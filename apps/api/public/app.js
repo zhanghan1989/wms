@@ -199,24 +199,18 @@ function renderInventoryTable() {
   $("inventoryBody").innerHTML = state.inventorySkus
     .map((sku) => {
       const rows = state.inventoryLocations.get(String(sku.id)) || [];
+      const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
       return `
       <tr class="inventory-main-row">
         <td>${escapeHtml(sku.sku)}</td>
         <td>${escapeHtml(sku.erpSku)}</td>
         <td>${escapeHtml(sku.asin)}</td>
         <td>${escapeHtml(sku.fnsku)}</td>
+        <td>${escapeHtml(totalQty)}</td>
         <td>
           <div class="action-row">
             <button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${sku.id}">入库</button>
             <button class="tiny-btn ghost" data-action="inventoryOutbound" data-sku-id="${sku.id}">出库</button>
-          </div>
-        </td>
-      </tr>
-      <tr class="inventory-sub-row">
-        <td colspan="5">
-          <div class="location-list">
-            <strong>所在箱号/货架号/数量：</strong>
-            ${renderInventoryLocationRows(rows)}
           </div>
         </td>
       </tr>

@@ -39,9 +39,9 @@
 
         <div class="inventory-toolbar">
           <div class="inventory-toolbar-actions">
-            <button type="button" id="openCreateSkuModal">新增 SKU</button>
-            <button type="button" id="openCreateBoxQuick" class="ghost">新增箱号</button>
-            <button type="button" id="openCreateShelfQuick" class="ghost">新增货架</button>
+            <button type="button" id="openCreateSkuModal">新增产品</button>
+            <button type="button" id="openCreateBoxQuick">新增箱号</button>
+            <button type="button" id="openCreateShelfQuick">新增货架</button>
           </div>
 
           <form id="inventorySearchForm" class="form-grid inventory-search-form">
@@ -56,7 +56,7 @@
         </div>
 
         <table class="inventory-table">
-          <thead><tr><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>操作</th></tr></thead>
+          <thead><tr><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>库存数量</th><th>操作</th></tr></thead>
           <tbody id="inventoryBody"></tbody>
         </table>
       </section>
@@ -183,7 +183,7 @@
   <div id="createSkuModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>新增 SKU</h3>
+        <h3>新增产品</h3>
         <button type="button" class="ghost" data-action="closeCreateSkuModal">关闭</button>
       </div>
       <form id="createSkuModalForm" class="form-grid modal-grid">
