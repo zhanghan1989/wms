@@ -5,6 +5,10 @@ const state = {
   boxes: [],
   inventorySkus: [],
   inventoryLocations: new Map(),
+  inventorySortedSkus: [],
+  inventoryVisibleCount: 0,
+  inventoryPageSize: 30,
+  inventorySearchMode: false,
   plainPasswords: (() => {
     try {
       const raw = localStorage.getItem("wms_plain_password_map");
@@ -99,6 +103,22 @@ function setAuthGate(isLoggedIn) {
   $("appLayout").classList.toggle("hidden", !isLoggedIn);
 }
 
+function setInventoryDisplayMode(searchMode) {
+  state.inventorySearchMode = searchMode;
+  const listSection = $("inventoryListSection");
+  const searchSection = $("inventorySearchSection");
+  if (listSection) listSection.classList.toggle("hidden", searchMode);
+  if (searchSection) searchSection.classList.toggle("hidden", !searchMode);
+}
+
+function focusInventorySearch() {
+  const panel = $("inventory");
+  if (!panel || !panel.classList.contains("active")) return;
+  const input = $("inventoryKeyword");
+  if (!input || document.activeElement === input) return;
+  setTimeout(() => input.focus(), 0);
+}
+
 function switchPanel(targetId) {
   document.querySelectorAll(".nav-btn").forEach((button) => button.classList.remove("active"));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
@@ -108,6 +128,9 @@ function switchPanel(targetId) {
 
   const panel = $(targetId);
   if (panel) panel.classList.add("active");
+  if (targetId === "inventory") {
+    focusInventorySearch();
+  }
 }
 
 function openModal(modalId) {
@@ -243,7 +266,8 @@ function renderInventoryLocationRows(rows) {
 }
 
 function renderInventoryTable() {
-  $("inventoryBody").innerHTML = state.inventorySkus
+  const list = state.inventorySortedSkus.slice(0, state.inventoryVisibleCount);
+  const html = list
     .map((sku) => {
       const rows = state.inventoryLocations.get(String(sku.id)) || [];
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
@@ -269,6 +293,18 @@ function renderInventoryTable() {
     `;
     })
     .join("");
+
+  $("inventoryBody").innerHTML = html || '<tr><td colspan="11" class="muted">-</td></tr>';
+}
+
+function loadMoreInventoryIfNeeded() {
+  if (state.inventorySearchMode) return;
+  if (!state.token) return;
+  const inventoryPanel = $("inventory");
+  if (!inventoryPanel || !inventoryPanel.classList.contains("active")) return;
+  if (state.inventoryVisibleCount >= state.inventorySortedSkus.length) return;
+  state.inventoryVisibleCount += state.inventoryPageSize;
+  renderInventoryTable();
 }
 
 async function loadInventory() {
@@ -281,6 +317,19 @@ async function loadInventory() {
   );
   state.inventoryLocations = new Map(locationEntries);
 
+  state.inventorySortedSkus = [...skus].sort((a, b) => {
+    const qtyA = (state.inventoryLocations.get(String(a.id)) || []).reduce(
+      (sum, row) => sum + Number(row.qty ?? 0),
+      0,
+    );
+    const qtyB = (state.inventoryLocations.get(String(b.id)) || []).reduce(
+      (sum, row) => sum + Number(row.qty ?? 0),
+      0,
+    );
+    return qtyB - qtyA;
+  });
+  state.inventoryVisibleCount = state.inventoryPageSize;
+  setInventoryDisplayMode(false);
   renderInventoryTable();
 }
 
@@ -312,10 +361,13 @@ function renderInventorySearchResults(skus, locationMap) {
 async function searchInventoryProducts(keyword) {
   const container = $("inventorySearchResults");
   if (!keyword) {
-    container.textContent = "-";
+    setInventoryDisplayMode(false);
+    renderInventoryTable();
+    focusInventorySearch();
     return;
   }
 
+  setInventoryDisplayMode(true);
   const skus = await request(`/inventory/search?keyword=${encodeURIComponent(keyword)}`);
   const locationEntries = await Promise.all(
     skus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
@@ -597,6 +649,7 @@ async function reloadAll() {
     $("inventoryBody").innerHTML = "";
     $("inboundBody").innerHTML = "";
     $("inventorySearchResults").textContent = "-";
+    setInventoryDisplayMode(false);
     return;
   }
 
@@ -615,6 +668,8 @@ async function reloadAll() {
   if (firstError && firstError.status === "rejected") {
     throw firstError.reason;
   }
+  setInventoryDisplayMode(false);
+  focusInventorySearch();
 }
 
 function bindForms() {
@@ -1005,6 +1060,16 @@ function bindDelegates() {
   });
 }
 
+function bindScrollLoad() {
+  window.addEventListener("scroll", () => {
+    const threshold = 120;
+    const nearBottom =
+      window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - threshold;
+    if (!nearBottom) return;
+    loadMoreInventoryIfNeeded();
+  });
+}
+
 function bindRefresh() {
   $("refreshInventory").addEventListener("click", () => loadInventory().catch((error) => showToast(error.message, true)));
   $("refreshUsers").addEventListener("click", () => loadUsers().catch((error) => showToast(error.message, true)));
@@ -1018,6 +1083,7 @@ bindTabs();
 bindInputRules();
 bindForms();
 bindDelegates();
+bindScrollLoad();
 bindRefresh();
 switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));

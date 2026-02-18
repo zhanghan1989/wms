@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WMS V1 Console</title>
+  <title>库存管理系统</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -15,7 +15,7 @@
       <div class="login-brand">
         <div class="brand-mark">W</div>
         <div>
-          <p class="brand-title">WMS V1 Console</p>
+          <p class="brand-title">库存管理系统</p>
           <p class="brand-sub">登录后进入仓库管理系统</p>
         </div>
       </div>
@@ -31,7 +31,7 @@
     <div class="brand">
       <div class="brand-mark">W</div>
       <div>
-        <p class="brand-title">WMS V1 Console</p>
+        <p class="brand-title">库存管理系统</p>
         <p class="brand-sub">Warehouse operations preview</p>
       </div>
     </div>
@@ -41,6 +41,10 @@
         <button type="button" id="topLogoutBtn" class="ghost">登出</button>
       </div>
       <div class="session-actions hidden" id="employeeQuickActions">
+        <button type="button" id="openCreateSkuModal">新增产品</button>
+        <button type="button" id="openCreateBoxQuick">新增箱号</button>
+        <button type="button" id="openCreateShelfQuick">新增货架</button>
+        <button type="button" id="openBatchInboundModal">批量入库</button>
         <button type="button" id="openMyAuditLog" class="ghost">我的日志</button>
         <button type="button" id="openProfileModal" class="ghost">个人设置</button>
       </div>
@@ -63,42 +67,37 @@
         </div>
 
         <div class="inventory-toolbar">
-          <div class="inventory-toolbar-actions">
-            <button type="button" id="openCreateSkuModal">新增产品</button>
-            <button type="button" id="openCreateBoxQuick">新增箱号</button>
-            <button type="button" id="openCreateShelfQuick">新增货架</button>
-            <button type="button" id="openBatchInboundModal">批量入库</button>
-          </div>
-
           <form id="inventorySearchForm" class="form-grid inventory-search-form">
             <label>产品检索（SKU/erpSKU/ASIN/FNSKU）<input id="inventoryKeyword" /></label>
             <button type="submit">检索产品</button>
           </form>
 
-          <div class="card inventory-search-card">
+          <div id="inventorySearchSection" class="card inventory-search-card hidden">
             <h3>检索结果</h3>
             <div id="inventorySearchResults" class="inventory-search-results">-</div>
           </div>
         </div>
 
-        <table class="inventory-table">
-          <thead>
-            <tr>
-              <th>型号</th>
-              <th>说明1</th>
-              <th>说明2</th>
-              <th>店铺</th>
-              <th>备注</th>
-              <th>SKU</th>
-              <th>erpSKU</th>
-              <th>ASIN</th>
-              <th>FNSKU</th>
-              <th>库存数量</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="inventoryBody"></tbody>
-        </table>
+        <div id="inventoryListSection">
+          <table class="inventory-table">
+            <thead>
+              <tr>
+                <th>型号</th>
+                <th>说明1</th>
+                <th>说明2</th>
+                <th>店铺</th>
+                <th>备注</th>
+                <th>SKU</th>
+                <th>erpSKU</th>
+                <th>ASIN</th>
+                <th>FNSKU</th>
+                <th>库存数量</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryBody"></tbody>
+          </table>
+        </div>
       </section>
 
       <section class="panel" id="overview">

@@ -129,7 +129,10 @@ body {
 
 .session-actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+  max-width: 920px;
 }
 
 .session-actions button {
