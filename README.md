@@ -68,3 +68,13 @@ This repository now contains the first runnable backend baseline for WMS V1.
 
 - Local/standalone: `docker-compose.yml`
 - Alibaba Cloud (ECS + RDS): `docker-compose.aliyun.yml` and `docs/DEPLOY_ALIYUN.md`
+
+## CI/CD (GitHub Actions -> ECS)
+
+- Workflow file: `.github/workflows/deploy-ecs.yml`
+- Trigger: push to `main` (or manual `workflow_dispatch`)
+- Required repository secrets:
+  - `ECS_HOST`
+  - `ECS_PORT`
+  - `ECS_USER`
+  - `ECS_SSH_KEY`

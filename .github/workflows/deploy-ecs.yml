@@ -1,0 +1,32 @@
+name: Deploy ECS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to ECS by SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          port: ${{ secrets.ECS_PORT }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd ~/wms
+            git fetch --all --prune
+            git checkout main
+            git reset --hard origin/main
+            docker compose up -d --build api
+            docker compose ps
