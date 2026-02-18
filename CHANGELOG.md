@@ -19,3 +19,13 @@
   - `apps/api/.env.aliyun.example`
   - `docs/DEPLOY_ALIYUN.md`
 - Added project documentation (`README.md`, `apps/api/README.md`) and seed script for default users.
+
+### Changed
+- Mounted static frontend assets under API root path (`/`).
+- Added first web console pages for:
+  - login/session overview
+  - users
+  - skus
+  - shelves
+  - boxes
+  - audit logs

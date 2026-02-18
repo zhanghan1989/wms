@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WMS V1 Console</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="bg-shape bg-shape-a"></div>
+  <div class="bg-shape bg-shape-b"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">W</div>
+      <div>
+        <p class="brand-title">WMS V1 Console</p>
+        <p class="brand-sub">Warehouse operations preview</p>
+      </div>
+    </div>
+    <div class="session" id="sessionInfo">未登录</div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <button class="nav-btn active" data-target="overview">总览</button>
+      <button class="nav-btn" data-target="users">员工</button>
+      <button class="nav-btn" data-target="skus">产品</button>
+      <button class="nav-btn" data-target="shelves">货架</button>
+      <button class="nav-btn" data-target="boxes">箱子</button>
+      <button class="nav-btn" data-target="audit">操作日志</button>
+    </aside>
+
+    <section class="panel-wrap">
+      <section class="panel active" id="overview">
+        <h2>登录与状态</h2>
+        <form id="loginForm" class="form-grid">
+          <label>
+            用户名
+            <input id="username" value="admin" />
+          </label>
+          <label>
+            密码
+            <input id="password" type="password" value="Admin@123" />
+          </label>
+          <div class="actions">
+            <button type="submit">登录</button>
+            <button type="button" id="logoutBtn" class="ghost">退出</button>
+          </div>
+        </form>
+
+        <div class="cards">
+          <article class="card">
+            <h3>当前用户</h3>
+            <pre id="meCard">-</pre>
+          </article>
+          <article class="card">
+            <h3>快速统计</h3>
+            <ul class="stats">
+              <li><span>员工数</span><strong id="statUsers">-</strong></li>
+              <li><span>SKU 数</span><strong id="statSkus">-</strong></li>
+              <li><span>货架数</span><strong id="statShelves">-</strong></li>
+              <li><span>箱子数</span><strong id="statBoxes">-</strong></li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel" id="users">
+        <div class="panel-head">
+          <h2>员工管理</h2>
+          <button id="refreshUsers" class="ghost">刷新</button>
+        </div>
+        <form id="createUserForm" class="form-grid compact">
+          <label>用户名<input id="newUsername" required /></label>
+          <label>密码<input id="newPassword" required /></label>
+          <label>角色
+            <select id="newRole">
+              <option value="employee">employee</option>
+              <option value="admin">admin</option>
+            </select>
+          </label>
+          <button type="submit">新增员工</button>
+        </form>
+        <table>
+          <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>更新时间</th></tr></thead>
+          <tbody id="usersBody"></tbody>
+        </table>
+      </section>
+
+      <section class="panel" id="skus">
+        <div class="panel-head">
+          <h2>产品管理</h2>
+          <button id="refreshSkus" class="ghost">刷新</button>
+        </div>
+        <form id="createSkuForm" class="form-grid compact">
+          <label>SKU<input id="newSku" required /></label>
+          <label>erpSKU<input id="newErpSku" /></label>
+          <label>ASIN<input id="newAsin" /></label>
+          <label>FNSKU<input id="newFnsku" /></label>
+          <button type="submit">新增 SKU</button>
+        </form>
+        <table>
+          <thead><tr><th>ID</th><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>状态</th></tr></thead>
+          <tbody id="skusBody"></tbody>
+        </table>
+      </section>
+
+      <section class="panel" id="shelves">
+        <div class="panel-head">
+          <h2>货架管理</h2>
+          <button id="refreshShelves" class="ghost">刷新</button>
+        </div>
+        <form id="createShelfForm" class="form-grid compact">
+          <label>货架编码<input id="newShelfCode" required /></label>
+          <label>名称<input id="newShelfName" /></label>
+          <button type="submit">新增货架</button>
+        </form>
+        <table>
+          <thead><tr><th>ID</th><th>货架编码</th><th>名称</th><th>状态</th></tr></thead>
+          <tbody id="shelvesBody"></tbody>
+        </table>
+      </section>
+
+      <section class="panel" id="boxes">
+        <div class="panel-head">
+          <h2>箱子管理</h2>
+          <button id="refreshBoxes" class="ghost">刷新</button>
+        </div>
+        <form id="createBoxForm" class="form-grid compact">
+          <label>箱号<input id="newBoxCode" required /></label>
+          <label>货架 ID<input id="newBoxShelfId" type="number" min="1" required /></label>
+          <button type="submit">新增箱子</button>
+        </form>
+        <table>
+          <thead><tr><th>ID</th><th>箱号</th><th>货架</th><th>状态</th></tr></thead>
+          <tbody id="boxesBody"></tbody>
+        </table>
+      </section>
+
+      <section class="panel" id="audit">
+        <div class="panel-head">
+          <h2>操作日志</h2>
+          <button id="refreshAudit" class="ghost">刷新</button>
+        </div>
+        <table>
+          <thead><tr><th>时间</th><th>实体</th><th>动作</th><th>事件</th><th>操作人</th><th>请求ID</th></tr></thead>
+          <tbody id="auditBody"></tbody>
+        </table>
+      </section>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

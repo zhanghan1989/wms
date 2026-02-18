@@ -27,6 +27,17 @@ This repository now contains the first runnable backend baseline for WMS V1.
 - admin / Admin@123
 - employee / Employee@123
 
+## Frontend Preview
+
+- A lightweight web console is served by the API process.
+- After startup, open `http://<server-ip>:3000/`.
+- Login with `admin / Admin@123` to view:
+  - users
+  - skus
+  - shelves
+  - boxes
+  - audit logs
+
 ## Implemented in First Build
 
 - Auth: login/logout/me (JWT)

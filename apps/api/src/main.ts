@@ -1,12 +1,23 @@
 import { randomUUID } from 'crypto';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  const publicDir = join(process.cwd(), 'apps', 'api', 'public');
+  app.useStaticAssets(publicDir, { index: false });
+  const expressApp = app.getHttpAdapter().getInstance() as {
+    get: (path: string, handler: (_req: unknown, res: { sendFile: (filePath: string) => void }) => void) => void;
+  };
+  expressApp.get('/', (_req, res) => {
+    res.sendFile(join(publicDir, 'index.html'));
+  });
 
   app.setGlobalPrefix('api');
   app.use((req: Record<string, unknown>, res: Record<string, unknown>, next: () => void) => {
