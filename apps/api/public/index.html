@@ -158,15 +158,20 @@
           <h2>产品管理</h2>
           <button id="refreshSkus" class="ghost">刷新</button>
         </div>
-        <form id="createSkuForm" class="form-grid compact">
+        <form id="createSkuForm" class="form-grid compact sku-compact">
           <label>SKU<input id="newSku" required /></label>
           <label>erpSKU<input id="newErpSku" /></label>
           <label>ASIN<input id="newAsin" /></label>
           <label>FNSKU<input id="newFnsku" /></label>
+          <label>箱号<input id="newSkuBoxCode" required /></label>
+          <label>新箱货架号（箱号不存在时必选）
+            <select id="newSkuShelfId"></select>
+          </label>
+          <label>数量<input id="newSkuQty" type="number" min="1" value="1" required /></label>
           <button type="submit">新增 SKU</button>
         </form>
         <table>
-          <thead><tr><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>状态</th></tr></thead>
+          <thead><tr><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>所在箱号/货架号/数量</th></tr></thead>
           <tbody id="skusBody"></tbody>
         </table>
       </section>

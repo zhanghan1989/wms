@@ -121,9 +121,36 @@ async function loadUsers() {
     .join("");
 }
 
+async function getSkuInventoryRows(skuId) {
+  try {
+    return await request(`/inventory/product-boxes?skuId=${skuId}`);
+  } catch {
+    return [];
+  }
+}
+
+function renderSkuLocationsCell(rows) {
+  if (!rows?.length) return "-";
+  const items = rows
+    .map((row) => {
+      const boxCode = row.box?.boxCode || "-";
+      const shelfCode = row.box?.shelf?.shelfCode || "-";
+      const qty = Number(row.qty ?? 0);
+      return `<div>${escapeHtml(boxCode)} / ${escapeHtml(shelfCode)} / ${escapeHtml(qty)}</div>`;
+    })
+    .join("");
+  return `<div class="location-list">${items}</div>`;
+}
+
 async function loadSkus() {
   const skus = await request("/skus");
   $("statSkus").textContent = skus.length;
+
+  const locationEntries = await Promise.all(
+    skus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
+  );
+  const locationMap = new Map(locationEntries);
+
   $("skusBody").innerHTML = skus
     .map(
       (sku) => `
@@ -132,31 +159,37 @@ async function loadSkus() {
         <td>${escapeHtml(sku.erpSku)}</td>
         <td>${escapeHtml(sku.asin)}</td>
         <td>${escapeHtml(sku.fnsku)}</td>
-        <td>${getStatusText(sku.status)}</td>
+        <td>${renderSkuLocationsCell(locationMap.get(String(sku.id)) || [])}</td>
       </tr>
     `,
     )
     .join("");
 }
 
-function renderShelfOptions(shelves) {
-  const select = $("newBoxShelfId");
+function renderShelfOptionsForSelect(selectId, shelves, placeholder) {
+  const select = $(selectId);
   if (!select) return;
 
   const prev = select.value;
   const options = shelves
     .map((shelf) => {
-      const disabledAttr = Number(shelf.status) === 1 ? "" : " disabled";
-      const disabledMark = Number(shelf.status) === 1 ? "" : "（禁用）";
+      const isEnabled = Number(shelf.status) === 1;
+      const disabledAttr = isEnabled ? "" : " disabled";
+      const disabledMark = isEnabled ? "" : "（禁用）";
       return `<option value="${escapeHtml(shelf.id)}"${disabledAttr}>${escapeHtml(shelf.shelfCode)}${disabledMark}</option>`;
     })
     .join("");
 
-  select.innerHTML = `<option value="">请选择货架号</option>${options}`;
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
 
   if (prev && shelves.some((shelf) => String(shelf.id) === prev && Number(shelf.status) === 1)) {
     select.value = prev;
   }
+}
+
+function renderShelfOptions(shelves) {
+  renderShelfOptionsForSelect("newBoxShelfId", shelves, "请选择货架号");
+  renderShelfOptionsForSelect("newSkuShelfId", shelves, "箱号已存在可不选；新建箱号请选货架号");
 }
 
 async function loadShelves() {
@@ -191,6 +224,30 @@ async function loadBoxes() {
     `,
     )
     .join("");
+}
+
+async function getExistingBoxByCode(boxCode) {
+  const matched = await request(`/boxes?q=${encodeURIComponent(boxCode)}`);
+  return matched.find((box) => box.boxCode === boxCode);
+}
+
+async function ensureBoxForNewSku(boxCode, shelfId) {
+  const existed = await getExistingBoxByCode(boxCode);
+  if (existed) {
+    return existed;
+  }
+
+  if (!Number.isInteger(shelfId) || shelfId <= 0) {
+    throw new Error("箱号不存在，请先选择货架号以创建新箱号");
+  }
+
+  await request("/boxes", {
+    method: "POST",
+    body: JSON.stringify({
+      boxCode,
+      shelfId,
+    }),
+  });
 }
 
 function getInboundOrderStatusTag(status) {
@@ -431,17 +488,56 @@ function bindForms() {
   $("createSkuForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await request("/skus", {
+      const sku = $("newSku").value.trim();
+      const boxCode = $("newSkuBoxCode").value.trim();
+      const shelfId = Number($("newSkuShelfId").value);
+      const qty = Number($("newSkuQty").value);
+
+      if (!sku) {
+        showToast("SKU 不能为空", true);
+        return;
+      }
+      if (!boxCode) {
+        showToast("箱号不能为空", true);
+        return;
+      }
+      if (!Number.isFinite(qty) || qty <= 0) {
+        showToast("数量必须大于 0", true);
+        return;
+      }
+
+      const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
+      if (possibleDuplicate.some((item) => item.sku === sku)) {
+        showToast("SKU 已存在", true);
+        return;
+      }
+
+      await ensureBoxForNewSku(boxCode, shelfId);
+
+      const createdSku = await request("/skus", {
         method: "POST",
         body: JSON.stringify({
-          sku: $("newSku").value.trim(),
+          sku,
           erpSku: $("newErpSku").value.trim() || undefined,
           asin: $("newAsin").value.trim() || undefined,
           fnsku: $("newFnsku").value.trim() || undefined,
         }),
       });
+
+      await request("/inventory/manual-adjust", {
+        method: "POST",
+        body: JSON.stringify({
+          skuId: createdSku.id,
+          boxCode,
+          qtyDelta: qty,
+          reason: "新建产品初始入库",
+        }),
+      });
+
       event.target.reset();
-      showToast("SKU 已创建");
+      showToast("产品已创建并入库");
+      await loadShelves();
+      await loadBoxes();
       await loadSkus();
       await loadAudit();
     } catch (error) {
