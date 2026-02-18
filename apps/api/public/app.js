@@ -634,7 +634,7 @@ function bindForms() {
   };
 
   $("logoutBtn").addEventListener("click", handleLogout);
-  $("quickLogoutBtn").addEventListener("click", handleLogout);
+  $("topLogoutBtn").addEventListener("click", handleLogout);
 
   $("createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
