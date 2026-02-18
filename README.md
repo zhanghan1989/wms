@@ -43,6 +43,15 @@ This repository now contains the first runnable backend baseline for WMS V1.
 - Auth: login/logout/me (JWT)
 - RBAC base: employee/admin and admin-only user management APIs
 - Master data APIs: skus, shelves, boxes
+- Inbound workflow:
+  - excel import (`boxCode`, `sku`, `qty`)
+  - one file creates one `pending_batch` inbound order (draft)
+  - whole-order confirm with idempotent behavior
+  - draft void supported, confirmed order cannot be voided
+- Inventory adjust workflow:
+  - create/confirm adjust order
+  - manual one-click adjust (`qtyDelta` positive/negative)
+  - product search by `sku`/`erpSku`/`asin`/`fnsku`
 - Audit system:
   - operation audit logs (`operation_audit_logs`)
   - summary query and entity-level query APIs

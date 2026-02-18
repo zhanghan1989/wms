@@ -1,6 +1,7 @@
 const state = {
   token: localStorage.getItem("wms_token") || "",
   me: null,
+  selectedSkuId: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -26,13 +27,30 @@ function formatDate(value) {
   return Number.isNaN(d.getTime()) ? "-" : d.toLocaleString();
 }
 
+function parseMaybeNumber(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const n = Number(value);
+  return Number.isNaN(n) ? undefined : n;
+}
+
 async function request(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  const headers = { ...(options.headers || {}) };
+  const isFormData = options.body instanceof FormData;
+  if (!isFormData && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
+
   const res = await fetch(`/api${path}`, { ...options, headers });
-  const payload = await res.json();
+  const text = await res.text();
+  let payload = {};
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { message: text || "Request failed" };
+  }
   if (!res.ok || payload.code !== 0) {
-    throw new Error(payload.message || "Request failed");
+    throw new Error(payload.message || `HTTP ${res.status}`);
   }
   return payload.data;
 }
@@ -123,6 +141,35 @@ async function loadBoxes() {
   `).join("");
 }
 
+async function loadInboundOrders() {
+  const orders = await request("/inbound/orders");
+  const draftCount = orders.filter((o) => o.status === "draft").length;
+  $("statInboundDraft").textContent = draftCount;
+  $("inboundBody").innerHTML = orders.map((order) => {
+    const actions = [];
+    if (order.status === "draft") {
+      actions.push(`<button class="tiny-btn" data-action="confirmInbound" data-id="${escapeHtml(order.id)}">确认</button>`);
+      actions.push(`<button class="tiny-btn ghost" data-action="voidInbound" data-id="${escapeHtml(order.id)}">作废</button>`);
+    } else if (order.status === "confirmed") {
+      actions.push('<span class="tag">已确认</span>');
+    } else {
+      actions.push('<span class="tag">已作废</span>');
+    }
+
+    return `
+      <tr>
+        <td>${escapeHtml(order.id)}</td>
+        <td>${escapeHtml(order.orderNo)}</td>
+        <td>${escapeHtml(order.status)}</td>
+        <td>${escapeHtml(order.orderType)}</td>
+        <td>${escapeHtml(order.items?.length ?? 0)}</td>
+        <td>${formatDate(order.createdAt)}</td>
+        <td>${actions.join(" ")}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
 async function loadAudit() {
   const result = await request("/audit-logs?page=1&pageSize=20");
   const items = result.items || [];
@@ -138,10 +185,50 @@ async function loadAudit() {
   `).join("");
 }
 
+async function loadManualBoxes() {
+  if (!state.selectedSkuId) {
+    $("manualBoxesBody").innerHTML = '<tr><td colspan="4">请先选择 SKU</td></tr>';
+    return;
+  }
+  const rows = await request(`/inventory/product-boxes?skuId=${state.selectedSkuId}`);
+  $("manualBoxesBody").innerHTML = rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.box?.id)}</td>
+      <td>${escapeHtml(row.box?.boxCode)}</td>
+      <td>${escapeHtml(row.box?.shelf?.shelfCode)}</td>
+      <td>${escapeHtml(row.qty)}</td>
+    </tr>
+  `).join("") || '<tr><td colspan="4">当前 SKU 在任意箱子中都没有库存</td></tr>';
+}
+
+async function searchManualSkus(keyword) {
+  if (!keyword) {
+    $("manualSkuResults").innerHTML = "-";
+    return;
+  }
+  const skus = await request(`/inventory/search?keyword=${encodeURIComponent(keyword)}`);
+  if (skus.length === 0) {
+    $("manualSkuResults").innerHTML = "未找到产品";
+    return;
+  }
+  $("manualSkuResults").innerHTML = skus.map((s) => `
+    <button class="tiny-btn ghost" data-action="pickSku" data-id="${escapeHtml(s.id)}" data-sku="${escapeHtml(s.sku)}">
+      #${escapeHtml(s.id)} ${escapeHtml(s.sku)} / ${escapeHtml(s.erpSku || "")}
+    </button>
+  `).join(" ");
+}
+
 async function reloadAll() {
   await loadMe();
   if (!state.token) return;
-  await Promise.all([loadUsers(), loadSkus(), loadShelves(), loadBoxes(), loadAudit()]);
+  await Promise.all([
+    loadUsers(),
+    loadSkus(),
+    loadShelves(),
+    loadBoxes(),
+    loadInboundOrders(),
+    loadAudit(),
+  ]);
 }
 
 function bindForms() {
@@ -250,6 +337,110 @@ function bindForms() {
       showToast(err.message, true);
     }
   });
+
+  $("importInboundForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const file = $("inboundFile").files?.[0];
+    if (!file) {
+      showToast("请选择 Excel 文件", true);
+      return;
+    }
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      await request("/inbound/import-excel", {
+        method: "POST",
+        body: formData,
+      });
+      $("importInboundForm").reset();
+      showToast("导入成功，已生成待确认入库单");
+      await loadInboundOrders();
+      await loadBoxes();
+      await loadSkus();
+      await loadAudit();
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
+  $("manualSearchForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const keyword = $("manualKeyword").value.trim();
+      await searchManualSkus(keyword);
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
+  $("manualAdjustForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      const skuId = parseMaybeNumber($("manualSkuId").value);
+      const payload = {
+        skuId,
+        keyword: skuId ? undefined : $("manualKeyword").value.trim() || undefined,
+        boxId: parseMaybeNumber($("manualBoxId").value),
+        boxCode: $("manualBoxCode").value.trim() || undefined,
+        qtyDelta: Number($("manualQtyDelta").value),
+        reason: $("manualReason").value.trim() || undefined,
+      };
+      await request("/inventory/manual-adjust", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      showToast("手工调整成功");
+      await loadAudit();
+      await loadBoxes();
+      if (skuId) {
+        state.selectedSkuId = skuId;
+        await loadManualBoxes();
+      }
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
+  $("manualSkuId").addEventListener("change", async () => {
+    const skuId = parseMaybeNumber($("manualSkuId").value);
+    state.selectedSkuId = skuId || null;
+    if (state.selectedSkuId) {
+      await loadManualBoxes().catch((err) => showToast(err.message, true));
+    }
+  });
+}
+
+function bindDelegates() {
+  $("inboundBody").addEventListener("click", async (e) => {
+    const target = e.target.closest("button[data-action]");
+    if (!target) return;
+    const action = target.dataset.action;
+    const id = target.dataset.id;
+    if (!id) return;
+    try {
+      if (action === "confirmInbound") {
+        await request(`/inbound/orders/${id}/confirm`, { method: "POST", body: "{}" });
+        showToast(`入库单 #${id} 已确认`);
+      } else if (action === "voidInbound") {
+        await request(`/inbound/orders/${id}/void`, { method: "POST", body: "{}" });
+        showToast(`入库单 #${id} 已作废`);
+      }
+      await loadInboundOrders();
+      await loadAudit();
+    } catch (err) {
+      showToast(err.message, true);
+    }
+  });
+
+  $("manualSkuResults").addEventListener("click", async (e) => {
+    const target = e.target.closest("button[data-action='pickSku']");
+    if (!target) return;
+    const id = Number(target.dataset.id);
+    if (!Number.isFinite(id)) return;
+    $("manualSkuId").value = String(id);
+    state.selectedSkuId = id;
+    await loadManualBoxes().catch((err) => showToast(err.message, true));
+  });
 }
 
 function bindRefresh() {
@@ -257,10 +448,18 @@ function bindRefresh() {
   $("refreshSkus").addEventListener("click", () => loadSkus().catch((e) => showToast(e.message, true)));
   $("refreshShelves").addEventListener("click", () => loadShelves().catch((e) => showToast(e.message, true)));
   $("refreshBoxes").addEventListener("click", () => loadBoxes().catch((e) => showToast(e.message, true)));
+  $("refreshInbound").addEventListener("click", () => loadInboundOrders().catch((e) => showToast(e.message, true)));
+  $("refreshManual").addEventListener("click", () => {
+    searchManualSkus($("manualKeyword").value.trim()).catch((e) => showToast(e.message, true));
+    if (state.selectedSkuId) {
+      loadManualBoxes().catch((e) => showToast(e.message, true));
+    }
+  });
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((e) => showToast(e.message, true)));
 }
 
 bindTabs();
 bindForms();
+bindDelegates();
 bindRefresh();
 reloadAll().catch((err) => showToast(err.message, true));

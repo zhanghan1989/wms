@@ -24,6 +24,8 @@
   <main class="layout">
     <aside class="sidebar">
       <button class="nav-btn active" data-target="overview">总览</button>
+      <button class="nav-btn" data-target="inbound">标准入库</button>
+      <button class="nav-btn" data-target="manualAdjust">手工调整</button>
       <button class="nav-btn" data-target="users">员工</button>
       <button class="nav-btn" data-target="skus">产品</button>
       <button class="nav-btn" data-target="shelves">货架</button>
@@ -61,9 +63,70 @@
               <li><span>SKU 数</span><strong id="statSkus">-</strong></li>
               <li><span>货架数</span><strong id="statShelves">-</strong></li>
               <li><span>箱子数</span><strong id="statBoxes">-</strong></li>
+              <li><span>待确认入库单</span><strong id="statInboundDraft">-</strong></li>
             </ul>
           </article>
         </div>
+      </section>
+
+      <section class="panel" id="inbound">
+        <div class="panel-head">
+          <h2>标准入库（Excel 导入）</h2>
+          <button id="refreshInbound" class="ghost">刷新</button>
+        </div>
+        <form id="importInboundForm" class="form-grid compact">
+          <label>Excel 文件
+            <input id="inboundFile" type="file" accept=".xlsx,.xls,.csv" required />
+          </label>
+          <button type="submit">上传并生成入库单</button>
+        </form>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th><th>单号</th><th>状态</th><th>类型</th><th>明细数</th><th>创建时间</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="inboundBody"></tbody>
+        </table>
+      </section>
+
+      <section class="panel" id="manualAdjust">
+        <div class="panel-head">
+          <h2>手工调整（库存增减）</h2>
+          <button id="refreshManual" class="ghost">刷新</button>
+        </div>
+        <form id="manualSearchForm" class="form-grid compact">
+          <label>关键字（SKU/erpSKU/ASIN/FNSKU）
+            <input id="manualKeyword" />
+          </label>
+          <button type="submit">检索产品</button>
+        </form>
+        <div class="card">
+          <h3>检索结果（点击可带入 SKU ID）</h3>
+          <div id="manualSkuResults" class="mini-list">-</div>
+        </div>
+        <form id="manualAdjustForm" class="form-grid compact">
+          <label>SKU ID（可手填）
+            <input id="manualSkuId" type="number" min="1" />
+          </label>
+          <label>箱子 ID
+            <input id="manualBoxId" type="number" min="1" />
+          </label>
+          <label>或箱号
+            <input id="manualBoxCode" />
+          </label>
+          <label>数量变化（可负数）
+            <input id="manualQtyDelta" type="number" required />
+          </label>
+          <label>原因
+            <input id="manualReason" />
+          </label>
+          <button type="submit">执行手工调整</button>
+        </form>
+        <table>
+          <thead><tr><th>箱子ID</th><th>箱号</th><th>货架</th><th>库存</th></tr></thead>
+          <tbody id="manualBoxesBody"></tbody>
+        </table>
       </section>
 
       <section class="panel" id="users">
@@ -152,7 +215,6 @@
   </main>
 
   <div id="toast" class="toast hidden"></div>
-
   <script type="module" src="/app.js"></script>
 </body>
 </html>

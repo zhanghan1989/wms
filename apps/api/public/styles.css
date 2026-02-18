@@ -164,7 +164,7 @@ h3 {
 }
 
 .form-grid.compact {
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
 }
 
 label {
@@ -220,6 +220,7 @@ button.ghost {
   border-radius: 14px;
   padding: 14px;
   background: #fff;
+  margin-bottom: 14px;
 }
 
 .stats {
@@ -233,6 +234,12 @@ button.ghost {
 .stats li {
   display: flex;
   justify-content: space-between;
+}
+
+.mini-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 table {
@@ -255,6 +262,32 @@ td {
   text-align: left;
   font-size: 13px;
   vertical-align: top;
+}
+
+.tiny-btn {
+  border: 1px solid #0b6a48;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  margin-right: 6px;
+  cursor: pointer;
+}
+
+.tiny-btn.ghost {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.tag {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 pre {

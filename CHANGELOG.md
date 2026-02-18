@@ -29,3 +29,21 @@
   - shelves
   - boxes
   - audit logs
+- Extended web console with:
+  - inbound excel import and order confirmation
+  - manual inventory adjust workflow
+
+### Added
+- Inbound module APIs:
+  - `POST /api/inbound/import-excel`
+  - `GET /api/inbound/orders`
+  - `POST /api/inbound/orders`
+  - `POST /api/inbound/orders/:id/confirm`
+  - `POST /api/inbound/orders/:id/void`
+- Inventory adjust APIs:
+  - `GET /api/inventory/search`
+  - `GET /api/inventory/product-boxes`
+  - `POST /api/inventory/adjust-orders`
+  - `POST /api/inventory/adjust-orders/:id/confirm`
+  - `POST /api/inventory/manual-adjust`
+- Excel parsing dependency `xlsx` for batch inbound import.
