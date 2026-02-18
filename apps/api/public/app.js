@@ -2,6 +2,7 @@
   token: localStorage.getItem("wms_token") || "",
   me: null,
   shelves: [],
+  boxes: [],
   inventorySkus: [],
   inventoryLocations: new Map(),
 };
@@ -262,13 +263,29 @@ function renderShelfOptionsForSelect(selectId, placeholder) {
   }
 }
 
+function renderBoxOptionsForSelect(selectId, placeholder) {
+  const select = $(selectId);
+  if (!select) return;
+
+  const prev = select.value;
+  const options = state.boxes
+    .filter((box) => Number(box.status) === 1)
+    .map((box) => `<option value="${escapeHtml(box.boxCode)}">${escapeHtml(box.boxCode)}</option>`)
+    .join("");
+
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+  if (prev && state.boxes.some((box) => box.boxCode === prev && Number(box.status) === 1)) {
+    select.value = prev;
+  }
+}
+
 async function loadShelves() {
   const shelves = await request("/shelves");
   state.shelves = shelves;
   $("statShelves").textContent = shelves.length;
 
   renderShelfOptionsForSelect("newBoxShelfId", "请选择货架号");
-  renderShelfOptionsForSelect("modalNewSkuShelfId", "箱号已存在可不选；新建箱号请选货架号");
+  renderShelfOptionsForSelect("modalNewBoxShelfId", "请选择货架号");
 
   $("shelvesBody").innerHTML = shelves
     .map(
@@ -285,7 +302,9 @@ async function loadShelves() {
 
 async function loadBoxes() {
   const boxes = await request("/boxes");
+  state.boxes = boxes;
   $("statBoxes").textContent = boxes.length;
+  renderBoxOptionsForSelect("modalNewSkuBoxCode", "请选择已有箱号");
   $("boxesBody").innerHTML = boxes
     .map(
       (box) => `
@@ -297,25 +316,6 @@ async function loadBoxes() {
     `,
     )
     .join("");
-}
-
-async function getExistingBoxByCode(boxCode) {
-  const matched = await request(`/boxes?q=${encodeURIComponent(boxCode)}`);
-  return matched.find((box) => box.boxCode === boxCode);
-}
-
-async function ensureBoxForSku(boxCode, shelfId) {
-  const existed = await getExistingBoxByCode(boxCode);
-  if (existed) return;
-
-  if (!Number.isInteger(shelfId) || shelfId <= 0) {
-    throw new Error("箱号不存在，请先选择货架号创建新箱号");
-  }
-
-  await request("/boxes", {
-    method: "POST",
-    body: JSON.stringify({ boxCode, shelfId }),
-  });
 }
 
 function getInboundOrderStatusTag(status) {
@@ -430,21 +430,18 @@ async function createSkuFromModal() {
   const erpSku = $("modalNewErpSku").value.trim() || undefined;
   const asin = $("modalNewAsin").value.trim() || undefined;
   const fnsku = $("modalNewFnsku").value.trim() || undefined;
-  const boxCode = $("modalNewSkuBoxCode").value.trim();
-  const shelfId = Number($("modalNewSkuShelfId").value);
+  const boxCode = $("modalNewSkuBoxCode").value;
   const qty = Math.abs(Number($("modalNewSkuQty").value));
   const reason = $("modalNewSkuReason").value.trim() || "新建产品初始入库";
 
   if (!sku) throw new Error("SKU 不能为空");
-  if (!boxCode) throw new Error("箱号不能为空");
+  if (!boxCode) throw new Error("请选择已有箱号");
   if (!Number.isFinite(qty) || qty <= 0) throw new Error("数量必须大于 0");
 
   const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
   if (possibleDuplicate.some((item) => item.sku === sku)) {
     throw new Error("SKU 已存在");
   }
-
-  await ensureBoxForSku(boxCode, shelfId);
 
   const createdSku = await request("/skus", {
     method: "POST",
@@ -459,6 +456,19 @@ async function createSkuFromModal() {
       qtyDelta: qty,
       reason,
     }),
+  });
+}
+
+async function createBoxFromSkuModal() {
+  const boxCode = $("modalNewBoxCode").value.trim();
+  const shelfId = Number($("modalNewBoxShelfId").value);
+
+  if (!boxCode) throw new Error("箱号不能为空");
+  if (!Number.isInteger(shelfId) || shelfId <= 0) throw new Error("请选择货架号");
+
+  await request("/boxes", {
+    method: "POST",
+    body: JSON.stringify({ boxCode, shelfId }),
   });
 }
 
@@ -602,13 +612,19 @@ function bindForms() {
   });
 
   $("openCreateSkuModal").addEventListener("click", async () => {
-    if (!state.shelves.length) {
-      await loadShelves().catch((error) => showToast(error.message, true));
-    }
+    await Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true));
     $("createSkuModalForm").reset();
     $("modalNewSkuQty").value = "1";
     $("modalNewSkuReason").value = "新建产品初始入库";
     openModal("createSkuModal");
+  });
+
+  $("openCreateBoxFromSkuModal").addEventListener("click", async () => {
+    if (!state.shelves.length) {
+      await loadShelves().catch((error) => showToast(error.message, true));
+    }
+    $("createBoxFromSkuForm").reset();
+    openModal("createBoxFromSkuModal");
   });
 
   $("createSkuModalForm").addEventListener("submit", async (event) => {
@@ -620,6 +636,20 @@ function bindForms() {
       await loadShelves();
       await loadBoxes();
       await loadInventory();
+      await loadAudit();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("createBoxFromSkuForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await createBoxFromSkuModal();
+      closeModal("createBoxFromSkuModal");
+      showToast("箱号已创建");
+      await loadShelves();
+      await loadBoxes();
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);
@@ -685,6 +715,11 @@ function bindDelegates() {
       closeModal("createSkuModal");
       return;
     }
+    const boxClose = event.target.closest("button[data-action='closeCreateBoxFromSkuModal']");
+    if (boxClose) {
+      closeModal("createBoxFromSkuModal");
+      return;
+    }
     const adjustClose = event.target.closest("button[data-action='closeAdjustModal']");
     if (adjustClose) {
       closeModal("adjustModal");
@@ -700,6 +735,12 @@ function bindDelegates() {
   $("adjustModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("adjustModal");
+    }
+  });
+
+  $("createBoxFromSkuModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("createBoxFromSkuModal");
     }
   });
 }

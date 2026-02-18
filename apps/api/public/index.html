@@ -187,9 +187,11 @@
         <label>erpSKU<input id="modalNewErpSku" /></label>
         <label>ASIN<input id="modalNewAsin" /></label>
         <label>FNSKU<input id="modalNewFnsku" /></label>
-        <label>箱号<input id="modalNewSkuBoxCode" required /></label>
-        <label>新箱货架号（箱号不存在时必选）
-          <select id="modalNewSkuShelfId"></select>
+        <label>箱号
+          <select id="modalNewSkuBoxCode" required></select>
+        </label>
+        <label>新增箱号
+          <button type="button" id="openCreateBoxFromSkuModal" class="ghost">新增箱号</button>
         </label>
         <label>数量<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
         <label>备注<input id="modalNewSkuReason" value="新建产品初始入库" /></label>
@@ -219,6 +221,25 @@
         <div class="modal-actions">
           <button id="adjustSubmitBtn" type="submit">提交</button>
           <button type="button" class="ghost" data-action="closeAdjustModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="createBoxFromSkuModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>新增箱号</h3>
+        <button type="button" class="ghost" data-action="closeCreateBoxFromSkuModal">关闭</button>
+      </div>
+      <form id="createBoxFromSkuForm" class="form-grid modal-grid">
+        <label>箱号<input id="modalNewBoxCode" required /></label>
+        <label>货架号
+          <select id="modalNewBoxShelfId" required></select>
+        </label>
+        <div class="modal-actions">
+          <button type="submit">确认新增箱号</button>
+          <button type="button" class="ghost" data-action="closeCreateBoxFromSkuModal">取消</button>
         </div>
       </form>
     </div>
