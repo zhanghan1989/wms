@@ -59,6 +59,26 @@ function clearStats() {
   $("statInboundDraft").textContent = "-";
 }
 
+function displayText(value) {
+  if (value === null || value === undefined || value === "") {
+    return "-";
+  }
+  return String(value);
+}
+
+function applyRoleView() {
+  const layout = document.querySelector(".layout");
+  const quickActions = $("employeeQuickActions");
+  const isEmployee = Boolean(state.me && state.me.role === "employee");
+
+  if (layout) {
+    layout.classList.toggle("no-sidebar", isEmployee);
+  }
+  if (quickActions) {
+    quickActions.classList.toggle("hidden", !isEmployee);
+  }
+}
+
 function switchPanel(targetId) {
   document.querySelectorAll(".nav-btn").forEach((button) => button.classList.remove("active"));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
@@ -139,6 +159,7 @@ async function loadMe() {
     state.me = null;
     $("sessionInfo").textContent = "未登录";
     $("meCard").textContent = "-";
+    applyRoleView();
     return;
   }
 
@@ -146,12 +167,14 @@ async function loadMe() {
     state.me = await request("/auth/me");
     $("sessionInfo").textContent = `${state.me.username} (${state.me.role})`;
     $("meCard").textContent = JSON.stringify(state.me, null, 2);
+    applyRoleView();
   } catch {
     state.token = "";
     state.me = null;
     localStorage.removeItem("wms_token");
     $("sessionInfo").textContent = "登录失效";
     $("meCard").textContent = "-";
+    applyRoleView();
   }
 }
 
@@ -202,10 +225,15 @@ function renderInventoryTable() {
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
       return `
       <tr class="inventory-main-row">
+        <td>${escapeHtml(displayText(sku.model))}</td>
+        <td>${escapeHtml(displayText(sku.desc1))}</td>
+        <td>${escapeHtml(displayText(sku.desc2))}</td>
+        <td>${escapeHtml(displayText(sku.shop))}</td>
+        <td>${escapeHtml(displayText(sku.remark))}</td>
         <td>${escapeHtml(sku.sku)}</td>
-        <td>${escapeHtml(sku.erpSku)}</td>
-        <td>${escapeHtml(sku.asin)}</td>
-        <td>${escapeHtml(sku.fnsku)}</td>
+        <td>${escapeHtml(displayText(sku.erpSku))}</td>
+        <td>${escapeHtml(displayText(sku.asin))}</td>
+        <td>${escapeHtml(displayText(sku.fnsku))}</td>
         <td>${escapeHtml(totalQty)}</td>
         <td>
           <div class="action-row">
@@ -404,6 +432,28 @@ async function loadAudit() {
     .join("");
 }
 
+async function loadMyAudit() {
+  if (!state.me?.id) {
+    $("myAuditBody").innerHTML = "";
+    return;
+  }
+  const result = await request(`/audit-logs?page=1&pageSize=20&operatorId=${state.me.id}`);
+  const items = result.items || [];
+  $("myAuditBody").innerHTML = items
+    .map(
+      (item) => `
+      <tr>
+        <td>${formatDate(item.createdAt)}</td>
+        <td>${formatAuditEntity(item)}</td>
+        <td>${escapeHtml(item.action)}</td>
+        <td>${escapeHtml(item.eventType)}</td>
+        <td>${escapeHtml(item.requestId)}</td>
+      </tr>
+    `,
+    )
+    .join("");
+}
+
 function findSkuById(skuId) {
   return state.inventorySkus.find((sku) => Number(sku.id) === Number(skuId));
 }
@@ -454,13 +504,18 @@ async function submitAdjustForm() {
 }
 
 async function createSkuFromModal() {
+  const model = $("modalNewModel").value.trim() || undefined;
+  const desc1 = $("modalNewDesc1").value.trim() || undefined;
+  const desc2 = $("modalNewDesc2").value.trim() || undefined;
+  const shop = $("modalNewShop").value.trim() || undefined;
+  const remark = $("modalNewRemark").value.trim() || undefined;
   const sku = $("modalNewSku").value.trim();
   const erpSku = $("modalNewErpSku").value.trim() || undefined;
   const asin = $("modalNewAsin").value.trim() || undefined;
   const fnsku = $("modalNewFnsku").value.trim() || undefined;
   const boxCode = $("modalNewSkuBoxCode").value;
   const qty = Math.abs(Number($("modalNewSkuQty").value));
-  const reason = $("modalNewSkuReason").value.trim() || "新建产品初始入库";
+  const reason = "新建产品初始入库";
 
   if (!sku) throw new Error("SKU 不能为空");
   if (!boxCode) throw new Error("请选择已有箱号");
@@ -473,7 +528,7 @@ async function createSkuFromModal() {
 
   const createdSku = await request("/skus", {
     method: "POST",
-    body: JSON.stringify({ sku, erpSku, asin, fnsku }),
+    body: JSON.stringify({ model, desc1, desc2, shop, remark, sku, erpSku, asin, fnsku }),
   });
 
   await request("/inventory/manual-adjust", {
@@ -513,10 +568,29 @@ async function reloadAll() {
   await loadMe();
   if (!state.token) {
     clearStats();
+    $("usersBody").innerHTML = "";
+    $("auditBody").innerHTML = "";
+    $("inventoryBody").innerHTML = "";
+    $("inboundBody").innerHTML = "";
+    $("inventorySearchResults").textContent = "-";
     return;
   }
 
-  await Promise.all([loadUsers(), loadInventory(), loadShelves(), loadBoxes(), loadInboundOrders(), loadAudit()]);
+  const isAdmin = state.me?.role === "admin";
+  const tasks = [loadInventory(), loadShelves(), loadBoxes(), loadInboundOrders()];
+  if (isAdmin) {
+    tasks.push(loadUsers(), loadAudit());
+  } else {
+    $("usersBody").innerHTML = "";
+    $("auditBody").innerHTML = "";
+    $("statUsers").textContent = "-";
+  }
+
+  const results = await Promise.allSettled(tasks);
+  const firstError = results.find((item) => item.status === "rejected");
+  if (firstError && firstError.status === "rejected") {
+    throw firstError.reason;
+  }
 }
 
 function bindForms() {
@@ -540,13 +614,17 @@ function bindForms() {
     }
   });
 
-  $("logoutBtn").addEventListener("click", async () => {
+  const handleLogout = async () => {
     state.token = "";
     state.me = null;
     localStorage.removeItem("wms_token");
     showToast("已退出登录");
     await reloadAll();
-  });
+    switchPanel("overview");
+  };
+
+  $("logoutBtn").addEventListener("click", handleLogout);
+  $("quickLogoutBtn").addEventListener("click", handleLogout);
 
   $("createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -650,11 +728,19 @@ function bindForms() {
     }
   });
 
+  $("openBatchInboundModal").addEventListener("click", async () => {
+    try {
+      await loadInboundOrders();
+      openModal("batchInboundModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openCreateSkuModal").addEventListener("click", async () => {
     await Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true));
     $("createSkuModalForm").reset();
     $("modalNewSkuQty").value = "1";
-    $("modalNewSkuReason").value = "新建产品初始入库";
     openModal("createSkuModal");
   });
 
@@ -711,6 +797,47 @@ function bindForms() {
       showToast("货架已创建");
       await loadShelves();
       await loadAudit();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openMyAuditLog").addEventListener("click", async () => {
+    try {
+      await loadMyAudit();
+      openModal("myAuditModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("refreshMyAudit").addEventListener("click", async () => {
+    try {
+      await loadMyAudit();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openProfileModal").addEventListener("click", () => {
+    $("profileUsername").value = state.me?.username || "";
+    $("profileRole").value = state.me?.role || "";
+    $("profileCurrentPassword").value = "";
+    $("profileNewPassword").value = "";
+    openModal("profileModal");
+  });
+
+  $("profileForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const currentPassword = $("profileCurrentPassword").value;
+      const newPassword = $("profileNewPassword").value;
+      await request("/auth/me/password", {
+        method: "POST",
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      closeModal("profileModal");
+      showToast("密码已更新");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -788,6 +915,21 @@ function bindDelegates() {
     const adjustClose = event.target.closest("button[data-action='closeAdjustModal']");
     if (adjustClose) {
       closeModal("adjustModal");
+      return;
+    }
+    const inboundClose = event.target.closest("button[data-action='closeBatchInboundModal']");
+    if (inboundClose) {
+      closeModal("batchInboundModal");
+      return;
+    }
+    const myAuditClose = event.target.closest("button[data-action='closeMyAuditModal']");
+    if (myAuditClose) {
+      closeModal("myAuditModal");
+      return;
+    }
+    const profileClose = event.target.closest("button[data-action='closeProfileModal']");
+    if (profileClose) {
+      closeModal("profileModal");
     }
   });
 
@@ -812,6 +954,24 @@ function bindDelegates() {
   $("createShelfFromInventoryModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("createShelfFromInventoryModal");
+    }
+  });
+
+  $("batchInboundModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("batchInboundModal");
+    }
+  });
+
+  $("myAuditModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("myAuditModal");
+    }
+  });
+
+  $("profileModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("profileModal");
     }
   });
 }

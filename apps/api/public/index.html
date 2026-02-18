@@ -18,14 +18,20 @@
         <p class="brand-sub">Warehouse operations preview</p>
       </div>
     </div>
-    <div class="session" id="sessionInfo">未登录</div>
+    <div class="session-wrap">
+      <div class="session" id="sessionInfo">未登录</div>
+      <div class="session-actions hidden" id="employeeQuickActions">
+        <button type="button" id="openMyAuditLog" class="ghost">我的日志</button>
+        <button type="button" id="openProfileModal" class="ghost">个人设置</button>
+        <button type="button" id="quickLogoutBtn" class="ghost">退出</button>
+      </div>
+    </div>
   </header>
 
   <main class="layout">
     <aside class="sidebar">
       <button class="nav-btn active" data-target="inventory">库存管理</button>
       <button class="nav-btn" data-target="overview">总览</button>
-      <button class="nav-btn" data-target="inbound">标准入库</button>
       <button class="nav-btn" data-target="users">员工</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
     </aside>
@@ -42,6 +48,7 @@
             <button type="button" id="openCreateSkuModal">新增产品</button>
             <button type="button" id="openCreateBoxQuick">新增箱号</button>
             <button type="button" id="openCreateShelfQuick">新增货架</button>
+            <button type="button" id="openBatchInboundModal">批量入库</button>
           </div>
 
           <form id="inventorySearchForm" class="form-grid inventory-search-form">
@@ -56,7 +63,21 @@
         </div>
 
         <table class="inventory-table">
-          <thead><tr><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>库存数量</th><th>操作</th></tr></thead>
+          <thead>
+            <tr>
+              <th>型号</th>
+              <th>说明1</th>
+              <th>说明2</th>
+              <th>店铺</th>
+              <th>备注</th>
+              <th>SKU</th>
+              <th>erpSKU</th>
+              <th>ASIN</th>
+              <th>FNSKU</th>
+              <th>库存数量</th>
+              <th>操作</th>
+            </tr>
+          </thead>
           <tbody id="inventoryBody"></tbody>
         </table>
       </section>
@@ -88,23 +109,6 @@
             </ul>
           </article>
         </div>
-      </section>
-
-      <section class="panel" id="inbound">
-        <div class="panel-head">
-          <h2>标准入库（Excel 导入）</h2>
-          <button id="refreshInbound" class="ghost">刷新</button>
-        </div>
-        <form id="importInboundForm" class="form-grid compact">
-          <label>Excel 文件<input id="inboundFile" type="file" accept=".xlsx,.xls,.csv" required /></label>
-          <button type="submit">导入并生成待确认单</button>
-        </form>
-        <table>
-          <thead>
-            <tr><th>单号</th><th>状态</th><th>类型</th><th>明细数</th><th>创建时间</th><th>操作</th></tr>
-          </thead>
-          <tbody id="inboundBody"></tbody>
-        </table>
       </section>
 
       <section class="panel" id="users">
@@ -187,6 +191,11 @@
         <button type="button" class="ghost" data-action="closeCreateSkuModal">关闭</button>
       </div>
       <form id="createSkuModalForm" class="form-grid modal-grid">
+        <label>型号<input id="modalNewModel" /></label>
+        <label>说明1<input id="modalNewDesc1" /></label>
+        <label>说明2<input id="modalNewDesc2" /></label>
+        <label>店铺<input id="modalNewShop" /></label>
+        <label>备注<input id="modalNewRemark" /></label>
         <label>SKU<input id="modalNewSku" required /></label>
         <label>erpSKU<input id="modalNewErpSku" /></label>
         <label>ASIN<input id="modalNewAsin" /></label>
@@ -198,10 +207,65 @@
           <button type="button" id="openCreateBoxFromSkuModal" class="ghost">新增箱号</button>
         </label>
         <label>数量<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
-        <label>备注<input id="modalNewSkuReason" value="新建产品初始入库" /></label>
         <div class="modal-actions">
           <button type="submit">确认新增</button>
           <button type="button" class="ghost" data-action="closeCreateSkuModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="batchInboundModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>批量入库（Excel 导入）</h3>
+        <button type="button" class="ghost" data-action="closeBatchInboundModal">关闭</button>
+      </div>
+      <form id="importInboundForm" class="form-grid compact">
+        <label>Excel 文件<input id="inboundFile" type="file" accept=".xlsx,.xls,.csv" required /></label>
+        <button type="submit">导入并生成待确认单</button>
+        <button type="button" id="refreshInbound" class="ghost">刷新</button>
+      </form>
+      <table>
+        <thead>
+          <tr><th>单号</th><th>状态</th><th>类型</th><th>明细数</th><th>创建时间</th><th>操作</th></tr>
+        </thead>
+        <tbody id="inboundBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="myAuditModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>我的操作日志</h3>
+        <button type="button" class="ghost" data-action="closeMyAuditModal">关闭</button>
+      </div>
+      <div class="panel-head">
+        <div></div>
+        <button id="refreshMyAudit" class="ghost" type="button">刷新</button>
+      </div>
+      <table>
+        <thead><tr><th>时间</th><th>实体</th><th>动作</th><th>事件</th><th>请求ID</th></tr></thead>
+        <tbody id="myAuditBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="profileModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>个人信息设置</h3>
+        <button type="button" class="ghost" data-action="closeProfileModal">关闭</button>
+      </div>
+      <form id="profileForm" class="form-grid modal-grid">
+        <label>用户名<input id="profileUsername" readonly /></label>
+        <label>角色<input id="profileRole" readonly /></label>
+        <label>当前密码<input id="profileCurrentPassword" type="password" required /></label>
+        <label>新密码<input id="profileNewPassword" type="password" minlength="6" required /></label>
+        <div class="modal-actions">
+          <button type="submit">保存</button>
+          <button type="button" class="ghost" data-action="closeProfileModal">取消</button>
         </div>
       </form>
     </div>

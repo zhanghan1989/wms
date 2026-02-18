@@ -86,11 +86,35 @@ body {
   color: var(--muted);
 }
 
+.session-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.session-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.session-actions button {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 180px 1fr;
   gap: 18px;
   padding: 0 24px 24px;
+}
+
+.layout.no-sidebar {
+  grid-template-columns: 1fr;
+}
+
+.layout.no-sidebar .sidebar {
+  display: none;
 }
 
 .sidebar {
@@ -418,6 +442,10 @@ pre {
   background: #fff;
   box-shadow: var(--shadow);
   padding: 14px;
+}
+
+.modal-card.modal-wide {
+  width: min(1100px, 100%);
 }
 
 .modal-head {
