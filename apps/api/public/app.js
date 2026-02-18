@@ -1,8 +1,9 @@
 ﻿const state = {
   token: localStorage.getItem("wms_token") || "",
   me: null,
-  manualInboundSkuId: null,
-  manualOutboundSkuId: null,
+  shelves: [],
+  inventorySkus: [],
+  inventoryLocations: new Map(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -41,6 +42,29 @@ function clearStats() {
   $("statInboundDraft").textContent = "-";
 }
 
+function switchPanel(targetId) {
+  document.querySelectorAll(".nav-btn").forEach((button) => button.classList.remove("active"));
+  document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
+
+  const button = document.querySelector(`.nav-btn[data-target="${targetId}"]`);
+  if (button) button.classList.add("active");
+
+  const panel = $(targetId);
+  if (panel) panel.classList.add("active");
+}
+
+function openModal(modalId) {
+  const modal = $(modalId);
+  if (!modal) return;
+  modal.classList.remove("hidden");
+}
+
+function closeModal(modalId) {
+  const modal = $(modalId);
+  if (!modal) return;
+  modal.classList.add("hidden");
+}
+
 async function request(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   const isFormData = options.body instanceof FormData;
@@ -71,15 +95,7 @@ async function request(path, options = {}) {
 
 function bindTabs() {
   document.querySelectorAll(".nav-btn").forEach((button) => {
-    button.addEventListener("click", () => {
-      document.querySelectorAll(".nav-btn").forEach((btn) => btn.classList.remove("active"));
-      document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
-      button.classList.add("active");
-      const target = $(button.dataset.target);
-      if (target) {
-        target.classList.add("active");
-      }
-    });
+    button.addEventListener("click", () => switchPanel(button.dataset.target));
   });
 }
 
@@ -129,49 +145,109 @@ async function getSkuInventoryRows(skuId) {
   }
 }
 
-function renderSkuLocationsCell(rows) {
-  if (!rows?.length) return "-";
-  const items = rows
+function renderInventoryLocationRows(rows) {
+  if (!rows.length) {
+    return '<span class="muted">无库存</span>';
+  }
+
+  return rows
     .map((row) => {
       const boxCode = row.box?.boxCode || "-";
       const shelfCode = row.box?.shelf?.shelfCode || "-";
       const qty = Number(row.qty ?? 0);
-      return `<div>${escapeHtml(boxCode)} / ${escapeHtml(shelfCode)} / ${escapeHtml(qty)}</div>`;
+      return `<div>${escapeHtml(boxCode)} / ${escapeHtml(shelfCode)} / 数量 ${escapeHtml(qty)}</div>`;
     })
     .join("");
-  return `<div class="location-list">${items}</div>`;
 }
 
-async function loadSkus() {
+function renderInventoryTable() {
+  $("inventoryBody").innerHTML = state.inventorySkus
+    .map((sku) => {
+      const rows = state.inventoryLocations.get(String(sku.id)) || [];
+      return `
+      <tr class="inventory-main-row">
+        <td>${escapeHtml(sku.sku)}</td>
+        <td>${escapeHtml(sku.erpSku)}</td>
+        <td>${escapeHtml(sku.asin)}</td>
+        <td>${escapeHtml(sku.fnsku)}</td>
+        <td>
+          <div class="action-row">
+            <button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${sku.id}">入库</button>
+            <button class="tiny-btn ghost" data-action="inventoryOutbound" data-sku-id="${sku.id}">出库</button>
+          </div>
+        </td>
+      </tr>
+      <tr class="inventory-sub-row">
+        <td colspan="5">
+          <div class="location-list">
+            <strong>所在箱号/货架号/数量：</strong>
+            ${renderInventoryLocationRows(rows)}
+          </div>
+        </td>
+      </tr>
+    `;
+    })
+    .join("");
+}
+
+async function loadInventory() {
   const skus = await request("/skus");
+  state.inventorySkus = skus;
   $("statSkus").textContent = skus.length;
 
   const locationEntries = await Promise.all(
     skus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
   );
-  const locationMap = new Map(locationEntries);
+  state.inventoryLocations = new Map(locationEntries);
 
-  $("skusBody").innerHTML = skus
-    .map(
-      (sku) => `
-      <tr>
-        <td>${escapeHtml(sku.sku)}</td>
-        <td>${escapeHtml(sku.erpSku)}</td>
-        <td>${escapeHtml(sku.asin)}</td>
-        <td>${escapeHtml(sku.fnsku)}</td>
-        <td>${renderSkuLocationsCell(locationMap.get(String(sku.id)) || [])}</td>
-      </tr>
-    `,
-    )
+  renderInventoryTable();
+}
+
+function renderInventorySearchResults(skus, locationMap) {
+  const container = $("inventorySearchResults");
+  if (!skus.length) {
+    container.textContent = "未找到匹配产品";
+    return;
+  }
+
+  container.innerHTML = skus
+    .map((sku) => {
+      const labels = [sku.sku, sku.erpSku, sku.asin, sku.fnsku].filter(Boolean).join(" / ");
+      const rows = locationMap.get(String(sku.id)) || [];
+      return `
+      <div class="inventory-search-item">
+        <div class="inventory-search-title">${escapeHtml(labels)}</div>
+        <div class="inventory-search-locations">${renderInventoryLocationRows(rows)}</div>
+        <div class="action-row">
+          <button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${sku.id}">入库</button>
+          <button class="tiny-btn ghost" data-action="inventoryOutbound" data-sku-id="${sku.id}">出库</button>
+        </div>
+      </div>
+    `;
+    })
     .join("");
 }
 
-function renderShelfOptionsForSelect(selectId, shelves, placeholder) {
+async function searchInventoryProducts(keyword) {
+  const container = $("inventorySearchResults");
+  if (!keyword) {
+    container.textContent = "-";
+    return;
+  }
+
+  const skus = await request(`/inventory/search?keyword=${encodeURIComponent(keyword)}`);
+  const locationEntries = await Promise.all(
+    skus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
+  );
+  renderInventorySearchResults(skus, new Map(locationEntries));
+}
+
+function renderShelfOptionsForSelect(selectId, placeholder) {
   const select = $(selectId);
   if (!select) return;
 
   const prev = select.value;
-  const options = shelves
+  const options = state.shelves
     .map((shelf) => {
       const isEnabled = Number(shelf.status) === 1;
       const disabledAttr = isEnabled ? "" : " disabled";
@@ -181,22 +257,19 @@ function renderShelfOptionsForSelect(selectId, shelves, placeholder) {
     .join("");
 
   select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
-
-  if (prev && shelves.some((shelf) => String(shelf.id) === prev && Number(shelf.status) === 1)) {
+  if (prev && state.shelves.some((shelf) => String(shelf.id) === prev && Number(shelf.status) === 1)) {
     select.value = prev;
   }
 }
 
-function renderShelfOptions(shelves) {
-  renderShelfOptionsForSelect("newBoxShelfId", shelves, "请选择货架号");
-  renderShelfOptionsForSelect("newSkuShelfId", shelves, "箱号已存在可不选；新建箱号请选货架号");
-}
-
 async function loadShelves() {
   const shelves = await request("/shelves");
+  state.shelves = shelves;
   $("statShelves").textContent = shelves.length;
 
-  renderShelfOptions(shelves);
+  renderShelfOptionsForSelect("newBoxShelfId", "请选择货架号");
+  renderShelfOptionsForSelect("modalNewSkuShelfId", "箱号已存在可不选；新建箱号请选货架号");
+
   $("shelvesBody").innerHTML = shelves
     .map(
       (shelf) => `
@@ -231,22 +304,17 @@ async function getExistingBoxByCode(boxCode) {
   return matched.find((box) => box.boxCode === boxCode);
 }
 
-async function ensureBoxForNewSku(boxCode, shelfId) {
+async function ensureBoxForSku(boxCode, shelfId) {
   const existed = await getExistingBoxByCode(boxCode);
-  if (existed) {
-    return existed;
-  }
+  if (existed) return;
 
   if (!Number.isInteger(shelfId) || shelfId <= 0) {
-    throw new Error("箱号不存在，请先选择货架号以创建新箱号");
+    throw new Error("箱号不存在，请先选择货架号创建新箱号");
   }
 
   await request("/boxes", {
     method: "POST",
-    body: JSON.stringify({
-      boxCode,
-      shelfId,
-    }),
+    body: JSON.stringify({ boxCode, shelfId }),
   });
 }
 
@@ -285,9 +353,7 @@ async function loadInboundOrders() {
 }
 
 function formatAuditEntity(item) {
-  const entityType = item.entityType || "-";
-  const entityId = item.entityId || "-";
-  return `${escapeHtml(entityType)}#${escapeHtml(entityId)}`;
+  return `${escapeHtml(item.entityType || "-")}#${escapeHtml(item.entityId || "-")}`;
 }
 
 async function loadAudit() {
@@ -310,121 +376,90 @@ async function loadAudit() {
     .join("");
 }
 
-function renderLocationText(rows) {
-  if (!rows || rows.length === 0) {
-    return "所在箱号/货架号：无";
-  }
-
-  const uniqueLocations = Array.from(
-    new Set(
-      rows.map((row) => {
-        const boxCode = row.box?.boxCode || "-";
-        const shelfCode = row.box?.shelf?.shelfCode || "-";
-        return `${boxCode}/${shelfCode}`;
-      }),
-    ),
-  );
-
-  return `所在箱号/货架号：${uniqueLocations.join("，")}`;
+function findSkuById(skuId) {
+  return state.inventorySkus.find((sku) => Number(sku.id) === Number(skuId));
 }
 
-async function loadManualBoxes(skuId, tbodyId) {
-  const tbody = $(tbodyId);
-  if (!tbody) return;
+function openAdjustModal(direction, skuId) {
+  const sku = findSkuById(skuId);
+  const skuText = sku
+    ? [sku.sku, sku.erpSku, sku.asin, sku.fnsku].filter(Boolean).join(" / ")
+    : `SKU#${skuId}`;
 
-  if (!skuId) {
-    tbody.innerHTML = '<tr><td colspan="3">请先选择产品</td></tr>';
-    return;
-  }
-
-  const rows = await request(`/inventory/product-boxes?skuId=${skuId}`);
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="3">该产品暂无库存记录</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = rows
-    .map(
-      (row) => `
-      <tr>
-        <td>${escapeHtml(row.box?.boxCode)}</td>
-        <td>${escapeHtml(row.box?.shelf?.shelfCode)}</td>
-        <td>${escapeHtml(row.qty)}</td>
-      </tr>
-    `,
-    )
-    .join("");
+  $("adjustSkuId").value = String(skuId);
+  $("adjustDirection").value = direction;
+  $("adjustSkuInfo").value = skuText;
+  $("adjustBoxCode").value = "";
+  $("adjustQty").value = "";
+  $("adjustReason").value = direction === "inbound" ? "库存入库" : "库存出库";
+  $("adjustModalTitle").textContent = direction === "inbound" ? "库存入库" : "库存出库";
+  $("adjustSubmitBtn").textContent = direction === "inbound" ? "确认入库" : "确认出库";
+  openModal("adjustModal");
 }
 
-function renderSkuResultLabel(sku) {
-  const labels = [sku.sku, sku.erpSku, sku.asin, sku.fnsku].filter(Boolean);
-  return escapeHtml(labels.join(" / "));
-}
+async function submitAdjustForm() {
+  const skuId = Number($("adjustSkuId").value);
+  const direction = $("adjustDirection").value;
+  const boxCode = $("adjustBoxCode").value.trim();
+  const qty = Math.abs(Number($("adjustQty").value));
+  const reason = $("adjustReason").value.trim() || undefined;
 
-async function searchManualSkus(keyword, resultId, action) {
-  const resultBox = $(resultId);
-  if (!resultBox) return;
-
-  if (!keyword) {
-    resultBox.innerHTML = "-";
-    return;
+  if (!Number.isInteger(skuId) || skuId <= 0) {
+    throw new Error("请选择产品");
   }
-
-  const skus = await request(`/inventory/search?keyword=${encodeURIComponent(keyword)}`);
-  if (!skus.length) {
-    resultBox.innerHTML = "未找到匹配产品";
-    return;
+  if (!boxCode) {
+    throw new Error("请输入箱号");
   }
-
-  const locationEntries = await Promise.all(
-    skus.map(async (sku) => {
-      try {
-        const rows = await request(`/inventory/product-boxes?skuId=${sku.id}`);
-        return [String(sku.id), rows];
-      } catch {
-        return [String(sku.id), []];
-      }
-    }),
-  );
-  const locationMap = new Map(locationEntries);
-
-  resultBox.innerHTML = skus
-    .map(
-      (sku) => `
-      <button class="tiny-btn ghost sku-result-btn" data-action="${action}" data-id="${sku.id}">
-        <span>${renderSkuResultLabel(sku)}</span>
-        <span class="sku-location">${renderLocationText(locationMap.get(String(sku.id)) || [])}</span>
-      </button>
-    `,
-    )
-    .join(" ");
-}
-
-async function submitManualAdjust({ skuStateKey, keywordInputId, boxCodeInputId, qtyInputId, reasonInputId, outbound, tbodyId }) {
-  const skuId = state[skuStateKey];
-  const absQty = Math.abs(Number($(qtyInputId).value));
-  if (!Number.isFinite(absQty) || absQty <= 0) {
+  if (!Number.isFinite(qty) || qty <= 0) {
     throw new Error("数量必须大于 0");
   }
 
-  const payload = {
-    skuId: skuId || undefined,
-    keyword: skuId ? undefined : $(keywordInputId).value.trim() || undefined,
-    boxCode: $(boxCodeInputId).value.trim() || undefined,
-    qtyDelta: outbound ? -absQty : absQty,
-    reason: $(reasonInputId).value.trim() || undefined,
-  };
+  await request("/inventory/manual-adjust", {
+    method: "POST",
+    body: JSON.stringify({
+      skuId,
+      boxCode,
+      qtyDelta: direction === "outbound" ? -qty : qty,
+      reason,
+    }),
+  });
+}
+
+async function createSkuFromModal() {
+  const sku = $("modalNewSku").value.trim();
+  const erpSku = $("modalNewErpSku").value.trim() || undefined;
+  const asin = $("modalNewAsin").value.trim() || undefined;
+  const fnsku = $("modalNewFnsku").value.trim() || undefined;
+  const boxCode = $("modalNewSkuBoxCode").value.trim();
+  const shelfId = Number($("modalNewSkuShelfId").value);
+  const qty = Math.abs(Number($("modalNewSkuQty").value));
+  const reason = $("modalNewSkuReason").value.trim() || "新建产品初始入库";
+
+  if (!sku) throw new Error("SKU 不能为空");
+  if (!boxCode) throw new Error("箱号不能为空");
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error("数量必须大于 0");
+
+  const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
+  if (possibleDuplicate.some((item) => item.sku === sku)) {
+    throw new Error("SKU 已存在");
+  }
+
+  await ensureBoxForSku(boxCode, shelfId);
+
+  const createdSku = await request("/skus", {
+    method: "POST",
+    body: JSON.stringify({ sku, erpSku, asin, fnsku }),
+  });
 
   await request("/inventory/manual-adjust", {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      skuId: createdSku.id,
+      boxCode,
+      qtyDelta: qty,
+      reason,
+    }),
   });
-
-  if (skuId) {
-    await loadManualBoxes(skuId, tbodyId);
-  }
-  await loadBoxes();
-  await loadAudit();
 }
 
 async function reloadAll() {
@@ -434,7 +469,7 @@ async function reloadAll() {
     return;
   }
 
-  await Promise.all([loadUsers(), loadSkus(), loadShelves(), loadBoxes(), loadInboundOrders(), loadAudit()]);
+  await Promise.all([loadUsers(), loadInventory(), loadShelves(), loadBoxes(), loadInboundOrders(), loadAudit()]);
 }
 
 function bindForms() {
@@ -452,6 +487,7 @@ function bindForms() {
       localStorage.setItem("wms_token", state.token);
       showToast("登录成功");
       await reloadAll();
+      switchPanel("inventory");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -485,66 +521,6 @@ function bindForms() {
     }
   });
 
-  $("createSkuForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const sku = $("newSku").value.trim();
-      const boxCode = $("newSkuBoxCode").value.trim();
-      const shelfId = Number($("newSkuShelfId").value);
-      const qty = Number($("newSkuQty").value);
-
-      if (!sku) {
-        showToast("SKU 不能为空", true);
-        return;
-      }
-      if (!boxCode) {
-        showToast("箱号不能为空", true);
-        return;
-      }
-      if (!Number.isFinite(qty) || qty <= 0) {
-        showToast("数量必须大于 0", true);
-        return;
-      }
-
-      const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
-      if (possibleDuplicate.some((item) => item.sku === sku)) {
-        showToast("SKU 已存在", true);
-        return;
-      }
-
-      await ensureBoxForNewSku(boxCode, shelfId);
-
-      const createdSku = await request("/skus", {
-        method: "POST",
-        body: JSON.stringify({
-          sku,
-          erpSku: $("newErpSku").value.trim() || undefined,
-          asin: $("newAsin").value.trim() || undefined,
-          fnsku: $("newFnsku").value.trim() || undefined,
-        }),
-      });
-
-      await request("/inventory/manual-adjust", {
-        method: "POST",
-        body: JSON.stringify({
-          skuId: createdSku.id,
-          boxCode,
-          qtyDelta: qty,
-          reason: "新建产品初始入库",
-        }),
-      });
-
-      event.target.reset();
-      showToast("产品已创建并入库");
-      await loadShelves();
-      await loadBoxes();
-      await loadSkus();
-      await loadAudit();
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
   $("createShelfForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -569,8 +545,7 @@ function bindForms() {
     try {
       const shelfId = Number($("newBoxShelfId").value);
       if (!Number.isInteger(shelfId) || shelfId <= 0) {
-        showToast("请选择货架号", true);
-        return;
+        throw new Error("请选择货架号");
       }
 
       await request("/boxes", {
@@ -610,66 +585,56 @@ function bindForms() {
       showToast("导入成功，已生成待确认入库单");
       await loadInboundOrders();
       await loadBoxes();
-      await loadSkus();
+      await loadInventory();
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);
     }
   });
 
-  $("manualInboundSearchForm").addEventListener("submit", async (event) => {
+  $("inventorySearchForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      state.manualInboundSkuId = null;
-      await searchManualSkus($("manualInboundKeyword").value.trim(), "manualInboundSkuResults", "pickManualInboundSku");
-      await loadManualBoxes(null, "manualInboundBoxesBody");
+      await searchInventoryProducts($("inventoryKeyword").value.trim());
     } catch (error) {
       showToast(error.message, true);
     }
   });
 
-  $("manualOutboundSearchForm").addEventListener("submit", async (event) => {
+  $("openCreateSkuModal").addEventListener("click", async () => {
+    if (!state.shelves.length) {
+      await loadShelves().catch((error) => showToast(error.message, true));
+    }
+    $("createSkuModalForm").reset();
+    $("modalNewSkuQty").value = "1";
+    $("modalNewSkuReason").value = "新建产品初始入库";
+    openModal("createSkuModal");
+  });
+
+  $("createSkuModalForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      state.manualOutboundSkuId = null;
-      await searchManualSkus($("manualOutboundKeyword").value.trim(), "manualOutboundSkuResults", "pickManualOutboundSku");
-      await loadManualBoxes(null, "manualOutboundBoxesBody");
+      await createSkuFromModal();
+      closeModal("createSkuModal");
+      showToast("产品已创建并入库");
+      await loadShelves();
+      await loadBoxes();
+      await loadInventory();
+      await loadAudit();
     } catch (error) {
       showToast(error.message, true);
     }
   });
 
-  $("manualInboundForm").addEventListener("submit", async (event) => {
+  $("adjustForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await submitManualAdjust({
-        skuStateKey: "manualInboundSkuId",
-        keywordInputId: "manualInboundKeyword",
-        boxCodeInputId: "manualInboundBoxCode",
-        qtyInputId: "manualInboundQty",
-        reasonInputId: "manualInboundReason",
-        outbound: false,
-        tbodyId: "manualInboundBoxesBody",
-      });
-      showToast("手动入库成功");
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("manualOutboundForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await submitManualAdjust({
-        skuStateKey: "manualOutboundSkuId",
-        keywordInputId: "manualOutboundKeyword",
-        boxCodeInputId: "manualOutboundBoxCode",
-        qtyInputId: "manualOutboundQty",
-        reasonInputId: "manualOutboundReason",
-        outbound: true,
-        tbodyId: "manualOutboundBoxesBody",
-      });
-      showToast("手动出库成功");
+      await submitAdjustForm();
+      closeModal("adjustModal");
+      showToast($("adjustDirection").value === "outbound" ? "出库成功" : "入库成功");
+      await loadInventory();
+      await loadBoxes();
+      await loadAudit();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -700,46 +665,51 @@ function bindDelegates() {
     }
   });
 
-  $("manualInboundSkuResults").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action='pickManualInboundSku']");
+  const openAdjustByAction = (event) => {
+    const button = event.target.closest("button[data-action='inventoryInbound'], button[data-action='inventoryOutbound']");
     if (!button) return;
 
-    const id = Number(button.dataset.id);
-    if (!Number.isFinite(id)) return;
+    const skuId = Number(button.dataset.skuId);
+    if (!Number.isInteger(skuId) || skuId <= 0) return;
 
-    state.manualInboundSkuId = id;
-    await loadManualBoxes(id, "manualInboundBoxesBody").catch((error) => showToast(error.message, true));
+    const direction = button.dataset.action === "inventoryOutbound" ? "outbound" : "inbound";
+    openAdjustModal(direction, skuId);
+  };
+
+  $("inventoryBody").addEventListener("click", openAdjustByAction);
+  $("inventorySearchResults").addEventListener("click", openAdjustByAction);
+
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action='closeCreateSkuModal']");
+    if (button) {
+      closeModal("createSkuModal");
+      return;
+    }
+    const adjustClose = event.target.closest("button[data-action='closeAdjustModal']");
+    if (adjustClose) {
+      closeModal("adjustModal");
+    }
   });
 
-  $("manualOutboundSkuResults").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action='pickManualOutboundSku']");
-    if (!button) return;
+  $("createSkuModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("createSkuModal");
+    }
+  });
 
-    const id = Number(button.dataset.id);
-    if (!Number.isFinite(id)) return;
-
-    state.manualOutboundSkuId = id;
-    await loadManualBoxes(id, "manualOutboundBoxesBody").catch((error) => showToast(error.message, true));
+  $("adjustModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("adjustModal");
+    }
   });
 }
 
 function bindRefresh() {
+  $("refreshInventory").addEventListener("click", () => loadInventory().catch((error) => showToast(error.message, true)));
   $("refreshUsers").addEventListener("click", () => loadUsers().catch((error) => showToast(error.message, true)));
-  $("refreshSkus").addEventListener("click", () => loadSkus().catch((error) => showToast(error.message, true)));
   $("refreshShelves").addEventListener("click", () => loadShelves().catch((error) => showToast(error.message, true)));
   $("refreshBoxes").addEventListener("click", () => loadBoxes().catch((error) => showToast(error.message, true)));
   $("refreshInbound").addEventListener("click", () => loadInboundOrders().catch((error) => showToast(error.message, true)));
-
-  $("refreshManualInbound").addEventListener("click", () => {
-    searchManualSkus($("manualInboundKeyword").value.trim(), "manualInboundSkuResults", "pickManualInboundSku").catch((error) => showToast(error.message, true));
-    loadManualBoxes(state.manualInboundSkuId, "manualInboundBoxesBody").catch((error) => showToast(error.message, true));
-  });
-
-  $("refreshManualOutbound").addEventListener("click", () => {
-    searchManualSkus($("manualOutboundKeyword").value.trim(), "manualOutboundSkuResults", "pickManualOutboundSku").catch((error) => showToast(error.message, true));
-    loadManualBoxes(state.manualOutboundSkuId, "manualOutboundBoxesBody").catch((error) => showToast(error.message, true));
-  });
-
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((error) => showToast(error.message, true)));
 }
 
@@ -747,4 +717,5 @@ bindTabs();
 bindForms();
 bindDelegates();
 bindRefresh();
+switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));

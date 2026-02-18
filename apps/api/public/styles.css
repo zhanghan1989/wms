@@ -167,8 +167,13 @@ h3 {
   grid-template-columns: repeat(5, minmax(120px, 1fr));
 }
 
-.form-grid.sku-compact {
-  grid-template-columns: repeat(7, minmax(120px, 1fr));
+.inventory-search-form {
+  grid-template-columns: minmax(280px, 1fr) 140px;
+  align-items: end;
+}
+
+.modal-grid {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
 }
 
 label {
@@ -225,6 +230,20 @@ button.ghost {
   padding: 14px;
   background: #fff;
   margin-bottom: 14px;
+}
+
+.inventory-toolbar {
+  margin-bottom: 14px;
+}
+
+.inventory-toolbar-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.inventory-search-card {
+  margin-bottom: 10px;
 }
 
 .stats {
@@ -285,6 +304,12 @@ td {
   color: var(--ink);
 }
 
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .sku-result-btn {
   display: inline-flex;
   flex-direction: column;
@@ -303,6 +328,44 @@ td {
 .location-list {
   display: grid;
   gap: 4px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.inventory-sub-row td {
+  background: #f6faf7;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.inventory-sub-row strong {
+  color: var(--ink);
+  margin-right: 8px;
+}
+
+.inventory-search-results {
+  display: grid;
+  gap: 8px;
+}
+
+.inventory-search-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fbfefd;
+}
+
+.inventory-search-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.inventory-search-locations {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
 }
 
 .tag {
@@ -338,6 +401,39 @@ pre {
   color: var(--danger);
 }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 20, 16, 0.35);
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  padding: 12px;
+}
+
+.modal-card {
+  width: min(760px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.modal-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .hidden {
   display: none;
 }
@@ -369,7 +465,13 @@ pre {
 
   .form-grid,
   .form-grid.compact,
+  .inventory-search-form,
+  .modal-grid,
   .cards {
     grid-template-columns: 1fr;
+  }
+
+  .modal-actions {
+    justify-content: stretch;
   }
 }

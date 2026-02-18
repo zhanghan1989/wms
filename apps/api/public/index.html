@@ -23,19 +23,45 @@
 
   <main class="layout">
     <aside class="sidebar">
-      <button class="nav-btn active" data-target="overview">总览</button>
+      <button class="nav-btn active" data-target="inventory">库存管理</button>
+      <button class="nav-btn" data-target="overview">总览</button>
       <button class="nav-btn" data-target="inbound">标准入库</button>
-      <button class="nav-btn" data-target="manualInbound">手动入库</button>
-      <button class="nav-btn" data-target="manualOutbound">手动出库</button>
       <button class="nav-btn" data-target="users">员工</button>
-      <button class="nav-btn" data-target="skus">产品</button>
       <button class="nav-btn" data-target="shelves">货架</button>
       <button class="nav-btn" data-target="boxes">箱号</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
     </aside>
 
     <section class="panel-wrap">
-      <section class="panel active" id="overview">
+      <section class="panel active" id="inventory">
+        <div class="panel-head">
+          <h2>库存管理</h2>
+          <button id="refreshInventory" class="ghost">刷新</button>
+        </div>
+
+        <div class="inventory-toolbar">
+          <div class="inventory-toolbar-actions">
+            <button type="button" id="openCreateSkuModal">新增 SKU</button>
+          </div>
+
+          <form id="inventorySearchForm" class="form-grid inventory-search-form">
+            <label>产品检索（SKU/erpSKU/ASIN/FNSKU）<input id="inventoryKeyword" /></label>
+            <button type="submit">检索产品</button>
+          </form>
+
+          <div class="card inventory-search-card">
+            <h3>检索结果</h3>
+            <div id="inventorySearchResults" class="inventory-search-results">-</div>
+          </div>
+        </div>
+
+        <table class="inventory-table">
+          <thead><tr><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>操作</th></tr></thead>
+          <tbody id="inventoryBody"></tbody>
+        </table>
+      </section>
+
+      <section class="panel" id="overview">
         <h2>登录与状态</h2>
         <form id="loginForm" class="form-grid">
           <label>用户名<input id="username" value="admin" /></label>
@@ -81,56 +107,6 @@
         </table>
       </section>
 
-      <section class="panel" id="manualInbound">
-        <div class="panel-head">
-          <h2>手动入库</h2>
-          <button id="refreshManualInbound" class="ghost">刷新</button>
-        </div>
-        <form id="manualInboundSearchForm" class="form-grid compact">
-          <label>产品检索（SKU/erpSKU/ASIN/FNSKU）<input id="manualInboundKeyword" /></label>
-          <button type="submit">检索产品</button>
-        </form>
-        <div class="card">
-          <h3>检索结果</h3>
-          <div id="manualInboundSkuResults" class="mini-list">-</div>
-        </div>
-        <form id="manualInboundForm" class="form-grid compact">
-          <label>箱号<input id="manualInboundBoxCode" /></label>
-          <label>入库数量（正数）<input id="manualInboundQty" type="number" min="1" required /></label>
-          <label>原因<input id="manualInboundReason" /></label>
-          <button type="submit">执行手动入库</button>
-        </form>
-        <table>
-          <thead><tr><th>箱号</th><th>货架号</th><th>库存</th></tr></thead>
-          <tbody id="manualInboundBoxesBody"></tbody>
-        </table>
-      </section>
-
-      <section class="panel" id="manualOutbound">
-        <div class="panel-head">
-          <h2>手动出库</h2>
-          <button id="refreshManualOutbound" class="ghost">刷新</button>
-        </div>
-        <form id="manualOutboundSearchForm" class="form-grid compact">
-          <label>产品检索（SKU/erpSKU/ASIN/FNSKU）<input id="manualOutboundKeyword" /></label>
-          <button type="submit">检索产品</button>
-        </form>
-        <div class="card">
-          <h3>检索结果</h3>
-          <div id="manualOutboundSkuResults" class="mini-list">-</div>
-        </div>
-        <form id="manualOutboundForm" class="form-grid compact">
-          <label>箱号<input id="manualOutboundBoxCode" /></label>
-          <label>出库数量（正数）<input id="manualOutboundQty" type="number" min="1" required /></label>
-          <label>原因<input id="manualOutboundReason" /></label>
-          <button type="submit">执行手动出库</button>
-        </form>
-        <table>
-          <thead><tr><th>箱号</th><th>货架号</th><th>库存</th></tr></thead>
-          <tbody id="manualOutboundBoxesBody"></tbody>
-        </table>
-      </section>
-
       <section class="panel" id="users">
         <div class="panel-head">
           <h2>员工管理</h2>
@@ -150,29 +126,6 @@
         <table>
           <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>更新时间</th></tr></thead>
           <tbody id="usersBody"></tbody>
-        </table>
-      </section>
-
-      <section class="panel" id="skus">
-        <div class="panel-head">
-          <h2>产品管理</h2>
-          <button id="refreshSkus" class="ghost">刷新</button>
-        </div>
-        <form id="createSkuForm" class="form-grid compact sku-compact">
-          <label>SKU<input id="newSku" required /></label>
-          <label>erpSKU<input id="newErpSku" /></label>
-          <label>ASIN<input id="newAsin" /></label>
-          <label>FNSKU<input id="newFnsku" /></label>
-          <label>箱号<input id="newSkuBoxCode" required /></label>
-          <label>新箱货架号（箱号不存在时必选）
-            <select id="newSkuShelfId"></select>
-          </label>
-          <label>数量<input id="newSkuQty" type="number" min="1" value="1" required /></label>
-          <button type="submit">新增 SKU</button>
-        </form>
-        <table>
-          <thead><tr><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>所在箱号/货架号/数量</th></tr></thead>
-          <tbody id="skusBody"></tbody>
         </table>
       </section>
 
@@ -222,6 +175,54 @@
       </section>
     </section>
   </main>
+
+  <div id="createSkuModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>新增 SKU</h3>
+        <button type="button" class="ghost" data-action="closeCreateSkuModal">关闭</button>
+      </div>
+      <form id="createSkuModalForm" class="form-grid modal-grid">
+        <label>SKU<input id="modalNewSku" required /></label>
+        <label>erpSKU<input id="modalNewErpSku" /></label>
+        <label>ASIN<input id="modalNewAsin" /></label>
+        <label>FNSKU<input id="modalNewFnsku" /></label>
+        <label>箱号<input id="modalNewSkuBoxCode" required /></label>
+        <label>新箱货架号（箱号不存在时必选）
+          <select id="modalNewSkuShelfId"></select>
+        </label>
+        <label>数量<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
+        <label>备注<input id="modalNewSkuReason" value="新建产品初始入库" /></label>
+        <div class="modal-actions">
+          <button type="submit">确认新增</button>
+          <button type="button" class="ghost" data-action="closeCreateSkuModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="adjustModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="adjustModalTitle">库存操作</h3>
+        <button type="button" class="ghost" data-action="closeAdjustModal">关闭</button>
+      </div>
+      <form id="adjustForm" class="form-grid modal-grid">
+        <input id="adjustSkuId" type="hidden" />
+        <input id="adjustDirection" type="hidden" />
+        <label>产品
+          <input id="adjustSkuInfo" readonly />
+        </label>
+        <label>箱号<input id="adjustBoxCode" required /></label>
+        <label>数量<input id="adjustQty" type="number" min="1" required /></label>
+        <label>原因<input id="adjustReason" /></label>
+        <div class="modal-actions">
+          <button id="adjustSubmitBtn" type="submit">提交</button>
+          <button type="button" class="ghost" data-action="closeAdjustModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <div id="toast" class="toast hidden"></div>
   <script type="module" src="/app.js"></script>
