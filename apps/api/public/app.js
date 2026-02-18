@@ -242,15 +242,41 @@ async function searchManualSkus(keyword, resultId, action) {
     $(resultId).innerHTML = "未找到产品";
     return;
   }
+
+  const locationEntries = await Promise.all(
+    skus.map(async (sku) => {
+      try {
+        const rows = await request(`/inventory/product-boxes?skuId=${sku.id}`);
+        return [String(sku.id), rows];
+      } catch {
+        return [String(sku.id), []];
+      }
+    }),
+  );
+  const locationMap = new Map(locationEntries);
+
   $(resultId).innerHTML = skus
     .map(
       (s) => `
-    <button class="tiny-btn ghost" data-action="${action}" data-id="${escapeHtml(s.id)}">
-      #${escapeHtml(s.id)} ${escapeHtml(s.sku)} / ${escapeHtml(s.erpSku || "")}
+    <button class="tiny-btn ghost sku-result-btn" data-action="${action}" data-id="${escapeHtml(s.id)}">
+      <span>#${escapeHtml(s.id)} ${escapeHtml(s.sku)} / ${escapeHtml(s.erpSku || "")}</span>
+      <span class="sku-location">${renderLocationText(locationMap.get(String(s.id)) || [])}</span>
     </button>
   `,
     )
     .join(" ");
+}
+
+function renderLocationText(rows) {
+  if (!rows || rows.length === 0) {
+    return "在库箱位：无";
+  }
+  const parts = rows.map((row) => {
+    const boxCode = row.box?.boxCode || "-";
+    const shelfCode = row.box?.shelf?.shelfCode || "-";
+    return `${boxCode}/${shelfCode}`;
+  });
+  return `在库箱位：${parts.join("，")}`;
 }
 
 async function submitManualAdjust({
