@@ -1,0 +1,351 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  employee
+  admin
+}
+
+enum ItemCodeStatus {
+  in_stock
+  outbound
+  frozen
+}
+
+enum InboundOrderType {
+  pending_batch
+  manual_batch
+  manual_single
+}
+
+enum OrderStatus {
+  draft
+  confirmed
+  void
+}
+
+enum StocktakeScopeType {
+  sample
+}
+
+enum StocktakeTaskStatus {
+  draft
+  in_progress
+  finished
+  void
+}
+
+enum MovementType {
+  inbound
+  outbound
+  stocktake_gain
+  stocktake_loss
+  adjust
+}
+
+enum AuditAction {
+  create
+  update
+  delete
+}
+
+enum AuditEventType {
+  box_created
+  box_field_updated
+  box_renamed
+  box_disabled
+  box_deleted
+  box_stock_increased
+  box_stock_outbound
+  sku_created
+  sku_field_updated
+  sku_disabled
+  sku_deleted
+  shelf_created
+  shelf_field_updated
+  shelf_disabled
+  shelf_deleted
+  user_created
+  user_updated
+  user_disabled
+  user_deleted
+  inbound_order_created
+  inbound_order_confirmed
+  inbound_order_voided
+  outbound_order_created
+  outbound_order_confirmed
+  outbound_order_voided
+  stocktake_task_created
+  stocktake_task_started
+  stocktake_task_finished
+  stocktake_task_voided
+  inventory_adjust_created
+  inventory_adjust_confirmed
+  inventory_adjust_voided
+}
+
+model User {
+  id           BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  username     String              @unique @db.VarChar(64)
+  passwordHash String              @map("password_hash") @db.VarChar(255)
+  role         Role
+  status       Int                 @default(1) @db.TinyInt
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  inboundOrders InboundOrder[]
+  outboundOrders OutboundOrder[]
+  stocktakeTasks StocktakeTask[]
+  adjustOrders InventoryAdjustOrder[]
+  stockMovements StockMovement[]
+  auditLogs    OperationAuditLog[]
+
+  @@map("users")
+}
+
+model Sku {
+  id         BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  sku        String              @unique @db.VarChar(128)
+  erpSku     String?             @map("erp_sku") @db.VarChar(128)
+  asin       String?             @db.VarChar(32)
+  fnsku      String?             @db.VarChar(32)
+  model      String?             @db.VarChar(255)
+  desc1      String?             @db.VarChar(255)
+  desc2      String?             @db.VarChar(255)
+  shop       String?             @db.VarChar(128)
+  remark     String?             @db.VarChar(255)
+  status     Int                 @default(1) @db.TinyInt
+  createdAt  DateTime            @default(now()) @map("created_at")
+  updatedAt  DateTime            @updatedAt @map("updated_at")
+  itemCodes  ItemCode[]
+  inventories InventoryBoxSku[]
+  inboundItems InboundOrderItem[]
+  outboundItems OutboundOrderItem[]
+  stocktakeRecords StocktakeRecord[]
+  stockMovements StockMovement[]
+  adjustItems InventoryAdjustOrderItem[]
+
+  @@map("skus")
+}
+
+model Shelf {
+  id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  shelfCode String              @unique @map("shelf_code") @db.VarChar(64)
+  name      String?             @db.VarChar(128)
+  status    Int                 @default(1) @db.TinyInt
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+  boxes     Box[]
+
+  @@map("shelves")
+}
+
+model Box {
+  id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  boxCode   String              @unique @map("box_code") @db.VarChar(128)
+  shelfId   BigInt              @map("shelf_id") @db.UnsignedBigInt
+  status    Int                 @default(1) @db.TinyInt
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+  shelf     Shelf               @relation(fields: [shelfId], references: [id])
+  itemCodes ItemCode[]
+  inventories InventoryBoxSku[]
+  inboundItems InboundOrderItem[]
+  outboundItems OutboundOrderItem[]
+  stocktakeRecords StocktakeRecord[]
+  stockMovements StockMovement[]
+  adjustItems InventoryAdjustOrderItem[]
+
+  @@map("boxes")
+}
+
+model ItemCode {
+  id        BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
+  barcode   String         @unique @db.VarChar(128)
+  skuId     BigInt         @map("sku_id") @db.UnsignedBigInt
+  boxId     BigInt         @map("box_id") @db.UnsignedBigInt
+  status    ItemCodeStatus @default(in_stock)
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+  sku       Sku            @relation(fields: [skuId], references: [id])
+  box       Box            @relation(fields: [boxId], references: [id])
+
+  @@index([boxId, status])
+  @@map("item_codes")
+}
+
+model InventoryBoxSku {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  boxId     BigInt   @map("box_id") @db.UnsignedBigInt
+  skuId     BigInt   @map("sku_id") @db.UnsignedBigInt
+  qty       Int      @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at")
+  box       Box      @relation(fields: [boxId], references: [id])
+  sku       Sku      @relation(fields: [skuId], references: [id])
+
+  @@unique([boxId, skuId])
+  @@index([skuId])
+  @@map("inventory_box_sku")
+}
+
+model InboundOrder {
+  id        BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  orderNo   String           @unique @map("order_no") @db.VarChar(64)
+  orderType InboundOrderType @map("order_type")
+  status    OrderStatus
+  remark    String?          @db.VarChar(255)
+  createdBy BigInt           @map("created_by") @db.UnsignedBigInt
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+  creator   User             @relation(fields: [createdBy], references: [id])
+  items     InboundOrderItem[]
+
+  @@map("inbound_orders")
+}
+
+model InboundOrderItem {
+  id          BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  orderId     BigInt       @map("order_id") @db.UnsignedBigInt
+  boxId       BigInt       @map("box_id") @db.UnsignedBigInt
+  skuId       BigInt       @map("sku_id") @db.UnsignedBigInt
+  qty         Int
+  sourceRowNo Int?         @map("source_row_no")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  order       InboundOrder @relation(fields: [orderId], references: [id])
+  box         Box          @relation(fields: [boxId], references: [id])
+  sku         Sku          @relation(fields: [skuId], references: [id])
+
+  @@map("inbound_order_items")
+}
+
+model OutboundOrder {
+  id        BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  orderNo   String            @unique @map("order_no") @db.VarChar(64)
+  status    OrderStatus
+  remark    String?           @db.VarChar(255)
+  createdBy BigInt            @map("created_by") @db.UnsignedBigInt
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+  creator   User              @relation(fields: [createdBy], references: [id])
+  items     OutboundOrderItem[]
+
+  @@map("outbound_orders")
+}
+
+model OutboundOrderItem {
+  id        BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  orderId   BigInt        @map("order_id") @db.UnsignedBigInt
+  boxId     BigInt        @map("box_id") @db.UnsignedBigInt
+  skuId     BigInt        @map("sku_id") @db.UnsignedBigInt
+  qty       Int
+  createdAt DateTime      @default(now()) @map("created_at")
+  order     OutboundOrder @relation(fields: [orderId], references: [id])
+  box       Box           @relation(fields: [boxId], references: [id])
+  sku       Sku           @relation(fields: [skuId], references: [id])
+
+  @@map("outbound_order_items")
+}
+
+model StocktakeTask {
+  id        BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  taskNo    String            @unique @map("task_no") @db.VarChar(64)
+  scopeType StocktakeScopeType @map("scope_type")
+  status    StocktakeTaskStatus
+  createdBy BigInt            @map("created_by") @db.UnsignedBigInt
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+  creator   User              @relation(fields: [createdBy], references: [id])
+  records   StocktakeRecord[]
+
+  @@map("stocktake_tasks")
+}
+
+model StocktakeRecord {
+  id        BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  taskId    BigInt       @map("task_id") @db.UnsignedBigInt
+  boxId     BigInt       @map("box_id") @db.UnsignedBigInt
+  skuId     BigInt       @map("sku_id") @db.UnsignedBigInt
+  systemQty Int          @map("system_qty")
+  countedQty Int         @map("counted_qty")
+  diffQty   Int          @map("diff_qty")
+  createdAt DateTime     @default(now()) @map("created_at")
+  task      StocktakeTask @relation(fields: [taskId], references: [id])
+  box       Box           @relation(fields: [boxId], references: [id])
+  sku       Sku           @relation(fields: [skuId], references: [id])
+
+  @@map("stocktake_records")
+}
+
+model StockMovement {
+  id          BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  movementType MovementType @map("movement_type")
+  refType     String       @map("ref_type") @db.VarChar(32)
+  refId       BigInt       @map("ref_id") @db.UnsignedBigInt
+  boxId       BigInt       @map("box_id") @db.UnsignedBigInt
+  skuId       BigInt       @map("sku_id") @db.UnsignedBigInt
+  qtyDelta    Int          @map("qty_delta")
+  operatorId  BigInt       @map("operator_id") @db.UnsignedBigInt
+  createdAt   DateTime     @default(now()) @map("created_at")
+  box         Box          @relation(fields: [boxId], references: [id])
+  sku         Sku          @relation(fields: [skuId], references: [id])
+  operator    User         @relation(fields: [operatorId], references: [id])
+
+  @@index([skuId, createdAt])
+  @@index([boxId, createdAt])
+  @@map("stock_movements")
+}
+
+model InventoryAdjustOrder {
+  id        BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  adjustNo  String       @unique @map("adjust_no") @db.VarChar(64)
+  status    OrderStatus
+  remark    String?      @db.VarChar(255)
+  createdBy BigInt       @map("created_by") @db.UnsignedBigInt
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+  creator   User         @relation(fields: [createdBy], references: [id])
+  items     InventoryAdjustOrderItem[]
+
+  @@map("inventory_adjust_orders")
+}
+
+model InventoryAdjustOrderItem {
+  id        BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  orderId   BigInt               @map("order_id") @db.UnsignedBigInt
+  boxId     BigInt               @map("box_id") @db.UnsignedBigInt
+  skuId     BigInt               @map("sku_id") @db.UnsignedBigInt
+  qtyDelta  Int                  @map("qty_delta")
+  reason    String?              @db.VarChar(128)
+  createdAt DateTime             @default(now()) @map("created_at")
+  order     InventoryAdjustOrder @relation(fields: [orderId], references: [id])
+  box       Box                  @relation(fields: [boxId], references: [id])
+  sku       Sku                  @relation(fields: [skuId], references: [id])
+
+  @@map("inventory_adjust_order_items")
+}
+
+model OperationAuditLog {
+  id            BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
+  entityType    String         @map("entity_type") @db.VarChar(64)
+  entityId      BigInt         @map("entity_id") @db.UnsignedBigInt
+  action        AuditAction
+  eventType     AuditEventType @map("event_type")
+  beforeData    Json?          @map("before_data")
+  afterData     Json?          @map("after_data")
+  changedFields Json?          @map("changed_fields")
+  operatorId    BigInt         @map("operator_id") @db.UnsignedBigInt
+  requestId     String?        @map("request_id") @db.VarChar(64)
+  remark        String?        @db.VarChar(255)
+  createdAt     DateTime       @default(now()) @map("created_at")
+  operator      User           @relation(fields: [operatorId], references: [id])
+
+  @@index([entityType, entityId, createdAt])
+  @@index([operatorId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("operation_audit_logs")
+}

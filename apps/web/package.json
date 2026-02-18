@@ -1,0 +1,13 @@
+{
+  "name": "web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Placeholder for Vue 3 frontend",
+  "scripts": {
+    "dev": "echo \"web app not scaffolded yet\"",
+    "build": "echo \"web app not scaffolded yet\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}

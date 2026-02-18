@@ -1,0 +1,19 @@
+{
+  "name": "002-wms",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WMS V1 monorepo",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run -w api build",
+    "start:api": "npm run -w api start:dev",
+    "test": "npm run -w api test",
+    "lint": "npm run -w api lint"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT"
+}
