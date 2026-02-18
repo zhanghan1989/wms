@@ -34,6 +34,7 @@
   - manual inventory adjust workflow
   - split manual adjust into `manual inbound` and `manual outbound` pages
   - show matched SKU locations (`box_code` + `shelf_code`) in manual inbound/outbound search results
+  - hide visible `ID` fields from frontend pages and lists
 
 ### Added
 - Inbound module APIs:

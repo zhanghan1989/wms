@@ -84,7 +84,6 @@
         <table>
           <thead>
             <tr>
-              <th>ID</th>
               <th>单号</th>
               <th>状态</th>
               <th>类型</th>
@@ -109,17 +108,11 @@
           <button type="submit">检索产品</button>
         </form>
         <div class="card">
-          <h3>检索结果（点击可带入 SKU ID）</h3>
+          <h3>检索结果</h3>
           <div id="manualInboundSkuResults" class="mini-list">-</div>
         </div>
         <form id="manualInboundForm" class="form-grid compact">
-          <label>SKU ID（可手填）
-            <input id="manualInboundSkuId" type="number" min="1" />
-          </label>
-          <label>箱子 ID
-            <input id="manualInboundBoxId" type="number" min="1" />
-          </label>
-          <label>或箱号
+          <label>箱号
             <input id="manualInboundBoxCode" />
           </label>
           <label>入库数量（正整数）
@@ -131,7 +124,7 @@
           <button type="submit">执行手动入库</button>
         </form>
         <table>
-          <thead><tr><th>箱子ID</th><th>箱号</th><th>货架</th><th>库存</th></tr></thead>
+          <thead><tr><th>箱号</th><th>货架</th><th>库存</th></tr></thead>
           <tbody id="manualInboundBoxesBody"></tbody>
         </table>
       </section>
@@ -148,17 +141,11 @@
           <button type="submit">检索产品</button>
         </form>
         <div class="card">
-          <h3>检索结果（点击可带入 SKU ID）</h3>
+          <h3>检索结果</h3>
           <div id="manualOutboundSkuResults" class="mini-list">-</div>
         </div>
         <form id="manualOutboundForm" class="form-grid compact">
-          <label>SKU ID（可手填）
-            <input id="manualOutboundSkuId" type="number" min="1" />
-          </label>
-          <label>箱子 ID
-            <input id="manualOutboundBoxId" type="number" min="1" />
-          </label>
-          <label>或箱号
+          <label>箱号
             <input id="manualOutboundBoxCode" />
           </label>
           <label>出库数量（正整数）
@@ -170,7 +157,7 @@
           <button type="submit">执行手动出库</button>
         </form>
         <table>
-          <thead><tr><th>箱子ID</th><th>箱号</th><th>货架</th><th>库存</th></tr></thead>
+          <thead><tr><th>箱号</th><th>货架</th><th>库存</th></tr></thead>
           <tbody id="manualOutboundBoxesBody"></tbody>
         </table>
       </section>
@@ -192,7 +179,7 @@
           <button type="submit">新增员工</button>
         </form>
         <table>
-          <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>更新时间</th></tr></thead>
+          <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>更新时间</th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </section>
@@ -210,7 +197,7 @@
           <button type="submit">新增 SKU</button>
         </form>
         <table>
-          <thead><tr><th>ID</th><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>状态</th></tr></thead>
+          <thead><tr><th>SKU</th><th>erpSKU</th><th>ASIN</th><th>FNSKU</th><th>状态</th></tr></thead>
           <tbody id="skusBody"></tbody>
         </table>
       </section>
@@ -226,7 +213,7 @@
           <button type="submit">新增货架</button>
         </form>
         <table>
-          <thead><tr><th>ID</th><th>货架编码</th><th>名称</th><th>状态</th></tr></thead>
+          <thead><tr><th>货架编码</th><th>名称</th><th>状态</th></tr></thead>
           <tbody id="shelvesBody"></tbody>
         </table>
       </section>
@@ -242,7 +229,7 @@
           <button type="submit">新增箱子</button>
         </form>
         <table>
-          <thead><tr><th>ID</th><th>箱号</th><th>货架</th><th>状态</th></tr></thead>
+          <thead><tr><th>箱号</th><th>货架</th><th>状态</th></tr></thead>
           <tbody id="boxesBody"></tbody>
         </table>
       </section>
@@ -253,7 +240,7 @@
           <button id="refreshAudit" class="ghost">刷新</button>
         </div>
         <table>
-          <thead><tr><th>时间</th><th>实体</th><th>动作</th><th>事件</th><th>操作人</th><th>请求ID</th></tr></thead>
+          <thead><tr><th>时间</th><th>实体</th><th>动作</th><th>事件</th><th>操作人</th></tr></thead>
           <tbody id="auditBody"></tbody>
         </table>
       </section>

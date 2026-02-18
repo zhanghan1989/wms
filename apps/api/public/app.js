@@ -94,7 +94,6 @@ async function loadUsers() {
     .map(
       (u) => `
     <tr>
-      <td>${escapeHtml(u.id)}</td>
       <td>${escapeHtml(u.username)}</td>
       <td>${escapeHtml(u.role)}</td>
       <td>${u.status === 1 ? "启用" : "停用"}</td>
@@ -112,7 +111,6 @@ async function loadSkus() {
     .map(
       (s) => `
     <tr>
-      <td>${escapeHtml(s.id)}</td>
       <td>${escapeHtml(s.sku)}</td>
       <td>${escapeHtml(s.erpSku)}</td>
       <td>${escapeHtml(s.asin)}</td>
@@ -131,7 +129,6 @@ async function loadShelves() {
     .map(
       (s) => `
     <tr>
-      <td>${escapeHtml(s.id)}</td>
       <td>${escapeHtml(s.shelfCode)}</td>
       <td>${escapeHtml(s.name)}</td>
       <td>${s.status === 1 ? "启用" : "停用"}</td>
@@ -148,9 +145,8 @@ async function loadBoxes() {
     .map(
       (b) => `
     <tr>
-      <td>${escapeHtml(b.id)}</td>
       <td>${escapeHtml(b.boxCode)}</td>
-      <td>${escapeHtml(b.shelf?.shelfCode)} (#${escapeHtml(b.shelfId)})</td>
+      <td>${escapeHtml(b.shelf?.shelfCode)}</td>
       <td>${b.status === 1 ? "启用" : "停用"}</td>
     </tr>
   `,
@@ -165,12 +161,8 @@ async function loadInboundOrders() {
     .map((order) => {
       const actions = [];
       if (order.status === "draft") {
-        actions.push(
-          `<button class="tiny-btn" data-action="confirmInbound" data-id="${escapeHtml(order.id)}">确认</button>`,
-        );
-        actions.push(
-          `<button class="tiny-btn ghost" data-action="voidInbound" data-id="${escapeHtml(order.id)}">作废</button>`,
-        );
+        actions.push(`<button class="tiny-btn" data-action="confirmInbound" data-id="${order.id}">确认</button>`);
+        actions.push(`<button class="tiny-btn ghost" data-action="voidInbound" data-id="${order.id}">作废</button>`);
       } else if (order.status === "confirmed") {
         actions.push('<span class="tag">已确认</span>');
       } else {
@@ -179,7 +171,6 @@ async function loadInboundOrders() {
 
       return `
       <tr>
-        <td>${escapeHtml(order.id)}</td>
         <td>${escapeHtml(order.orderNo)}</td>
         <td>${escapeHtml(order.status)}</td>
         <td>${escapeHtml(order.orderType)}</td>
@@ -200,20 +191,31 @@ async function loadAudit() {
       (item) => `
     <tr>
       <td>${formatDate(item.createdAt)}</td>
-      <td>${escapeHtml(item.entityType)}#${escapeHtml(item.entityId)}</td>
+      <td>${escapeHtml(item.entityType)}</td>
       <td>${escapeHtml(item.action)}</td>
       <td>${escapeHtml(item.eventType)}</td>
       <td>${escapeHtml(item.operator?.username)}</td>
-      <td>${escapeHtml(item.requestId)}</td>
     </tr>
   `,
     )
     .join("");
 }
 
+function renderLocationText(rows) {
+  if (!rows || rows.length === 0) {
+    return "在库箱位：无";
+  }
+  const parts = rows.map((row) => {
+    const boxCode = row.box?.boxCode || "-";
+    const shelfCode = row.box?.shelf?.shelfCode || "-";
+    return `${boxCode}/${shelfCode}`;
+  });
+  return `在库箱位：${parts.join("，")}`;
+}
+
 async function loadManualBoxes(skuId, tbodyId) {
   if (!skuId) {
-    $(tbodyId).innerHTML = '<tr><td colspan="4">请先选择 SKU</td></tr>';
+    $(tbodyId).innerHTML = '<tr><td colspan="3">请先选择 SKU</td></tr>';
     return;
   }
   const rows = await request(`/inventory/product-boxes?skuId=${skuId}`);
@@ -222,14 +224,13 @@ async function loadManualBoxes(skuId, tbodyId) {
       .map(
         (row) => `
     <tr>
-      <td>${escapeHtml(row.box?.id)}</td>
       <td>${escapeHtml(row.box?.boxCode)}</td>
       <td>${escapeHtml(row.box?.shelf?.shelfCode)}</td>
       <td>${escapeHtml(row.qty)}</td>
     </tr>
   `,
       )
-      .join("") || '<tr><td colspan="4">该 SKU 当前没有箱内库存</td></tr>';
+      .join("") || '<tr><td colspan="3">该 SKU 当前没有箱内库存</td></tr>';
 }
 
 async function searchManualSkus(keyword, resultId, action) {
@@ -258,8 +259,8 @@ async function searchManualSkus(keyword, resultId, action) {
   $(resultId).innerHTML = skus
     .map(
       (s) => `
-    <button class="tiny-btn ghost sku-result-btn" data-action="${action}" data-id="${escapeHtml(s.id)}">
-      <span>#${escapeHtml(s.id)} ${escapeHtml(s.sku)} / ${escapeHtml(s.erpSku || "")}</span>
+    <button class="tiny-btn ghost sku-result-btn" data-action="${action}" data-id="${s.id}">
+      <span>${escapeHtml(s.sku)} / ${escapeHtml(s.erpSku || "")}</span>
       <span class="sku-location">${renderLocationText(locationMap.get(String(s.id)) || [])}</span>
     </button>
   `,
@@ -267,49 +268,35 @@ async function searchManualSkus(keyword, resultId, action) {
     .join(" ");
 }
 
-function renderLocationText(rows) {
-  if (!rows || rows.length === 0) {
-    return "在库箱位：无";
-  }
-  const parts = rows.map((row) => {
-    const boxCode = row.box?.boxCode || "-";
-    const shelfCode = row.box?.shelf?.shelfCode || "-";
-    return `${boxCode}/${shelfCode}`;
-  });
-  return `在库箱位：${parts.join("，")}`;
-}
-
 async function submitManualAdjust({
-  skuInputId,
+  skuStateKey,
   keywordInputId,
-  boxIdInputId,
   boxCodeInputId,
   qtyInputId,
   reasonInputId,
   outbound,
   tbodyId,
-  selectedSkuStateKey,
 }) {
-  const skuId = parseMaybeNumber($(skuInputId).value);
+  const skuId = state[skuStateKey];
   const absQty = Math.abs(Number($(qtyInputId).value));
   if (!Number.isFinite(absQty) || absQty <= 0) {
     throw new Error("数量必须大于 0");
   }
+
   const payload = {
-    skuId,
+    skuId: skuId || undefined,
     keyword: skuId ? undefined : $(keywordInputId).value.trim() || undefined,
-    boxId: parseMaybeNumber($(boxIdInputId).value),
     boxCode: $(boxCodeInputId).value.trim() || undefined,
     qtyDelta: outbound ? -absQty : absQty,
     reason: $(reasonInputId).value.trim() || undefined,
   };
+
   await request("/inventory/manual-adjust", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 
   if (skuId) {
-    state[selectedSkuStateKey] = skuId;
     await loadManualBoxes(skuId, tbodyId);
   }
   await loadBoxes();
@@ -491,15 +478,13 @@ function bindForms() {
     e.preventDefault();
     try {
       await submitManualAdjust({
-        skuInputId: "manualInboundSkuId",
+        skuStateKey: "manualInboundSkuId",
         keywordInputId: "manualInboundKeyword",
-        boxIdInputId: "manualInboundBoxId",
         boxCodeInputId: "manualInboundBoxCode",
         qtyInputId: "manualInboundQty",
         reasonInputId: "manualInboundReason",
         outbound: false,
         tbodyId: "manualInboundBoxesBody",
-        selectedSkuStateKey: "manualInboundSkuId",
       });
       showToast("手动入库成功");
     } catch (err) {
@@ -511,34 +496,18 @@ function bindForms() {
     e.preventDefault();
     try {
       await submitManualAdjust({
-        skuInputId: "manualOutboundSkuId",
+        skuStateKey: "manualOutboundSkuId",
         keywordInputId: "manualOutboundKeyword",
-        boxIdInputId: "manualOutboundBoxId",
         boxCodeInputId: "manualOutboundBoxCode",
         qtyInputId: "manualOutboundQty",
         reasonInputId: "manualOutboundReason",
         outbound: true,
         tbodyId: "manualOutboundBoxesBody",
-        selectedSkuStateKey: "manualOutboundSkuId",
       });
       showToast("手动出库成功");
     } catch (err) {
       showToast(err.message, true);
     }
-  });
-
-  $("manualInboundSkuId").addEventListener("change", async () => {
-    state.manualInboundSkuId = parseMaybeNumber($("manualInboundSkuId").value) || null;
-    await loadManualBoxes(state.manualInboundSkuId, "manualInboundBoxesBody").catch((err) =>
-      showToast(err.message, true),
-    );
-  });
-
-  $("manualOutboundSkuId").addEventListener("change", async () => {
-    state.manualOutboundSkuId = parseMaybeNumber($("manualOutboundSkuId").value) || null;
-    await loadManualBoxes(state.manualOutboundSkuId, "manualOutboundBoxesBody").catch((err) =>
-      showToast(err.message, true),
-    );
   });
 }
 
@@ -552,10 +521,10 @@ function bindDelegates() {
     try {
       if (action === "confirmInbound") {
         await request(`/inbound/orders/${id}/confirm`, { method: "POST", body: "{}" });
-        showToast(`入库单 #${id} 已确认`);
+        showToast("入库单已确认");
       } else if (action === "voidInbound") {
         await request(`/inbound/orders/${id}/void`, { method: "POST", body: "{}" });
-        showToast(`入库单 #${id} 已作废`);
+        showToast("入库单已作废");
       }
       await loadInboundOrders();
       await loadAudit();
@@ -569,11 +538,8 @@ function bindDelegates() {
     if (!target) return;
     const id = Number(target.dataset.id);
     if (!Number.isFinite(id)) return;
-    $("manualInboundSkuId").value = String(id);
     state.manualInboundSkuId = id;
-    await loadManualBoxes(state.manualInboundSkuId, "manualInboundBoxesBody").catch((err) =>
-      showToast(err.message, true),
-    );
+    await loadManualBoxes(id, "manualInboundBoxesBody").catch((err) => showToast(err.message, true));
   });
 
   $("manualOutboundSkuResults").addEventListener("click", async (e) => {
@@ -581,11 +547,8 @@ function bindDelegates() {
     if (!target) return;
     const id = Number(target.dataset.id);
     if (!Number.isFinite(id)) return;
-    $("manualOutboundSkuId").value = String(id);
     state.manualOutboundSkuId = id;
-    await loadManualBoxes(state.manualOutboundSkuId, "manualOutboundBoxesBody").catch((err) =>
-      showToast(err.message, true),
-    );
+    await loadManualBoxes(id, "manualOutboundBoxesBody").catch((err) => showToast(err.message, true));
   });
 }
 
@@ -599,17 +562,15 @@ function bindRefresh() {
     searchManualSkus($("manualInboundKeyword").value.trim(), "manualInboundSkuResults", "pickManualInboundSku").catch(
       (e) => showToast(e.message, true),
     );
-    loadManualBoxes(state.manualInboundSkuId, "manualInboundBoxesBody").catch((e) =>
-      showToast(e.message, true),
-    );
+    loadManualBoxes(state.manualInboundSkuId, "manualInboundBoxesBody").catch((e) => showToast(e.message, true));
   });
   $("refreshManualOutbound").addEventListener("click", () => {
-    searchManualSkus($("manualOutboundKeyword").value.trim(), "manualOutboundSkuResults", "pickManualOutboundSku").catch(
-      (e) => showToast(e.message, true),
-    );
-    loadManualBoxes(state.manualOutboundSkuId, "manualOutboundBoxesBody").catch((e) =>
-      showToast(e.message, true),
-    );
+    searchManualSkus(
+      $("manualOutboundKeyword").value.trim(),
+      "manualOutboundSkuResults",
+      "pickManualOutboundSku",
+    ).catch((e) => showToast(e.message, true));
+    loadManualBoxes(state.manualOutboundSkuId, "manualOutboundBoxesBody").catch((e) => showToast(e.message, true));
   });
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((e) => showToast(e.message, true)));
 }
