@@ -27,8 +27,6 @@
       <button class="nav-btn" data-target="overview">总览</button>
       <button class="nav-btn" data-target="inbound">标准入库</button>
       <button class="nav-btn" data-target="users">员工</button>
-      <button class="nav-btn" data-target="shelves">货架</button>
-      <button class="nav-btn" data-target="boxes">箱号</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
     </aside>
 
@@ -42,6 +40,8 @@
         <div class="inventory-toolbar">
           <div class="inventory-toolbar-actions">
             <button type="button" id="openCreateSkuModal">新增 SKU</button>
+            <button type="button" id="openCreateBoxQuick" class="ghost">新增箱号</button>
+            <button type="button" id="openCreateShelfQuick" class="ghost">新增货架</button>
           </div>
 
           <form id="inventorySearchForm" class="form-grid inventory-search-form">
@@ -135,7 +135,9 @@
           <button id="refreshShelves" class="ghost">刷新</button>
         </div>
         <form id="createShelfForm" class="form-grid compact">
-          <label>货架号<input id="newShelfCode" required /></label>
+          <label>货架号（S-）
+            <input id="newShelfCodeDigits" inputmode="numeric" maxlength="3" placeholder="3位数字" required />
+          </label>
           <label>名称<input id="newShelfName" /></label>
           <button type="submit">新增货架</button>
         </form>
@@ -151,7 +153,9 @@
           <button id="refreshBoxes" class="ghost">刷新</button>
         </div>
         <form id="createBoxForm" class="form-grid compact">
-          <label>箱号<input id="newBoxCode" required /></label>
+          <label>箱号（B-）
+            <input id="newBoxCodeDigits" inputmode="numeric" maxlength="4" placeholder="4位数字" required />
+          </label>
           <label>货架号
             <select id="newBoxShelfId" required></select>
           </label>
@@ -233,13 +237,34 @@
         <button type="button" class="ghost" data-action="closeCreateBoxFromSkuModal">关闭</button>
       </div>
       <form id="createBoxFromSkuForm" class="form-grid modal-grid">
-        <label>箱号<input id="modalNewBoxCode" required /></label>
+        <label>箱号（B-）
+          <input id="modalNewBoxCodeDigits" inputmode="numeric" maxlength="4" placeholder="4位数字" required />
+        </label>
         <label>货架号
           <select id="modalNewBoxShelfId" required></select>
         </label>
         <div class="modal-actions">
           <button type="submit">确认新增箱号</button>
           <button type="button" class="ghost" data-action="closeCreateBoxFromSkuModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="createShelfFromInventoryModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>新增货架</h3>
+        <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">关闭</button>
+      </div>
+      <form id="createShelfFromInventoryForm" class="form-grid modal-grid">
+        <label>货架号（S-）
+          <input id="modalNewShelfCodeDigits" inputmode="numeric" maxlength="3" placeholder="3位数字" required />
+        </label>
+        <label>名称<input id="modalNewShelfName" /></label>
+        <div class="modal-actions">
+          <button type="submit">确认新增货架</button>
+          <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">取消</button>
         </div>
       </form>
     </div>

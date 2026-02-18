@@ -35,6 +35,22 @@ function getStatusText(status) {
   return Number(status) === 1 ? "启用" : "禁用";
 }
 
+function parseFixedDigits(raw, length, fieldName) {
+  const digits = String(raw ?? "").replace(/\D/g, "");
+  if (digits.length !== length) {
+    throw new Error(`${fieldName}必须是${length}位数字`);
+  }
+  return digits;
+}
+
+function buildBoxCode(rawDigits) {
+  return `B-${parseFixedDigits(rawDigits, 4, "箱号")}`;
+}
+
+function buildShelfCode(rawDigits) {
+  return `S-${parseFixedDigits(rawDigits, 3, "货架号")}`;
+}
+
 function clearStats() {
   $("statUsers").textContent = "-";
   $("statSkus").textContent = "-";
@@ -98,6 +114,24 @@ function bindTabs() {
   document.querySelectorAll(".nav-btn").forEach((button) => {
     button.addEventListener("click", () => switchPanel(button.dataset.target));
   });
+}
+
+function bindDigitInput(id, maxLen) {
+  const input = $(id);
+  if (!input) return;
+  input.addEventListener("input", () => {
+    const digits = input.value.replace(/\D/g, "").slice(0, maxLen);
+    if (input.value !== digits) {
+      input.value = digits;
+    }
+  });
+}
+
+function bindInputRules() {
+  bindDigitInput("newShelfCodeDigits", 3);
+  bindDigitInput("newBoxCodeDigits", 4);
+  bindDigitInput("modalNewBoxCodeDigits", 4);
+  bindDigitInput("modalNewShelfCodeDigits", 3);
 }
 
 async function loadMe() {
@@ -460,15 +494,24 @@ async function createSkuFromModal() {
 }
 
 async function createBoxFromSkuModal() {
-  const boxCode = $("modalNewBoxCode").value.trim();
+  const boxCode = buildBoxCode($("modalNewBoxCodeDigits").value);
   const shelfId = Number($("modalNewBoxShelfId").value);
 
-  if (!boxCode) throw new Error("箱号不能为空");
   if (!Number.isInteger(shelfId) || shelfId <= 0) throw new Error("请选择货架号");
 
   await request("/boxes", {
     method: "POST",
     body: JSON.stringify({ boxCode, shelfId }),
+  });
+}
+
+async function createShelfFromInventoryModal() {
+  const shelfCode = buildShelfCode($("modalNewShelfCodeDigits").value);
+  const name = $("modalNewShelfName").value.trim() || undefined;
+
+  await request("/shelves", {
+    method: "POST",
+    body: JSON.stringify({ shelfCode, name }),
   });
 }
 
@@ -534,10 +577,11 @@ function bindForms() {
   $("createShelfForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      const shelfCode = buildShelfCode($("newShelfCodeDigits").value);
       await request("/shelves", {
         method: "POST",
         body: JSON.stringify({
-          shelfCode: $("newShelfCode").value.trim(),
+          shelfCode,
           name: $("newShelfName").value.trim() || undefined,
         }),
       });
@@ -553,6 +597,7 @@ function bindForms() {
   $("createBoxForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      const boxCode = buildBoxCode($("newBoxCodeDigits").value);
       const shelfId = Number($("newBoxShelfId").value);
       if (!Number.isInteger(shelfId) || shelfId <= 0) {
         throw new Error("请选择货架号");
@@ -561,7 +606,7 @@ function bindForms() {
       await request("/boxes", {
         method: "POST",
         body: JSON.stringify({
-          boxCode: $("newBoxCode").value.trim(),
+          boxCode,
           shelfId,
         }),
       });
@@ -619,12 +664,20 @@ function bindForms() {
     openModal("createSkuModal");
   });
 
-  $("openCreateBoxFromSkuModal").addEventListener("click", async () => {
+  const openCreateBoxModal = async () => {
     if (!state.shelves.length) {
       await loadShelves().catch((error) => showToast(error.message, true));
     }
     $("createBoxFromSkuForm").reset();
     openModal("createBoxFromSkuModal");
+  };
+
+  $("openCreateBoxFromSkuModal").addEventListener("click", openCreateBoxModal);
+  $("openCreateBoxQuick").addEventListener("click", openCreateBoxModal);
+
+  $("openCreateShelfQuick").addEventListener("click", () => {
+    $("createShelfFromInventoryForm").reset();
+    openModal("createShelfFromInventoryModal");
   });
 
   $("createSkuModalForm").addEventListener("submit", async (event) => {
@@ -650,6 +703,19 @@ function bindForms() {
       showToast("箱号已创建");
       await loadShelves();
       await loadBoxes();
+      await loadAudit();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("createShelfFromInventoryForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await createShelfFromInventoryModal();
+      closeModal("createShelfFromInventoryModal");
+      showToast("货架已创建");
+      await loadShelves();
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);
@@ -720,6 +786,11 @@ function bindDelegates() {
       closeModal("createBoxFromSkuModal");
       return;
     }
+    const shelfClose = event.target.closest("button[data-action='closeCreateShelfFromInventoryModal']");
+    if (shelfClose) {
+      closeModal("createShelfFromInventoryModal");
+      return;
+    }
     const adjustClose = event.target.closest("button[data-action='closeAdjustModal']");
     if (adjustClose) {
       closeModal("adjustModal");
@@ -743,6 +814,12 @@ function bindDelegates() {
       closeModal("createBoxFromSkuModal");
     }
   });
+
+  $("createShelfFromInventoryModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("createShelfFromInventoryModal");
+    }
+  });
 }
 
 function bindRefresh() {
@@ -755,6 +832,7 @@ function bindRefresh() {
 }
 
 bindTabs();
+bindInputRules();
 bindForms();
 bindDelegates();
 bindRefresh();
