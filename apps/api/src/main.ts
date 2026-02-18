@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { existsSync } from 'fs';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -10,14 +11,10 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  const publicDir = join(process.cwd(), 'apps', 'api', 'public');
-  app.useStaticAssets(publicDir, { index: false });
-  const expressApp = app.getHttpAdapter().getInstance() as {
-    get: (path: string, handler: (_req: unknown, res: { sendFile: (filePath: string) => void }) => void) => void;
-  };
-  expressApp.get('/', (_req, res) => {
-    res.sendFile(join(publicDir, 'index.html'));
-  });
+  const preferredPublicDir = join(process.cwd(), 'public');
+  const fallbackPublicDir = join(process.cwd(), 'apps', 'api', 'public');
+  const publicDir = existsSync(preferredPublicDir) ? preferredPublicDir : fallbackPublicDir;
+  app.useStaticAssets(publicDir, { index: 'index.html' });
 
   app.setGlobalPrefix('api');
   app.use((req: Record<string, unknown>, res: Record<string, unknown>, next: () => void) => {
