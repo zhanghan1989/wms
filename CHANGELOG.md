@@ -32,6 +32,7 @@
 - Extended web console with:
   - inbound excel import and order confirmation
   - manual inventory adjust workflow
+  - split manual adjust into `manual inbound` and `manual outbound` pages
 
 ### Added
 - Inbound module APIs:
