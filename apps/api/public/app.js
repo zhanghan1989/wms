@@ -69,13 +69,14 @@ function displayText(value) {
 function applyRoleView() {
   const layout = document.querySelector(".layout");
   const quickActions = $("employeeQuickActions");
-  const isEmployee = Boolean(state.me && state.me.role === "employee");
+  const isLoggedIn = Boolean(state.me);
+  const isEmployee = Boolean(state.me?.role === "employee");
 
   if (layout) {
     layout.classList.toggle("no-sidebar", isEmployee);
   }
   if (quickActions) {
-    quickActions.classList.toggle("hidden", !isEmployee);
+    quickActions.classList.toggle("hidden", !isLoggedIn);
   }
 }
 
