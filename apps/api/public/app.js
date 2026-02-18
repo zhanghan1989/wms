@@ -1,10 +1,19 @@
-﻿const state = {
+const state = {
   token: localStorage.getItem("wms_token") || "",
   me: null,
   shelves: [],
   boxes: [],
   inventorySkus: [],
   inventoryLocations: new Map(),
+  plainPasswords: (() => {
+    try {
+      const raw = localStorage.getItem("wms_plain_password_map");
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  })(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -33,6 +42,10 @@ function formatDate(value) {
 
 function getStatusText(status) {
   return Number(status) === 1 ? "启用" : "禁用";
+}
+
+function getRoleText(role) {
+  return role === "admin" ? "管理者" : "员工";
 }
 
 function parseFixedDigits(raw, length, fieldName) {
@@ -196,7 +209,8 @@ async function loadUsers() {
       (user) => `
       <tr>
         <td>${escapeHtml(user.username)}</td>
-        <td>${escapeHtml(user.role)}</td>
+        <td>${escapeHtml(state.plainPasswords[user.username] || "-")}</td>
+        <td>${escapeHtml(getRoleText(user.role))}</td>
         <td>${getStatusText(user.status)}</td>
         <td>${formatDate(user.updatedAt)}</td>
       </tr>
@@ -640,14 +654,18 @@ function bindForms() {
   $("createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      const username = $("newUsername").value.trim();
+      const password = $("newPassword").value;
       await request("/users", {
         method: "POST",
         body: JSON.stringify({
-          username: $("newUsername").value.trim(),
-          password: $("newPassword").value,
+          username,
+          password,
           role: $("newRole").value,
         }),
       });
+      state.plainPasswords[username] = password;
+      localStorage.setItem("wms_plain_password_map", JSON.stringify(state.plainPasswords));
       event.target.reset();
       showToast("员工已创建");
       await loadUsers();
