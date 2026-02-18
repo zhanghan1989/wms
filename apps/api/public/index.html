@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
@@ -30,7 +30,7 @@
       <button class="nav-btn" data-target="users">员工</button>
       <button class="nav-btn" data-target="skus">产品</button>
       <button class="nav-btn" data-target="shelves">货架</button>
-      <button class="nav-btn" data-target="boxes">箱子</button>
+      <button class="nav-btn" data-target="boxes">箱号</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
     </aside>
 
@@ -38,14 +38,8 @@
       <section class="panel active" id="overview">
         <h2>登录与状态</h2>
         <form id="loginForm" class="form-grid">
-          <label>
-            用户名
-            <input id="username" value="admin" />
-          </label>
-          <label>
-            密码
-            <input id="password" type="password" value="Admin@123" />
-          </label>
+          <label>用户名<input id="username" value="admin" /></label>
+          <label>密码<input id="password" type="password" value="Admin@123" /></label>
           <div class="actions">
             <button type="submit">登录</button>
             <button type="button" id="logoutBtn" class="ghost">退出</button>
@@ -63,7 +57,7 @@
               <li><span>员工数</span><strong id="statUsers">-</strong></li>
               <li><span>SKU 数</span><strong id="statSkus">-</strong></li>
               <li><span>货架数</span><strong id="statShelves">-</strong></li>
-              <li><span>箱子数</span><strong id="statBoxes">-</strong></li>
+              <li><span>箱号数</span><strong id="statBoxes">-</strong></li>
               <li><span>待确认入库单</span><strong id="statInboundDraft">-</strong></li>
             </ul>
           </article>
@@ -76,21 +70,12 @@
           <button id="refreshInbound" class="ghost">刷新</button>
         </div>
         <form id="importInboundForm" class="form-grid compact">
-          <label>Excel 文件
-            <input id="inboundFile" type="file" accept=".xlsx,.xls,.csv" required />
-          </label>
-          <button type="submit">上传并生成入库单</button>
+          <label>Excel 文件<input id="inboundFile" type="file" accept=".xlsx,.xls,.csv" required /></label>
+          <button type="submit">导入并生成待确认单</button>
         </form>
         <table>
           <thead>
-            <tr>
-              <th>单号</th>
-              <th>状态</th>
-              <th>类型</th>
-              <th>明细数</th>
-              <th>创建时间</th>
-              <th>操作</th>
-            </tr>
+            <tr><th>单号</th><th>状态</th><th>类型</th><th>明细数</th><th>创建时间</th><th>操作</th></tr>
           </thead>
           <tbody id="inboundBody"></tbody>
         </table>
@@ -102,9 +87,7 @@
           <button id="refreshManualInbound" class="ghost">刷新</button>
         </div>
         <form id="manualInboundSearchForm" class="form-grid compact">
-          <label>关键字（SKU/erpSKU/ASIN/FNSKU）
-            <input id="manualInboundKeyword" />
-          </label>
+          <label>产品检索（SKU/erpSKU/ASIN/FNSKU）<input id="manualInboundKeyword" /></label>
           <button type="submit">检索产品</button>
         </form>
         <div class="card">
@@ -112,19 +95,13 @@
           <div id="manualInboundSkuResults" class="mini-list">-</div>
         </div>
         <form id="manualInboundForm" class="form-grid compact">
-          <label>箱号
-            <input id="manualInboundBoxCode" />
-          </label>
-          <label>入库数量（正整数）
-            <input id="manualInboundQty" type="number" min="1" required />
-          </label>
-          <label>原因
-            <input id="manualInboundReason" />
-          </label>
+          <label>箱号<input id="manualInboundBoxCode" /></label>
+          <label>入库数量（正数）<input id="manualInboundQty" type="number" min="1" required /></label>
+          <label>原因<input id="manualInboundReason" /></label>
           <button type="submit">执行手动入库</button>
         </form>
         <table>
-          <thead><tr><th>箱号</th><th>货架</th><th>库存</th></tr></thead>
+          <thead><tr><th>箱号</th><th>货架号</th><th>库存</th></tr></thead>
           <tbody id="manualInboundBoxesBody"></tbody>
         </table>
       </section>
@@ -135,9 +112,7 @@
           <button id="refreshManualOutbound" class="ghost">刷新</button>
         </div>
         <form id="manualOutboundSearchForm" class="form-grid compact">
-          <label>关键字（SKU/erpSKU/ASIN/FNSKU）
-            <input id="manualOutboundKeyword" />
-          </label>
+          <label>产品检索（SKU/erpSKU/ASIN/FNSKU）<input id="manualOutboundKeyword" /></label>
           <button type="submit">检索产品</button>
         </form>
         <div class="card">
@@ -145,19 +120,13 @@
           <div id="manualOutboundSkuResults" class="mini-list">-</div>
         </div>
         <form id="manualOutboundForm" class="form-grid compact">
-          <label>箱号
-            <input id="manualOutboundBoxCode" />
-          </label>
-          <label>出库数量（正整数）
-            <input id="manualOutboundQty" type="number" min="1" required />
-          </label>
-          <label>原因
-            <input id="manualOutboundReason" />
-          </label>
+          <label>箱号<input id="manualOutboundBoxCode" /></label>
+          <label>出库数量（正数）<input id="manualOutboundQty" type="number" min="1" required /></label>
+          <label>原因<input id="manualOutboundReason" /></label>
           <button type="submit">执行手动出库</button>
         </form>
         <table>
-          <thead><tr><th>箱号</th><th>货架</th><th>库存</th></tr></thead>
+          <thead><tr><th>箱号</th><th>货架号</th><th>库存</th></tr></thead>
           <tbody id="manualOutboundBoxesBody"></tbody>
         </table>
       </section>
@@ -208,28 +177,30 @@
           <button id="refreshShelves" class="ghost">刷新</button>
         </div>
         <form id="createShelfForm" class="form-grid compact">
-          <label>货架编码<input id="newShelfCode" required /></label>
+          <label>货架号<input id="newShelfCode" required /></label>
           <label>名称<input id="newShelfName" /></label>
           <button type="submit">新增货架</button>
         </form>
         <table>
-          <thead><tr><th>货架编码</th><th>名称</th><th>状态</th></tr></thead>
+          <thead><tr><th>货架号</th><th>名称</th><th>状态</th></tr></thead>
           <tbody id="shelvesBody"></tbody>
         </table>
       </section>
 
       <section class="panel" id="boxes">
         <div class="panel-head">
-          <h2>箱子管理</h2>
+          <h2>箱号管理</h2>
           <button id="refreshBoxes" class="ghost">刷新</button>
         </div>
         <form id="createBoxForm" class="form-grid compact">
           <label>箱号<input id="newBoxCode" required /></label>
-          <label>货架 ID<input id="newBoxShelfId" type="number" min="1" required /></label>
-          <button type="submit">新增箱子</button>
+          <label>货架号
+            <select id="newBoxShelfId" required></select>
+          </label>
+          <button type="submit">新增箱号</button>
         </form>
         <table>
-          <thead><tr><th>箱号</th><th>货架</th><th>状态</th></tr></thead>
+          <thead><tr><th>箱号</th><th>货架号</th><th>状态</th></tr></thead>
           <tbody id="boxesBody"></tbody>
         </table>
       </section>
@@ -240,7 +211,7 @@
           <button id="refreshAudit" class="ghost">刷新</button>
         </div>
         <table>
-          <thead><tr><th>时间</th><th>实体</th><th>动作</th><th>事件</th><th>操作人</th></tr></thead>
+          <thead><tr><th>时间</th><th>实体</th><th>动作</th><th>事件</th><th>操作人</th><th>请求ID</th></tr></thead>
           <tbody id="auditBody"></tbody>
         </table>
       </section>
