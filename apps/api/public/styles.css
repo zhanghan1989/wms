@@ -52,6 +52,34 @@ body {
   padding: 20px 28px;
 }
 
+.login-gate {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(560px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.login-grid {
+  grid-template-columns: 1fr;
+  margin-bottom: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;

@@ -79,6 +79,12 @@ function applyRoleView() {
   }
 }
 
+function setAuthGate(isLoggedIn) {
+  $("loginGate").classList.toggle("hidden", isLoggedIn);
+  $("appTopbar").classList.toggle("hidden", !isLoggedIn);
+  $("appLayout").classList.toggle("hidden", !isLoggedIn);
+}
+
 function switchPanel(targetId) {
   document.querySelectorAll(".nav-btn").forEach((button) => button.classList.remove("active"));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
@@ -159,6 +165,7 @@ async function loadMe() {
     state.me = null;
     $("sessionInfo").textContent = "未登录";
     $("meCard").textContent = "-";
+    setAuthGate(false);
     applyRoleView();
     return;
   }
@@ -167,6 +174,7 @@ async function loadMe() {
     state.me = await request("/auth/me");
     $("sessionInfo").textContent = `${state.me.username} (${state.me.role})`;
     $("meCard").textContent = JSON.stringify(state.me, null, 2);
+    setAuthGate(true);
     applyRoleView();
   } catch {
     state.token = "";
@@ -174,6 +182,7 @@ async function loadMe() {
     localStorage.removeItem("wms_token");
     $("sessionInfo").textContent = "登录失效";
     $("meCard").textContent = "-";
+    setAuthGate(false);
     applyRoleView();
   }
 }
@@ -594,14 +603,14 @@ async function reloadAll() {
 }
 
 function bindForms() {
-  $("loginForm").addEventListener("submit", async (event) => {
+  $("loginGateForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
       const data = await request("/auth/login", {
         method: "POST",
         body: JSON.stringify({
-          username: $("username").value.trim(),
-          password: $("password").value,
+          username: $("gateUsername").value.trim(),
+          password: $("gatePassword").value,
         }),
       });
       state.token = data.accessToken;
@@ -618,6 +627,7 @@ function bindForms() {
     state.token = "";
     state.me = null;
     localStorage.removeItem("wms_token");
+    document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden"));
     showToast("已退出登录");
     await reloadAll();
     switchPanel("overview");

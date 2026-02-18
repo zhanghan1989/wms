@@ -10,7 +10,24 @@
   <div class="bg-shape bg-shape-a"></div>
   <div class="bg-shape bg-shape-b"></div>
 
-  <header class="topbar">
+  <section id="loginGate" class="login-gate">
+    <article class="login-card">
+      <div class="login-brand">
+        <div class="brand-mark">W</div>
+        <div>
+          <p class="brand-title">WMS V1 Console</p>
+          <p class="brand-sub">登录后进入仓库管理系统</p>
+        </div>
+      </div>
+      <form id="loginGateForm" class="form-grid login-grid">
+        <label>用户名<input id="gateUsername" value="admin" autocomplete="username" /></label>
+        <label>密码<input id="gatePassword" type="password" value="Admin@123" autocomplete="current-password" /></label>
+        <button type="submit">登录系统</button>
+      </form>
+    </article>
+  </section>
+
+  <header id="appTopbar" class="topbar hidden">
     <div class="brand">
       <div class="brand-mark">W</div>
       <div>
@@ -28,7 +45,7 @@
     </div>
   </header>
 
-  <main class="layout">
+  <main id="appLayout" class="layout hidden">
     <aside class="sidebar">
       <button class="nav-btn active" data-target="inventory">库存管理</button>
       <button class="nav-btn" data-target="overview">总览</button>
@@ -83,15 +100,10 @@
       </section>
 
       <section class="panel" id="overview">
-        <h2>登录与状态</h2>
-        <form id="loginForm" class="form-grid">
-          <label>用户名<input id="username" value="admin" /></label>
-          <label>密码<input id="password" type="password" value="Admin@123" /></label>
-          <div class="actions">
-            <button type="submit">登录</button>
-            <button type="button" id="logoutBtn" class="ghost">退出</button>
-          </div>
-        </form>
+        <div class="panel-head">
+          <h2>系统状态</h2>
+          <button type="button" id="logoutBtn" class="ghost">退出登录</button>
+        </div>
 
         <div class="cards">
           <article class="card">
