@@ -627,20 +627,20 @@ function renderShelfOptionsForSelect(selectId, placeholder) {
   }
 }
 
-function renderBoxOptionsForSelect(selectId, placeholder) {
-  const select = $(selectId);
-  if (!select) return;
+function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
+  const input = $(inputId);
+  const datalist = $(listId);
+  if (!input || !datalist) return;
 
-  const prev = select.value;
-  const options = state.boxes
-    .filter((box) => Number(box.status) === 1)
-    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }))
-    .map((box) => `<option value="${escapeHtml(box.boxCode)}">${escapeHtml(box.boxCode)}</option>`)
+  const prev = input.value;
+  input.placeholder = placeholder;
+  const matches = filterAdjustBoxes(keyword);
+  datalist.innerHTML = matches
+    .map((box) => `<option value="${escapeHtml(box.boxCode)}"></option>`)
     .join("");
 
-  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
-  if (prev && state.boxes.some((box) => box.boxCode === prev && Number(box.status) === 1)) {
-    select.value = prev;
+  if (prev) {
+    input.value = prev;
   }
 }
 
@@ -661,6 +661,13 @@ function normalizeBoxCodeInput(raw) {
     return `B-${prefixed[1].padStart(4, "0")}`;
   }
   return value;
+}
+
+function resolveEnabledBoxCode(raw) {
+  const normalized = normalizeBoxCodeInput(raw);
+  if (!normalized) return "";
+  const found = getEnabledBoxesSorted().find((box) => String(box.boxCode).toUpperCase() === normalized);
+  return found?.boxCode || "";
 }
 
 function filterAdjustBoxes(keyword) {
@@ -722,7 +729,7 @@ async function loadBoxes() {
   const boxes = await request("/boxes");
   state.boxes = boxes;
   $("statBoxes").textContent = boxes.length;
-  renderBoxOptionsForSelect("modalNewSkuBoxCode", "请选择已有箱号或者新增箱号");
+  renderBoxOptionsForInput("modalNewSkuBoxCode", "modalNewSkuBoxCodeList", "请选择已有箱号或者新增箱号");
   renderAdjustBoxSuggestions($("adjustBoxCode")?.value || "");
   $("boxesBody").innerHTML = boxes
     .map(
@@ -908,12 +915,14 @@ async function createSkuFromModal() {
   const erpSku = $("modalNewErpSku").value.trim() || undefined;
   const asin = $("modalNewAsin").value.trim() || undefined;
   const fnsku = $("modalNewFnsku").value.trim() || undefined;
-  const boxCode = $("modalNewSkuBoxCode").value;
+  const rawBoxCode = $("modalNewSkuBoxCode").value;
+  const boxCode = resolveEnabledBoxCode(rawBoxCode);
   const qty = Math.abs(Number($("modalNewSkuQty").value));
   const reason = "新建产品初始入库";
 
   if (!sku) throw new Error("SKU 不能为空");
-  if (!boxCode) throw new Error("请选择已有箱号或者新增箱号");
+  if (!boxCode) throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
+  $("modalNewSkuBoxCode").value = boxCode;
   if (!Number.isFinite(qty) || qty <= 0) throw new Error("数量必须大于 0");
 
   const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
@@ -1159,6 +1168,28 @@ function bindForms() {
   $("openCreateBoxFromSkuModal").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxQuick").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxFromAdjust").addEventListener("click", openCreateBoxModal);
+  $("modalNewSkuBoxCode").addEventListener("input", (event) => {
+    renderBoxOptionsForInput(
+      "modalNewSkuBoxCode",
+      "modalNewSkuBoxCodeList",
+      "请选择已有箱号或者新增箱号",
+      event.target.value,
+    );
+  });
+  $("modalNewSkuBoxCode").addEventListener("focus", (event) => {
+    renderBoxOptionsForInput(
+      "modalNewSkuBoxCode",
+      "modalNewSkuBoxCodeList",
+      "请选择已有箱号或者新增箱号",
+      event.target.value,
+    );
+  });
+  $("modalNewSkuBoxCode").addEventListener("blur", (event) => {
+    const resolved = resolveEnabledBoxCode(event.target.value);
+    if (resolved) {
+      event.target.value = resolved;
+    }
+  });
   $("adjustBoxCode").addEventListener("input", (event) => {
     renderAdjustBoxSuggestions(event.target.value);
   });
@@ -1194,6 +1225,16 @@ function bindForms() {
       showToast("箱号已创建");
       await loadShelves();
       await loadBoxes();
+      const createSkuModal = $("createSkuModal");
+      if (createSkuModal && !createSkuModal.classList.contains("hidden")) {
+        $("modalNewSkuBoxCode").value = createdBoxCode;
+        renderBoxOptionsForInput(
+          "modalNewSkuBoxCode",
+          "modalNewSkuBoxCodeList",
+          "请选择已有箱号或者新增箱号",
+          createdBoxCode,
+        );
+      }
       const adjustModal = $("adjustModal");
       if (adjustModal && !adjustModal.classList.contains("hidden")) {
         $("adjustBoxCode").value = createdBoxCode;

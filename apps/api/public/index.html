@@ -211,7 +211,14 @@
         <label>FNSKU<input id="modalNewFnsku" /></label>
         <label>所属亚马逊店铺<input id="modalNewShop" /></label>
         <label class="create-sku-left-col">箱号
-          <select id="modalNewSkuBoxCode" required></select>
+          <input
+            id="modalNewSkuBoxCode"
+            list="modalNewSkuBoxCodeList"
+            placeholder="请选择已有箱号或者新增箱号"
+            inputmode="numeric"
+            required
+          />
+          <datalist id="modalNewSkuBoxCodeList"></datalist>
         </label>
         <div class="create-sku-box-action create-sku-right-col">
           <button type="button" id="openCreateBoxFromSkuModal" class="small-btn">新增箱号</button>
