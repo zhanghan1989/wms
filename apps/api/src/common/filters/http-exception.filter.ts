@@ -4,10 +4,14 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<{
@@ -16,13 +20,21 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const request = ctx.getRequest<{ requestId?: string }>();
 
     const isHttpException = exception instanceof HttpException;
+    const isPrismaKnown = exception instanceof Prisma.PrismaClientKnownRequestError;
     const status = isHttpException
       ? exception.getStatus()
       : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const message = isHttpException
       ? this.extractHttpMessage(exception)
-      : 'Internal Server Error';
+      : isPrismaKnown
+        ? this.extractPrismaMessage(exception)
+        : 'Internal Server Error';
+
+    if (!isHttpException) {
+      const stack = exception instanceof Error ? exception.stack : undefined;
+      this.logger.error(`[${request.requestId ?? 'no-request-id'}] ${message}`, stack);
+    }
 
     response.status(status).json({
       code: status,
@@ -50,5 +62,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return message;
     }
     return exception.message;
+  }
+
+  private extractPrismaMessage(exception: Prisma.PrismaClientKnownRequestError): string {
+    if (exception.code === 'P2021' || exception.code === 'P2022') {
+      return 'Database schema is outdated. Please run prisma migrate deploy.';
+    }
+    return 'Database error';
   }
 }

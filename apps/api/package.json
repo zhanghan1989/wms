@@ -9,6 +9,7 @@
     "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "prisma db seed",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test": "jest --runInBand",
