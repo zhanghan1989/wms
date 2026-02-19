@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { BatchInboundModule } from './batch-inbound/batch-inbound.module';
 import { BoxesModule } from './boxes/boxes.module';
 import { InboundModule } from './inbound/inbound.module';
 import { InventoryModule } from './inventory/inventory.module';
@@ -21,6 +22,7 @@ import { UsersModule } from './users/users.module';
     SkusModule,
     ShelvesModule,
     BoxesModule,
+    BatchInboundModule,
     InboundModule,
     InventoryModule,
     AuditModule,

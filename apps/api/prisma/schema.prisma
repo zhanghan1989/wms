@@ -30,6 +30,18 @@ enum OrderStatus {
   void
 }
 
+enum BatchInboundOrderStatus {
+  waiting_upload
+  waiting_inbound
+  confirmed
+  void
+}
+
+enum BatchInboundItemStatus {
+  pending
+  confirmed
+}
+
 enum StocktakeScopeType {
   sample
 }
@@ -102,10 +114,48 @@ model User {
   outboundOrders OutboundOrder[]
   stocktakeTasks StocktakeTask[]
   adjustOrders InventoryAdjustOrder[]
+  batchInboundOrders BatchInboundOrder[]
   stockMovements StockMovement[]
   auditLogs    OperationAuditLog[]
 
   @@map("users")
+}
+
+model BatchInboundOrder {
+  id                BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  orderNo           String                  @unique @map("order_no") @db.VarChar(64)
+  status            BatchInboundOrderStatus
+  expectedBoxCount  Int                     @map("expected_box_count")
+  rangeStart        Int                     @map("range_start")
+  rangeEnd          Int                     @map("range_end")
+  collectedBoxCodes Json                    @map("collected_box_codes")
+  uploadedFileName  String?                 @map("uploaded_file_name") @db.VarChar(255)
+  remark            String?                 @db.VarChar(255)
+  createdBy         BigInt                  @map("created_by") @db.UnsignedBigInt
+  createdAt         DateTime                @default(now()) @map("created_at")
+  updatedAt         DateTime                @updatedAt @map("updated_at")
+  creator           User                    @relation(fields: [createdBy], references: [id])
+  items             BatchInboundItem[]
+
+  @@map("batch_inbound_orders")
+}
+
+model BatchInboundItem {
+  id          BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  orderId     BigInt                @map("order_id") @db.UnsignedBigInt
+  boxCode     String                @map("box_code") @db.VarChar(128)
+  skuCode     String                @map("sku_code") @db.VarChar(128)
+  qty         Int
+  sourceRowNo Int?                  @map("source_row_no")
+  status      BatchInboundItemStatus @default(pending)
+  confirmedAt DateTime?             @map("confirmed_at")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  order       BatchInboundOrder     @relation(fields: [orderId], references: [id])
+
+  @@unique([orderId, boxCode, skuCode], map: "uq_batch_order_box_sku")
+  @@index([orderId, status])
+  @@index([orderId, boxCode])
+  @@map("batch_inbound_items")
 }
 
 model Sku {

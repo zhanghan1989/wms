@@ -54,6 +54,7 @@
   <main id="appLayout" class="layout hidden">
     <aside class="sidebar">
       <button class="nav-btn active" data-target="inventory">库存管理</button>
+      <button class="nav-btn" data-target="batchInbound">批量入库</button>
       <button class="nav-btn" data-target="overview">总览</button>
       <button class="nav-btn" data-target="users">员工</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
@@ -94,6 +95,66 @@
             </thead>
             <tbody id="inventoryBody"></tbody>
           </table>
+        </div>
+      </section>
+
+      <section class="panel" id="batchInbound">
+        <div class="panel-head">
+          <h2>批量入库</h2>
+          <button id="refreshBatchInbound" class="ghost">刷新</button>
+        </div>
+
+        <div class="batch-inbound-layout">
+          <article class="card">
+            <h3>第一步：采集箱号</h3>
+            <form id="collectBatchInboundForm" class="form-grid batch-collect-form">
+              <label>
+                采集总箱数
+                <input id="batchCollectBoxCount" type="number" min="1" max="500" value="20" required />
+              </label>
+              <button type="submit">采集</button>
+            </form>
+            <p id="batchCollectHint" class="batch-hint muted">输入箱数后点击采集，系统会分配连续可用箱号范围。</p>
+          </article>
+
+          <article class="card">
+            <h3>第二步：上传批量入库文档</h3>
+            <form id="uploadBatchInboundForm" class="form-grid batch-upload-form">
+              <label>
+                选择批量入库单
+                <select id="batchUploadOrderId" required>
+                  <option value="">请选择入库单</option>
+                </select>
+              </label>
+              <label>
+                Excel 文件
+                <input id="batchInboundFile" type="file" accept=".xlsx,.xls,.csv" required />
+              </label>
+              <button type="submit">上传并校验箱号</button>
+            </form>
+          </article>
+        </div>
+
+        <div class="card">
+          <h3>批量入库单列表</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>单号</th>
+                <th>状态</th>
+                <th>采集箱号范围</th>
+                <th>明细进度</th>
+                <th>创建时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="batchInboundBody"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <h3>确认入库</h3>
+          <div id="batchInboundDetail" class="batch-detail-empty muted">请先选择批量入库单。</div>
         </div>
       </section>
 
@@ -254,26 +315,6 @@
           <button type="button" class="ghost" data-action="closeEditSkuModal">取消</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <div id="batchInboundModal" class="modal hidden">
-    <div class="modal-card modal-wide">
-      <div class="modal-head">
-        <h3>批量入库（Excel 导入）</h3>
-        <button type="button" class="ghost" data-action="closeBatchInboundModal">关闭</button>
-      </div>
-      <form id="importInboundForm" class="form-grid compact">
-        <label>Excel 文件<input id="inboundFile" type="file" accept=".xlsx,.xls,.csv" required /></label>
-        <button type="submit">导入并生成待确认单</button>
-        <button type="button" id="refreshInbound" class="ghost">刷新</button>
-      </form>
-      <table>
-        <thead>
-          <tr><th>单号</th><th>状态</th><th>类型</th><th>明细数</th><th>创建时间</th><th>操作</th></tr>
-        </thead>
-        <tbody id="inboundBody"></tbody>
-      </table>
     </div>
   </div>
 

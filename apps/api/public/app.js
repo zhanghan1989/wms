@@ -9,6 +9,9 @@ const state = {
   inventoryVisibleCount: 0,
   inventoryPageSize: 30,
   inventorySearchMode: false,
+  batchInboundOrders: [],
+  selectedBatchInboundOrderId: "",
+  selectedBatchInboundOrderDetail: null,
   plainPasswords: (() => {
     try {
       const raw = localStorage.getItem("wms_plain_password_map");
@@ -744,38 +747,273 @@ async function loadBoxes() {
     .join("");
 }
 
-function getInboundOrderStatusTag(status) {
-  if (status === "confirmed") return '<span class="tag">已确认</span>';
-  if (status === "void") return '<span class="tag">已作废</span>';
-  return '<span class="tag">待处理</span>';
+function getBatchInboundStatusText(status) {
+  if (status === "waiting_upload") return "等待上传批量入库文档";
+  if (status === "waiting_inbound") return "等待入库";
+  if (status === "confirmed") return "已确认";
+  if (status === "void") return "已作废";
+  return status || "-";
 }
 
-async function loadInboundOrders() {
-  const orders = await request("/inbound/orders");
-  $("statInboundDraft").textContent = orders.filter((order) => order.status === "draft").length;
+function formatBatchRange(order) {
+  if (!order?.rangeStart || !order?.rangeEnd || !order?.expectedBoxCount) {
+    return "-";
+  }
+  return `${order.rangeStart} ~ ${order.rangeEnd}（${order.expectedBoxCount}箱）`;
+}
 
-  $("inboundBody").innerHTML = orders
+function renderBatchInboundUploadOptions() {
+  const select = $("batchUploadOrderId");
+  if (!select) return;
+  const prev = select.value || state.selectedBatchInboundOrderId || "";
+  const waitingUploadOrders = state.batchInboundOrders.filter(
+    (order) => order.status === "waiting_upload" || order.status === "waiting_inbound",
+  );
+  const options = waitingUploadOrders
+    .map(
+      (order) =>
+        `<option value="${escapeHtml(order.id)}">${escapeHtml(order.orderNo)}（${escapeHtml(
+          getBatchInboundStatusText(order.status),
+        )}）</option>`,
+    )
+    .join("");
+  select.innerHTML = `<option value="">请选择入库单</option>${options}`;
+  if (waitingUploadOrders.some((order) => String(order.id) === String(prev))) {
+    select.value = prev;
+  }
+}
+
+function renderBatchInboundOrders() {
+  const tbody = $("batchInboundBody");
+  if (!tbody) return;
+  if (!state.batchInboundOrders.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">-</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = state.batchInboundOrders
     .map((order) => {
-      const actionHtml =
-        order.status === "draft"
-          ? [
-              `<button class="tiny-btn" data-action="confirmInbound" data-id="${order.id}">确认</button>`,
-              `<button class="tiny-btn ghost" data-action="voidInbound" data-id="${order.id}">作废</button>`,
-            ].join(" ")
-          : getInboundOrderStatusTag(order.status);
-
+      const actions = [
+        `<button class="tiny-btn ghost" data-action="batchInboundSelectOrder" data-order-id="${escapeHtml(
+          order.id,
+        )}">查看</button>`,
+      ];
+      if (order.status === "waiting_inbound") {
+        actions.push(
+          `<button class="tiny-btn" data-action="batchInboundOpenConfirm" data-order-id="${escapeHtml(
+            order.id,
+          )}">确认入库</button>`,
+        );
+      }
       return `
         <tr>
           <td>${escapeHtml(order.orderNo)}</td>
-          <td>${escapeHtml(order.status)}</td>
-          <td>${escapeHtml(order.orderType)}</td>
-          <td>${escapeHtml(order.items?.length ?? 0)}</td>
+          <td>${escapeHtml(getBatchInboundStatusText(order.status))}</td>
+          <td>${escapeHtml(formatBatchRange(order))}</td>
+          <td>${escapeHtml(order.confirmedCount ?? 0)} / ${escapeHtml(order.itemCount ?? 0)}</td>
           <td>${formatDate(order.createdAt)}</td>
-          <td>${actionHtml}</td>
+          <td><div class="action-row">${actions.join("")}</div></td>
         </tr>
       `;
     })
     .join("");
+}
+
+function renderBatchInboundDetail(detail) {
+  const container = $("batchInboundDetail");
+  if (!container) return;
+  if (!detail) {
+    container.className = "batch-detail-empty muted";
+    container.textContent = "请先选择批量入库单。";
+    return;
+  }
+
+  const grouped = new Map();
+  (detail.items || []).forEach((item) => {
+    const key = item.boxCode;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(item);
+  });
+
+  const boxCodes = Array.from(grouped.keys()).sort((a, b) => {
+    const numA = Number(String(a).replace(/\D/g, ""));
+    const numB = Number(String(b).replace(/\D/g, ""));
+    return numA - numB;
+  });
+
+  const canConfirm = detail.status === "waiting_inbound";
+  const headerActions = canConfirm
+    ? `<button class="tiny-btn" data-action="batchInboundConfirmAll" data-order-id="${escapeHtml(
+        detail.id,
+      )}">整单确认入库</button>`
+    : "";
+
+  const boxBlocks = boxCodes
+    .map((boxCode) => {
+      const items = grouped.get(boxCode) || [];
+      const pendingCount = items.filter((item) => item.status === "pending").length;
+      const boxAction =
+        canConfirm && pendingCount > 0
+          ? `<button class="tiny-btn" data-action="batchInboundConfirmBox" data-order-id="${escapeHtml(
+              detail.id,
+            )}" data-box-code="${escapeHtml(boxCode)}">确认整箱</button>`
+          : `<span class="tag">${pendingCount > 0 ? "待确认" : "已确认"}</span>`;
+
+      return `
+        <article class="batch-box-card">
+          <div class="batch-box-head">
+            <h4 class="batch-box-title">箱号 ${escapeHtml(boxCode)}</h4>
+            <div class="batch-detail-actions">${boxAction}</div>
+          </div>
+          <table class="batch-detail-table">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>数量</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items
+                .map((item) => {
+                  const itemAction =
+                    canConfirm && item.status === "pending"
+                      ? `<button class="tiny-btn" data-action="batchInboundConfirmItem" data-order-id="${escapeHtml(
+                          detail.id,
+                        )}" data-item-id="${escapeHtml(item.id)}">确认SKU</button>`
+                      : '<span class="muted">-</span>';
+                  return `
+                    <tr>
+                      <td>${escapeHtml(item.skuCode)}</td>
+                      <td>${escapeHtml(item.qty)}</td>
+                      <td>${escapeHtml(item.status === "pending" ? "待确认" : "已确认")}</td>
+                      <td>${itemAction}</td>
+                    </tr>
+                  `;
+                })
+                .join("")}
+            </tbody>
+          </table>
+        </article>
+      `;
+    })
+    .join("");
+
+  container.className = "";
+  container.innerHTML = `
+    <div class="batch-detail-head">
+      <div class="batch-detail-meta">
+        <div>单号：${escapeHtml(detail.orderNo)}</div>
+        <div>状态：${escapeHtml(getBatchInboundStatusText(detail.status))}</div>
+        <div>采集范围：${escapeHtml(formatBatchRange(detail))}</div>
+        <div>明细进度：${escapeHtml(detail.confirmedCount ?? 0)} / ${escapeHtml(
+          detail.itemCount ?? 0,
+        )}</div>
+      </div>
+      <div class="batch-detail-actions">${headerActions}</div>
+    </div>
+    ${boxBlocks || '<div class="muted">暂无明细</div>'}
+  `;
+}
+
+async function loadBatchInboundOrders({ keepSelection = true } = {}) {
+  const orders = await request("/batch-inbound/orders");
+  state.batchInboundOrders = Array.isArray(orders) ? orders : [];
+  $("statInboundDraft").textContent = state.batchInboundOrders.filter(
+    (order) => order.status === "waiting_upload" || order.status === "waiting_inbound",
+  ).length;
+  renderBatchInboundOrders();
+  renderBatchInboundUploadOptions();
+
+  if (!keepSelection) {
+    state.selectedBatchInboundOrderId = "";
+    state.selectedBatchInboundOrderDetail = null;
+    renderBatchInboundDetail(null);
+    return;
+  }
+
+  if (!state.selectedBatchInboundOrderId) {
+    renderBatchInboundDetail(null);
+    return;
+  }
+
+  const exists = state.batchInboundOrders.some(
+    (order) => String(order.id) === String(state.selectedBatchInboundOrderId),
+  );
+  if (!exists) {
+    state.selectedBatchInboundOrderId = "";
+    state.selectedBatchInboundOrderDetail = null;
+    renderBatchInboundDetail(null);
+    return;
+  }
+
+  await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
+}
+
+async function loadBatchInboundOrderDetail(orderId, { silent = false } = {}) {
+  const detail = await request(`/batch-inbound/orders/${orderId}`);
+  state.selectedBatchInboundOrderId = String(orderId);
+  state.selectedBatchInboundOrderDetail = detail;
+  renderBatchInboundDetail(detail);
+  if (!silent) {
+    $("batchUploadOrderId").value = String(orderId);
+  }
+}
+
+async function submitCollectBatchInboundForm() {
+  const boxCount = Number($("batchCollectBoxCount").value);
+  if (!Number.isInteger(boxCount) || boxCount <= 0) {
+    throw new Error("采集箱数必须是大于0的整数");
+  }
+
+  const created = await request("/batch-inbound/orders/collect", {
+    method: "POST",
+    body: JSON.stringify({ boxCount }),
+  });
+
+  const hint = $("batchCollectHint");
+  if (hint && created) {
+    hint.textContent = `请使用从数字 ${created.rangeStart} ~ ${created.rangeEnd} 的 ${created.expectedBoxCount} 个箱号。`;
+  }
+  state.selectedBatchInboundOrderId = String(created.id);
+}
+
+async function submitUploadBatchInboundForm() {
+  const orderId = $("batchUploadOrderId").value;
+  const file = $("batchInboundFile").files?.[0];
+  if (!orderId) {
+    throw new Error("请先选择批量入库单");
+  }
+  if (!file) {
+    throw new Error("请上传批量入库文档");
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+  await request(`/batch-inbound/orders/${orderId}/upload`, {
+    method: "POST",
+    body: formData,
+  });
+
+  $("batchInboundFile").value = "";
+  state.selectedBatchInboundOrderId = String(orderId);
+}
+
+async function confirmBatchInboundAction(action, orderId, payload = {}) {
+  if (!orderId) {
+    throw new Error("缺少批量入库单ID");
+  }
+  let path = `/batch-inbound/orders/${orderId}/confirm-all`;
+  if (action === "item") {
+    path = `/batch-inbound/orders/${orderId}/items/${payload.itemId}/confirm`;
+  } else if (action === "box") {
+    path = `/batch-inbound/orders/${orderId}/boxes/${encodeURIComponent(payload.boxCode)}/confirm`;
+  }
+  await request(path, {
+    method: "POST",
+    body: "{}",
+  });
 }
 
 function formatAuditEntity(item) {
@@ -976,14 +1214,15 @@ async function reloadAll() {
     $("usersBody").innerHTML = "";
     $("auditBody").innerHTML = "";
     $("inventoryBody").innerHTML = "";
-    $("inboundBody").innerHTML = "";
+    $("batchInboundBody").innerHTML = "";
+    renderBatchInboundDetail(null);
     $("inventorySearchResults").textContent = "-";
     setInventoryDisplayMode(false);
     return;
   }
 
   const isAdmin = state.me?.role === "admin";
-  const tasks = [loadInventory(), loadShelves(), loadBoxes(), loadInboundOrders()];
+  const tasks = [loadInventory(), loadShelves(), loadBoxes(), loadBatchInboundOrders()];
   if (isAdmin) {
     tasks.push(loadUsers(), loadAudit());
   } else {
@@ -1106,26 +1345,31 @@ function bindForms() {
     }
   });
 
-  $("importInboundForm").addEventListener("submit", async (event) => {
+  $("collectBatchInboundForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const file = $("inboundFile").files?.[0];
-    if (!file) {
-      showToast("请选择 Excel 文件", true);
-      return;
-    }
-
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      await request("/inbound/import-excel", {
-        method: "POST",
-        body: formData,
-      });
-      $("importInboundForm").reset();
-      showToast("导入成功，已生成待确认入库单");
-      await loadInboundOrders();
-      await loadBoxes();
+      await submitCollectBatchInboundForm();
+      showToast("箱号采集完成，已创建批量入库单");
+      await loadBatchInboundOrders();
+      if (state.selectedBatchInboundOrderId) {
+        await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("uploadBatchInboundForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await submitUploadBatchInboundForm();
+      showToast("文档上传成功，状态已更新为等待入库");
+      await loadBatchInboundOrders();
+      if (state.selectedBatchInboundOrderId) {
+        await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
+      }
       await loadInventory();
+      await loadBoxes();
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);
@@ -1143,8 +1387,13 @@ function bindForms() {
 
   $("openBatchInboundModal").addEventListener("click", async () => {
     try {
-      await loadInboundOrders();
-      openModal("batchInboundModal");
+      switchPanel("batchInbound");
+      await loadBatchInboundOrders();
+      if (state.selectedBatchInboundOrderId) {
+        await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
+      } else {
+        renderBatchInboundDetail(null);
+      }
     } catch (error) {
       showToast(error.message, true);
     }
@@ -1339,23 +1588,51 @@ function bindForms() {
 }
 
 function bindDelegates() {
-  $("inboundBody").addEventListener("click", async (event) => {
+  $("batchInboundBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
 
     const action = button.dataset.action;
-    const id = button.dataset.id;
-    if (!id) return;
+    const orderId = button.dataset.orderId;
+    if (!orderId) return;
 
     try {
-      if (action === "confirmInbound") {
-        await request(`/inbound/orders/${id}/confirm`, { method: "POST", body: "{}" });
-        showToast("入库单已确认");
-      } else if (action === "voidInbound") {
-        await request(`/inbound/orders/${id}/void`, { method: "POST", body: "{}" });
-        showToast("入库单已作废");
+      if (action === "batchInboundSelectOrder" || action === "batchInboundOpenConfirm") {
+        await loadBatchInboundOrderDetail(orderId);
+        switchPanel("batchInbound");
       }
-      await loadInboundOrders();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("batchInboundDetail").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const action = button.dataset.action;
+    const orderId = button.dataset.orderId;
+    if (!orderId) return;
+
+    try {
+      if (action === "batchInboundConfirmAll") {
+        await confirmBatchInboundAction("all", orderId);
+        showToast("整单确认入库成功");
+      } else if (action === "batchInboundConfirmBox") {
+        const boxCode = button.dataset.boxCode;
+        await confirmBatchInboundAction("box", orderId, { boxCode });
+        showToast("整箱确认入库成功");
+      } else if (action === "batchInboundConfirmItem") {
+        const itemId = button.dataset.itemId;
+        await confirmBatchInboundAction("item", orderId, { itemId });
+        showToast("SKU确认入库成功");
+      } else {
+        return;
+      }
+
+      await loadBatchInboundOrders();
+      await loadBatchInboundOrderDetail(orderId, { silent: true });
+      await loadInventory();
+      await loadBoxes();
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);
@@ -1429,11 +1706,6 @@ function bindDelegates() {
       closeModal("adjustModal");
       return;
     }
-    const inboundClose = event.target.closest("button[data-action='closeBatchInboundModal']");
-    if (inboundClose) {
-      closeModal("batchInboundModal");
-      return;
-    }
     const myAuditClose = event.target.closest("button[data-action='closeMyAuditModal']");
     if (myAuditClose) {
       closeModal("myAuditModal");
@@ -1474,12 +1746,6 @@ function bindDelegates() {
     }
   });
 
-  $("batchInboundModal").addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) {
-      closeModal("batchInboundModal");
-    }
-  });
-
   $("myAuditModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("myAuditModal");
@@ -1514,7 +1780,9 @@ function bindRefresh() {
   $("refreshUsers").addEventListener("click", () => loadUsers().catch((error) => showToast(error.message, true)));
   $("refreshShelves").addEventListener("click", () => loadShelves().catch((error) => showToast(error.message, true)));
   $("refreshBoxes").addEventListener("click", () => loadBoxes().catch((error) => showToast(error.message, true)));
-  $("refreshInbound").addEventListener("click", () => loadInboundOrders().catch((error) => showToast(error.message, true)));
+  $("refreshBatchInbound").addEventListener("click", () =>
+    loadBatchInboundOrders().catch((error) => showToast(error.message, true)),
+  );
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((error) => showToast(error.message, true)));
 }
 

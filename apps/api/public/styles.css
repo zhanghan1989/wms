@@ -525,6 +525,88 @@ td {
   margin-top: 6px;
 }
 
+.batch-inbound-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.batch-collect-form {
+  grid-template-columns: 1fr 180px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+
+.batch-upload-form {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  align-items: end;
+}
+
+.batch-hint {
+  margin: 0;
+}
+
+.batch-detail-empty {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+}
+
+.batch-detail-head {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.batch-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 6px 12px;
+  font-size: 13px;
+}
+
+.batch-detail-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.batch-box-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  margin-top: 10px;
+  background: #fff;
+}
+
+.batch-box-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.batch-box-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.batch-detail-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.batch-detail-table th,
+.batch-detail-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 8px;
+  text-align: left;
+  font-size: 13px;
+}
+
 .tag {
   display: inline-block;
   border: 1px solid var(--line);
@@ -638,6 +720,17 @@ pre {
 
   .inventory-search-fields {
     grid-template-columns: 1fr;
+  }
+
+  .batch-inbound-layout,
+  .batch-collect-form,
+  .batch-upload-form,
+  .batch-detail-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .batch-detail-head {
+    flex-direction: column;
   }
 
   .adjust-box-row {
