@@ -101,7 +101,7 @@ export class InboundService {
         Prisma.sql`SELECT id, status FROM inbound_orders WHERE id = ${orderId} FOR UPDATE`,
       );
       if (locked.length === 0) {
-        throw new NotFoundException('inbound order not found');
+        throw new NotFoundException('入库单不存在');
       }
 
       if (locked[0].status === OrderStatus.confirmed) {
@@ -113,16 +113,16 @@ export class InboundService {
         };
       }
       if (locked[0].status === OrderStatus.void) {
-        throw new UnprocessableEntityException('void order cannot be confirmed');
+        throw new UnprocessableEntityException('已作废入库单不能确认');
       }
 
       const order = await tx.inboundOrder.findUnique({
         where: { id: orderId },
         include: { items: true },
       });
-      if (!order) throw new NotFoundException('inbound order not found');
+      if (!order) throw new NotFoundException('入库单不存在');
       if (order.items.length === 0) {
-        throw new UnprocessableEntityException('inbound order has no items');
+        throw new UnprocessableEntityException('入库单没有明细');
       }
 
       const currentInventoryRows = await tx.inventoryBoxSku.findMany({
@@ -246,10 +246,10 @@ export class InboundService {
       const locked = await tx.$queryRaw<Array<{ id: bigint; status: OrderStatus }>>(
         Prisma.sql`SELECT id, status FROM inbound_orders WHERE id = ${orderId} FOR UPDATE`,
       );
-      if (locked.length === 0) throw new NotFoundException('inbound order not found');
+      if (locked.length === 0) throw new NotFoundException('入库单不存在');
 
       if (locked[0].status === OrderStatus.confirmed) {
-        throw new UnprocessableEntityException('confirmed order cannot be voided');
+        throw new UnprocessableEntityException('已确认入库单不能作废');
       }
       if (locked[0].status === OrderStatus.void) {
         return {
@@ -260,7 +260,7 @@ export class InboundService {
       }
 
       const before = await tx.inboundOrder.findUnique({ where: { id: orderId } });
-      if (!before) throw new NotFoundException('inbound order not found');
+      if (!before) throw new NotFoundException('入库单不存在');
 
       await tx.inboundOrder.update({
         where: { id: orderId },
@@ -291,7 +291,7 @@ export class InboundService {
     const boxCode = item.boxCode.trim();
     const sku = item.sku.trim();
     if (!boxCode || !sku) {
-      throw new BadRequestException('boxCode and sku are required');
+      throw new BadRequestException('箱号和SKU为必填项');
     }
     return {
       boxCode,
@@ -306,16 +306,16 @@ export class InboundService {
     try {
       workbook = XLSX.read(fileBuffer, { type: 'buffer' });
     } catch {
-      throw new BadRequestException('invalid excel file');
+      throw new BadRequestException('无效的Excel文件');
     }
     const firstSheet = workbook.SheetNames[0];
     if (!firstSheet) {
-      throw new BadRequestException('excel has no sheet');
+      throw new BadRequestException('Excel中没有工作表');
     }
     const sheet = workbook.Sheets[firstSheet];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
     if (rows.length === 0) {
-      throw new BadRequestException('excel has no data rows');
+      throw new BadRequestException('Excel中没有数据行');
     }
 
     const errors: string[] = [];
@@ -333,13 +333,13 @@ export class InboundService {
       const qtyRaw = this.pickField(normalized, ['数量', 'qty', 'count']);
 
       if (!boxCode || !sku || !qtyRaw) {
-        errors.push(`row ${rowNo}: 箱号/SKU/数量 are required`);
+        errors.push(`第${rowNo}行：箱号/SKU/数量为必填`);
         return;
       }
 
       const qtyNumber = Number(qtyRaw);
       if (!Number.isInteger(qtyNumber) || qtyNumber <= 0) {
-        errors.push(`row ${rowNo}: 数量 must be a positive integer`);
+        errors.push(`第${rowNo}行：数量必须是正整数`);
         return;
       }
 
@@ -352,7 +352,7 @@ export class InboundService {
     });
 
     if (errors.length > 0) {
-      throw new UnprocessableEntityException(`excel validation failed: ${errors.join(' | ')}`);
+      throw new UnprocessableEntityException(`Excel校验失败：${errors.join(' | ')}`);
     }
 
     return result;
@@ -394,7 +394,7 @@ export class InboundService {
     });
     if (existing.length > 0) {
       const boxCodes = existing.map((item) => item.boxCode).join(', ');
-      throw new UnprocessableEntityException(`box already exists: ${boxCodes}`);
+      throw new UnprocessableEntityException(`箱号已存在：${boxCodes}`);
     }
   }
 
@@ -410,7 +410,7 @@ export class InboundService {
         orderBy: { id: 'asc' },
       });
       if (!shelf) {
-        throw new UnprocessableEntityException('please create at least one active shelf first');
+        throw new UnprocessableEntityException('请先创建至少一个启用状态货架');
       }
 
       const order = await tx.inboundOrder.create({

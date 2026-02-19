@@ -4,7 +4,7 @@ export function parseId(param: string, fieldName = 'id'): bigint {
   try {
     return BigInt(param);
   } catch {
-    throw new BadRequestException(`${fieldName} must be a valid integer id`);
+    throw new BadRequestException(`${fieldName}必须是有效的整数ID`);
   }
 }
 

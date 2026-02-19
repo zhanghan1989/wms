@@ -52,7 +52,7 @@ export class BatchInboundController {
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
     if (!file?.buffer) {
-      throw new BadRequestException('file is required');
+      throw new BadRequestException('请上传文件');
     }
     return this.batchInboundService.upload(
       id,

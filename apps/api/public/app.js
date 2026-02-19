@@ -62,6 +62,39 @@ function closeErrorModal() {
   closeModal("errorModal");
 }
 
+function normalizeErrorMessage(message) {
+  const raw = String(message || "").trim();
+  if (!raw) {
+    return "发生未知错误";
+  }
+
+  const exactMap = {
+    "Request failed": "请求失败",
+    "Internal Server Error": "服务器内部错误",
+    "Failed to fetch": "网络请求失败，请检查网络连接",
+    Unauthorized: "未授权，请重新登录",
+    Forbidden: "无权限执行该操作",
+    "Forbidden resource": "无权限执行该操作",
+  };
+  if (exactMap[raw]) {
+    return exactMap[raw];
+  }
+
+  const httpMatch = raw.match(/^HTTP\s+(\d{3})$/i);
+  if (httpMatch) {
+    return `请求失败（HTTP ${httpMatch[1]}）`;
+  }
+
+  const lockedMatch = raw.match(
+    /^box code is locked by batch inbound order\s+(.+),\s*please confirm or delete that order first$/i,
+  );
+  if (lockedMatch) {
+    return `箱号已被批量入库单 ${lockedMatch[1]} 锁定，请先确认或删除该单据`;
+  }
+
+  return raw;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -211,18 +244,23 @@ async function request(path, options = {}) {
     headers.Authorization = `Bearer ${state.token}`;
   }
 
-  const res = await fetch(`/api${path}`, { ...options, headers });
+  let res;
+  try {
+    res = await fetch(`/api${path}`, { ...options, headers });
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+  }
   const text = await res.text();
 
   let payload;
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
-    payload = { message: text || "Request failed" };
+    payload = { message: text || "请求失败" };
   }
 
   if (!res.ok || payload.code !== 0) {
-    throw new Error(payload.message || `HTTP ${res.status}`);
+    throw new Error(normalizeErrorMessage(payload.message || `HTTP ${res.status}`));
   }
 
   return payload.data;

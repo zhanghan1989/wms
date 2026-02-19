@@ -44,7 +44,7 @@ export class UsersService {
       where: { username: payload.username },
     });
     if (exists) {
-      throw new BadRequestException('username already exists');
+      throw new BadRequestException('用户名已存在');
     }
     const passwordHash = await hash(payload.password, 10);
     const created = await this.prisma.$transaction(async (tx) => {
@@ -92,7 +92,7 @@ export class UsersService {
   ): Promise<unknown> {
     const id = parseId(idParam, 'userId');
     const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('user not found');
+    if (!user) throw new NotFoundException('用户不存在');
 
     const data: {
       passwordHash?: string;
@@ -146,7 +146,7 @@ export class UsersService {
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'userId');
     const user = await this.prisma.user.findUnique({ where: { id } });
-    if (!user) throw new NotFoundException('user not found');
+    if (!user) throw new NotFoundException('用户不存在');
 
     await this.prisma.$transaction(async (tx) => {
       await tx.user.delete({

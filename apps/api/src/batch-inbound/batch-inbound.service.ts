@@ -113,7 +113,7 @@ export class BatchInboundService {
       },
     });
     if (!order) {
-      throw new NotFoundException('batch inbound order not found');
+      throw new NotFoundException('批量入库单不存在');
     }
 
     return this.toOrderDetail(order);
@@ -136,10 +136,10 @@ export class BatchInboundService {
         },
       });
       if (!order) {
-        throw new NotFoundException('batch inbound order not found');
+        throw new NotFoundException('批量入库单不存在');
       }
       if (order.status === BatchInboundOrderStatus.confirmed) {
-        throw new UnprocessableEntityException('confirmed order cannot be deleted');
+        throw new UnprocessableEntityException('已确认的批量入库单不能删除');
       }
 
       await tx.batchInboundItem.deleteMany({
@@ -163,7 +163,7 @@ export class BatchInboundService {
         afterData: null,
         operatorId,
         requestId,
-        remark: 'delete batch inbound order',
+        remark: '删除批量入库单',
       });
     });
 
@@ -178,7 +178,7 @@ export class BatchInboundService {
     return this.prisma.$transaction(async (tx) => {
       const normalizedBatchNo = payload.batchNo.trim().replace(/^0+/, '');
       if (!normalizedBatchNo || !/^[1-9]\d*$/.test(normalizedBatchNo)) {
-        throw new BadRequestException('batchNo must be a positive integer');
+        throw new BadRequestException('批号必须是大于0的数字');
       }
       const orderNo = this.buildBatchInboundOrderNo(normalizedBatchNo, payload.boxCount);
 
@@ -281,13 +281,13 @@ export class BatchInboundService {
         },
       });
       if (!order) {
-        throw new NotFoundException('batch inbound order not found');
+        throw new NotFoundException('批量入库单不存在');
       }
       if (order.status === BatchInboundOrderStatus.confirmed) {
-        throw new UnprocessableEntityException('confirmed order cannot upload file');
+        throw new UnprocessableEntityException('已确认的批量入库单不能上传文件');
       }
       if (order.status === BatchInboundOrderStatus.void) {
-        throw new UnprocessableEntityException('void order cannot upload file');
+        throw new UnprocessableEntityException('已作废的批量入库单不能上传文件');
       }
 
       const collectedBoxCodes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
@@ -349,7 +349,7 @@ export class BatchInboundService {
         },
         operatorId,
         requestId,
-        remark: 'upload batch inbound excel',
+        remark: '上传批量入库Excel',
       });
 
       return this.toOrderDetail(updatedOrder);
@@ -374,7 +374,7 @@ export class BatchInboundService {
         },
       });
       if (!item) {
-        throw new NotFoundException('batch inbound item not found');
+        throw new NotFoundException('批量入库明细不存在');
       }
 
       if (item.status === BatchInboundItemStatus.confirmed) {
@@ -411,7 +411,7 @@ export class BatchInboundService {
     const orderId = parseId(orderIdParam, 'batchInboundOrderId');
     const boxCode = this.normalizeBoxCode(boxCodeParam);
     if (!boxCode) {
-      throw new BadRequestException('invalid box code');
+      throw new BadRequestException('箱号格式不正确');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -512,15 +512,15 @@ export class BatchInboundService {
     `);
 
     if (rows.length === 0) {
-      throw new NotFoundException('batch inbound order not found');
+      throw new NotFoundException('批量入库单不存在');
     }
 
     const locked = rows[0];
     if (locked.status === BatchInboundOrderStatus.waiting_upload) {
-      throw new UnprocessableEntityException('please upload batch document first');
+      throw new UnprocessableEntityException('请先上传批量入库文档');
     }
     if (locked.status === BatchInboundOrderStatus.void) {
-      throw new UnprocessableEntityException('void order cannot be confirmed');
+      throw new UnprocessableEntityException('已作废的批量入库单不能确认');
     }
 
     return {
@@ -544,7 +544,7 @@ export class BatchInboundService {
       },
     });
     if (!order) {
-      throw new NotFoundException('batch inbound order not found');
+      throw new NotFoundException('批量入库单不存在');
     }
 
     const pendingCount = await tx.batchInboundItem.count({
@@ -755,7 +755,7 @@ export class BatchInboundService {
       select: { id: true },
     });
     if (!shelf) {
-      throw new UnprocessableEntityException('please create an active shelf first');
+      throw new UnprocessableEntityException('请先创建启用状态的货架');
     }
 
     const created = await tx.box.create({
@@ -790,18 +790,18 @@ export class BatchInboundService {
     try {
       workbook = XLSX.read(fileBuffer, { type: 'buffer' });
     } catch {
-      throw new BadRequestException('invalid excel file');
+      throw new BadRequestException('无效的Excel文件');
     }
 
     const firstSheet = workbook.SheetNames[0];
     if (!firstSheet) {
-      throw new BadRequestException('excel has no sheet');
+      throw new BadRequestException('Excel中没有工作表');
     }
 
     const sheet = workbook.Sheets[firstSheet];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
     if (rows.length === 0) {
-      throw new BadRequestException('excel has no data rows');
+      throw new BadRequestException('Excel中没有数据行');
     }
 
     const parsed: ParsedInboundLine[] = [];
@@ -832,13 +832,13 @@ export class BatchInboundService {
 
       const boxCode = this.normalizeBoxCode(rawBoxCode);
       if (!boxCode || !skuCode || !qtyRaw) {
-        errors.push(`row ${rowNo}: 箱号/SKU/数量 are required`);
+        errors.push(`第${rowNo}行：箱号/SKU/数量为必填`);
         return;
       }
 
       const qty = Number(qtyRaw);
       if (!Number.isInteger(qty) || qty <= 0) {
-        errors.push(`row ${rowNo}: 数量 must be a positive integer`);
+        errors.push(`第${rowNo}行：数量必须是正整数`);
         return;
       }
 
@@ -851,7 +851,7 @@ export class BatchInboundService {
     });
 
     if (errors.length > 0) {
-      throw new UnprocessableEntityException(`excel validation failed: ${errors.join(' | ')}`);
+      throw new UnprocessableEntityException(`Excel校验失败：${errors.join(' | ')}`);
     }
 
     return parsed;
@@ -889,9 +889,9 @@ export class BatchInboundService {
     }
 
     const message = [
-      'uploaded box codes must exactly match collected box range',
-      `missing: ${missing.length ? missing.join(', ') : '-'}`,
-      `unexpected: ${unexpected.length ? unexpected.join(', ') : '-'}`,
+      '上传文件中的箱号必须与采集到的箱号范围完全一致',
+      `缺少箱号：${missing.length ? missing.join(', ') : '-'}`,
+      `多余箱号：${unexpected.length ? unexpected.join(', ') : '-'}`,
     ].join(' | ');
 
     throw new UnprocessableEntityException(message);
@@ -959,7 +959,7 @@ export class BatchInboundService {
       start += 1;
     }
 
-    throw new UnprocessableEntityException('cannot find enough continuous empty box codes');
+    throw new UnprocessableEntityException('无法找到足够连续的空箱号');
   }
 
   private boxCodeToNumber(boxCode: string): number {
@@ -1011,7 +1011,7 @@ export class BatchInboundService {
 
   private parseCollectedBoxCodes(value: Prisma.JsonValue): string[] {
     if (!Array.isArray(value)) {
-      throw new UnprocessableEntityException('invalid collected box codes');
+      throw new UnprocessableEntityException('采集箱号数据无效');
     }
 
     const boxCodes = value
@@ -1019,7 +1019,7 @@ export class BatchInboundService {
       .filter((item) => Boolean(item));
 
     if (boxCodes.length === 0) {
-      throw new UnprocessableEntityException('invalid collected box codes');
+      throw new UnprocessableEntityException('采集箱号数据无效');
     }
 
     return Array.from(new Set(boxCodes)).sort((a, b) => this.boxCodeToNumber(a) - this.boxCodeToNumber(b));
@@ -1050,7 +1050,7 @@ export class BatchInboundService {
     });
 
     if (!order) {
-      throw new NotFoundException('batch inbound order not found');
+      throw new NotFoundException('批量入库单不存在');
     }
 
     return this.toOrderDetail(order);

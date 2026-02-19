@@ -43,19 +43,19 @@ export class BoxesService {
     const lockedOrderNo = await this.findLockingBatchInboundOrderNo(boxCode);
     if (lockedOrderNo) {
       throw new BadRequestException(
-        `box code is locked by batch inbound order ${lockedOrderNo}, please confirm or delete that order first`,
+        `箱号已被批量入库单 ${lockedOrderNo} 锁定，请先确认或删除该单据`,
       );
     }
 
     const exists = await this.prisma.box.findUnique({
       where: { boxCode },
     });
-    if (exists) throw new BadRequestException('box code already exists');
+    if (exists) throw new BadRequestException('箱号已存在');
 
     const shelf = await this.prisma.shelf.findUnique({
       where: { id: BigInt(payload.shelfId) },
     });
-    if (!shelf) throw new BadRequestException('shelf not found');
+    if (!shelf) throw new BadRequestException('货架不存在');
 
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.box.create({
@@ -88,32 +88,33 @@ export class BoxesService {
   ): Promise<unknown> {
     const id = parseId(idParam, 'boxId');
     const box = await this.prisma.box.findUnique({ where: { id } });
-    if (!box) throw new NotFoundException('box not found');
+    if (!box) throw new NotFoundException('箱号不存在');
 
     if (payload.boxCode) {
       const nextBoxCode = payload.boxCode.trim().toUpperCase();
       if (nextBoxCode === box.boxCode) {
         payload.boxCode = nextBoxCode;
       } else {
-      const lockedOrderNo = await this.findLockingBatchInboundOrderNo(nextBoxCode);
-      if (lockedOrderNo) {
-        throw new BadRequestException(
-          `box code is locked by batch inbound order ${lockedOrderNo}, please confirm or delete that order first`,
-        );
-      }
+        const lockedOrderNo = await this.findLockingBatchInboundOrderNo(nextBoxCode);
+        if (lockedOrderNo) {
+          throw new BadRequestException(
+            `箱号已被批量入库单 ${lockedOrderNo} 锁定，请先确认或删除该单据`,
+          );
+        }
 
-      const duplicate = await this.prisma.box.findUnique({
-        where: { boxCode: nextBoxCode },
-      });
-      if (duplicate) throw new BadRequestException('box code already exists');
+        const duplicate = await this.prisma.box.findUnique({
+          where: { boxCode: nextBoxCode },
+        });
+        if (duplicate) throw new BadRequestException('箱号已存在');
       }
       payload.boxCode = nextBoxCode;
     }
+
     if (payload.shelfId) {
       const shelf = await this.prisma.shelf.findUnique({
         where: { id: BigInt(payload.shelfId) },
       });
-      if (!shelf) throw new BadRequestException('shelf not found');
+      if (!shelf) throw new BadRequestException('货架不存在');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -145,7 +146,7 @@ export class BoxesService {
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'boxId');
     const box = await this.prisma.box.findUnique({ where: { id } });
-    if (!box) throw new NotFoundException('box not found');
+    if (!box) throw new NotFoundException('箱号不存在');
     await this.prisma.$transaction(async (tx) => {
       await tx.box.delete({ where: { id } });
       await this.auditService.create({

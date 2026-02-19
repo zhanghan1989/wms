@@ -29,12 +29,12 @@ export class AuthService {
       },
     });
     if (!user || user.status === 0) {
-      throw new UnauthorizedException('Invalid username or password');
+      throw new UnauthorizedException('用户名或密码错误');
     }
 
     const passwordMatch = await compare(password, user.passwordHash);
     if (!passwordMatch) {
-      throw new UnauthorizedException('Invalid username or password');
+      throw new UnauthorizedException('用户名或密码错误');
     }
 
     const accessToken = await this.jwtService.signAsync({
@@ -65,7 +65,7 @@ export class AuthService {
       },
     });
     if (!user) {
-      throw new UnauthorizedException('User not found');
+      throw new UnauthorizedException('用户不存在');
     }
     return user;
   }
@@ -87,16 +87,16 @@ export class AuthService {
       },
     });
     if (!user || user.status === 0) {
-      throw new UnauthorizedException('User not found');
+      throw new UnauthorizedException('用户不存在');
     }
 
     const currentMatched = await compare(currentPassword, user.passwordHash);
     if (!currentMatched) {
-      throw new BadRequestException('Current password is incorrect');
+      throw new BadRequestException('当前密码错误');
     }
     const sameAsOld = await compare(newPassword, user.passwordHash);
     if (sameAsOld) {
-      throw new BadRequestException('New password must be different');
+      throw new BadRequestException('新密码不能与当前密码相同');
     }
 
     const passwordHash = await hash(newPassword, 10);

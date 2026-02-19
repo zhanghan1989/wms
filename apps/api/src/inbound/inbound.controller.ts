@@ -38,7 +38,7 @@ export class InboundController {
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
     if (!file?.buffer) {
-      throw new BadRequestException('file is required');
+      throw new BadRequestException('请上传文件');
     }
     return this.inboundService.importExcel(
       file.buffer,

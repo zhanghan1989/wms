@@ -242,7 +242,7 @@ export class InventoryService {
     reason?: string;
   } {
     if (item.qtyDelta === 0) {
-      throw new BadRequestException('qtyDelta cannot be 0');
+      throw new BadRequestException('调整数量不能为0');
     }
     return {
       boxId: BigInt(item.boxId),
@@ -271,10 +271,10 @@ export class InventoryService {
     ]);
 
     if (boxes.length !== uniqueBoxIds.length) {
-      throw new NotFoundException('box not found in adjust items');
+      throw new NotFoundException('调整明细中存在不存在的箱号');
     }
     if (skus.length !== uniqueSkuIds.length) {
-      throw new NotFoundException('sku not found in adjust items');
+      throw new NotFoundException('调整明细中存在不存在的SKU');
     }
   }
 
@@ -290,7 +290,7 @@ export class InventoryService {
         Prisma.sql`SELECT id, status FROM inventory_adjust_orders WHERE id = ${orderId} FOR UPDATE`,
       );
       if (locked.length === 0) {
-        throw new NotFoundException('adjust order not found');
+        throw new NotFoundException('调整单不存在');
       }
       if (locked[0].status === OrderStatus.confirmed) {
         return {
@@ -301,7 +301,7 @@ export class InventoryService {
         };
       }
       if (locked[0].status === OrderStatus.void) {
-        throw new UnprocessableEntityException('void adjust order cannot be confirmed');
+        throw new UnprocessableEntityException('已作废调整单不能确认');
       }
     }
 
@@ -309,9 +309,9 @@ export class InventoryService {
       where: { id: orderId },
       include: { items: true },
     });
-    if (!order) throw new NotFoundException('adjust order not found');
+    if (!order) throw new NotFoundException('调整单不存在');
     if (order.items.length === 0) {
-      throw new UnprocessableEntityException('adjust order has no items');
+      throw new UnprocessableEntityException('调整单没有明细');
     }
 
     const currentInventoryRows = await tx.inventoryBoxSku.findMany({
@@ -335,7 +335,9 @@ export class InventoryService {
       const beforeQty = currentQtyMap.get(key) ?? 0;
       const afterQty = beforeQty + item.qtyDelta;
       if (afterQty < 0) {
-        throw new ConflictException(`insufficient inventory for box ${item.boxId} sku ${item.skuId}`);
+        throw new ConflictException(
+          `库存不足：箱号ID ${item.boxId.toString()}，SKU ID ${item.skuId.toString()}`,
+        );
       }
 
       if (existingInventoryKeys.has(key)) {
@@ -434,13 +436,13 @@ export class InventoryService {
         where: { id: BigInt(payload.skuId) },
         select: { id: true, sku: true },
       });
-      if (!sku) throw new NotFoundException('sku not found');
+      if (!sku) throw new NotFoundException('SKU不存在');
       return sku;
     }
 
     const keyword = payload.keyword?.trim();
     if (!keyword) {
-      throw new BadRequestException('skuId or keyword is required');
+      throw new BadRequestException('skuId或关键字不能为空');
     }
 
     const matched = await tx.sku.findMany({
@@ -456,10 +458,10 @@ export class InventoryService {
       take: 20,
     });
     if (matched.length === 0) {
-      throw new NotFoundException('no sku matched');
+      throw new NotFoundException('未找到匹配的SKU');
     }
     if (matched.length > 1) {
-      throw new UnprocessableEntityException('multiple skus matched, please choose skuId explicitly');
+      throw new UnprocessableEntityException('匹配到多个SKU，请明确选择skuId');
     }
     return matched[0];
   }
@@ -473,18 +475,18 @@ export class InventoryService {
         where: { id: BigInt(payload.boxId) },
         select: { id: true, boxCode: true },
       });
-      if (!box) throw new NotFoundException('box not found');
+      if (!box) throw new NotFoundException('箱号不存在');
       return box;
     }
     const boxCode = payload.boxCode?.trim();
     if (!boxCode) {
-      throw new BadRequestException('boxId or boxCode is required');
+      throw new BadRequestException('boxId或箱号不能为空');
     }
     const box = await tx.box.findUnique({
       where: { boxCode },
       select: { id: true, boxCode: true },
     });
-    if (!box) throw new NotFoundException('box not found');
+    if (!box) throw new NotFoundException('箱号不存在');
     return box;
   }
 

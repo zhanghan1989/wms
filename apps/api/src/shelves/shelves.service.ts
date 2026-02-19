@@ -34,7 +34,7 @@ export class ShelvesService {
         shelfCode: payload.shelfCode,
       },
     });
-    if (exists) throw new BadRequestException('shelf code already exists');
+    if (exists) throw new BadRequestException('货架号已存在');
 
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.shelf.create({
@@ -67,14 +67,14 @@ export class ShelvesService {
   ): Promise<unknown> {
     const id = parseId(idParam, 'shelfId');
     const shelf = await this.prisma.shelf.findUnique({ where: { id } });
-    if (!shelf) throw new NotFoundException('shelf not found');
+    if (!shelf) throw new NotFoundException('货架不存在');
 
     if (payload.shelfCode && payload.shelfCode !== shelf.shelfCode) {
       const duplicate = await this.prisma.shelf.findUnique({
         where: { shelfCode: payload.shelfCode },
       });
       if (duplicate) {
-        throw new BadRequestException('shelf code already exists');
+        throw new BadRequestException('货架号已存在');
       }
     }
 
@@ -102,7 +102,7 @@ export class ShelvesService {
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'shelfId');
     const shelf = await this.prisma.shelf.findUnique({ where: { id } });
-    if (!shelf) throw new NotFoundException('shelf not found');
+    if (!shelf) throw new NotFoundException('货架不存在');
     await this.prisma.$transaction(async (tx) => {
       await tx.shelf.delete({ where: { id } });
       await this.auditService.create({

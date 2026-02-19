@@ -41,7 +41,7 @@ export class SkusService {
   ): Promise<unknown> {
     const exists = await this.prisma.sku.findUnique({ where: { sku: payload.sku } });
     if (exists) {
-      throw new BadRequestException('sku already exists');
+      throw new BadRequestException('SKU已存在');
     }
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.sku.create({
@@ -70,7 +70,7 @@ export class SkusService {
   ): Promise<unknown> {
     const id = parseId(idParam, 'skuId');
     const sku = await this.prisma.sku.findUnique({ where: { id } });
-    if (!sku) throw new NotFoundException('sku not found');
+    if (!sku) throw new NotFoundException('SKU不存在');
 
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.sku.update({
@@ -96,7 +96,7 @@ export class SkusService {
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'skuId');
     const sku = await this.prisma.sku.findUnique({ where: { id } });
-    if (!sku) throw new NotFoundException('sku not found');
+    if (!sku) throw new NotFoundException('SKU不存在');
     await this.prisma.$transaction(async (tx) => {
       await tx.sku.delete({ where: { id } });
       await this.auditService.create({
