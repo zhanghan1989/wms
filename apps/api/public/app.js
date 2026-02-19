@@ -416,12 +416,9 @@ function renderInventoryTable() {
         <td>${escapeHtml(displayText(sku.model))}</td>
         <td>${escapeHtml(displayText(sku.desc1))}</td>
         <td>${escapeHtml(displayText(sku.desc2))}</td>
-        <td>${escapeHtml(displayText(sku.shop))}</td>
         <td>${escapeHtml(displayText(sku.remark))}</td>
         <td>${escapeHtml(sku.sku)}</td>
-        <td>${escapeHtml(displayText(sku.erpSku))}</td>
-        <td>${escapeHtml(displayText(sku.asin))}</td>
-        <td>${escapeHtml(displayText(sku.fnsku))}</td>
+        <td>${escapeHtml(displayText(sku.shop))}</td>
         <td>${escapeHtml(totalQty)}</td>
         <td>
           <div class="action-row">
@@ -433,7 +430,7 @@ function renderInventoryTable() {
     })
     .join("");
 
-  $("inventoryBody").innerHTML = html || '<tr><td colspan="11" class="muted">-</td></tr>';
+  $("inventoryBody").innerHTML = html || '<tr><td colspan="8" class="muted">-</td></tr>';
 }
 
 function loadMoreInventoryIfNeeded() {
