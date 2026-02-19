@@ -319,9 +319,20 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
   const flatRows = targetBoxes.flatMap((box) => {
     const boxRows = (boxSkuMap.get(String(box.boxId)) || [])
       .filter((row) => Number(row.qty ?? 0) > 0)
-      .sort((a, b) =>
-        String(displayText(a.sku?.sku)).localeCompare(String(displayText(b.sku?.sku)), "en", { numeric: true }),
-      );
+      .sort((a, b) => {
+        const aIsCurrent = Number(a.sku?.id) === currentSkuId;
+        const bIsCurrent = Number(b.sku?.id) === currentSkuId;
+        if (aIsCurrent !== bIsCurrent) {
+          return aIsCurrent ? -1 : 1;
+        }
+        if (!aIsCurrent && !bIsCurrent) {
+          const qtyDiff = Number(b.qty ?? 0) - Number(a.qty ?? 0);
+          if (qtyDiff !== 0) {
+            return qtyDiff;
+          }
+        }
+        return String(displayText(a.sku?.sku)).localeCompare(String(displayText(b.sku?.sku)), "en", { numeric: true });
+      });
     if (!boxRows.length) {
       return [
         {
