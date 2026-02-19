@@ -51,6 +51,7 @@ export class InventoryService {
     return this.prisma.inventoryBoxSku.findMany({
       where: {
         skuId: BigInt(skuId),
+        qty: { gt: 0 },
       },
       include: {
         box: {
@@ -75,6 +76,7 @@ export class InventoryService {
     return this.prisma.inventoryBoxSku.findMany({
       where: {
         boxId: BigInt(boxId),
+        qty: { gt: 0 },
       },
       include: {
         box: {
