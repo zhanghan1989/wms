@@ -279,6 +279,10 @@ function renderInboundButton(skuId, boxCode = "", label = "新增入库", lockBo
   return `<button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${skuId}"${boxAttr}${lockAttr}>${escapeHtml(label)}</button>`;
 }
 
+function renderEditButton(skuId) {
+  return `<button class="tiny-btn" data-action="inventoryEdit" data-sku-id="${skuId}">编辑</button>`;
+}
+
 function renderOutboundButton(
   skuId,
   totalQty,
@@ -396,7 +400,6 @@ function renderInventoryTable() {
     .map((sku) => {
       const rows = state.inventoryLocations.get(String(sku.id)) || [];
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
-      const outboundButton = renderOutboundButton(sku.id, totalQty);
       return `
       <tr class="inventory-main-row">
         <td>${escapeHtml(displayText(sku.model))}</td>
@@ -411,8 +414,7 @@ function renderInventoryTable() {
         <td>${escapeHtml(totalQty)}</td>
         <td>
           <div class="action-row">
-            ${renderInboundButton(sku.id)}
-            ${outboundButton}
+            ${renderEditButton(sku.id)}
           </div>
         </td>
       </tr>
@@ -552,6 +554,52 @@ async function searchInventoryProducts(keyword) {
     boxIds.map(async (boxId) => [String(boxId), await getBoxSkuInventoryRows(boxId)]),
   );
   renderInventorySearchResults(skus, new Map(locationEntries), new Map(boxSkuEntries));
+}
+
+function findSkuById(skuId) {
+  return state.inventorySkus.find((sku) => Number(sku.id) === Number(skuId));
+}
+
+function openEditSkuModal(skuId) {
+  const sku = findSkuById(skuId);
+  if (!sku) {
+    throw new Error("未找到产品");
+  }
+
+  $("editSkuId").value = String(sku.id);
+  $("editModel").value = sku.model || "";
+  $("editDesc1").value = sku.desc1 || "";
+  $("editDesc2").value = sku.desc2 || "";
+  $("editShop").value = sku.shop || "";
+  $("editRemark").value = sku.remark || "";
+  $("editSku").value = sku.sku || "";
+  $("editErpSku").value = sku.erpSku || "";
+  $("editAsin").value = sku.asin || "";
+  $("editFnsku").value = sku.fnsku || "";
+  openModal("editSkuModal");
+}
+
+async function submitEditSkuForm() {
+  const skuId = Number($("editSkuId").value);
+  if (!Number.isInteger(skuId) || skuId <= 0) {
+    throw new Error("请选择产品");
+  }
+
+  const payload = {
+    model: $("editModel").value.trim() || undefined,
+    desc1: $("editDesc1").value.trim() || undefined,
+    desc2: $("editDesc2").value.trim() || undefined,
+    shop: $("editShop").value.trim() || undefined,
+    remark: $("editRemark").value.trim() || undefined,
+    erpSku: $("editErpSku").value.trim() || undefined,
+    asin: $("editAsin").value.trim() || undefined,
+    fnsku: $("editFnsku").value.trim() || undefined,
+  };
+
+  await request(`/skus/${skuId}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
 }
 
 function renderShelfOptionsForSelect(selectId, placeholder) {
@@ -1206,6 +1254,22 @@ function bindForms() {
     }
   });
 
+  $("editSkuForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await submitEditSkuForm();
+      closeModal("editSkuModal");
+      showToast("产品已更新");
+      await loadInventory();
+      await loadAudit();
+      if (state.inventorySearchMode) {
+        await searchInventoryProducts($("inventoryKeyword").value.trim());
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("adjustForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -1279,7 +1343,17 @@ function bindDelegates() {
     }
   };
 
-  $("inventoryBody").addEventListener("click", openAdjustByAction);
+  $("inventoryBody").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action='inventoryEdit']");
+    if (!button) return;
+    const skuId = Number(button.dataset.skuId);
+    if (!Number.isInteger(skuId) || skuId <= 0) return;
+    try {
+      openEditSkuModal(skuId);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
   $("inventorySearchResults").addEventListener("click", openAdjustByAction);
 
   document.addEventListener("click", (event) => {
@@ -1316,6 +1390,11 @@ function bindDelegates() {
     const profileClose = event.target.closest("button[data-action='closeProfileModal']");
     if (profileClose) {
       closeModal("profileModal");
+      return;
+    }
+    const editClose = event.target.closest("button[data-action='closeEditSkuModal']");
+    if (editClose) {
+      closeModal("editSkuModal");
     }
   });
 
@@ -1358,6 +1437,12 @@ function bindDelegates() {
   $("profileModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("profileModal");
+    }
+  });
+
+  $("editSkuModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("editSkuModal");
     }
   });
 }

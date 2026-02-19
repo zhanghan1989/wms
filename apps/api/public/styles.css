@@ -230,7 +230,8 @@ h3 {
 }
 
 .inventory-search-form {
-  grid-template-columns: minmax(280px, 1fr) 140px;
+  grid-template-columns: minmax(240px, 33%) 100px;
+  justify-content: start;
   align-items: end;
 }
 
