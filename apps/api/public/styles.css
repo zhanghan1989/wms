@@ -257,6 +257,10 @@ h3 {
   grid-column: 1 / 2;
 }
 
+.create-sku-right-col {
+  grid-column: 2 / 3;
+}
+
 .create-sku-full-row {
   grid-column: 1 / -1;
 }
@@ -638,6 +642,12 @@ pre {
 
   .adjust-box-row {
     grid-template-columns: 1fr;
+  }
+
+  .create-sku-left-col,
+  .create-sku-right-col,
+  .create-sku-box-action {
+    grid-column: 1 / -1;
   }
 
   .modal-actions {
