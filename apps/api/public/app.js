@@ -342,11 +342,35 @@ function renderInventorySearchResults(skus, locationMap) {
 
   container.innerHTML = skus
     .map((sku) => {
-      const labels = [sku.sku, sku.erpSku, sku.asin, sku.fnsku].filter(Boolean).join(" / ");
       const rows = locationMap.get(String(sku.id)) || [];
+      const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
+      const detailRows = [
+        ["型号", displayText(sku.model)],
+        ["说明1", displayText(sku.desc1)],
+        ["说明2", displayText(sku.desc2)],
+        ["店铺", displayText(sku.shop)],
+        ["备注", displayText(sku.remark)],
+        ["SKU", displayText(sku.sku)],
+        ["erpSKU", displayText(sku.erpSku)],
+        ["ASIN", displayText(sku.asin)],
+        ["FNSKU", displayText(sku.fnsku)],
+        ["库存数量", totalQty],
+      ];
       return `
       <div class="inventory-search-item">
-        <div class="inventory-search-title">${escapeHtml(labels)}</div>
+        <div class="inventory-search-title">检索结果明细</div>
+        <div class="inventory-search-fields">
+          ${detailRows
+            .map(
+              ([name, value]) => `
+            <div class="inventory-search-field">
+              <span class="inventory-search-field-name">${escapeHtml(name)}：</span>
+              <span class="inventory-search-field-value">${escapeHtml(value)}</span>
+            </div>
+          `,
+            )
+            .join("")}
+        </div>
         <div class="inventory-search-locations">${renderInventoryLocationRows(rows)}</div>
         <div class="action-row">
           <button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${sku.id}">入库</button>

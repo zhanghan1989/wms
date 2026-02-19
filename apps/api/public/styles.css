@@ -424,6 +424,26 @@ td {
   margin-bottom: 4px;
 }
 
+.inventory-search-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 4px 14px;
+  margin-bottom: 6px;
+}
+
+.inventory-search-field {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.inventory-search-field-name {
+  color: var(--muted);
+}
+
+.inventory-search-field-value {
+  color: var(--ink);
+}
+
 .inventory-search-locations {
   font-size: 12px;
   color: var(--muted);
@@ -534,6 +554,10 @@ pre {
   .inventory-search-form,
   .modal-grid,
   .cards {
+    grid-template-columns: 1fr;
+  }
+
+  .inventory-search-fields {
     grid-template-columns: 1fr;
   }
 
