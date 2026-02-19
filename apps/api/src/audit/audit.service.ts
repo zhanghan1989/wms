@@ -23,21 +23,30 @@ export class AuditService {
 
   async create(payload: AuditLogPayload): Promise<void> {
     const db = payload.db ?? this.prisma;
-    const changedFields = this.buildChangedFields(payload.beforeData, payload.afterData);
+    const normalizedBeforeData = payload.beforeData
+      ? (this.normalizeForJson(payload.beforeData) as Record<string, unknown>)
+      : undefined;
+    const normalizedAfterData = payload.afterData
+      ? (this.normalizeForJson(payload.afterData) as Record<string, unknown>)
+      : undefined;
+    const changedFields = this.buildChangedFields(
+      normalizedBeforeData ?? null,
+      normalizedAfterData ?? null,
+    );
     const beforeData =
       payload.beforeData === null
         ? Prisma.JsonNull
-        : payload.beforeData
-          ? (payload.beforeData as Prisma.InputJsonValue)
+        : normalizedBeforeData
+          ? (normalizedBeforeData as Prisma.InputJsonValue)
           : undefined;
     const afterData =
       payload.afterData === null
         ? Prisma.JsonNull
-        : payload.afterData
-          ? (payload.afterData as Prisma.InputJsonValue)
+        : normalizedAfterData
+          ? (normalizedAfterData as Prisma.InputJsonValue)
           : undefined;
     const changedFieldsData = changedFields.length
-      ? (changedFields as Prisma.InputJsonValue)
+      ? (this.normalizeForJson(changedFields) as Prisma.InputJsonValue)
       : undefined;
 
     await db.operationAuditLog.create({
@@ -129,10 +138,37 @@ export class AuditService {
     keys.forEach((key) => {
       const before = beforeData[key];
       const after = afterData[key];
-      if (JSON.stringify(before) !== JSON.stringify(after)) {
+      if (this.toComparableJson(before) !== this.toComparableJson(after)) {
         changes.push({ field: key, before, after });
       }
     });
     return changes;
+  }
+
+  private normalizeForJson(value: unknown): unknown {
+    if (value === null || value === undefined) {
+      return value;
+    }
+    if (typeof value === 'bigint') {
+      return value.toString();
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    if (Array.isArray(value)) {
+      return value.map((item) => this.normalizeForJson(item));
+    }
+    if (typeof value === 'object') {
+      const entries = Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, this.normalizeForJson(item)]);
+      return Object.fromEntries(entries);
+    }
+    return value;
+  }
+
+  private toComparableJson(value: unknown): string {
+    const normalized = this.normalizeForJson(value);
+    return JSON.stringify(normalized ?? null);
   }
 }
