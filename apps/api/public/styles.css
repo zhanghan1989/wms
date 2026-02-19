@@ -246,6 +246,23 @@ h3 {
   grid-template-columns: repeat(2, minmax(180px, 1fr));
 }
 
+.create-sku-box-action {
+  align-self: end;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.create-sku-full-row {
+  grid-column: 1 / -1;
+}
+
+.small-btn {
+  width: auto;
+  padding: 6px 10px;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
 .adjust-single-col {
   grid-template-columns: 1fr;
 }

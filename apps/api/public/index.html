@@ -202,21 +202,21 @@
       </div>
       <form id="createSkuModalForm" class="form-grid modal-grid">
         <label>型号<input id="modalNewModel" /></label>
-        <label>说明1<input id="modalNewDesc1" /></label>
-        <label>说明2<input id="modalNewDesc2" /></label>
-        <label>店铺<input id="modalNewShop" /></label>
-        <label>备注<input id="modalNewRemark" /></label>
         <label>SKU<input id="modalNewSku" required /></label>
+        <label>说明1<input id="modalNewDesc1" /></label>
         <label>erpSKU<input id="modalNewErpSku" /></label>
+        <label>说明2<input id="modalNewDesc2" /></label>
         <label>ASIN<input id="modalNewAsin" /></label>
+        <label>备注<input id="modalNewRemark" /></label>
         <label>FNSKU<input id="modalNewFnsku" /></label>
+        <label>所属亚马逊店铺<input id="modalNewShop" /></label>
+        <div class="create-sku-box-action">
+          <button type="button" id="openCreateBoxFromSkuModal" class="ghost small-btn">新增箱号</button>
+        </div>
         <label>箱号
           <select id="modalNewSkuBoxCode" required></select>
         </label>
-        <label>新增箱号
-          <button type="button" id="openCreateBoxFromSkuModal" class="ghost">新增箱号</button>
-        </label>
-        <label>数量<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
+        <label class="create-sku-full-row">入库数<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
         <div class="modal-actions">
           <button type="submit">确认新增</button>
           <button type="button" class="ghost" data-action="closeCreateSkuModal">取消</button>

@@ -722,7 +722,7 @@ async function loadBoxes() {
   const boxes = await request("/boxes");
   state.boxes = boxes;
   $("statBoxes").textContent = boxes.length;
-  renderBoxOptionsForSelect("modalNewSkuBoxCode", "请选择已有箱号");
+  renderBoxOptionsForSelect("modalNewSkuBoxCode", "请选择已有箱号或者新增箱号");
   renderAdjustBoxSuggestions($("adjustBoxCode")?.value || "");
   $("boxesBody").innerHTML = boxes
     .map(
@@ -913,7 +913,7 @@ async function createSkuFromModal() {
   const reason = "新建产品初始入库";
 
   if (!sku) throw new Error("SKU 不能为空");
-  if (!boxCode) throw new Error("请选择已有箱号");
+  if (!boxCode) throw new Error("请选择已有箱号或者新增箱号");
   if (!Number.isFinite(qty) || qty <= 0) throw new Error("数量必须大于 0");
 
   const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
