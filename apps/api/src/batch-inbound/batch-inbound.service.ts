@@ -12,7 +12,7 @@ import {
 } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
-import { generateOrderNo, parseId } from '../common/utils';
+import { parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CollectBatchInboundDto } from './dto/collect-batch-inbound.dto';
@@ -125,6 +125,20 @@ export class BatchInboundService {
     requestId?: string,
   ): Promise<BatchInboundOrderDetail> {
     return this.prisma.$transaction(async (tx) => {
+      const normalizedBatchNo = payload.batchNo.trim().toUpperCase();
+      if (!normalizedBatchNo) {
+        throw new BadRequestException('batchNo is required');
+      }
+      const orderNo = this.buildBatchInboundOrderNo(normalizedBatchNo, payload.boxCount);
+
+      const duplicated = await tx.batchInboundOrder.findUnique({
+        where: { orderNo },
+        select: { id: true },
+      });
+      if (duplicated) {
+        throw new UnprocessableEntityException(`单号已存在：${orderNo}，请先删除已有的单号`);
+      }
+
       const usedNumbers = await this.getUsedBoxNumbers(tx);
       const reservedNumbers = await this.getReservedBoxNumbers(tx);
       reservedNumbers.forEach((num) => usedNumbers.add(num));
@@ -135,26 +149,38 @@ export class BatchInboundService {
         this.formatBoxCode(rangeStart + index),
       );
 
-      const created = await tx.batchInboundOrder.create({
-        data: {
-          orderNo: generateOrderNo('BINB'),
-          status: BatchInboundOrderStatus.waiting_upload,
-          expectedBoxCount: payload.boxCount,
-          rangeStart,
-          rangeEnd,
-          collectedBoxCodes,
-          createdBy: operatorId,
-        },
-        include: {
-          creator: {
-            select: {
-              id: true,
-              username: true,
+      const created = await (async () => {
+        try {
+          return await tx.batchInboundOrder.create({
+            data: {
+              orderNo,
+              status: BatchInboundOrderStatus.waiting_upload,
+              expectedBoxCount: payload.boxCount,
+              rangeStart,
+              rangeEnd,
+              collectedBoxCodes,
+              createdBy: operatorId,
             },
-          },
-          items: true,
-        },
-      });
+            include: {
+              creator: {
+                select: {
+                  id: true,
+                  username: true,
+                },
+              },
+              items: true,
+            },
+          });
+        } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            throw new UnprocessableEntityException(`单号已存在：${orderNo}，请先删除已有的单号`);
+          }
+          throw error;
+        }
+      })();
 
       await this.auditService.create({
         db: tx,
@@ -946,6 +972,14 @@ export class BatchInboundService {
     }
 
     return Array.from(new Set(boxCodes)).sort((a, b) => this.boxCodeToNumber(a) - this.boxCodeToNumber(b));
+  }
+
+  private buildBatchInboundOrderNo(batchNo: string, boxCount: number): string {
+    const now = new Date();
+    const yyyy = now.getFullYear().toString();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    return `BINB-${yyyy}${mm}${dd}-${batchNo}-${boxCount}`;
   }
 
   private async loadOrderDetailInTx(tx: Tx, orderId: bigint): Promise<BatchInboundOrderDetail> {

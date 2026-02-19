@@ -218,12 +218,27 @@ function bindPositiveIntegerInput(id, { min = 1, max = null } = {}) {
   input.addEventListener("blur", normalize);
 }
 
+function bindBatchNoInput(id) {
+  const input = $(id);
+  if (!input) return;
+  input.addEventListener("input", () => {
+    const normalized = String(input.value || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9_-]/g, "")
+      .slice(0, 32);
+    if (input.value !== normalized) {
+      input.value = normalized;
+    }
+  });
+}
+
 function bindInputRules() {
   bindDigitInput("newShelfCodeDigits", 3);
   bindDigitInput("newBoxCodeDigits", 4);
   bindDigitInput("modalNewBoxCodeDigits", 4);
   bindDigitInput("modalNewShelfCodeDigits", 3);
   bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
+  bindBatchNoInput("batchCollectBatchNo");
 }
 
 async function loadMe() {
@@ -986,14 +1001,24 @@ async function loadBatchInboundOrderDetail(orderId, { silent = false } = {}) {
 }
 
 async function submitCollectBatchInboundForm() {
+  const batchNoRaw = String($("batchCollectBatchNo").value || "").trim();
   const boxCount = Number($("batchCollectBoxCount").value);
+  if (!batchNoRaw) {
+    throw new Error("批号不能为空");
+  }
+  if (!/^[A-Za-z0-9_-]{1,32}$/.test(batchNoRaw)) {
+    throw new Error("批号仅支持字母/数字/_/-，最多32位");
+  }
   if (!Number.isInteger(boxCount) || boxCount <= 0) {
     throw new Error("采集箱数必须是大于0的整数");
   }
 
   const created = await request("/batch-inbound/orders/collect", {
     method: "POST",
-    body: JSON.stringify({ boxCount }),
+    body: JSON.stringify({
+      batchNo: batchNoRaw.toUpperCase(),
+      boxCount,
+    }),
   });
 
   const hint = $("batchCollectHint");

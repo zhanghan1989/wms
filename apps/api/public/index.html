@@ -106,8 +106,12 @@
 
         <div class="batch-inbound-layout">
           <article class="card">
-            <h3>第一步：采集箱号</h3>
+            <h3>第一步：输入批号和采集箱号</h3>
             <form id="collectBatchInboundForm" class="form-grid batch-collect-form">
+              <label>
+                批号
+                <input id="batchCollectBatchNo" type="text" maxlength="32" placeholder="例如：A01" required />
+              </label>
               <label>
                 采集总箱数
                 <input

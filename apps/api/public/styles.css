@@ -533,7 +533,7 @@ td {
 }
 
 .batch-collect-form {
-  grid-template-columns: 1fr 180px;
+  grid-template-columns: minmax(180px, 1fr) minmax(200px, 1fr) 180px;
   align-items: end;
   margin-bottom: 8px;
 }
