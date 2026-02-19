@@ -297,6 +297,8 @@ function renderOutboundButton(
 function buildBoxSummaries(rows) {
   const grouped = new Map();
   rows.forEach((row) => {
+    const rowQty = Number(row.qty ?? 0);
+    if (rowQty <= 0) return;
     const box = row.box;
     if (!box?.id) return;
     const boxId = String(box.id);
@@ -306,19 +308,21 @@ function buildBoxSummaries(rows) {
       shelfCode: box.shelf?.shelfCode || "-",
       qty: 0,
     };
-    current.qty += Number(row.qty ?? 0);
+    current.qty += rowQty;
     grouped.set(boxId, current);
   });
 
-  return Array.from(grouped.values()).sort((a, b) =>
-    String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }),
-  );
+  return Array.from(grouped.values())
+    .filter((item) => Number(item.qty) > 0)
+    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }));
 }
 
 function renderBoxSkuRowsTable(defaultBoxCode, rows) {
-  const list = [...rows].sort((a, b) =>
-    String(displayText(a.sku?.sku)).localeCompare(String(displayText(b.sku?.sku)), "en", { numeric: true }),
-  );
+  const list = rows
+    .filter((row) => Number(row.qty ?? 0) > 0)
+    .sort((a, b) =>
+      String(displayText(a.sku?.sku)).localeCompare(String(displayText(b.sku?.sku)), "en", { numeric: true }),
+    );
   if (!list.length) {
     return `
       <table class="inventory-box-sku-table">
