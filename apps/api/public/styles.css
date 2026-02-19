@@ -683,6 +683,12 @@ pre {
   padding: 18px;
 }
 
+.modal-card.modal-error {
+  width: min(560px, 100%);
+  padding: 18px;
+  border-color: #e8b7b7;
+}
+
 .confirm-title {
   display: inline-flex;
   align-items: center;

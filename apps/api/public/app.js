@@ -24,16 +24,42 @@ const state = {
 };
 
 let deleteConfirmResolver = null;
+let toastTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
 function showToast(message, isError = false) {
+  if (isError) {
+    showErrorModal(message);
+    return;
+  }
+
   const toast = $("toast");
   if (!toast) return;
   toast.textContent = message;
   toast.classList.remove("hidden");
-  toast.classList.toggle("error", isError);
-  setTimeout(() => toast.classList.add("hidden"), 3000);
+  toast.classList.remove("error");
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+  toastTimer = setTimeout(() => {
+    toast.classList.add("hidden");
+    toastTimer = null;
+  }, 3000);
+}
+
+function showErrorModal(message) {
+  const text = String(message || "发生未知错误");
+  const messageEl = $("errorModalMessage");
+  if (messageEl) {
+    messageEl.textContent = text;
+  }
+  openModal("errorModal");
+}
+
+function closeErrorModal() {
+  closeModal("errorModal");
 }
 
 function escapeHtml(value) {
@@ -1824,6 +1850,11 @@ function bindDelegates() {
     const deleteConfirmClose = event.target.closest("button[data-action='closeDeleteConfirmModal']");
     if (deleteConfirmClose) {
       resolveDeleteConfirm(false);
+      return;
+    }
+    const errorModalClose = event.target.closest("button[data-action='closeErrorModal']");
+    if (errorModalClose) {
+      closeErrorModal();
     }
   });
 
@@ -1880,6 +1911,16 @@ function bindDelegates() {
   $("deleteConfirmModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       resolveDeleteConfirm(false);
+    }
+  });
+
+  $("errorModalCloseBtn").addEventListener("click", () => {
+    closeErrorModal();
+  });
+
+  $("errorModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeErrorModal();
     }
   });
 }

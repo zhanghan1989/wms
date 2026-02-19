@@ -460,6 +460,19 @@
     </div>
   </div>
 
+  <div id="errorModal" class="modal hidden">
+    <div class="modal-card modal-error">
+      <div class="modal-head">
+        <h3 class="confirm-title"><span class="confirm-icon">!</span>错误</h3>
+        <button type="button" class="ghost" data-action="closeErrorModal">关闭</button>
+      </div>
+      <p id="errorModalMessage" class="confirm-message">发生错误</p>
+      <div class="modal-actions">
+        <button id="errorModalCloseBtn" type="button" class="danger-solid">我知道了</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
   <script type="module" src="/app.js"></script>
 </body>
