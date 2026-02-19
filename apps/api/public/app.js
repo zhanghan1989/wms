@@ -662,7 +662,7 @@ async function submitAdjustForm() {
     throw new Error("入库数量必须大于 1");
   }
   if (reason && reason.length > 10) {
-    throw new Error("原因最多 10 个字");
+    throw new Error("备注最多 10 个字");
   }
 
   await request("/inventory/manual-adjust", {

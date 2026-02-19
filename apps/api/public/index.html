@@ -290,7 +290,7 @@
         <h3 id="adjustModalTitle">库存操作</h3>
         <button type="button" class="ghost" data-action="closeAdjustModal">关闭</button>
       </div>
-      <form id="adjustForm" class="form-grid modal-grid">
+      <form id="adjustForm" class="form-grid modal-grid adjust-single-col">
         <input id="adjustSkuId" type="hidden" />
         <input id="adjustDirection" type="hidden" />
         <label>箱号
@@ -308,7 +308,7 @@
           <span id="adjustBoxHint" class="field-hint hidden">未找到匹配箱号，请点击右侧新增箱号</span>
         </label>
         <label>数量<input id="adjustQty" type="number" min="1" step="1" required /></label>
-        <label>原因<input id="adjustReason" maxlength="10" /></label>
+        <label>备注<input id="adjustReason" maxlength="10" /></label>
         <div class="modal-actions">
           <button id="adjustSubmitBtn" type="submit">提交</button>
           <button type="button" class="ghost" data-action="closeAdjustModal">取消</button>

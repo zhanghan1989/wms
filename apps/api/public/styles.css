@@ -245,6 +245,10 @@ h3 {
   grid-template-columns: repeat(2, minmax(180px, 1fr));
 }
 
+.adjust-single-col {
+  grid-template-columns: 1fr;
+}
+
 label {
   display: grid;
   gap: 6px;
