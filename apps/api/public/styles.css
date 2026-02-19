@@ -533,9 +533,14 @@ td {
 }
 
 .batch-collect-form {
-  grid-template-columns: minmax(180px, 1fr) minmax(200px, 1fr) 180px;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
   align-items: end;
   margin-bottom: 8px;
+}
+
+.batch-collect-submit {
+  grid-column: 1 / -1;
+  width: 180px;
 }
 
 .batch-upload-form {

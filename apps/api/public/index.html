@@ -106,7 +106,7 @@
 
         <div class="batch-inbound-layout">
           <article class="card">
-            <h3>第一步：输入批号和采集箱号</h3>
+            <h3>第一步：输入批号并采集箱号</h3>
             <form id="collectBatchInboundForm" class="form-grid batch-collect-form">
               <label>
                 批号
@@ -131,9 +131,9 @@
                   required
                 />
               </label>
-              <button type="submit">采集</button>
+              <button type="submit" class="batch-collect-submit">采集</button>
             </form>
-            <p id="batchCollectHint" class="batch-hint muted">输入箱数后点击采集，系统会分配连续可用箱号范围。</p>
+            <p id="batchCollectHint" class="batch-hint muted">输入批号和采集总箱数后点击采集，系统会分配连续可用箱号范围。</p>
           </article>
 
           <article class="card">
