@@ -23,6 +23,8 @@ const state = {
   })(),
 };
 
+let deleteConfirmResolver = null;
+
 const $ = (id) => document.getElementById(id);
 
 function showToast(message, isError = false) {
@@ -146,6 +148,30 @@ function closeModal(modalId) {
   const modal = $(modalId);
   if (!modal) return;
   modal.classList.add("hidden");
+}
+
+function openDeleteConfirmModal(orderNo) {
+  const message = $("deleteConfirmMessage");
+  if (message) {
+    message.textContent = `确认删除批量入库单 ${orderNo} ？删除后会释放该单锁定的箱号。`;
+  }
+  if (typeof deleteConfirmResolver === "function") {
+    deleteConfirmResolver(false);
+    deleteConfirmResolver = null;
+  }
+  openModal("deleteConfirmModal");
+  return new Promise((resolve) => {
+    deleteConfirmResolver = resolve;
+  });
+}
+
+function resolveDeleteConfirm(confirmed) {
+  closeModal("deleteConfirmModal");
+  if (typeof deleteConfirmResolver === "function") {
+    const resolve = deleteConfirmResolver;
+    deleteConfirmResolver = null;
+    resolve(Boolean(confirmed));
+  }
 }
 
 async function request(path, options = {}) {
@@ -1664,7 +1690,7 @@ function bindDelegates() {
         switchPanel("batchInbound");
       } else if (action === "batchInboundDeleteOrder") {
         const orderNo = button.dataset.orderNo || orderId;
-        const ok = window.confirm(`确认删除批量入库单 ${orderNo} ?`);
+        const ok = await openDeleteConfirmModal(orderNo);
         if (!ok) return;
         await deleteBatchInboundOrder(orderId);
         showToast("删除成功，已释放锁定箱号");
@@ -1793,6 +1819,11 @@ function bindDelegates() {
     const editClose = event.target.closest("button[data-action='closeEditSkuModal']");
     if (editClose) {
       closeModal("editSkuModal");
+      return;
+    }
+    const deleteConfirmClose = event.target.closest("button[data-action='closeDeleteConfirmModal']");
+    if (deleteConfirmClose) {
+      resolveDeleteConfirm(false);
     }
   });
 
@@ -1835,6 +1866,20 @@ function bindDelegates() {
   $("editSkuModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("editSkuModal");
+    }
+  });
+
+  $("deleteConfirmOkBtn").addEventListener("click", () => {
+    resolveDeleteConfirm(true);
+  });
+
+  $("deleteConfirmCancelBtn").addEventListener("click", () => {
+    resolveDeleteConfirm(false);
+  });
+
+  $("deleteConfirmModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      resolveDeleteConfirm(false);
     }
   });
 }

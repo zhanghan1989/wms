@@ -446,6 +446,20 @@
     </div>
   </div>
 
+  <div id="deleteConfirmModal" class="modal hidden">
+    <div class="modal-card modal-confirm">
+      <div class="modal-head">
+        <h3 class="confirm-title"><span class="confirm-icon">!</span>确认删除</h3>
+        <button type="button" class="ghost" data-action="closeDeleteConfirmModal">关闭</button>
+      </div>
+      <p id="deleteConfirmMessage" class="confirm-message">确认删除当前批量入库单？</p>
+      <div class="modal-actions">
+        <button id="deleteConfirmOkBtn" type="button" class="danger-solid">确认删除</button>
+        <button id="deleteConfirmCancelBtn" type="button" class="ghost">取消</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
   <script type="module" src="/app.js"></script>
 </body>

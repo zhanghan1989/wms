@@ -678,6 +678,43 @@ pre {
   width: min(1100px, 100%);
 }
 
+.modal-card.modal-confirm {
+  width: min(520px, 100%);
+  padding: 18px;
+}
+
+.confirm-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.confirm-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid #e8b7b7;
+  background: #fff0f0;
+  color: var(--danger);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.confirm-message {
+  margin: 8px 0 14px;
+  color: var(--ink);
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+button.danger-solid {
+  background: var(--danger);
+  border-color: #9e2f2f;
+  color: #fff;
+}
+
 .modal-head {
   display: flex;
   align-items: center;
