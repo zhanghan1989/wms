@@ -1,7 +1,6 @@
 const state = {
   token: localStorage.getItem("wms_token") || "",
   me: null,
-  editingSku: null,
   shelves: [],
   boxes: [],
   inventorySkus: [],
@@ -280,10 +279,6 @@ function renderInboundButton(skuId, boxCode = "", label = "新增入库", lockBo
   return `<button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${skuId}"${boxAttr}${lockAttr}>${escapeHtml(label)}</button>`;
 }
 
-function renderEditButton(skuId) {
-  return `<button class="tiny-btn" data-action="inventoryEdit" data-sku-id="${skuId}">编辑</button>`;
-}
-
 function renderOutboundButton(
   skuId,
   totalQty,
@@ -356,10 +351,25 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
         <tbody>
           ${flatRows
             .map((row) => {
+              const inboundButton = renderInboundButton(currentSkuId, row.boxCode, "入库", true);
+              const outboundPrimaryButton = renderOutboundButton(currentSkuId, row.qty, row.boxCode, {
+                label: "出库",
+                ghost: false,
+                lockBox: true,
+                action: "inventoryOutbound",
+              });
+              const outboundOneButton = renderOutboundButton(currentSkuId, row.qty, row.boxCode, {
+                label: "出库1件",
+                ghost: false,
+                lockBox: true,
+                action: "inventoryOutboundOne",
+              });
               const actionButtons = row.isCurrentSku
                 ? `
                   <div class="action-row">
-                    ${renderEditButton(currentSkuId)}
+                    ${inboundButton}
+                    ${outboundPrimaryButton}
+                    ${outboundOneButton}
                   </div>
                 `
                 : '<span class="muted">-</span>';
@@ -386,6 +396,7 @@ function renderInventoryTable() {
     .map((sku) => {
       const rows = state.inventoryLocations.get(String(sku.id)) || [];
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
+      const outboundButton = renderOutboundButton(sku.id, totalQty);
       return `
       <tr class="inventory-main-row">
         <td>${escapeHtml(displayText(sku.model))}</td>
@@ -400,7 +411,8 @@ function renderInventoryTable() {
         <td>${escapeHtml(totalQty)}</td>
         <td>
           <div class="action-row">
-            ${renderEditButton(sku.id)}
+            ${renderInboundButton(sku.id)}
+            ${outboundButton}
           </div>
         </td>
       </tr>
@@ -473,7 +485,10 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
         ["库存总数量", totalQty],
       ];
       const boxTable = totalQty > 0 ? renderBoxSkuFlatTable(sku, rows, boxSkuMap) : "";
-      const topActionRow = `<div class="action-row">${renderEditButton(sku.id)}</div>`;
+      const topActionRow =
+        totalQty > 0
+          ? ""
+          : `<div class="action-row">${renderInboundButton(sku.id)}${renderOutboundButton(sku.id, totalQty)}</div>`;
       return `
       <div class="inventory-search-item">
         <div class="inventory-search-fields">
@@ -537,51 +552,6 @@ async function searchInventoryProducts(keyword) {
     boxIds.map(async (boxId) => [String(boxId), await getBoxSkuInventoryRows(boxId)]),
   );
   renderInventorySearchResults(skus, new Map(locationEntries), new Map(boxSkuEntries));
-}
-
-function findSkuById(skuId) {
-  return state.inventorySkus.find((item) => Number(item.id) === Number(skuId));
-}
-
-function openEditSkuModal(skuId) {
-  const sku = findSkuById(skuId);
-  if (!sku) {
-    throw new Error("未找到产品");
-  }
-  state.editingSku = sku;
-  $("editSkuId").value = String(sku.id);
-  $("editModel").value = sku.model || "";
-  $("editDesc1").value = sku.desc1 || "";
-  $("editDesc2").value = sku.desc2 || "";
-  $("editShop").value = sku.shop || "";
-  $("editRemark").value = sku.remark || "";
-  $("editSku").value = sku.sku || "";
-  $("editErpSku").value = sku.erpSku || "";
-  $("editAsin").value = sku.asin || "";
-  $("editFnsku").value = sku.fnsku || "";
-  openModal("editSkuModal");
-}
-
-async function submitEditSkuForm() {
-  const skuId = Number($("editSkuId").value);
-  if (!Number.isInteger(skuId) || skuId <= 0) {
-    throw new Error("请选择产品");
-  }
-  const payload = {
-    model: $("editModel").value.trim() || undefined,
-    desc1: $("editDesc1").value.trim() || undefined,
-    desc2: $("editDesc2").value.trim() || undefined,
-    shop: $("editShop").value.trim() || undefined,
-    remark: $("editRemark").value.trim() || undefined,
-    erpSku: $("editErpSku").value.trim() || undefined,
-    asin: $("editAsin").value.trim() || undefined,
-    fnsku: $("editFnsku").value.trim() || undefined,
-  };
-
-  await request(`/skus/${skuId}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
 }
 
 function renderShelfOptionsForSelect(selectId, placeholder) {
@@ -1236,22 +1206,6 @@ function bindForms() {
     }
   });
 
-  $("editSkuForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await submitEditSkuForm();
-      closeModal("editSkuModal");
-      showToast("产品已更新");
-      await loadInventory();
-      await loadAudit();
-      if (state.inventorySearchMode) {
-        await searchInventoryProducts($("inventoryKeyword").value.trim());
-      }
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
   $("adjustForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -1295,14 +1249,31 @@ function bindDelegates() {
   });
 
   const openAdjustByAction = async (event) => {
-    const button = event.target.closest("button[data-action='inventoryEdit']");
+    const button = event.target.closest(
+      "button[data-action='inventoryInbound'], button[data-action='inventoryOutbound'], button[data-action='inventoryOutboundOne']",
+    );
     if (!button) return;
 
     const skuId = Number(button.dataset.skuId);
     if (!Number.isInteger(skuId) || skuId <= 0) return;
 
     try {
-      openEditSkuModal(skuId);
+      const action = button.dataset.action;
+      const boxCode = button.dataset.boxCode || "";
+      if (action === "inventoryOutboundOne") {
+        await quickOutboundOne(skuId, boxCode);
+        showToast("出库1件成功");
+        await loadInventory();
+        await loadBoxes();
+        await loadAudit();
+        if (state.inventorySearchMode) {
+          await searchInventoryProducts($("inventoryKeyword").value.trim());
+        }
+        return;
+      }
+
+      const direction = action === "inventoryOutbound" ? "outbound" : "inbound";
+      openAdjustModal(direction, skuId, boxCode);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -1345,11 +1316,6 @@ function bindDelegates() {
     const profileClose = event.target.closest("button[data-action='closeProfileModal']");
     if (profileClose) {
       closeModal("profileModal");
-      return;
-    }
-    const editClose = event.target.closest("button[data-action='closeEditSkuModal']");
-    if (editClose) {
-      closeModal("editSkuModal");
     }
   });
 
@@ -1392,12 +1358,6 @@ function bindDelegates() {
   $("profileModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("profileModal");
-    }
-  });
-
-  $("editSkuModal").addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) {
-      closeModal("editSkuModal");
     }
   });
 }
