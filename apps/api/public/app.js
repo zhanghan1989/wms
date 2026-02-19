@@ -344,32 +344,47 @@ function renderInventorySearchResults(skus, locationMap) {
     .map((sku) => {
       const rows = locationMap.get(String(sku.id)) || [];
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
-      const detailRows = [
+      const leftRows = [
         ["型号", displayText(sku.model)],
         ["说明1", displayText(sku.desc1)],
         ["说明2", displayText(sku.desc2)],
-        ["店铺", displayText(sku.shop)],
         ["备注", displayText(sku.remark)],
+        ["店铺", displayText(sku.shop)],
+      ];
+      const rightRows = [
         ["SKU", displayText(sku.sku)],
         ["erpSKU", displayText(sku.erpSku)],
         ["ASIN", displayText(sku.asin)],
         ["FNSKU", displayText(sku.fnsku)],
-        ["库存数量", totalQty],
+        ["库存总数量", totalQty],
       ];
       return `
       <div class="inventory-search-item">
-        <div class="inventory-search-title">检索结果明细</div>
         <div class="inventory-search-fields">
-          ${detailRows
-            .map(
-              ([name, value]) => `
-            <div class="inventory-search-field">
-              <span class="inventory-search-field-name">${escapeHtml(name)}：</span>
-              <span class="inventory-search-field-value">${escapeHtml(value)}</span>
-            </div>
-          `,
-            )
-            .join("")}
+          <div class="inventory-search-column">
+            ${leftRows
+              .map(
+                ([name, value]) => `
+              <div class="inventory-search-field">
+                <span class="inventory-search-field-name">${escapeHtml(name)}：</span>
+                <span class="inventory-search-field-value">${escapeHtml(value)}</span>
+              </div>
+            `,
+              )
+              .join("")}
+          </div>
+          <div class="inventory-search-column">
+            ${rightRows
+              .map(
+                ([name, value]) => `
+              <div class="inventory-search-field">
+                <span class="inventory-search-field-name">${escapeHtml(name)}：</span>
+                <span class="inventory-search-field-value">${escapeHtml(value)}</span>
+              </div>
+            `,
+              )
+              .join("")}
+          </div>
         </div>
         <div class="inventory-search-locations">${renderInventoryLocationRows(rows)}</div>
         <div class="action-row">

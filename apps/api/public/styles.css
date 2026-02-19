@@ -419,16 +419,16 @@ td {
   background: #fbfefd;
 }
 
-.inventory-search-title {
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
 .inventory-search-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
-  gap: 4px 14px;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  gap: 8px 28px;
   margin-bottom: 6px;
+}
+
+.inventory-search-column {
+  display: grid;
+  gap: 4px;
 }
 
 .inventory-search-field {
