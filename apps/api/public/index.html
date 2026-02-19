@@ -53,7 +53,7 @@
 
   <main id="appLayout" class="layout hidden">
     <aside class="sidebar">
-      <button class="nav-btn active" data-target="inventory">库存管理</button>
+      <button class="nav-btn active" data-target="inventory">产品检索</button>
       <button class="nav-btn" data-target="overview">总览</button>
       <button class="nav-btn" data-target="users">员工</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
@@ -62,14 +62,14 @@
     <section class="panel-wrap">
       <section class="panel active" id="inventory">
         <div class="panel-head">
-          <h2>库存管理</h2>
+          <h2>产品检索</h2>
           <button id="refreshInventory" class="ghost">刷新</button>
         </div>
 
         <div class="inventory-toolbar">
           <form id="inventorySearchForm" class="form-grid inventory-search-form">
-            <label>产品检索（SKU/erpSKU/ASIN/FNSKU）<input id="inventoryKeyword" /></label>
-            <button type="submit">检索产品</button>
+            <label><input id="inventoryKeyword" placeholder="SKU/erpSKU/ASIN/FNSKU" /></label>
+            <button type="submit">检索</button>
           </form>
 
           <div id="inventorySearchSection" class="card inventory-search-card hidden">
@@ -223,6 +223,31 @@
         <div class="modal-actions">
           <button type="submit">确认新增</button>
           <button type="button" class="ghost" data-action="closeCreateSkuModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="editSkuModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>编辑产品</h3>
+        <button type="button" class="ghost" data-action="closeEditSkuModal">关闭</button>
+      </div>
+      <form id="editSkuForm" class="form-grid modal-grid">
+        <input id="editSkuId" type="hidden" />
+        <label>型号<input id="editModel" /></label>
+        <label>说明1<input id="editDesc1" /></label>
+        <label>说明2<input id="editDesc2" /></label>
+        <label>店铺<input id="editShop" /></label>
+        <label>备注<input id="editRemark" /></label>
+        <label>SKU<input id="editSku" readonly /></label>
+        <label>erpSKU<input id="editErpSku" /></label>
+        <label>ASIN<input id="editAsin" /></label>
+        <label>FNSKU<input id="editFnsku" /></label>
+        <div class="modal-actions">
+          <button type="submit">保存</button>
+          <button type="button" class="ghost" data-action="closeEditSkuModal">取消</button>
         </div>
       </form>
     </div>
