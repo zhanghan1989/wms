@@ -932,7 +932,7 @@ function renderBatchInboundOrders() {
   const tbody = $("batchInboundBody");
   if (!tbody) return;
   if (!state.batchInboundOrders.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="muted">-</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">-</td></tr>';
     return;
   }
 
@@ -1002,7 +1002,6 @@ function renderBatchInboundOrders() {
             }
           </td>
           <td>${escapeHtml(order.confirmedCount ?? 0)} / ${escapeHtml(order.itemCount ?? 0)}</td>
-          <td>${formatDate(order.createdAt)}</td>
           <td><div class="action-row">${actions.join("")}</div></td>
         </tr>
       `;
