@@ -234,6 +234,13 @@ h3 {
   align-items: end;
 }
 
+.adjust-box-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .modal-grid {
   grid-template-columns: repeat(2, minmax(180px, 1fr));
 }
@@ -558,6 +565,10 @@ pre {
   }
 
   .inventory-search-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .adjust-box-row {
     grid-template-columns: 1fr;
   }
 

@@ -476,6 +476,7 @@ async function loadBoxes() {
   state.boxes = boxes;
   $("statBoxes").textContent = boxes.length;
   renderBoxOptionsForSelect("modalNewSkuBoxCode", "请选择已有箱号");
+  renderBoxOptionsForSelect("adjustBoxCode", "请选择已有箱号");
   $("boxesBody").innerHTML = boxes
     .map(
       (box) => `
@@ -569,22 +570,14 @@ async function loadMyAudit() {
     .join("");
 }
 
-function findSkuById(skuId) {
-  return state.inventorySkus.find((sku) => Number(sku.id) === Number(skuId));
-}
-
 function openAdjustModal(direction, skuId) {
-  const sku = findSkuById(skuId);
-  const skuText = sku
-    ? [sku.sku, sku.erpSku, sku.asin, sku.fnsku].filter(Boolean).join(" / ")
-    : `SKU#${skuId}`;
-
   $("adjustSkuId").value = String(skuId);
   $("adjustDirection").value = direction;
-  $("adjustSkuInfo").value = skuText;
+  renderBoxOptionsForSelect("adjustBoxCode", "请选择已有箱号");
   $("adjustBoxCode").value = "";
-  $("adjustQty").value = "";
-  $("adjustReason").value = direction === "inbound" ? "库存入库" : "库存出库";
+  $("adjustQty").min = direction === "inbound" ? "2" : "1";
+  $("adjustQty").value = "1";
+  $("adjustReason").value = direction === "inbound" ? "退货入库" : "库存出库";
   $("adjustModalTitle").textContent = direction === "inbound" ? "库存入库" : "库存出库";
   $("adjustSubmitBtn").textContent = direction === "inbound" ? "确认入库" : "确认出库";
   openModal("adjustModal");
@@ -601,10 +594,16 @@ async function submitAdjustForm() {
     throw new Error("请选择产品");
   }
   if (!boxCode) {
-    throw new Error("请输入箱号");
+    throw new Error("请选择箱号");
   }
-  if (!Number.isFinite(qty) || qty <= 0) {
-    throw new Error("数量必须大于 0");
+  if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
+    throw new Error("数量必须为正整数");
+  }
+  if (direction === "inbound" && qty <= 1) {
+    throw new Error("入库数量必须大于 1");
+  }
+  if (reason && reason.length > 10) {
+    throw new Error("原因最多 10 个字");
   }
 
   await request("/inventory/manual-adjust", {
@@ -667,6 +666,7 @@ async function createBoxFromSkuModal() {
     method: "POST",
     body: JSON.stringify({ boxCode, shelfId }),
   });
+  return boxCode;
 }
 
 async function createShelfFromInventoryModal() {
@@ -877,6 +877,7 @@ function bindForms() {
 
   $("openCreateBoxFromSkuModal").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxQuick").addEventListener("click", openCreateBoxModal);
+  $("openCreateBoxFromAdjust").addEventListener("click", openCreateBoxModal);
 
   $("openCreateShelfQuick").addEventListener("click", () => {
     $("createShelfFromInventoryForm").reset();
@@ -901,11 +902,15 @@ function bindForms() {
   $("createBoxFromSkuForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await createBoxFromSkuModal();
+      const createdBoxCode = await createBoxFromSkuModal();
       closeModal("createBoxFromSkuModal");
       showToast("箱号已创建");
       await loadShelves();
       await loadBoxes();
+      const adjustModal = $("adjustModal");
+      if (adjustModal && !adjustModal.classList.contains("hidden")) {
+        $("adjustBoxCode").value = createdBoxCode;
+      }
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);

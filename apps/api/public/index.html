@@ -293,12 +293,14 @@
       <form id="adjustForm" class="form-grid modal-grid">
         <input id="adjustSkuId" type="hidden" />
         <input id="adjustDirection" type="hidden" />
-        <label>产品
-          <input id="adjustSkuInfo" readonly />
+        <label>箱号
+          <div class="adjust-box-row">
+            <select id="adjustBoxCode" required></select>
+            <button id="openCreateBoxFromAdjust" type="button" class="ghost">新增箱号</button>
+          </div>
         </label>
-        <label>箱号<input id="adjustBoxCode" required /></label>
-        <label>数量<input id="adjustQty" type="number" min="1" required /></label>
-        <label>原因<input id="adjustReason" /></label>
+        <label>数量<input id="adjustQty" type="number" min="1" step="1" required /></label>
+        <label>原因<input id="adjustReason" maxlength="10" /></label>
         <div class="modal-actions">
           <button id="adjustSubmitBtn" type="submit">提交</button>
           <button type="button" class="ghost" data-action="closeAdjustModal">取消</button>
