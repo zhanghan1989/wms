@@ -294,70 +294,48 @@ function renderOutboundButton(
   return `<button class="${className}" data-action="${action}" data-sku-id="${skuId}"${boxAttr}${lockAttr}>${escapeHtml(label)}</button>`;
 }
 
-function buildBoxSummaries(rows) {
-  const grouped = new Map();
-  rows.forEach((row) => {
-    const rowQty = Number(row.qty ?? 0);
-    if (rowQty <= 0) return;
-    const box = row.box;
-    if (!box?.id) return;
-    const boxId = String(box.id);
-    const current = grouped.get(boxId) || {
-      boxId,
-      boxCode: box.boxCode || "-",
-      shelfCode: box.shelf?.shelfCode || "-",
-      qty: 0,
-    };
-    current.qty += rowQty;
-    grouped.set(boxId, current);
-  });
-
-  return Array.from(grouped.values())
-    .filter((item) => Number(item.qty) > 0)
-    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }));
-}
-
-function renderBoxSkuRowsTable(defaultBoxCode, rows) {
-  const list = rows
-    .filter((row) => Number(row.qty ?? 0) > 0)
-    .sort((a, b) =>
-      String(displayText(a.sku?.sku)).localeCompare(String(displayText(b.sku?.sku)), "en", { numeric: true }),
-    );
-  if (!list.length) {
-    return `
-      <table class="inventory-box-sku-table">
-        <thead>
-          <tr><th>箱号</th><th>SKU</th><th>数量</th></tr>
-        </thead>
-        <tbody>
-          <tr><td colspan="3" class="muted">-</td></tr>
-        </tbody>
-      </table>
-    `;
+function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
+  const currentSkuId = Number(currentSku.id);
+  const currentSkuRows = rows.filter((row) => Number(row.qty ?? 0) > 0 && row.box?.id);
+  if (!currentSkuRows.length) {
+    return "";
   }
 
-  return `
-    <table class="inventory-box-sku-table">
-      <thead>
-        <tr><th>箱号</th><th>SKU</th><th>数量</th></tr>
-      </thead>
-      <tbody>
-        ${list
-          .map((row) => {
-            const boxCode = row.box?.boxCode || defaultBoxCode || "-";
-            const sku = row.sku?.sku || "-";
-            const qty = Number(row.qty ?? 0);
-            return `<tr><td>${escapeHtml(boxCode)}</td><td>${escapeHtml(sku)}</td><td>${escapeHtml(qty)}</td></tr>`;
-          })
-          .join("")}
-      </tbody>
-    </table>
-  `;
-}
+  const targetBoxes = currentSkuRows
+    .map((row) => ({
+      boxId: String(row.box.id),
+      boxCode: row.box?.boxCode || "-",
+      shelfCode: row.box?.shelf?.shelfCode || "-",
+    }))
+    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }));
 
-function renderBoxSummaryTable(skuId, rows, boxSkuMap) {
-  const summaries = buildBoxSummaries(rows);
-  if (!summaries.length) {
+  const flatRows = targetBoxes.flatMap((box) => {
+    const boxRows = (boxSkuMap.get(String(box.boxId)) || [])
+      .filter((row) => Number(row.qty ?? 0) > 0)
+      .sort((a, b) =>
+        String(displayText(a.sku?.sku)).localeCompare(String(displayText(b.sku?.sku)), "en", { numeric: true }),
+      );
+    if (!boxRows.length) {
+      return [
+        {
+          boxCode: box.boxCode,
+          shelfCode: box.shelfCode,
+          sku: "-",
+          qty: 0,
+          isCurrentSku: false,
+        },
+      ];
+    }
+    return boxRows.map((row) => ({
+      boxCode: box.boxCode,
+      shelfCode: box.shelfCode,
+      sku: row.sku?.sku || "-",
+      qty: Number(row.qty ?? 0),
+      isCurrentSku: Number(row.sku?.id) === currentSkuId,
+    }));
+  });
+
+  if (!flatRows.length) {
     return "";
   }
 
@@ -365,40 +343,40 @@ function renderBoxSummaryTable(skuId, rows, boxSkuMap) {
     <div class="inventory-box-table-wrap">
       <table class="inventory-box-table">
         <thead>
-          <tr><th>箱号</th><th>货架号</th><th>库存数量</th><th></th></tr>
+          <tr><th>箱号</th><th>货架号</th><th>SKU</th><th>数量</th><th></th></tr>
         </thead>
         <tbody>
-          ${summaries
-            .map((summary) => {
-              const inboundButton = renderInboundButton(skuId, summary.boxCode, "入库", true);
-              const outboundPrimaryButton = renderOutboundButton(skuId, summary.qty, summary.boxCode, {
+          ${flatRows
+            .map((row) => {
+              const inboundButton = renderInboundButton(currentSkuId, row.boxCode, "入库", true);
+              const outboundPrimaryButton = renderOutboundButton(currentSkuId, row.qty, row.boxCode, {
                 label: "出库",
                 ghost: false,
                 lockBox: true,
                 action: "inventoryOutbound",
               });
-              const outboundOneButton = renderOutboundButton(skuId, summary.qty, summary.boxCode, {
+              const outboundOneButton = renderOutboundButton(currentSkuId, row.qty, row.boxCode, {
                 label: "出库1件",
                 ghost: false,
                 lockBox: true,
                 action: "inventoryOutboundOne",
               });
-              const boxRows = boxSkuMap.get(String(summary.boxId)) || [];
+              const actionButtons = row.isCurrentSku
+                ? `
+                  <div class="action-row">
+                    ${inboundButton}
+                    ${outboundPrimaryButton}
+                    ${outboundOneButton}
+                  </div>
+                `
+                : '<span class="muted">-</span>';
               return `
-                <tr>
-                  <td>${escapeHtml(summary.boxCode)}</td>
-                  <td>${escapeHtml(summary.shelfCode)}</td>
-                  <td>${escapeHtml(summary.qty)}</td>
-                  <td>
-                    <div class="action-row">
-                      ${inboundButton}
-                      ${outboundPrimaryButton}
-                      ${outboundOneButton}
-                    </div>
-                  </td>
-                </tr>
-                <tr class="inventory-box-detail-row">
-                  <td colspan="4">${renderBoxSkuRowsTable(summary.boxCode, boxRows)}</td>
+                <tr class="${row.isCurrentSku ? "inventory-current-sku-row" : ""}">
+                  <td>${escapeHtml(row.boxCode)}</td>
+                  <td>${escapeHtml(row.shelfCode)}</td>
+                  <td>${escapeHtml(row.sku)}</td>
+                  <td>${escapeHtml(row.qty)}</td>
+                  <td>${actionButtons}</td>
                 </tr>
               `;
             })
@@ -503,8 +481,11 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
         ["FNSKU", displayText(sku.fnsku)],
         ["库存总数量", totalQty],
       ];
-      const outboundButton = renderOutboundButton(sku.id, totalQty);
-      const boxTable = totalQty > 0 ? renderBoxSummaryTable(sku.id, rows, boxSkuMap) : "";
+      const boxTable = totalQty > 0 ? renderBoxSkuFlatTable(sku, rows, boxSkuMap) : "";
+      const topActionRow =
+        totalQty > 0
+          ? ""
+          : `<div class="action-row">${renderInboundButton(sku.id)}${renderOutboundButton(sku.id, totalQty)}</div>`;
       return `
       <div class="inventory-search-item">
         <div class="inventory-search-fields">
@@ -534,10 +515,7 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
           </div>
         </div>
         ${totalQty > 0 ? "" : `<div class="inventory-search-locations">${renderInventoryLocationRows(rows)}</div>`}
-        <div class="action-row">
-          ${renderInboundButton(sku.id)}
-          ${outboundButton}
-        </div>
+        ${topActionRow}
         ${boxTable}
       </div>
     `;
