@@ -247,9 +247,14 @@ h3 {
 }
 
 .create-sku-box-action {
+  grid-column: 1 / 2;
   align-self: end;
   display: flex;
   justify-content: flex-start;
+}
+
+.create-sku-left-col {
+  grid-column: 1 / 2;
 }
 
 .create-sku-full-row {

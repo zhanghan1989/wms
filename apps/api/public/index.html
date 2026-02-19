@@ -210,13 +210,13 @@
         <label>备注<input id="modalNewRemark" /></label>
         <label>FNSKU<input id="modalNewFnsku" /></label>
         <label>所属亚马逊店铺<input id="modalNewShop" /></label>
-        <label>箱号
+        <label class="create-sku-left-col">箱号
           <select id="modalNewSkuBoxCode" required></select>
         </label>
-        <div class="create-sku-box-action">
+        <div class="create-sku-box-action create-sku-left-col">
           <button type="button" id="openCreateBoxFromSkuModal" class="small-btn">新增箱号</button>
         </div>
-        <label>入库数<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
+        <label class="create-sku-left-col">入库数<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
         <div class="modal-actions">
           <button type="submit">确认新增</button>
           <button type="button" class="ghost" data-action="closeCreateSkuModal">取消</button>
