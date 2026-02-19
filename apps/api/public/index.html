@@ -295,9 +295,17 @@
         <input id="adjustDirection" type="hidden" />
         <label>箱号
           <div class="adjust-box-row">
-            <select id="adjustBoxCode" required></select>
+            <input
+              id="adjustBoxCode"
+              list="adjustBoxCodeList"
+              required
+              autocomplete="off"
+              placeholder="输入数字或选择已有箱号"
+            />
+            <datalist id="adjustBoxCodeList"></datalist>
             <button id="openCreateBoxFromAdjust" type="button" class="ghost">新增箱号</button>
           </div>
+          <span id="adjustBoxHint" class="field-hint hidden">未找到匹配箱号，请点击右侧新增箱号</span>
         </label>
         <label>数量<input id="adjustQty" type="number" min="1" step="1" required /></label>
         <label>原因<input id="adjustReason" maxlength="10" /></label>

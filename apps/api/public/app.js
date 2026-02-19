@@ -441,6 +441,7 @@ function renderBoxOptionsForSelect(selectId, placeholder) {
   const prev = select.value;
   const options = state.boxes
     .filter((box) => Number(box.status) === 1)
+    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }))
     .map((box) => `<option value="${escapeHtml(box.boxCode)}">${escapeHtml(box.boxCode)}</option>`)
     .join("");
 
@@ -448,6 +449,59 @@ function renderBoxOptionsForSelect(selectId, placeholder) {
   if (prev && state.boxes.some((box) => box.boxCode === prev && Number(box.status) === 1)) {
     select.value = prev;
   }
+}
+
+function getEnabledBoxesSorted() {
+  return state.boxes
+    .filter((box) => Number(box.status) === 1)
+    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }));
+}
+
+function normalizeBoxCodeInput(raw) {
+  const value = String(raw ?? "").trim().toUpperCase();
+  if (!value) return "";
+  if (/^\d{1,4}$/.test(value)) {
+    return `B-${value.padStart(4, "0")}`;
+  }
+  const prefixed = value.match(/^B-(\d{1,4})$/);
+  if (prefixed) {
+    return `B-${prefixed[1].padStart(4, "0")}`;
+  }
+  return value;
+}
+
+function filterAdjustBoxes(keyword) {
+  const boxes = getEnabledBoxesSorted();
+  const raw = String(keyword ?? "").trim().toUpperCase();
+  if (!raw) return boxes;
+
+  const digits = raw.replace(/\D/g, "");
+  if (digits) {
+    return boxes.filter((box) => String(box.boxCode).replace(/\D/g, "").includes(digits));
+  }
+
+  return boxes.filter((box) => String(box.boxCode).toUpperCase().includes(raw));
+}
+
+function renderAdjustBoxSuggestions(keyword = "") {
+  const datalist = $("adjustBoxCodeList");
+  if (!datalist) return;
+
+  const matches = filterAdjustBoxes(keyword);
+  datalist.innerHTML = matches
+    .map((box) => `<option value="${escapeHtml(box.boxCode)}"></option>`)
+    .join("");
+
+  const hint = $("adjustBoxHint");
+  if (!hint) return;
+
+  const raw = String(keyword ?? "").trim();
+  if (!raw) {
+    hint.classList.add("hidden");
+    return;
+  }
+
+  hint.classList.toggle("hidden", matches.length > 0);
 }
 
 async function loadShelves() {
@@ -476,7 +530,7 @@ async function loadBoxes() {
   state.boxes = boxes;
   $("statBoxes").textContent = boxes.length;
   renderBoxOptionsForSelect("modalNewSkuBoxCode", "请选择已有箱号");
-  renderBoxOptionsForSelect("adjustBoxCode", "请选择已有箱号");
+  renderAdjustBoxSuggestions($("adjustBoxCode")?.value || "");
   $("boxesBody").innerHTML = boxes
     .map(
       (box) => `
@@ -573,7 +627,7 @@ async function loadMyAudit() {
 function openAdjustModal(direction, skuId) {
   $("adjustSkuId").value = String(skuId);
   $("adjustDirection").value = direction;
-  renderBoxOptionsForSelect("adjustBoxCode", "请选择已有箱号");
+  renderAdjustBoxSuggestions("");
   $("adjustBoxCode").value = "";
   $("adjustQty").min = direction === "inbound" ? "2" : "1";
   $("adjustQty").value = "1";
@@ -586,7 +640,8 @@ function openAdjustModal(direction, skuId) {
 async function submitAdjustForm() {
   const skuId = Number($("adjustSkuId").value);
   const direction = $("adjustDirection").value;
-  const boxCode = $("adjustBoxCode").value.trim();
+  const rawBoxCode = $("adjustBoxCode").value;
+  const boxCode = normalizeBoxCodeInput(rawBoxCode);
   const qty = Math.abs(Number($("adjustQty").value));
   const reason = $("adjustReason").value.trim() || undefined;
 
@@ -596,6 +651,10 @@ async function submitAdjustForm() {
   if (!boxCode) {
     throw new Error("请选择箱号");
   }
+  if (!getEnabledBoxesSorted().some((box) => box.boxCode === boxCode)) {
+    throw new Error("未找到该箱号，请先新增箱号");
+  }
+  $("adjustBoxCode").value = boxCode;
   if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
     throw new Error("数量必须为正整数");
   }
@@ -878,6 +937,12 @@ function bindForms() {
   $("openCreateBoxFromSkuModal").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxQuick").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxFromAdjust").addEventListener("click", openCreateBoxModal);
+  $("adjustBoxCode").addEventListener("input", (event) => {
+    renderAdjustBoxSuggestions(event.target.value);
+  });
+  $("adjustBoxCode").addEventListener("focus", (event) => {
+    renderAdjustBoxSuggestions(event.target.value);
+  });
 
   $("openCreateShelfQuick").addEventListener("click", () => {
     $("createShelfFromInventoryForm").reset();
@@ -910,6 +975,7 @@ function bindForms() {
       const adjustModal = $("adjustModal");
       if (adjustModal && !adjustModal.classList.contains("hidden")) {
         $("adjustBoxCode").value = createdBoxCode;
+        renderAdjustBoxSuggestions(createdBoxCode);
       }
       await loadAudit();
     } catch (error) {
