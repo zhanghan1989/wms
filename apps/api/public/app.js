@@ -1268,13 +1268,15 @@ function bindForms() {
   $("editSkuForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      const keyword = $("inventoryKeyword").value.trim();
+      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
       await submitEditSkuForm();
       closeModal("editSkuModal");
       showToast("产品已更新");
       await loadInventory();
       await loadAudit();
-      if (state.inventorySearchMode) {
-        await searchInventoryProducts($("inventoryKeyword").value.trim());
+      if (shouldRefreshSearch) {
+        await searchInventoryProducts(keyword);
       }
     } catch (error) {
       showToast(error.message, true);
@@ -1284,14 +1286,16 @@ function bindForms() {
   $("adjustForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
+      const keyword = $("inventoryKeyword").value.trim();
+      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
       await submitAdjustForm();
       closeModal("adjustModal");
       showToast($("adjustDirection").value === "outbound" ? "出库成功" : "入库成功");
       await loadInventory();
       await loadBoxes();
       await loadAudit();
-      if (state.inventorySearchMode) {
-        await searchInventoryProducts($("inventoryKeyword").value.trim());
+      if (shouldRefreshSearch) {
+        await searchInventoryProducts(keyword);
       }
     } catch (error) {
       showToast(error.message, true);
@@ -1336,13 +1340,15 @@ function bindDelegates() {
       const action = button.dataset.action;
       const boxCode = button.dataset.boxCode || "";
       if (action === "inventoryOutboundOne") {
+        const keyword = $("inventoryKeyword").value.trim();
+        const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
         await quickOutboundOne(skuId, boxCode);
         showToast("出库1件成功");
         await loadInventory();
         await loadBoxes();
         await loadAudit();
-        if (state.inventorySearchMode) {
-          await searchInventoryProducts($("inventoryKeyword").value.trim());
+        if (shouldRefreshSearch) {
+          await searchInventoryProducts(keyword);
         }
         return;
       }
