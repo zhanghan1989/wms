@@ -558,16 +558,24 @@ td {
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-wrap: nowrap;
 }
 
 .batch-no-input {
-  min-width: 130px;
-  width: 100%;
-  max-width: 220px;
+  min-width: 90px;
+  width: 120px;
+  max-width: 120px;
+  flex: 0 0 120px;
   padding: 5px 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
   font-size: 12px;
+}
+
+.batch-no-editor .tiny-btn {
+  flex: 0 0 auto;
+  margin-right: 0;
+  white-space: nowrap;
 }
 
 .batch-sea-link {
