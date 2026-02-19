@@ -651,9 +651,6 @@ async function submitAdjustForm() {
   if (!boxCode) {
     throw new Error("请选择箱号");
   }
-  if (!getEnabledBoxesSorted().some((box) => box.boxCode === boxCode)) {
-    throw new Error("未找到该箱号，请先新增箱号");
-  }
   $("adjustBoxCode").value = boxCode;
   if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
     throw new Error("数量必须为正整数");

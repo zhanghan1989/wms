@@ -518,6 +518,10 @@ pre {
   padding: 14px;
 }
 
+.modal-card.modal-adjust {
+  width: min(380px, 100%);
+}
+
 .modal-card.modal-wide {
   width: min(1100px, 100%);
 }
