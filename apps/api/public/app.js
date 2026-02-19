@@ -498,10 +498,7 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
         ["库存总数量", totalQty],
       ];
       const boxTable = totalQty > 0 ? renderBoxSkuFlatTable(sku, rows, boxSkuMap) : "";
-      const topActionRow =
-        totalQty > 0
-          ? ""
-          : `<div class="action-row">${renderInboundButton(sku.id)}${renderOutboundButton(sku.id, totalQty)}</div>`;
+      const topActionRow = `<div class="action-row">${renderInboundButton(sku.id, "", "新增入库")}</div>`;
       return `
       <div class="inventory-search-item">
         <div class="inventory-search-fields">
