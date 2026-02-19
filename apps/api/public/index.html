@@ -110,7 +110,14 @@
             <form id="collectBatchInboundForm" class="form-grid batch-collect-form">
               <label>
                 采集总箱数
-                <input id="batchCollectBoxCount" type="number" min="1" max="500" value="20" required />
+                <input
+                  id="batchCollectBoxCount"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="例如：20"
+                  autocomplete="off"
+                  required
+                />
               </label>
               <button type="submit">采集</button>
             </form>

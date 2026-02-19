@@ -527,7 +527,7 @@ td {
 
 .batch-inbound-layout {
   display: grid;
-  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  grid-template-columns: minmax(260px, 1fr) minmax(420px, 2fr);
   gap: 12px;
   margin-bottom: 12px;
 }

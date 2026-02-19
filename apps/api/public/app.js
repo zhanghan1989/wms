@@ -193,11 +193,37 @@ function bindDigitInput(id, maxLen) {
   });
 }
 
+function bindPositiveIntegerInput(id, { min = 1, max = null } = {}) {
+  const input = $(id);
+  if (!input) return;
+
+  const normalize = () => {
+    let digits = String(input.value || "").replace(/\D/g, "");
+    digits = digits.replace(/^0+/, "");
+    if (!digits) {
+      input.value = "";
+      return;
+    }
+    let value = Number(digits);
+    if (Number.isNaN(value)) {
+      input.value = "";
+      return;
+    }
+    if (value < min) value = min;
+    if (max !== null && value > max) value = max;
+    input.value = String(value);
+  };
+
+  input.addEventListener("input", normalize);
+  input.addEventListener("blur", normalize);
+}
+
 function bindInputRules() {
   bindDigitInput("newShelfCodeDigits", 3);
   bindDigitInput("newBoxCodeDigits", 4);
   bindDigitInput("modalNewBoxCodeDigits", 4);
   bindDigitInput("modalNewShelfCodeDigits", 3);
+  bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
 }
 
 async function loadMe() {
@@ -767,14 +793,12 @@ function renderBatchInboundUploadOptions() {
   if (!select) return;
   const prev = select.value || state.selectedBatchInboundOrderId || "";
   const waitingUploadOrders = state.batchInboundOrders.filter(
-    (order) => order.status === "waiting_upload" || order.status === "waiting_inbound",
+    (order) => order.status === "waiting_upload",
   );
   const options = waitingUploadOrders
     .map(
       (order) =>
-        `<option value="${escapeHtml(order.id)}">${escapeHtml(order.orderNo)}（${escapeHtml(
-          getBatchInboundStatusText(order.status),
-        )}）</option>`,
+        `<option value="${escapeHtml(order.id)}">${escapeHtml(order.orderNo)}</option>`,
     )
     .join("");
   select.innerHTML = `<option value="">请选择入库单</option>${options}`;
