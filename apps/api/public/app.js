@@ -296,7 +296,9 @@ function renderOutboundButton(
 
 function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
   const currentSkuId = Number(currentSku.id);
-  const currentSkuRows = rows.filter((row) => Number(row.qty ?? 0) > 0 && row.box?.id);
+  const currentSkuRows = rows
+    .filter((row) => Number(row.qty ?? 0) > 0 && row.box?.id)
+    .sort((a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0));
   if (!currentSkuRows.length) {
     return "";
   }
@@ -306,8 +308,9 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
       boxId: String(row.box.id),
       boxCode: row.box?.boxCode || "-",
       shelfCode: row.box?.shelf?.shelfCode || "-",
+      currentSkuQty: Number(row.qty ?? 0),
     }))
-    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }));
+    .sort((a, b) => a.currentSkuQty - b.currentSkuQty);
 
   const flatRows = targetBoxes.flatMap((box) => {
     const boxRows = (boxSkuMap.get(String(box.boxId)) || [])
@@ -318,8 +321,8 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
     if (!boxRows.length) {
       return [
         {
-          boxCode: box.boxCode,
-          shelfCode: box.shelfCode,
+          boxCode: "",
+          shelfCode: "",
           sku: "-",
           qty: 0,
           isCurrentSku: false,
@@ -327,8 +330,8 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
       ];
     }
     return boxRows.map((row) => ({
-      boxCode: box.boxCode,
-      shelfCode: box.shelfCode,
+      boxCode: Number(row.sku?.id) === currentSkuId ? box.boxCode : "",
+      shelfCode: Number(row.sku?.id) === currentSkuId ? box.shelfCode : "",
       sku: row.sku?.sku || "-",
       qty: Number(row.qty ?? 0),
       isCurrentSku: Number(row.sku?.id) === currentSkuId,
