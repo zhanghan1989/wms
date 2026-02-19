@@ -250,6 +250,14 @@ async function getSkuInventoryRows(skuId) {
   }
 }
 
+async function getBoxSkuInventoryRows(boxId) {
+  try {
+    return await request(`/inventory/box-skus?boxId=${boxId}`);
+  } catch {
+    return [];
+  }
+}
+
 function renderInventoryLocationRows(rows) {
   if (!rows.length) {
     return '<span class="muted">无库存</span>';
@@ -265,12 +273,120 @@ function renderInventoryLocationRows(rows) {
     .join("");
 }
 
+function renderInboundButton(skuId, boxCode = "") {
+  const boxAttr = boxCode ? ` data-box-code="${escapeHtml(boxCode)}"` : "";
+  return `<button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${skuId}"${boxAttr}>新增入库</button>`;
+}
+
+function renderOutboundButton(skuId, totalQty, boxCode = "") {
+  if (Number(totalQty) <= 0) {
+    return "";
+  }
+  const boxAttr = boxCode ? ` data-box-code="${escapeHtml(boxCode)}"` : "";
+  return `<button class="tiny-btn ghost" data-action="inventoryOutbound" data-sku-id="${skuId}"${boxAttr}>出库</button>`;
+}
+
+function buildBoxSummaries(rows) {
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const box = row.box;
+    if (!box?.id) return;
+    const boxId = String(box.id);
+    const current = grouped.get(boxId) || {
+      boxId,
+      boxCode: box.boxCode || "-",
+      shelfCode: box.shelf?.shelfCode || "-",
+      qty: 0,
+    };
+    current.qty += Number(row.qty ?? 0);
+    grouped.set(boxId, current);
+  });
+
+  return Array.from(grouped.values()).sort((a, b) =>
+    String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }),
+  );
+}
+
+function renderBoxSkuRowsTable(defaultBoxCode, rows) {
+  const list = [...rows].sort((a, b) =>
+    String(displayText(a.sku?.sku)).localeCompare(String(displayText(b.sku?.sku)), "en", { numeric: true }),
+  );
+  if (!list.length) {
+    return `
+      <table class="inventory-box-sku-table">
+        <thead>
+          <tr><th>箱号</th><th>SKU</th><th>数量</th></tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="3" class="muted">-</td></tr>
+        </tbody>
+      </table>
+    `;
+  }
+
+  return `
+    <table class="inventory-box-sku-table">
+      <thead>
+        <tr><th>箱号</th><th>SKU</th><th>数量</th></tr>
+      </thead>
+      <tbody>
+        ${list
+          .map((row) => {
+            const boxCode = row.box?.boxCode || defaultBoxCode || "-";
+            const sku = row.sku?.sku || "-";
+            const qty = Number(row.qty ?? 0);
+            return `<tr><td>${escapeHtml(boxCode)}</td><td>${escapeHtml(sku)}</td><td>${escapeHtml(qty)}</td></tr>`;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderBoxSummaryTable(skuId, rows, boxSkuMap) {
+  const summaries = buildBoxSummaries(rows);
+  if (!summaries.length) {
+    return "";
+  }
+
+  return `
+    <div class="inventory-box-table-wrap">
+      <table class="inventory-box-table">
+        <thead>
+          <tr><th>箱号</th><th>货架号</th><th>库存数量</th><th>入库</th><th>出库</th></tr>
+        </thead>
+        <tbody>
+          ${summaries
+            .map((summary) => {
+              const outboundButton = renderOutboundButton(skuId, summary.qty, summary.boxCode);
+              const boxRows = boxSkuMap.get(String(summary.boxId)) || [];
+              return `
+                <tr>
+                  <td>${escapeHtml(summary.boxCode)}</td>
+                  <td>${escapeHtml(summary.shelfCode)}</td>
+                  <td>${escapeHtml(summary.qty)}</td>
+                  <td>${renderInboundButton(skuId, summary.boxCode)}</td>
+                  <td>${outboundButton || '<span class="muted">-</span>'}</td>
+                </tr>
+                <tr class="inventory-box-detail-row">
+                  <td colspan="5">${renderBoxSkuRowsTable(summary.boxCode, boxRows)}</td>
+                </tr>
+              `;
+            })
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderInventoryTable() {
   const list = state.inventorySortedSkus.slice(0, state.inventoryVisibleCount);
   const html = list
     .map((sku) => {
       const rows = state.inventoryLocations.get(String(sku.id)) || [];
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
+      const outboundButton = renderOutboundButton(sku.id, totalQty);
       return `
       <tr class="inventory-main-row">
         <td>${escapeHtml(displayText(sku.model))}</td>
@@ -285,8 +401,8 @@ function renderInventoryTable() {
         <td>${escapeHtml(totalQty)}</td>
         <td>
           <div class="action-row">
-            <button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${sku.id}">入库</button>
-            <button class="tiny-btn ghost" data-action="inventoryOutbound" data-sku-id="${sku.id}">出库</button>
+            ${renderInboundButton(sku.id)}
+            ${outboundButton}
           </div>
         </td>
       </tr>
@@ -333,7 +449,7 @@ async function loadInventory() {
   renderInventoryTable();
 }
 
-function renderInventorySearchResults(skus, locationMap) {
+function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
   const container = $("inventorySearchResults");
   if (!skus.length) {
     container.textContent = "未找到匹配产品";
@@ -358,6 +474,8 @@ function renderInventorySearchResults(skus, locationMap) {
         ["FNSKU", displayText(sku.fnsku)],
         ["库存总数量", totalQty],
       ];
+      const outboundButton = renderOutboundButton(sku.id, totalQty);
+      const boxTable = totalQty > 0 ? renderBoxSummaryTable(sku.id, rows, boxSkuMap) : "";
       return `
       <div class="inventory-search-item">
         <div class="inventory-search-fields">
@@ -386,11 +504,12 @@ function renderInventorySearchResults(skus, locationMap) {
               .join("")}
           </div>
         </div>
-        <div class="inventory-search-locations">${renderInventoryLocationRows(rows)}</div>
+        ${totalQty > 0 ? "" : `<div class="inventory-search-locations">${renderInventoryLocationRows(rows)}</div>`}
         <div class="action-row">
-          <button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${sku.id}">入库</button>
-          <button class="tiny-btn ghost" data-action="inventoryOutbound" data-sku-id="${sku.id}">出库</button>
+          ${renderInboundButton(sku.id)}
+          ${outboundButton}
         </div>
+        ${boxTable}
       </div>
     `;
     })
@@ -411,7 +530,18 @@ async function searchInventoryProducts(keyword) {
   const locationEntries = await Promise.all(
     skus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
   );
-  renderInventorySearchResults(skus, new Map(locationEntries));
+  const boxIds = Array.from(
+    new Set(
+      locationEntries
+        .flatMap(([, rows]) => rows.map((row) => row.box?.id))
+        .filter((boxId) => boxId !== null && boxId !== undefined)
+        .map((boxId) => String(boxId)),
+    ),
+  );
+  const boxSkuEntries = await Promise.all(
+    boxIds.map(async (boxId) => [String(boxId), await getBoxSkuInventoryRows(boxId)]),
+  );
+  renderInventorySearchResults(skus, new Map(locationEntries), new Map(boxSkuEntries));
 }
 
 function renderShelfOptionsForSelect(selectId, placeholder) {
@@ -624,11 +754,12 @@ async function loadMyAudit() {
     .join("");
 }
 
-function openAdjustModal(direction, skuId) {
+function openAdjustModal(direction, skuId, presetBoxCode = "") {
+  const normalizedPresetBoxCode = normalizeBoxCodeInput(presetBoxCode);
   $("adjustSkuId").value = String(skuId);
   $("adjustDirection").value = direction;
-  renderAdjustBoxSuggestions("");
-  $("adjustBoxCode").value = "";
+  renderAdjustBoxSuggestions(normalizedPresetBoxCode);
+  $("adjustBoxCode").value = normalizedPresetBoxCode;
   $("adjustQty").min = "1";
   $("adjustQty").value = "1";
   $("adjustReason").value = direction === "inbound" ? "退货入库" : "库存出库";
@@ -1078,7 +1209,8 @@ function bindDelegates() {
     if (!Number.isInteger(skuId) || skuId <= 0) return;
 
     const direction = button.dataset.action === "inventoryOutbound" ? "outbound" : "inbound";
-    openAdjustModal(direction, skuId);
+    const boxCode = button.dataset.boxCode || "";
+    openAdjustModal(direction, skuId, boxCode);
   };
 
   $("inventoryBody").addEventListener("click", openAdjustByAction);

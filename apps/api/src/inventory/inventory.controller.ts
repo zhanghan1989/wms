@@ -14,7 +14,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { CreateAdjustOrderDto } from './dto/create-adjust-order.dto';
 import { ManualAdjustDto } from './dto/manual-adjust.dto';
-import { ProductBoxesQueryDto, SearchSkuDto } from './dto/search-sku.dto';
+import { BoxSkusQueryDto, ProductBoxesQueryDto, SearchSkuDto } from './dto/search-sku.dto';
 import { InventoryService } from './inventory.service';
 
 @Controller('inventory')
@@ -30,6 +30,11 @@ export class InventoryController {
   @Get('product-boxes')
   async productBoxes(@Query() query: ProductBoxesQueryDto): Promise<unknown[]> {
     return this.inventoryService.productBoxes(query.skuId);
+  }
+
+  @Get('box-skus')
+  async boxSkus(@Query() query: BoxSkusQueryDto): Promise<unknown[]> {
+    return this.inventoryService.boxSkus(query.boxId);
   }
 
   @Post('adjust-orders')

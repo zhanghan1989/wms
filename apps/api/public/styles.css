@@ -466,6 +466,38 @@ td {
   margin-bottom: 8px;
 }
 
+.inventory-box-table-wrap {
+  margin-top: 10px;
+}
+
+.inventory-box-table,
+.inventory-box-sku-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.inventory-box-table th,
+.inventory-box-table td,
+.inventory-box-sku-table th,
+.inventory-box-sku-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 10px;
+  font-size: 12px;
+  vertical-align: middle;
+}
+
+.inventory-box-detail-row td {
+  background: #f8fcfa;
+}
+
+.inventory-box-sku-table {
+  margin-top: 6px;
+}
+
 .tag {
   display: inline-block;
   border: 1px solid var(--line);

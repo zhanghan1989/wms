@@ -71,6 +71,41 @@ export class InventoryService {
     });
   }
 
+  async boxSkus(boxId: number): Promise<unknown[]> {
+    return this.prisma.inventoryBoxSku.findMany({
+      where: {
+        boxId: BigInt(boxId),
+      },
+      include: {
+        box: {
+          include: {
+            shelf: {
+              select: {
+                id: true,
+                shelfCode: true,
+                name: true,
+              },
+            },
+          },
+        },
+        sku: {
+          select: {
+            id: true,
+            sku: true,
+            erpSku: true,
+            asin: true,
+            fnsku: true,
+          },
+        },
+      },
+      orderBy: {
+        sku: {
+          sku: 'asc',
+        },
+      },
+    });
+  }
+
   async createAdjustOrder(
     payload: CreateAdjustOrderDto,
     operatorId: bigint,

@@ -14,3 +14,10 @@ export class ProductBoxesQueryDto {
   @Min(1)
   skuId!: number;
 }
+
+export class BoxSkusQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  boxId!: number;
+}
