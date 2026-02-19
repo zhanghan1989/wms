@@ -110,7 +110,15 @@
             <form id="collectBatchInboundForm" class="form-grid batch-collect-form">
               <label>
                 批号
-                <input id="batchCollectBatchNo" type="text" maxlength="32" placeholder="例如：A01" required />
+                <input
+                  id="batchCollectBatchNo"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="20"
+                  placeholder="例如：1"
+                  autocomplete="off"
+                  required
+                />
               </label>
               <label>
                 采集总箱数

@@ -125,9 +125,9 @@ export class BatchInboundService {
     requestId?: string,
   ): Promise<BatchInboundOrderDetail> {
     return this.prisma.$transaction(async (tx) => {
-      const normalizedBatchNo = payload.batchNo.trim().toUpperCase();
-      if (!normalizedBatchNo) {
-        throw new BadRequestException('batchNo is required');
+      const normalizedBatchNo = payload.batchNo.trim().replace(/^0+/, '');
+      if (!normalizedBatchNo || !/^[1-9]\d*$/.test(normalizedBatchNo)) {
+        throw new BadRequestException('batchNo must be a positive integer');
       }
       const orderNo = this.buildBatchInboundOrderNo(normalizedBatchNo, payload.boxCount);
 

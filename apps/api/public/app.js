@@ -223,9 +223,9 @@ function bindBatchNoInput(id) {
   if (!input) return;
   input.addEventListener("input", () => {
     const normalized = String(input.value || "")
-      .toUpperCase()
-      .replace(/[^A-Z0-9_-]/g, "")
-      .slice(0, 32);
+      .replace(/\D/g, "")
+      .replace(/^0+/, "")
+      .slice(0, 20);
     if (input.value !== normalized) {
       input.value = normalized;
     }
@@ -1006,8 +1006,8 @@ async function submitCollectBatchInboundForm() {
   if (!batchNoRaw) {
     throw new Error("批号不能为空");
   }
-  if (!/^[A-Za-z0-9_-]{1,32}$/.test(batchNoRaw)) {
-    throw new Error("批号仅支持字母/数字/_/-，最多32位");
+  if (!/^[1-9]\d*$/.test(batchNoRaw)) {
+    throw new Error("批号只能输入大于0的数字");
   }
   if (!Number.isInteger(boxCount) || boxCount <= 0) {
     throw new Error("采集箱数必须是大于0的整数");
@@ -1016,7 +1016,7 @@ async function submitCollectBatchInboundForm() {
   const created = await request("/batch-inbound/orders/collect", {
     method: "POST",
     body: JSON.stringify({
-      batchNo: batchNoRaw.toUpperCase(),
+      batchNo: batchNoRaw,
       boxCount,
     }),
   });

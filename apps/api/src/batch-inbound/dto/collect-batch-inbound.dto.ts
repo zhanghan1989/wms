@@ -3,8 +3,8 @@ import { IsInt, IsString, Length, Matches, Max, Min } from 'class-validator';
 
 export class CollectBatchInboundDto {
   @IsString()
-  @Length(1, 32)
-  @Matches(/^[A-Za-z0-9_-]+$/)
+  @Length(1, 20)
+  @Matches(/^[1-9]\d*$/)
   batchNo!: string;
 
   @Type(() => Number)
