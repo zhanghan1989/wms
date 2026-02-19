@@ -629,7 +629,7 @@ function openAdjustModal(direction, skuId) {
   $("adjustDirection").value = direction;
   renderAdjustBoxSuggestions("");
   $("adjustBoxCode").value = "";
-  $("adjustQty").min = direction === "inbound" ? "2" : "1";
+  $("adjustQty").min = "1";
   $("adjustQty").value = "1";
   $("adjustReason").value = direction === "inbound" ? "退货入库" : "库存出库";
   $("adjustModalTitle").textContent = direction === "inbound" ? "库存入库" : "库存出库";
@@ -657,9 +657,6 @@ async function submitAdjustForm() {
   $("adjustBoxCode").value = boxCode;
   if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
     throw new Error("数量必须为正整数");
-  }
-  if (direction === "inbound" && qty <= 1) {
-    throw new Error("入库数量必须大于 1");
   }
   if (reason && reason.length > 10) {
     throw new Error("备注最多 10 个字");
