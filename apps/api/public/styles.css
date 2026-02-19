@@ -409,6 +409,12 @@ td {
   color: var(--ink);
 }
 
+.tiny-btn.danger {
+  background: #fff0f0;
+  border-color: #e2a7a7;
+  color: var(--danger);
+}
+
 .action-row {
   display: flex;
   flex-wrap: wrap;

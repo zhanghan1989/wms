@@ -844,6 +844,13 @@ function renderBatchInboundOrders() {
           )}">确认入库</button>`,
         );
       }
+      if (order.status !== "confirmed") {
+        actions.push(
+          `<button class="tiny-btn danger" data-action="batchInboundDeleteOrder" data-order-id="${escapeHtml(
+            order.id,
+          )}" data-order-no="${escapeHtml(order.orderNo)}">删除</button>`,
+        );
+      }
       return `
         <tr>
           <td>${escapeHtml(order.orderNo)}</td>
@@ -1062,6 +1069,12 @@ async function confirmBatchInboundAction(action, orderId, payload = {}) {
   await request(path, {
     method: "POST",
     body: "{}",
+  });
+}
+
+async function deleteBatchInboundOrder(orderId) {
+  await request(`/batch-inbound/orders/${orderId}`, {
+    method: "DELETE",
   });
 }
 
@@ -1649,6 +1662,18 @@ function bindDelegates() {
       if (action === "batchInboundSelectOrder" || action === "batchInboundOpenConfirm") {
         await loadBatchInboundOrderDetail(orderId);
         switchPanel("batchInbound");
+      } else if (action === "batchInboundDeleteOrder") {
+        const orderNo = button.dataset.orderNo || orderId;
+        const ok = window.confirm(`确认删除批量入库单 ${orderNo} ?`);
+        if (!ok) return;
+        await deleteBatchInboundOrder(orderId);
+        showToast("删除成功，已释放锁定箱号");
+        if (String(state.selectedBatchInboundOrderId) === String(orderId)) {
+          state.selectedBatchInboundOrderId = "";
+          state.selectedBatchInboundOrderDetail = null;
+          renderBatchInboundDetail(null);
+        }
+        await loadBatchInboundOrders();
       }
     } catch (error) {
       showToast(error.message, true);

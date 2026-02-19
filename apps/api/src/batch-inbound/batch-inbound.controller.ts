@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -90,5 +91,13 @@ export class BatchInboundController {
   ): Promise<unknown> {
     return this.batchInboundService.confirmItem(id, itemId, user.id, req.requestId);
   }
-}
 
+  @Delete('orders/:id')
+  async remove(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<{ success: boolean }> {
+    return this.batchInboundService.removeOrder(id, user.id, req.requestId);
+  }
+}

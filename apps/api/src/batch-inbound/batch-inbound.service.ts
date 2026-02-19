@@ -119,6 +119,57 @@ export class BatchInboundService {
     return this.toOrderDetail(order);
   }
 
+  async removeOrder(
+    orderIdParam: string,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ success: boolean }> {
+    const orderId = parseId(orderIdParam, 'batchInboundOrderId');
+
+    await this.prisma.$transaction(async (tx) => {
+      const order = await tx.batchInboundOrder.findUnique({
+        where: { id: orderId },
+        include: {
+          items: {
+            select: { id: true },
+          },
+        },
+      });
+      if (!order) {
+        throw new NotFoundException('batch inbound order not found');
+      }
+      if (order.status === BatchInboundOrderStatus.confirmed) {
+        throw new UnprocessableEntityException('confirmed order cannot be deleted');
+      }
+
+      await tx.batchInboundItem.deleteMany({
+        where: { orderId: order.id },
+      });
+      await tx.batchInboundOrder.delete({
+        where: { id: order.id },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'batch_inbound_order',
+        entityId: order.id,
+        action: AuditAction.delete,
+        eventType: AuditEventType.INBOUND_ORDER_VOIDED,
+        beforeData: {
+          orderNo: order.orderNo,
+          status: order.status,
+          itemCount: order.items.length,
+        },
+        afterData: null,
+        operatorId,
+        requestId,
+        remark: 'delete batch inbound order',
+      });
+    });
+
+    return { success: true };
+  }
+
   async collect(
     payload: CollectBatchInboundDto,
     operatorId: bigint,

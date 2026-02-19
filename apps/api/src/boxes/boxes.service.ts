@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, BatchInboundOrderStatus, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
 import { AuditEventType, AuditEventTypeValue } from '../constants/audit-event-type';
@@ -39,8 +39,16 @@ export class BoxesService {
   }
 
   async create(payload: CreateBoxDto, operatorId: bigint, requestId?: string): Promise<unknown> {
+    const boxCode = payload.boxCode.trim().toUpperCase();
+    const lockedOrderNo = await this.findLockingBatchInboundOrderNo(boxCode);
+    if (lockedOrderNo) {
+      throw new BadRequestException(
+        `box code is locked by batch inbound order ${lockedOrderNo}, please confirm or delete that order first`,
+      );
+    }
+
     const exists = await this.prisma.box.findUnique({
-      where: { boxCode: payload.boxCode },
+      where: { boxCode },
     });
     if (exists) throw new BadRequestException('box code already exists');
 
@@ -52,7 +60,7 @@ export class BoxesService {
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.box.create({
         data: {
-          boxCode: payload.boxCode,
+          boxCode,
           shelfId: BigInt(payload.shelfId),
           status: payload.status ?? 1,
         },
@@ -82,11 +90,24 @@ export class BoxesService {
     const box = await this.prisma.box.findUnique({ where: { id } });
     if (!box) throw new NotFoundException('box not found');
 
-    if (payload.boxCode && payload.boxCode !== box.boxCode) {
+    if (payload.boxCode) {
+      const nextBoxCode = payload.boxCode.trim().toUpperCase();
+      if (nextBoxCode === box.boxCode) {
+        payload.boxCode = nextBoxCode;
+      } else {
+      const lockedOrderNo = await this.findLockingBatchInboundOrderNo(nextBoxCode);
+      if (lockedOrderNo) {
+        throw new BadRequestException(
+          `box code is locked by batch inbound order ${lockedOrderNo}, please confirm or delete that order first`,
+        );
+      }
+
       const duplicate = await this.prisma.box.findUnique({
-        where: { boxCode: payload.boxCode },
+        where: { boxCode: nextBoxCode },
       });
       if (duplicate) throw new BadRequestException('box code already exists');
+      }
+      payload.boxCode = nextBoxCode;
     }
     if (payload.shelfId) {
       const shelf = await this.prisma.shelf.findUnique({
@@ -150,5 +171,42 @@ export class BoxesService {
     if (status === 0) return AuditEventType.BOX_DISABLED;
     if (previousBoxCode !== nextBoxCode) return AuditEventType.BOX_RENAMED;
     return AuditEventType.BOX_FIELD_UPDATED;
+  }
+
+  private async findLockingBatchInboundOrderNo(boxCode: string): Promise<string | null> {
+    const orders = await this.prisma.batchInboundOrder.findMany({
+      where: {
+        status: {
+          in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
+        },
+      },
+      select: {
+        orderNo: true,
+        collectedBoxCodes: true,
+      },
+      orderBy: { id: 'desc' },
+    });
+
+    for (const order of orders) {
+      const codes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
+      if (codes.includes(boxCode)) {
+        return order.orderNo;
+      }
+    }
+
+    return null;
+  }
+
+  private parseCollectedBoxCodes(value: Prisma.JsonValue): string[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return Array.from(
+      new Set(
+        value
+          .map((item) => String(item ?? '').trim().toUpperCase())
+          .filter((item) => Boolean(item)),
+      ),
+    );
   }
 }
