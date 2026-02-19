@@ -33,6 +33,8 @@ interface BatchInboundOrderSummary {
   rangeEnd: number;
   collectedBoxCodes: string[];
   uploadedFileName: string | null;
+  domesticOrderNo: string | null;
+  seaOrderNo: string | null;
   createdAt: Date;
   updatedAt: Date;
   creator: {
@@ -140,6 +142,9 @@ export class BatchInboundService {
       }
       if (order.status === BatchInboundOrderStatus.confirmed) {
         throw new UnprocessableEntityException('已确认的批量入库单不能删除');
+      }
+      if (this.readSeaOrderNo(order)) {
+        throw new UnprocessableEntityException('已保存海运单号的批量入库单不能删除');
       }
 
       await tx.batchInboundItem.deleteMany({
@@ -315,7 +320,9 @@ export class BatchInboundService {
       const updatedOrder = await tx.batchInboundOrder.update({
         where: { id: order.id },
         data: {
-          status: BatchInboundOrderStatus.waiting_inbound,
+          status: this.readSeaOrderNo(order)
+            ? BatchInboundOrderStatus.waiting_inbound
+            : BatchInboundOrderStatus.waiting_upload,
           uploadedFileName: originalName ?? null,
         },
         include: {
@@ -350,6 +357,174 @@ export class BatchInboundService {
         operatorId,
         requestId,
         remark: '上传批量入库Excel',
+      });
+
+      return this.toOrderDetail(updatedOrder);
+    });
+  }
+
+  async updateDomesticOrderNo(
+    orderIdParam: string,
+    domesticOrderNoRaw: string,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<BatchInboundOrderDetail> {
+    const orderId = parseId(orderIdParam, 'batchInboundOrderId');
+    const domesticOrderNo = domesticOrderNoRaw.trim();
+    if (!domesticOrderNo) {
+      throw new BadRequestException('国内单号不能为空');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.batchInboundOrder.findUnique({
+        where: { id: orderId },
+        include: {
+          creator: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          items: {
+            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+          },
+        },
+      });
+      if (!order) {
+        throw new NotFoundException('批量入库单不存在');
+      }
+      if (order.status === BatchInboundOrderStatus.confirmed) {
+        throw new UnprocessableEntityException('已确认的批量入库单不能编辑单号');
+      }
+      if (order.status === BatchInboundOrderStatus.void) {
+        throw new UnprocessableEntityException('已作废的批量入库单不能编辑单号');
+      }
+
+      const nextStatus = this.readSeaOrderNo(order)
+        ? BatchInboundOrderStatus.waiting_inbound
+        : BatchInboundOrderStatus.waiting_upload;
+
+      const updatedOrder = await tx.batchInboundOrder.update({
+        where: { id: order.id },
+        data: {
+          domesticOrderNo,
+          status: nextStatus,
+        } as any,
+        include: {
+          creator: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          items: {
+            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+          },
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'batch_inbound_order',
+        entityId: order.id,
+        action: AuditAction.update,
+        eventType: AuditEventType.INBOUND_ORDER_CREATED,
+        beforeData: {
+          status: order.status,
+          domesticOrderNo: this.readDomesticOrderNo(order),
+        },
+        afterData: {
+          status: updatedOrder.status,
+          domesticOrderNo: this.readDomesticOrderNo(updatedOrder),
+        },
+        operatorId,
+        requestId,
+        remark: '保存国内单号',
+      });
+
+      return this.toOrderDetail(updatedOrder);
+    });
+  }
+
+  async updateSeaOrderNo(
+    orderIdParam: string,
+    seaOrderNoRaw: string,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<BatchInboundOrderDetail> {
+    const orderId = parseId(orderIdParam, 'batchInboundOrderId');
+    const seaOrderNo = seaOrderNoRaw.trim();
+    if (!seaOrderNo) {
+      throw new BadRequestException('海运单号不能为空');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const order = await tx.batchInboundOrder.findUnique({
+        where: { id: orderId },
+        include: {
+          creator: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          items: {
+            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+          },
+        },
+      });
+      if (!order) {
+        throw new NotFoundException('批量入库单不存在');
+      }
+      if (order.status === BatchInboundOrderStatus.confirmed) {
+        throw new UnprocessableEntityException('已确认的批量入库单不能编辑单号');
+      }
+      if (order.status === BatchInboundOrderStatus.void) {
+        throw new UnprocessableEntityException('已作废的批量入库单不能编辑单号');
+      }
+      if (!this.readDomesticOrderNo(order)) {
+        throw new UnprocessableEntityException('请先保存国内单号');
+      }
+      if (!order.uploadedFileName) {
+        throw new UnprocessableEntityException('请先上传批量入库文档');
+      }
+
+      const updatedOrder = await tx.batchInboundOrder.update({
+        where: { id: order.id },
+        data: {
+          seaOrderNo,
+          status: BatchInboundOrderStatus.waiting_inbound,
+        } as any,
+        include: {
+          creator: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+          items: {
+            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+          },
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'batch_inbound_order',
+        entityId: order.id,
+        action: AuditAction.update,
+        eventType: AuditEventType.INBOUND_ORDER_CREATED,
+        beforeData: {
+          status: order.status,
+          seaOrderNo: this.readSeaOrderNo(order),
+        },
+        afterData: {
+          status: updatedOrder.status,
+          seaOrderNo: this.readSeaOrderNo(updatedOrder),
+        },
+        operatorId,
+        requestId,
+        remark: '保存海运单号',
       });
 
       return this.toOrderDetail(updatedOrder);
@@ -1064,6 +1239,8 @@ export class BatchInboundService {
     rangeStart: number;
     rangeEnd: number;
     uploadedFileName: string | null;
+    domesticOrderNo?: string | null;
+    seaOrderNo?: string | null;
     createdAt: Date;
     updatedAt: Date;
     collectedBoxCodes: Prisma.JsonValue;
@@ -1082,6 +1259,8 @@ export class BatchInboundService {
       rangeEnd: order.rangeEnd,
       collectedBoxCodes: this.parseCollectedBoxCodes(order.collectedBoxCodes),
       uploadedFileName: order.uploadedFileName,
+      domesticOrderNo: this.readDomesticOrderNo(order),
+      seaOrderNo: this.readSeaOrderNo(order),
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       creator: {
@@ -1102,6 +1281,8 @@ export class BatchInboundService {
     rangeStart: number;
     rangeEnd: number;
     uploadedFileName: string | null;
+    domesticOrderNo?: string | null;
+    seaOrderNo?: string | null;
     createdAt: Date;
     updatedAt: Date;
     collectedBoxCodes: Prisma.JsonValue;
@@ -1129,6 +1310,8 @@ export class BatchInboundService {
       rangeEnd: order.rangeEnd,
       collectedBoxCodes: this.parseCollectedBoxCodes(order.collectedBoxCodes),
       uploadedFileName: order.uploadedFileName,
+      domesticOrderNo: this.readDomesticOrderNo(order),
+      seaOrderNo: this.readSeaOrderNo(order),
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       creator: {
@@ -1149,5 +1332,19 @@ export class BatchInboundService {
         createdAt: item.createdAt,
       })),
     };
+  }
+
+  private readDomesticOrderNo(order: unknown): string | null {
+    const value = (order as { domesticOrderNo?: string | null } | null)?.domesticOrderNo;
+    if (!value) return null;
+    const normalized = value.trim();
+    return normalized || null;
+  }
+
+  private readSeaOrderNo(order: unknown): string | null {
+    const value = (order as { seaOrderNo?: string | null } | null)?.seaOrderNo;
+    if (!value) return null;
+    const normalized = value.trim();
+    return normalized || null;
   }
 }

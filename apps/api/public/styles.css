@@ -554,6 +554,31 @@ td {
   align-items: end;
 }
 
+.batch-no-editor {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.batch-no-input {
+  min-width: 130px;
+  width: 100%;
+  max-width: 220px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.batch-sea-link {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
 .batch-hint {
   margin: 0;
 }

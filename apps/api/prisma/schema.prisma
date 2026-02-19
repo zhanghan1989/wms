@@ -130,6 +130,8 @@ model BatchInboundOrder {
   rangeEnd          Int                     @map("range_end")
   collectedBoxCodes Json                    @map("collected_box_codes")
   uploadedFileName  String?                 @map("uploaded_file_name") @db.VarChar(255)
+  domesticOrderNo   String?                 @map("domestic_order_no") @db.VarChar(128)
+  seaOrderNo        String?                 @map("sea_order_no") @db.VarChar(128)
   remark            String?                 @db.VarChar(255)
   createdBy         BigInt                  @map("created_by") @db.UnsignedBigInt
   createdAt         DateTime                @default(now()) @map("created_at")

@@ -878,12 +878,24 @@ async function loadBoxes() {
     .join("");
 }
 
-function getBatchInboundStatusText(status) {
-  if (status === "waiting_upload") return "等待上传批量入库文档";
-  if (status === "waiting_inbound") return "等待入库";
+function getBatchInboundStatusText(status, order = null) {
+  if (status === "waiting_upload") {
+    if (order?.domesticOrderNo && !order?.seaOrderNo) {
+      return "待发海运";
+    }
+    if (order?.uploadedFileName && !order?.domesticOrderNo) {
+      return "待填国内单号";
+    }
+    return "等待上传批量入库文档";
+  }
+  if (status === "waiting_inbound") return "待入库";
   if (status === "confirmed") return "已确认";
   if (status === "void") return "已作废";
   return status || "-";
+}
+
+function getSeaOrderTrackUrl(seaOrderNo) {
+  return `http://jp.uofexp.com/search_order.aspx?trackNumber=${encodeURIComponent(seaOrderNo)}`;
 }
 
 function formatBatchRange(order) {
@@ -898,7 +910,11 @@ function renderBatchInboundUploadOptions() {
   if (!select) return;
   const prev = select.value || state.selectedBatchInboundOrderId || "";
   const waitingUploadOrders = state.batchInboundOrders.filter(
-    (order) => order.status === "waiting_upload",
+    (order) =>
+      order.status === "waiting_upload" &&
+      !order.uploadedFileName &&
+      !order.domesticOrderNo &&
+      !order.seaOrderNo,
   );
   const options = waitingUploadOrders
     .map(
@@ -916,7 +932,7 @@ function renderBatchInboundOrders() {
   const tbody = $("batchInboundBody");
   if (!tbody) return;
   if (!state.batchInboundOrders.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">-</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">-</td></tr>';
     return;
   }
 
@@ -934,7 +950,7 @@ function renderBatchInboundOrders() {
           )}">确认入库</button>`,
         );
       }
-      if (order.status !== "confirmed") {
+      if (order.status !== "confirmed" && !order.seaOrderNo) {
         actions.push(
           `<button class="tiny-btn danger" data-action="batchInboundDeleteOrder" data-order-id="${escapeHtml(
             order.id,
@@ -944,8 +960,47 @@ function renderBatchInboundOrders() {
       return `
         <tr>
           <td>${escapeHtml(order.orderNo)}</td>
-          <td>${escapeHtml(getBatchInboundStatusText(order.status))}</td>
+          <td>${escapeHtml(getBatchInboundStatusText(order.status, order))}</td>
           <td>${escapeHtml(formatBatchRange(order))}</td>
+          <td>
+            <div class="batch-no-editor">
+              <input
+                id="domesticOrderNo-${escapeHtml(order.id)}"
+                class="batch-no-input"
+                value="${escapeHtml(order.domesticOrderNo || "")}"
+                placeholder="请输入国内单号"
+              />
+              <button
+                class="tiny-btn"
+                data-action="batchInboundSaveDomesticOrderNo"
+                data-order-id="${escapeHtml(order.id)}"
+                data-input-id="domesticOrderNo-${escapeHtml(order.id)}"
+              >保存</button>
+            </div>
+          </td>
+          <td>
+            <div class="batch-no-editor">
+              <input
+                id="seaOrderNo-${escapeHtml(order.id)}"
+                class="batch-no-input"
+                value="${escapeHtml(order.seaOrderNo || "")}"
+                placeholder="请输入海运单号"
+              />
+              <button
+                class="tiny-btn"
+                data-action="batchInboundSaveSeaOrderNo"
+                data-order-id="${escapeHtml(order.id)}"
+                data-input-id="seaOrderNo-${escapeHtml(order.id)}"
+              >保存</button>
+            </div>
+            ${
+              order.seaOrderNo
+                ? `<a class="batch-sea-link" href="${escapeHtml(
+                    getSeaOrderTrackUrl(order.seaOrderNo),
+                  )}" target="_blank" rel="noopener noreferrer">${escapeHtml(order.seaOrderNo)}</a>`
+                : ""
+            }
+          </td>
           <td>${escapeHtml(order.confirmedCount ?? 0)} / ${escapeHtml(order.itemCount ?? 0)}</td>
           <td>${formatDate(order.createdAt)}</td>
           <td><div class="action-row">${actions.join("")}</div></td>
@@ -1041,7 +1096,7 @@ function renderBatchInboundDetail(detail) {
     <div class="batch-detail-head">
       <div class="batch-detail-meta">
         <div>单号：${escapeHtml(detail.orderNo)}</div>
-        <div>状态：${escapeHtml(getBatchInboundStatusText(detail.status))}</div>
+        <div>状态：${escapeHtml(getBatchInboundStatusText(detail.status, detail))}</div>
         <div>采集范围：${escapeHtml(formatBatchRange(detail))}</div>
         <div>明细进度：${escapeHtml(detail.confirmedCount ?? 0)} / ${escapeHtml(
           detail.itemCount ?? 0,
@@ -1144,6 +1199,20 @@ async function submitUploadBatchInboundForm() {
 
   $("batchInboundFile").value = "";
   state.selectedBatchInboundOrderId = String(orderId);
+}
+
+async function saveBatchInboundDomesticOrderNo(orderId, domesticOrderNo) {
+  return request(`/batch-inbound/orders/${orderId}/domestic-order-no`, {
+    method: "POST",
+    body: JSON.stringify({ domesticOrderNo }),
+  });
+}
+
+async function saveBatchInboundSeaOrderNo(orderId, seaOrderNo) {
+  return request(`/batch-inbound/orders/${orderId}/sea-order-no`, {
+    method: "POST",
+    body: JSON.stringify({ seaOrderNo }),
+  });
 }
 
 async function confirmBatchInboundAction(action, orderId, payload = {}) {
@@ -1515,7 +1584,7 @@ function bindForms() {
     event.preventDefault();
     try {
       await submitUploadBatchInboundForm();
-      showToast("文档上传成功，状态已更新为等待入库");
+      showToast("文档上传成功");
       await loadBatchInboundOrders();
       if (state.selectedBatchInboundOrderId) {
         await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
@@ -1752,6 +1821,30 @@ function bindDelegates() {
       if (action === "batchInboundSelectOrder" || action === "batchInboundOpenConfirm") {
         await loadBatchInboundOrderDetail(orderId);
         switchPanel("batchInbound");
+      } else if (action === "batchInboundSaveDomesticOrderNo") {
+        const input = $(button.dataset.inputId || "");
+        const domesticOrderNo = String(input?.value || "").trim();
+        if (!domesticOrderNo) {
+          throw new Error("请输入国内单号");
+        }
+        await saveBatchInboundDomesticOrderNo(orderId, domesticOrderNo);
+        showToast("国内单号已保存");
+        await loadBatchInboundOrders();
+        if (state.selectedBatchInboundOrderId) {
+          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
+        }
+      } else if (action === "batchInboundSaveSeaOrderNo") {
+        const input = $(button.dataset.inputId || "");
+        const seaOrderNo = String(input?.value || "").trim();
+        if (!seaOrderNo) {
+          throw new Error("请输入海运单号");
+        }
+        await saveBatchInboundSeaOrderNo(orderId, seaOrderNo);
+        showToast("海运单号已保存");
+        await loadBatchInboundOrders();
+        if (state.selectedBatchInboundOrderId) {
+          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
+        }
       } else if (action === "batchInboundDeleteOrder") {
         const orderNo = button.dataset.orderNo || orderId;
         const ok = await openDeleteConfirmModal(orderNo);
