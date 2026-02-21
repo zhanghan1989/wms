@@ -125,6 +125,7 @@ function getFbaStatusText(status) {
   if (status === "pending_confirm") return "待确认";
   if (status === "pending_outbound") return "待出库";
   if (status === "outbound") return "已出库";
+  if (status === "deleted") return "已删除";
   return displayText(status);
 }
 
@@ -221,10 +222,10 @@ function closeModal(modalId) {
   modal.classList.add("hidden");
 }
 
-function openDeleteConfirmModal(orderNo) {
+function openDeleteConfirmModal(messageText) {
   const message = $("deleteConfirmMessage");
   if (message) {
-    message.textContent = `确认删除批量入库单 ${orderNo} ？删除后会释放该单锁定的箱号。`;
+    message.textContent = String(messageText || "确认删除当前数据？");
   }
   if (typeof deleteConfirmResolver === "function") {
     deleteConfirmResolver(false);
@@ -1388,11 +1389,19 @@ function renderFbaReplenishmentList() {
           }
         </td>
         <td>
-          ${
-            item.status === "pending_confirm"
-              ? `<button class="tiny-btn" data-action="fbaConfirmRow" data-id="${escapeHtml(item.id)}" data-input-id="fbaActualQty-${escapeHtml(item.id)}">确认</button>`
-              : '<span class="muted">-</span>'
-          }
+          <div class="action-row">
+            ${
+              item.status === "pending_confirm"
+                ? `<button class="tiny-btn" data-action="fbaConfirmRow" data-id="${escapeHtml(item.id)}" data-input-id="fbaActualQty-${escapeHtml(item.id)}">确认</button>`
+                : ""
+            }
+            ${
+              item.status !== "deleted"
+                ? `<button class="tiny-btn danger" data-action="fbaDeleteRow" data-id="${escapeHtml(item.id)}" data-request-no="${escapeHtml(item.requestNo)}">删除</button>`
+                : ""
+            }
+            ${item.status === "deleted" ? '<span class="muted">-</span>' : ""}
+          </div>
         </td>
       </tr>
     `,
@@ -1439,6 +1448,12 @@ async function outboundFbaReplenishmentRequests(ids, expressNo) {
   return request("/inventory/fba-replenishments/outbound", {
     method: "POST",
     body: JSON.stringify({ ids, expressNo }),
+  });
+}
+
+async function deleteFbaReplenishmentRequest(id) {
+  return request(`/inventory/fba-replenishments/${id}/delete`, {
+    method: "POST",
   });
 }
 
@@ -2134,7 +2149,9 @@ function bindDelegates() {
         }
       } else if (action === "batchInboundDeleteOrder") {
         const orderNo = button.dataset.orderNo || orderId;
-        const ok = await openDeleteConfirmModal(orderNo);
+        const ok = await openDeleteConfirmModal(
+          `确认删除批量入库单 ${orderNo} ？删除后会释放该单锁定的箱号。`,
+        );
         if (!ok) return;
         await deleteBatchInboundOrder(orderId);
         showToast("删除成功，已释放锁定箱号");
@@ -2184,23 +2201,36 @@ function bindDelegates() {
   });
 
   $("fbaReplenishmentBody").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action='fbaConfirmRow']");
+    const button = event.target.closest("button[data-action]");
     if (!button) return;
 
     try {
+      const action = button.dataset.action;
       const id = Number(button.dataset.id);
-      const inputId = button.dataset.inputId || "";
-      const input = $(inputId);
-      const actualQty = Number(String(input?.value || "").trim());
       if (!Number.isInteger(id) || id <= 0) {
         throw new Error("申请单ID无效");
       }
-      if (!Number.isInteger(actualQty) || actualQty <= 0) {
-        throw new Error("实际数量必须是大于0的整数");
+
+      if (action === "fbaConfirmRow") {
+        const inputId = button.dataset.inputId || "";
+        const input = $(inputId);
+        const actualQty = Number(String(input?.value || "").trim());
+        if (!Number.isInteger(actualQty) || actualQty <= 0) {
+          throw new Error("实际数量必须是大于0的整数");
+        }
+        await confirmFbaReplenishmentRequest(id, actualQty);
+        showToast("已转为待出库");
+      } else if (action === "fbaDeleteRow") {
+        const requestNo = button.dataset.requestNo || `#${id}`;
+        const ok = await openDeleteConfirmModal(`确认删除FBA补货申请单 ${requestNo} ？`);
+        if (!ok) return;
+        await deleteFbaReplenishmentRequest(id);
+        showToast("申请单已删除");
+      } else {
+        return;
       }
 
-      await confirmFbaReplenishmentRequest(id, actualQty);
-      showToast("已转为待出库");
+      state.selectedFbaIds.delete(String(id));
       await loadFbaReplenishments();
       await loadFbaPendingSummary();
       await loadInventory();

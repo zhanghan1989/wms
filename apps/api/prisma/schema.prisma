@@ -46,6 +46,7 @@ enum FbaReplenishmentStatus {
   pending_confirm
   pending_outbound
   outbound
+  deleted
 }
 
 enum StocktakeScopeType {
@@ -109,23 +110,24 @@ enum AuditEventType {
 }
 
 model User {
-  id           BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
-  username     String              @unique @db.VarChar(64)
-  passwordHash String              @map("password_hash") @db.VarChar(255)
-  role         Role
-  status       Int                 @default(1) @db.TinyInt
-  createdAt    DateTime            @default(now()) @map("created_at")
-  updatedAt    DateTime            @updatedAt @map("updated_at")
-  inboundOrders InboundOrder[]
-  outboundOrders OutboundOrder[]
-  stocktakeTasks StocktakeTask[]
-  adjustOrders InventoryAdjustOrder[]
-  batchInboundOrders BatchInboundOrder[]
-  createdFbaReplenishments FbaReplenishment[] @relation("fba_created_by")
-  confirmedFbaReplenishments FbaReplenishment[] @relation("fba_confirmed_by")
-  outboundFbaReplenishments FbaReplenishment[] @relation("fba_outbound_by")
-  stockMovements StockMovement[]
-  auditLogs    OperationAuditLog[]
+  id                         BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  username                   String                 @unique @db.VarChar(64)
+  passwordHash               String                 @map("password_hash") @db.VarChar(255)
+  role                       Role
+  status                     Int                    @default(1) @db.TinyInt
+  createdAt                  DateTime               @default(now()) @map("created_at")
+  updatedAt                  DateTime               @updatedAt @map("updated_at")
+  inboundOrders              InboundOrder[]
+  outboundOrders             OutboundOrder[]
+  stocktakeTasks             StocktakeTask[]
+  adjustOrders               InventoryAdjustOrder[]
+  batchInboundOrders         BatchInboundOrder[]
+  createdFbaReplenishments   FbaReplenishment[]     @relation("fba_created_by")
+  confirmedFbaReplenishments FbaReplenishment[]     @relation("fba_confirmed_by")
+  outboundFbaReplenishments  FbaReplenishment[]     @relation("fba_outbound_by")
+  deletedFbaReplenishments   FbaReplenishment[]     @relation("fba_deleted_by")
+  stockMovements             StockMovement[]
+  auditLogs                  OperationAuditLog[]
 
   @@map("users")
 }
@@ -152,16 +154,16 @@ model BatchInboundOrder {
 }
 
 model BatchInboundItem {
-  id          BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
-  orderId     BigInt                @map("order_id") @db.UnsignedBigInt
-  boxCode     String                @map("box_code") @db.VarChar(128)
-  skuCode     String                @map("sku_code") @db.VarChar(128)
+  id          BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  orderId     BigInt                 @map("order_id") @db.UnsignedBigInt
+  boxCode     String                 @map("box_code") @db.VarChar(128)
+  skuCode     String                 @map("sku_code") @db.VarChar(128)
   qty         Int
-  sourceRowNo Int?                  @map("source_row_no")
+  sourceRowNo Int?                   @map("source_row_no")
   status      BatchInboundItemStatus @default(pending)
-  confirmedAt DateTime?             @map("confirmed_at")
-  createdAt   DateTime              @default(now()) @map("created_at")
-  order       BatchInboundOrder     @relation(fields: [orderId], references: [id])
+  confirmedAt DateTime?              @map("confirmed_at")
+  createdAt   DateTime               @default(now()) @map("created_at")
+  order       BatchInboundOrder      @relation(fields: [orderId], references: [id])
 
   @@unique([orderId, boxCode, skuCode], map: "uq_batch_order_box_sku")
   @@index([orderId, status])
@@ -170,58 +172,58 @@ model BatchInboundItem {
 }
 
 model Sku {
-  id         BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
-  sku        String              @unique @db.VarChar(128)
-  erpSku     String?             @map("erp_sku") @db.VarChar(128)
-  asin       String?             @db.VarChar(32)
-  fnsku      String?             @db.VarChar(32)
-  model      String?             @db.VarChar(255)
-  desc1      String?             @db.VarChar(255)
-  desc2      String?             @db.VarChar(255)
-  shop       String?             @db.VarChar(128)
-  remark     String?             @db.VarChar(255)
-  status     Int                 @default(1) @db.TinyInt
-  createdAt  DateTime            @default(now()) @map("created_at")
-  updatedAt  DateTime            @updatedAt @map("updated_at")
-  itemCodes  ItemCode[]
-  inventories InventoryBoxSku[]
-  inboundItems InboundOrderItem[]
-  outboundItems OutboundOrderItem[]
-  stocktakeRecords StocktakeRecord[]
-  stockMovements StockMovement[]
-  adjustItems InventoryAdjustOrderItem[]
+  id                BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  sku               String                     @unique @db.VarChar(128)
+  erpSku            String?                    @map("erp_sku") @db.VarChar(128)
+  asin              String?                    @db.VarChar(32)
+  fnsku             String?                    @db.VarChar(32)
+  model             String?                    @db.VarChar(255)
+  desc1             String?                    @db.VarChar(255)
+  desc2             String?                    @db.VarChar(255)
+  shop              String?                    @db.VarChar(128)
+  remark            String?                    @db.VarChar(255)
+  status            Int                        @default(1) @db.TinyInt
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+  itemCodes         ItemCode[]
+  inventories       InventoryBoxSku[]
+  inboundItems      InboundOrderItem[]
+  outboundItems     OutboundOrderItem[]
+  stocktakeRecords  StocktakeRecord[]
+  stockMovements    StockMovement[]
+  adjustItems       InventoryAdjustOrderItem[]
   fbaReplenishments FbaReplenishment[]
 
   @@map("skus")
 }
 
 model Shelf {
-  id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
-  shelfCode String              @unique @map("shelf_code") @db.VarChar(64)
-  name      String?             @db.VarChar(128)
-  status    Int                 @default(1) @db.TinyInt
-  createdAt DateTime            @default(now()) @map("created_at")
-  updatedAt DateTime            @updatedAt @map("updated_at")
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  shelfCode String   @unique @map("shelf_code") @db.VarChar(64)
+  name      String?  @db.VarChar(128)
+  status    Int      @default(1) @db.TinyInt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
   boxes     Box[]
 
   @@map("shelves")
 }
 
 model Box {
-  id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
-  boxCode   String              @unique @map("box_code") @db.VarChar(128)
-  shelfId   BigInt              @map("shelf_id") @db.UnsignedBigInt
-  status    Int                 @default(1) @db.TinyInt
-  createdAt DateTime            @default(now()) @map("created_at")
-  updatedAt DateTime            @updatedAt @map("updated_at")
-  shelf     Shelf               @relation(fields: [shelfId], references: [id])
-  itemCodes ItemCode[]
-  inventories InventoryBoxSku[]
-  inboundItems InboundOrderItem[]
-  outboundItems OutboundOrderItem[]
-  stocktakeRecords StocktakeRecord[]
-  stockMovements StockMovement[]
-  adjustItems InventoryAdjustOrderItem[]
+  id                BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  boxCode           String                     @unique @map("box_code") @db.VarChar(128)
+  shelfId           BigInt                     @map("shelf_id") @db.UnsignedBigInt
+  status            Int                        @default(1) @db.TinyInt
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+  shelf             Shelf                      @relation(fields: [shelfId], references: [id])
+  itemCodes         ItemCode[]
+  inventories       InventoryBoxSku[]
+  inboundItems      InboundOrderItem[]
+  outboundItems     OutboundOrderItem[]
+  stocktakeRecords  StocktakeRecord[]
+  stockMovements    StockMovement[]
+  adjustItems       InventoryAdjustOrderItem[]
   fbaReplenishments FbaReplenishment[]
 
   @@map("boxes")
@@ -257,15 +259,15 @@ model InventoryBoxSku {
 }
 
 model InboundOrder {
-  id        BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
-  orderNo   String           @unique @map("order_no") @db.VarChar(64)
-  orderType InboundOrderType @map("order_type")
+  id        BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  orderNo   String             @unique @map("order_no") @db.VarChar(64)
+  orderType InboundOrderType   @map("order_type")
   status    OrderStatus
-  remark    String?          @db.VarChar(255)
-  createdBy BigInt           @map("created_by") @db.UnsignedBigInt
-  createdAt DateTime         @default(now()) @map("created_at")
-  updatedAt DateTime         @updatedAt @map("updated_at")
-  creator   User             @relation(fields: [createdBy], references: [id])
+  remark    String?            @db.VarChar(255)
+  createdBy BigInt             @map("created_by") @db.UnsignedBigInt
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+  creator   User               @relation(fields: [createdBy], references: [id])
   items     InboundOrderItem[]
 
   @@map("inbound_orders")
@@ -287,14 +289,14 @@ model InboundOrderItem {
 }
 
 model OutboundOrder {
-  id        BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
-  orderNo   String            @unique @map("order_no") @db.VarChar(64)
+  id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  orderNo   String              @unique @map("order_no") @db.VarChar(64)
   status    OrderStatus
-  remark    String?           @db.VarChar(255)
-  createdBy BigInt            @map("created_by") @db.UnsignedBigInt
-  createdAt DateTime          @default(now()) @map("created_at")
-  updatedAt DateTime          @updatedAt @map("updated_at")
-  creator   User              @relation(fields: [createdBy], references: [id])
+  remark    String?             @db.VarChar(255)
+  createdBy BigInt              @map("created_by") @db.UnsignedBigInt
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+  creator   User                @relation(fields: [createdBy], references: [id])
   items     OutboundOrderItem[]
 
   @@map("outbound_orders")
@@ -315,48 +317,48 @@ model OutboundOrderItem {
 }
 
 model StocktakeTask {
-  id        BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
-  taskNo    String            @unique @map("task_no") @db.VarChar(64)
-  scopeType StocktakeScopeType @map("scope_type")
+  id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  taskNo    String              @unique @map("task_no") @db.VarChar(64)
+  scopeType StocktakeScopeType  @map("scope_type")
   status    StocktakeTaskStatus
-  createdBy BigInt            @map("created_by") @db.UnsignedBigInt
-  createdAt DateTime          @default(now()) @map("created_at")
-  updatedAt DateTime          @updatedAt @map("updated_at")
-  creator   User              @relation(fields: [createdBy], references: [id])
+  createdBy BigInt              @map("created_by") @db.UnsignedBigInt
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+  creator   User                @relation(fields: [createdBy], references: [id])
   records   StocktakeRecord[]
 
   @@map("stocktake_tasks")
 }
 
 model StocktakeRecord {
-  id        BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
-  taskId    BigInt       @map("task_id") @db.UnsignedBigInt
-  boxId     BigInt       @map("box_id") @db.UnsignedBigInt
-  skuId     BigInt       @map("sku_id") @db.UnsignedBigInt
-  systemQty Int          @map("system_qty")
-  countedQty Int         @map("counted_qty")
-  diffQty   Int          @map("diff_qty")
-  createdAt DateTime     @default(now()) @map("created_at")
-  task      StocktakeTask @relation(fields: [taskId], references: [id])
-  box       Box           @relation(fields: [boxId], references: [id])
-  sku       Sku           @relation(fields: [skuId], references: [id])
+  id         BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  taskId     BigInt        @map("task_id") @db.UnsignedBigInt
+  boxId      BigInt        @map("box_id") @db.UnsignedBigInt
+  skuId      BigInt        @map("sku_id") @db.UnsignedBigInt
+  systemQty  Int           @map("system_qty")
+  countedQty Int           @map("counted_qty")
+  diffQty    Int           @map("diff_qty")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  task       StocktakeTask @relation(fields: [taskId], references: [id])
+  box        Box           @relation(fields: [boxId], references: [id])
+  sku        Sku           @relation(fields: [skuId], references: [id])
 
   @@map("stocktake_records")
 }
 
 model StockMovement {
-  id          BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
+  id           BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
   movementType MovementType @map("movement_type")
-  refType     String       @map("ref_type") @db.VarChar(32)
-  refId       BigInt       @map("ref_id") @db.UnsignedBigInt
-  boxId       BigInt       @map("box_id") @db.UnsignedBigInt
-  skuId       BigInt       @map("sku_id") @db.UnsignedBigInt
-  qtyDelta    Int          @map("qty_delta")
-  operatorId  BigInt       @map("operator_id") @db.UnsignedBigInt
-  createdAt   DateTime     @default(now()) @map("created_at")
-  box         Box          @relation(fields: [boxId], references: [id])
-  sku         Sku          @relation(fields: [skuId], references: [id])
-  operator    User         @relation(fields: [operatorId], references: [id])
+  refType      String       @map("ref_type") @db.VarChar(32)
+  refId        BigInt       @map("ref_id") @db.UnsignedBigInt
+  boxId        BigInt       @map("box_id") @db.UnsignedBigInt
+  skuId        BigInt       @map("sku_id") @db.UnsignedBigInt
+  qtyDelta     Int          @map("qty_delta")
+  operatorId   BigInt       @map("operator_id") @db.UnsignedBigInt
+  createdAt    DateTime     @default(now()) @map("created_at")
+  box          Box          @relation(fields: [boxId], references: [id])
+  sku          Sku          @relation(fields: [skuId], references: [id])
+  operator     User         @relation(fields: [operatorId], references: [id])
 
   @@index([skuId, createdAt])
   @@index([boxId, createdAt])
@@ -364,14 +366,14 @@ model StockMovement {
 }
 
 model InventoryAdjustOrder {
-  id        BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
-  adjustNo  String       @unique @map("adjust_no") @db.VarChar(64)
+  id        BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  adjustNo  String                     @unique @map("adjust_no") @db.VarChar(64)
   status    OrderStatus
-  remark    String?      @db.VarChar(255)
-  createdBy BigInt       @map("created_by") @db.UnsignedBigInt
-  createdAt DateTime     @default(now()) @map("created_at")
-  updatedAt DateTime     @updatedAt @map("updated_at")
-  creator   User         @relation(fields: [createdBy], references: [id])
+  remark    String?                    @db.VarChar(255)
+  createdBy BigInt                     @map("created_by") @db.UnsignedBigInt
+  createdAt DateTime                   @default(now()) @map("created_at")
+  updatedAt DateTime                   @updatedAt @map("updated_at")
+  creator   User                       @relation(fields: [createdBy], references: [id])
   items     InventoryAdjustOrderItem[]
 
   @@map("inventory_adjust_orders")
@@ -393,27 +395,30 @@ model InventoryAdjustOrderItem {
 }
 
 model FbaReplenishment {
-  id           BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
-  requestNo    String                @unique @map("request_no") @db.VarChar(64)
+  id           BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  requestNo    String                 @unique @map("request_no") @db.VarChar(64)
   status       FbaReplenishmentStatus @default(pending_confirm)
-  skuId        BigInt                @map("sku_id") @db.UnsignedBigInt
-  boxId        BigInt                @map("box_id") @db.UnsignedBigInt
-  requestedQty Int                   @map("requested_qty")
-  actualQty    Int?                  @map("actual_qty")
-  expressNo    String?               @map("express_no") @db.VarChar(128)
-  remark       String?               @db.VarChar(128)
-  createdBy    BigInt                @map("created_by") @db.UnsignedBigInt
-  confirmedBy  BigInt?               @map("confirmed_by") @db.UnsignedBigInt
-  outboundBy   BigInt?               @map("outbound_by") @db.UnsignedBigInt
-  createdAt    DateTime              @default(now()) @map("created_at")
-  confirmedAt  DateTime?             @map("confirmed_at")
-  outboundAt   DateTime?             @map("outbound_at")
-  updatedAt    DateTime              @updatedAt @map("updated_at")
-  sku          Sku                   @relation(fields: [skuId], references: [id])
-  box          Box                   @relation(fields: [boxId], references: [id])
-  creator      User                  @relation("fba_created_by", fields: [createdBy], references: [id])
-  confirmer    User?                 @relation("fba_confirmed_by", fields: [confirmedBy], references: [id])
-  outbounder   User?                 @relation("fba_outbound_by", fields: [outboundBy], references: [id])
+  skuId        BigInt                 @map("sku_id") @db.UnsignedBigInt
+  boxId        BigInt                 @map("box_id") @db.UnsignedBigInt
+  requestedQty Int                    @map("requested_qty")
+  actualQty    Int?                   @map("actual_qty")
+  expressNo    String?                @map("express_no") @db.VarChar(128)
+  remark       String?                @db.VarChar(128)
+  createdBy    BigInt                 @map("created_by") @db.UnsignedBigInt
+  confirmedBy  BigInt?                @map("confirmed_by") @db.UnsignedBigInt
+  outboundBy   BigInt?                @map("outbound_by") @db.UnsignedBigInt
+  deletedBy    BigInt?                @map("deleted_by") @db.UnsignedBigInt
+  createdAt    DateTime               @default(now()) @map("created_at")
+  confirmedAt  DateTime?              @map("confirmed_at")
+  outboundAt   DateTime?              @map("outbound_at")
+  deletedAt    DateTime?              @map("deleted_at")
+  updatedAt    DateTime               @updatedAt @map("updated_at")
+  sku          Sku                    @relation(fields: [skuId], references: [id])
+  box          Box                    @relation(fields: [boxId], references: [id])
+  creator      User                   @relation("fba_created_by", fields: [createdBy], references: [id])
+  confirmer    User?                  @relation("fba_confirmed_by", fields: [confirmedBy], references: [id])
+  outbounder   User?                  @relation("fba_outbound_by", fields: [outboundBy], references: [id])
+  deleter      User?                  @relation("fba_deleted_by", fields: [deletedBy], references: [id])
 
   @@index([status, createdAt])
   @@index([skuId, status])

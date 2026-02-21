@@ -291,6 +291,33 @@ export class InventoryService {
         throw new ConflictException('当前箱号下该SKU无可用库存，无法创建FBA补货申请');
       }
 
+      const existingActive = await tx.fbaReplenishment.findFirst({
+        where: {
+          skuId: sku.id,
+          status: {
+            in: ['pending_confirm', 'pending_outbound'],
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          requestNo: true,
+          status: true,
+          requestedQty: true,
+          actualQty: true,
+        },
+      });
+      if (existingActive) {
+        const activeQty =
+          existingActive.status === 'pending_outbound'
+            ? (existingActive.actualQty ?? existingActive.requestedQty)
+            : existingActive.requestedQty;
+        let message = `本SKU已发起FBA申请${activeQty}件（申请单号：${existingActive.requestNo}），当前状态：${this.getFbaStatusLabel(existingActive.status)}。`;
+        if (existingActive.status === 'pending_confirm') {
+          message += '可先删除该申请后重新提交申请。';
+        }
+        throw new ConflictException(message);
+      }
+
       if (requestedQty > inventory.qty) {
         throw new ConflictException(`申请数量不能大于当前库存（${inventory.qty}）`);
       }
@@ -399,6 +426,9 @@ export class InventoryService {
       if (!row) throw new NotFoundException('FBA补货申请不存在');
       if (row.status === 'outbound') {
         throw new UnprocessableEntityException('已出库申请不可再次确认');
+      }
+      if (String(row.status) === 'deleted') {
+        throw new UnprocessableEntityException('已删除申请不可再次确认');
       }
 
       if (actualQty > row.requestedQty) {
@@ -625,6 +655,82 @@ export class InventoryService {
     });
   }
 
+  async deleteFbaReplenishment(
+    idParam: string,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ id: string; requestNo: string; status: string; idempotent: boolean }> {
+    const id = parseId(idParam, 'fbaReplenishmentId');
+
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.fbaReplenishment.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          requestNo: true,
+          status: true,
+          requestedQty: true,
+          actualQty: true,
+          expressNo: true,
+        },
+      });
+      if (!row) {
+        throw new NotFoundException('FBA补货申请不存在');
+      }
+
+      if (String(row.status) === 'deleted') {
+        return {
+          id: row.id.toString(),
+          requestNo: row.requestNo,
+          status: String(row.status),
+          idempotent: true,
+        };
+      }
+
+      const deletedAt = new Date();
+      const updated = await tx.fbaReplenishment.update({
+        where: { id: row.id },
+        data: {
+          status: 'deleted' as any,
+          deletedBy: operatorId,
+          deletedAt,
+        },
+        select: {
+          id: true,
+          requestNo: true,
+          status: true,
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'fba_replenishment',
+        entityId: row.id,
+        action: AuditAction.delete,
+        eventType: AuditEventType.INVENTORY_ADJUST_VOIDED,
+        beforeData: {
+          status: row.status,
+          requestedQty: row.requestedQty,
+          actualQty: row.actualQty,
+          expressNo: row.expressNo,
+        },
+        afterData: {
+          status: updated.status,
+          deletedAt,
+        },
+        operatorId,
+        requestId,
+      });
+
+      return {
+        id: updated.id.toString(),
+        requestNo: updated.requestNo,
+        status: updated.status,
+        idempotent: false,
+      };
+    });
+  }
+
   async listFbaReplenishments(): Promise<unknown[]> {
     const rows = await this.prisma.fbaReplenishment.findMany({
       orderBy: { createdAt: 'desc' },
@@ -761,6 +867,14 @@ export class InventoryService {
       candidate = new Date(candidate.getTime() + 1000);
     }
     throw new ConflictException('申请单号重复，请稍后重试');
+  }
+
+  private getFbaStatusLabel(status: string): string {
+    if (status === 'pending_confirm') return '待确认';
+    if (status === 'pending_outbound') return '待出库';
+    if (status === 'outbound') return '已出库';
+    if (status === 'deleted') return '已删除';
+    return status;
   }
 
   private normalizeAdjustItem(item: CreateAdjustOrderItemDto): {

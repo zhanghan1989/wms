@@ -95,6 +95,15 @@ export class InventoryController {
     return this.inventoryService.outboundFbaReplenishments(payload, user.id, req.requestId);
   }
 
+  @Post('fba-replenishments/:id/delete')
+  async deleteFbaReplenishment(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.inventoryService.deleteFbaReplenishment(id, user.id, req.requestId);
+  }
+
   @Get('fba-replenishments')
   async listFbaReplenishments(): Promise<unknown[]> {
     return this.inventoryService.listFbaReplenishments();

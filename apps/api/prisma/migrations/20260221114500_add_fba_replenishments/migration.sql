@@ -1,4 +1,4 @@
-﻿-- CreateTable
+-- CreateTable
 CREATE TABLE `fba_replenishments` (
   `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   `request_no` VARCHAR(64) NOT NULL,
