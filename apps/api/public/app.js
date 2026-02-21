@@ -434,15 +434,19 @@ function renderOutboundButton(
   skuId,
   totalQty,
   boxCode = "",
-  { label = "FBA补货", ghost = true, lockBox = false, action = "inventoryOutbound" } = {},
+  { label = "FBA补货", ghost = true, lockBox = false, action = "inventoryOutbound", maxQty = null } = {},
 ) {
   if (Number(totalQty) <= 0) {
     return "";
   }
   const boxAttr = boxCode ? ` data-box-code="${escapeHtml(boxCode)}"` : "";
   const lockAttr = lockBox ? ' data-lock-box="1"' : "";
+  const normalizedMaxQty = Math.floor(Number(maxQty));
+  const maxQtyAttr = Number.isInteger(normalizedMaxQty) && normalizedMaxQty > 0
+    ? ` data-max-qty="${escapeHtml(normalizedMaxQty)}"`
+    : "";
   const className = ghost ? "tiny-btn ghost" : "tiny-btn";
-  return `<button class="${className}" data-action="${action}" data-sku-id="${skuId}"${boxAttr}${lockAttr}>${escapeHtml(label)}</button>`;
+  return `<button class="${className}" data-action="${action}" data-sku-id="${skuId}"${boxAttr}${lockAttr}${maxQtyAttr}>${escapeHtml(label)}</button>`;
 }
 
 function getFbaPendingQtyBySku(skuId) {
@@ -540,6 +544,7 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
                 ghost: false,
                 lockBox: true,
                 action: "inventoryOutbound",
+                maxQty: row.qty,
               });
               const outboundOneButton = renderOutboundButton(currentSkuId, row.qty, row.boxCode, {
                 label: "出库1件",
@@ -1499,7 +1504,7 @@ function openFbaOutboundModal() {
   openModal("fbaOutboundModal");
 }
 
-function openAdjustModal(direction, skuId, presetBoxCode = "") {
+function openAdjustModal(direction, skuId, presetBoxCode = "", maxQty = null) {
   const normalizedPresetBoxCode = normalizeBoxCodeInput(presetBoxCode);
   $("adjustSkuId").value = String(skuId);
   $("adjustDirection").value = direction;
@@ -1519,8 +1524,18 @@ function openAdjustModal(direction, skuId, presetBoxCode = "") {
     addBoxBtn.classList.remove("hidden");
     renderAdjustBoxSuggestions(normalizedPresetBoxCode);
   }
-  $("adjustQty").min = "1";
-  $("adjustQty").value = "1";
+  const qtyInput = $("adjustQty");
+  qtyInput.min = "1";
+  qtyInput.step = "1";
+  qtyInput.value = "1";
+  const normalizedMaxQty = Number(maxQty);
+  if (direction === "outbound" && Number.isInteger(normalizedMaxQty) && normalizedMaxQty > 0) {
+    qtyInput.max = String(normalizedMaxQty);
+    qtyInput.dataset.maxQty = String(normalizedMaxQty);
+  } else {
+    qtyInput.removeAttribute("max");
+    qtyInput.dataset.maxQty = "";
+  }
   $("adjustReason").value = direction === "inbound" ? "退货入库" : "FBA补货";
   $("adjustModalTitle").textContent = direction === "inbound" ? "库存入库" : "FBA补货";
   $("adjustSubmitBtn").textContent = direction === "inbound" ? "确认入库" : "生成FBA补货申请单";
@@ -1564,6 +1579,12 @@ async function submitAdjustForm() {
   $("adjustBoxCode").value = boxCode;
   if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
     throw new Error("数量必须为正整数");
+  }
+  if (direction === "outbound") {
+    const maxQty = Number($("adjustQty").dataset.maxQty || 0);
+    if (Number.isInteger(maxQty) && maxQty > 0 && qty > maxQty) {
+      throw new Error(`FBA\u8865\u8d27\u6570\u91cf\u4e0d\u80fd\u5927\u4e8e\u5f53\u524d\u7bb1\u53f7\u8be5SKU\u53ef\u7528\u6570\u91cf\uff08${maxQty}\uff09`);
+    }
   }
   if (reason && reason.length > 10) {
     throw new Error("备注最多 10 个字");
@@ -1920,6 +1941,11 @@ function bindForms() {
     }
   });
 
+  $("openInventoryHome").addEventListener("click", () => {
+    switchPanel("inventory");
+    focusInventorySearch();
+  });
+
   $("openCreateSkuModal").addEventListener("click", async () => {
     await Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true));
     $("createSkuModalForm").reset();
@@ -1965,6 +1991,32 @@ function bindForms() {
   });
   $("adjustBoxCode").addEventListener("focus", (event) => {
     renderAdjustBoxSuggestions(event.target.value);
+  });
+  $("adjustQty").addEventListener("input", (event) => {
+    const input = event.target;
+    let digits = String(input.value || "").replace(/\D/g, "").replace(/^0+/, "");
+    if (!digits) {
+      input.value = "";
+      return;
+    }
+
+    let value = Number(digits);
+    if (!Number.isInteger(value) || value <= 0) {
+      input.value = "";
+      return;
+    }
+
+    const maxQty = Number(input.dataset.maxQty || 0);
+    if (Number.isInteger(maxQty) && maxQty > 0 && value > maxQty) {
+      value = maxQty;
+    }
+    input.value = String(value);
+  });
+  $("adjustQty").addEventListener("blur", (event) => {
+    const input = event.target;
+    if (!String(input.value || "").trim()) {
+      input.value = "1";
+    }
   });
 
   $("openCreateShelfQuick").addEventListener("click", () => {
@@ -2288,7 +2340,13 @@ function bindDelegates() {
       }
 
       const direction = action === "inventoryOutbound" ? "outbound" : "inbound";
-      openAdjustModal(direction, skuId, boxCode);
+      const maxQty = Number(button.dataset.maxQty || 0);
+      openAdjustModal(
+        direction,
+        skuId,
+        boxCode,
+        Number.isInteger(maxQty) && maxQty > 0 ? maxQty : null,
+      );
     } catch (error) {
       showToast(error.message, true);
     }
