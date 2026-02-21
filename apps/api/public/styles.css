@@ -711,6 +711,11 @@ pre {
   width: min(1100px, 100%);
 }
 
+.batch-detail-modal-card {
+  max-height: 86vh;
+  overflow: auto;
+}
+
 .modal-card.modal-confirm {
   width: min(520px, 100%);
   padding: 18px;

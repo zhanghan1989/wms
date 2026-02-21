@@ -172,10 +172,6 @@
           </table>
         </div>
 
-        <div class="card">
-          <h3>确认入库</h3>
-          <div id="batchInboundDetail" class="batch-detail-empty muted">请先选择批量入库单。</div>
-        </div>
       </section>
 
       <section class="panel" id="overview">
@@ -471,6 +467,16 @@
       <div class="modal-actions">
         <button id="errorModalCloseBtn" type="button" class="danger-solid">我知道了</button>
       </div>
+    </div>
+  </div>
+
+  <div id="batchInboundDetailModal" class="modal hidden">
+    <div class="modal-card modal-wide batch-detail-modal-card">
+      <div class="modal-head">
+        <h3>确认入库</h3>
+        <button type="button" class="ghost" data-action="closeBatchInboundDetailModal">关闭</button>
+      </div>
+      <div id="batchInboundDetail" class="batch-detail-empty muted">请先选择批量入库单。</div>
     </div>
   </div>
 

@@ -1818,8 +1818,8 @@ function bindDelegates() {
 
     try {
       if (action === "batchInboundSelectOrder" || action === "batchInboundOpenConfirm") {
-        await loadBatchInboundOrderDetail(orderId);
-        switchPanel("batchInbound");
+        await loadBatchInboundOrderDetail(orderId, { silent: true });
+        openModal("batchInboundDetailModal");
       } else if (action === "batchInboundSaveDomesticOrderNo") {
         const input = $(button.dataset.inputId || "");
         const domesticOrderNo = String(input?.value || "").trim();
@@ -1985,6 +1985,13 @@ function bindDelegates() {
     const errorModalClose = event.target.closest("button[data-action='closeErrorModal']");
     if (errorModalClose) {
       closeErrorModal();
+      return;
+    }
+    const batchInboundDetailModalClose = event.target.closest(
+      "button[data-action='closeBatchInboundDetailModal']",
+    );
+    if (batchInboundDetailModalClose) {
+      closeModal("batchInboundDetailModal");
     }
   });
 
@@ -2027,6 +2034,12 @@ function bindDelegates() {
   $("editSkuModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("editSkuModal");
+    }
+  });
+
+  $("batchInboundDetailModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("batchInboundDetailModal");
     }
   });
 
