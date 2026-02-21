@@ -42,6 +42,12 @@ enum BatchInboundItemStatus {
   confirmed
 }
 
+enum FbaReplenishmentStatus {
+  pending_confirm
+  pending_outbound
+  outbound
+}
+
 enum StocktakeScopeType {
   sample
 }
@@ -115,6 +121,9 @@ model User {
   stocktakeTasks StocktakeTask[]
   adjustOrders InventoryAdjustOrder[]
   batchInboundOrders BatchInboundOrder[]
+  createdFbaReplenishments FbaReplenishment[] @relation("fba_created_by")
+  confirmedFbaReplenishments FbaReplenishment[] @relation("fba_confirmed_by")
+  outboundFbaReplenishments FbaReplenishment[] @relation("fba_outbound_by")
   stockMovements StockMovement[]
   auditLogs    OperationAuditLog[]
 
@@ -181,6 +190,7 @@ model Sku {
   stocktakeRecords StocktakeRecord[]
   stockMovements StockMovement[]
   adjustItems InventoryAdjustOrderItem[]
+  fbaReplenishments FbaReplenishment[]
 
   @@map("skus")
 }
@@ -212,6 +222,7 @@ model Box {
   stocktakeRecords StocktakeRecord[]
   stockMovements StockMovement[]
   adjustItems InventoryAdjustOrderItem[]
+  fbaReplenishments FbaReplenishment[]
 
   @@map("boxes")
 }
@@ -379,6 +390,35 @@ model InventoryAdjustOrderItem {
   sku       Sku                  @relation(fields: [skuId], references: [id])
 
   @@map("inventory_adjust_order_items")
+}
+
+model FbaReplenishment {
+  id           BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  requestNo    String                @unique @map("request_no") @db.VarChar(64)
+  status       FbaReplenishmentStatus @default(pending_confirm)
+  skuId        BigInt                @map("sku_id") @db.UnsignedBigInt
+  boxId        BigInt                @map("box_id") @db.UnsignedBigInt
+  requestedQty Int                   @map("requested_qty")
+  actualQty    Int?                  @map("actual_qty")
+  expressNo    String?               @map("express_no") @db.VarChar(128)
+  remark       String?               @db.VarChar(128)
+  createdBy    BigInt                @map("created_by") @db.UnsignedBigInt
+  confirmedBy  BigInt?               @map("confirmed_by") @db.UnsignedBigInt
+  outboundBy   BigInt?               @map("outbound_by") @db.UnsignedBigInt
+  createdAt    DateTime              @default(now()) @map("created_at")
+  confirmedAt  DateTime?             @map("confirmed_at")
+  outboundAt   DateTime?             @map("outbound_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+  sku          Sku                   @relation(fields: [skuId], references: [id])
+  box          Box                   @relation(fields: [boxId], references: [id])
+  creator      User                  @relation("fba_created_by", fields: [createdBy], references: [id])
+  confirmer    User?                 @relation("fba_confirmed_by", fields: [confirmedBy], references: [id])
+  outbounder   User?                 @relation("fba_outbound_by", fields: [outboundBy], references: [id])
+
+  @@index([status, createdAt])
+  @@index([skuId, status])
+  @@index([boxId, status])
+  @@map("fba_replenishments")
 }
 
 model OperationAuditLog {

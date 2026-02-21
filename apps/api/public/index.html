@@ -182,20 +182,25 @@
       <section class="panel" id="fbaReplenishment">
         <div class="panel-head">
           <h2>FBA补货申请一览</h2>
-          <button id="refreshFbaReplenishment" class="ghost">刷新</button>
+          <div class="panel-tools">
+            <button id="fbaBatchOutboundBtn" type="button">出库</button>
+            <button id="refreshFbaReplenishment" class="ghost">刷新</button>
+          </div>
         </div>
         <table>
           <thead>
             <tr>
+              <th><input id="fbaSelectAll" type="checkbox" /></th>
               <th>申请单号</th>
               <th>状态</th>
               <th>SKU</th>
+              <th>型号</th>
+              <th>说明1</th>
               <th>箱号</th>
               <th>货架号</th>
               <th>申请数量</th>
-              <th>备注</th>
-              <th>申请人</th>
-              <th>申请时间</th>
+              <th>实际数量</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody id="fbaReplenishmentBody"></tbody>
@@ -505,6 +510,22 @@
         <button type="button" class="ghost" data-action="closeBatchInboundDetailModal">关闭</button>
       </div>
       <div id="batchInboundDetail" class="batch-detail-empty muted">请先选择批量入库单。</div>
+    </div>
+  </div>
+
+  <div id="fbaOutboundModal" class="modal hidden">
+    <div class="modal-card modal-adjust">
+      <div class="modal-head">
+        <h3>FBA补货出库</h3>
+        <button type="button" class="ghost" data-action="closeFbaOutboundModal">关闭</button>
+      </div>
+      <form id="fbaOutboundForm" class="form-grid modal-grid adjust-single-col">
+        <label>快递号<input id="fbaOutboundExpressNo" maxlength="128" required /></label>
+        <div class="modal-actions">
+          <button id="fbaOutboundSubmitBtn" type="submit">确认出库</button>
+          <button type="button" class="ghost" data-action="closeFbaOutboundModal">取消</button>
+        </div>
+      </form>
     </div>
   </div>
 

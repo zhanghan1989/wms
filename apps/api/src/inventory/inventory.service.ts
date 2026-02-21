@@ -14,8 +14,10 @@ import {
   CreateAdjustOrderDto,
   CreateAdjustOrderItemDto,
 } from './dto/create-adjust-order.dto';
+import { ConfirmFbaReplenishmentDto } from './dto/confirm-fba-replenishment.dto';
 import { CreateFbaReplenishmentDto } from './dto/create-fba-replenishment.dto';
 import { ManualAdjustDto } from './dto/manual-adjust.dto';
+import { OutboundFbaReplenishmentDto } from './dto/outbound-fba-replenishment.dto';
 
 interface AdjustOrderResult {
   orderId: string;
@@ -245,33 +247,36 @@ export class InventoryService {
   ): Promise<unknown> {
     const skuId = BigInt(payload.skuId);
     const boxCode = payload.boxCode.trim();
-    const qty = Number(payload.qty);
+    const requestedQty = Number(payload.qty);
     const remark = payload.remark?.trim() || FBA_REPLENISH_MARK;
 
-    if (!boxCode) {
-      throw new BadRequestException('箱号不能为空');
-    }
-    if (!Number.isInteger(qty) || qty <= 0) {
-      throw new BadRequestException('补货数量必须是大于0的整数');
+    if (!boxCode) throw new BadRequestException('箱号不能为空');
+    if (!Number.isInteger(requestedQty) || requestedQty <= 0) {
+      throw new BadRequestException('申请数量必须是大于0的整数');
     }
 
     return this.prisma.$transaction(async (tx) => {
       const [sku, box] = await Promise.all([
         tx.sku.findUnique({
           where: { id: skuId },
-          select: { id: true, sku: true },
+          select: {
+            id: true,
+            sku: true,
+            model: true,
+            desc1: true,
+          },
         }),
         tx.box.findUnique({
           where: { boxCode },
-          select: { id: true, boxCode: true, shelf: { select: { shelfCode: true } } },
+          select: {
+            id: true,
+            boxCode: true,
+            shelf: { select: { shelfCode: true } },
+          },
         }),
       ]);
-      if (!sku) {
-        throw new NotFoundException('SKU不存在');
-      }
-      if (!box) {
-        throw new NotFoundException('箱号不存在');
-      }
+      if (!sku) throw new NotFoundException('SKU不存在');
+      if (!box) throw new NotFoundException('箱号不存在');
 
       const inventory = await tx.inventoryBoxSku.findUnique({
         where: {
@@ -286,63 +291,342 @@ export class InventoryService {
         throw new ConflictException('当前箱号下该SKU无可用库存，无法创建FBA补货申请');
       }
 
-      const order = await tx.inventoryAdjustOrder.create({
+      if (requestedQty > inventory.qty) {
+        throw new ConflictException(`申请数量不能大于当前库存（${inventory.qty}）`);
+      }
+
+      const requestNo = await this.generateFbaRequestNo(tx);
+      const created = await tx.fbaReplenishment.create({
         data: {
-          adjustNo: generateOrderNo('FBA'),
-          status: OrderStatus.draft,
-          remark: FBA_REPLENISH_MARK,
+          requestNo,
+          status: 'pending_confirm',
+          skuId: sku.id,
+          boxId: box.id,
+          requestedQty,
+          actualQty: null,
+          remark,
           createdBy: operatorId,
         },
-      });
-
-      const item = await tx.inventoryAdjustOrderItem.create({
-        data: {
-          orderId: order.id,
-          boxId: box.id,
-          skuId: sku.id,
-          qtyDelta: -qty,
-          reason: remark,
+        include: {
+          sku: {
+            select: { id: true, sku: true, model: true, desc1: true },
+          },
+          box: {
+            select: {
+              id: true,
+              boxCode: true,
+              shelf: { select: { shelfCode: true } },
+            },
+          },
+          creator: { select: { id: true, username: true } },
         },
       });
 
       await this.auditService.create({
         db: tx,
-        entityType: 'inventory_adjust_order',
-        entityId: order.id,
+        entityType: 'fba_replenishment',
+        entityId: created.id,
         action: AuditAction.create,
         eventType: AuditEventType.INVENTORY_ADJUST_CREATED,
         beforeData: null,
         afterData: {
-          adjustNo: order.adjustNo,
-          status: order.status,
-          mode: 'fba_replenish',
-          skuId: sku.id.toString(),
-          boxId: box.id.toString(),
-          qty,
+          requestNo: created.requestNo,
+          status: created.status,
+          skuId: created.skuId.toString(),
+          boxId: created.boxId.toString(),
+          requestedQty: created.requestedQty,
         },
         operatorId,
         requestId,
       });
 
       return {
-        id: order.id.toString(),
-        requestNo: order.adjustNo,
-        status: order.status,
-        skuId: sku.id.toString(),
-        sku: sku.sku,
-        boxId: box.id.toString(),
-        boxCode: box.boxCode,
-        shelfCode: box.shelf?.shelfCode ?? null,
-        qty,
-        remark: item.reason ?? FBA_REPLENISH_MARK,
-        createdAt: order.createdAt,
+        id: created.id.toString(),
+        requestNo: created.requestNo,
+        status: created.status,
+        sku: {
+          id: created.sku.id.toString(),
+          sku: created.sku.sku,
+          model: created.sku.model,
+          desc1: created.sku.desc1,
+        },
+        box: {
+          id: created.box.id.toString(),
+          boxCode: created.box.boxCode,
+          shelfCode: created.box.shelf?.shelfCode ?? null,
+        },
+        requestedQty: created.requestedQty,
+        actualQty: created.actualQty,
+        expressNo: created.expressNo,
+        remark: created.remark,
+        creator: created.creator
+          ? {
+              id: created.creator.id.toString(),
+              username: created.creator.username,
+            }
+          : null,
+        createdAt: created.createdAt,
+      };
+    });
+  }
+
+  async confirmFbaReplenishment(
+    idParam: string,
+    payload: ConfirmFbaReplenishmentDto,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<unknown> {
+    const id = parseId(idParam, 'fbaReplenishmentId');
+    const actualQty = Number(payload.actualQty);
+    if (!Number.isInteger(actualQty) || actualQty <= 0) {
+      throw new BadRequestException('实际数量必须是大于0的整数');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.fbaReplenishment.findUnique({
+        where: { id },
+        include: {
+          sku: { select: { id: true, sku: true, model: true, desc1: true } },
+          box: {
+            select: {
+              id: true,
+              boxCode: true,
+              shelf: { select: { shelfCode: true } },
+            },
+          },
+        },
+      });
+      if (!row) throw new NotFoundException('FBA补货申请不存在');
+      if (row.status === 'outbound') {
+        throw new UnprocessableEntityException('已出库申请不可再次确认');
+      }
+
+      if (actualQty > row.requestedQty) {
+        throw new ConflictException(`实际数量不能大于申请数量（${row.requestedQty}）`);
+      }
+
+      const updated = await tx.fbaReplenishment.update({
+        where: { id: row.id },
+        data: {
+          status: 'pending_outbound',
+          actualQty,
+          confirmedBy: operatorId,
+          confirmedAt: new Date(),
+        },
+        include: {
+          sku: { select: { id: true, sku: true, model: true, desc1: true } },
+          box: {
+            select: {
+              id: true,
+              boxCode: true,
+              shelf: { select: { shelfCode: true } },
+            },
+          },
+          creator: { select: { id: true, username: true } },
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'fba_replenishment',
+        entityId: updated.id,
+        action: AuditAction.update,
+        eventType: AuditEventType.INVENTORY_ADJUST_CONFIRMED,
+        beforeData: {
+          status: row.status,
+          requestedQty: row.requestedQty,
+          actualQty: row.actualQty,
+        },
+        afterData: {
+          status: updated.status,
+          requestedQty: updated.requestedQty,
+          actualQty: updated.actualQty,
+        },
+        operatorId,
+        requestId,
+      });
+
+      return {
+        id: updated.id.toString(),
+        requestNo: updated.requestNo,
+        status: updated.status,
+        sku: {
+          id: updated.sku.id.toString(),
+          sku: updated.sku.sku,
+          model: updated.sku.model,
+          desc1: updated.sku.desc1,
+        },
+        box: {
+          id: updated.box.id.toString(),
+          boxCode: updated.box.boxCode,
+          shelfCode: updated.box.shelf?.shelfCode ?? null,
+        },
+        requestedQty: updated.requestedQty,
+        actualQty: updated.actualQty,
+        expressNo: updated.expressNo,
+        remark: updated.remark,
+        creator: updated.creator
+          ? {
+              id: updated.creator.id.toString(),
+              username: updated.creator.username,
+            }
+          : null,
+        createdAt: updated.createdAt,
+      };
+    });
+  }
+
+  async outboundFbaReplenishments(
+    payload: OutboundFbaReplenishmentDto,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ updatedCount: number; expressNo: string }> {
+    const ids = Array.from(new Set((payload.ids || []).map((id) => BigInt(id))));
+    const expressNo = payload.expressNo.trim();
+    if (!ids.length) throw new BadRequestException('请至少选择一条申请单');
+    if (!expressNo) throw new BadRequestException('快递号不能为空');
+
+    return this.prisma.$transaction(async (tx) => {
+      const rows = await tx.fbaReplenishment.findMany({
+        where: { id: { in: ids } },
+        orderBy: { id: 'asc' },
+      });
+      if (rows.length !== ids.length) {
+        throw new NotFoundException('存在不存在的FBA补货申请');
+      }
+
+      const invalid = rows.find((row) => row.status !== 'pending_outbound');
+      if (invalid) {
+        throw new ConflictException(`申请单 ${invalid.requestNo} 当前状态不可出库`);
+      }
+
+      const requiredMap = new Map<string, { boxId: bigint; skuId: bigint; qty: number }>();
+      rows.forEach((row) => {
+        const qty = Number(row.actualQty ?? row.requestedQty);
+        const key = `${row.boxId.toString()}-${row.skuId.toString()}`;
+        const prev = requiredMap.get(key);
+        if (prev) {
+          prev.qty += qty;
+        } else {
+          requiredMap.set(key, {
+            boxId: row.boxId,
+            skuId: row.skuId,
+            qty,
+          });
+        }
+      });
+
+      const requiredRows = Array.from(requiredMap.values());
+      const inventoryRows = await tx.inventoryBoxSku.findMany({
+        where: {
+          OR: requiredRows.map((row) => ({
+            boxId: row.boxId,
+            skuId: row.skuId,
+          })),
+        },
+      });
+      const inventoryMap = new Map(
+        inventoryRows.map((row) => [`${row.boxId.toString()}-${row.skuId.toString()}`, row]),
+      );
+
+      for (const reqRow of requiredRows) {
+        const key = `${reqRow.boxId.toString()}-${reqRow.skuId.toString()}`;
+        const inventory = inventoryMap.get(key);
+        const currentQty = Number(inventory?.qty ?? 0);
+        if (currentQty < reqRow.qty) {
+          throw new ConflictException(`库存不足：箱号ID ${reqRow.boxId.toString()}，SKU ID ${reqRow.skuId.toString()}`);
+        }
+      }
+
+      for (const reqRow of requiredRows) {
+        const key = `${reqRow.boxId.toString()}-${reqRow.skuId.toString()}`;
+        const inventory = inventoryMap.get(key)!;
+        await tx.inventoryBoxSku.update({
+          where: {
+            boxId_skuId: {
+              boxId: reqRow.boxId,
+              skuId: reqRow.skuId,
+            },
+          },
+          data: {
+            qty: inventory.qty - reqRow.qty,
+          },
+        });
+      }
+
+      const outboundAt = new Date();
+      for (const row of rows) {
+        const qtyDelta = -(Number(row.actualQty ?? row.requestedQty));
+        await tx.stockMovement.create({
+          data: {
+            movementType: 'adjust',
+            refType: 'fba_replenishment',
+            refId: row.id,
+            boxId: row.boxId,
+            skuId: row.skuId,
+            qtyDelta,
+            operatorId,
+          },
+        });
+
+        await this.auditService.create({
+          db: tx,
+          entityType: 'box',
+          entityId: row.boxId,
+          action: AuditAction.update,
+          eventType: AuditEventType.BOX_STOCK_OUTBOUND,
+          beforeData: null,
+          afterData: {
+            skuId: row.skuId.toString(),
+            qtyDelta,
+            by: 'fba_replenishment',
+            requestNo: row.requestNo,
+          },
+          operatorId,
+          requestId,
+          remark: `fba outbound ${row.requestNo}`,
+        });
+
+        await this.auditService.create({
+          db: tx,
+          entityType: 'fba_replenishment',
+          entityId: row.id,
+          action: AuditAction.update,
+          eventType: AuditEventType.INVENTORY_ADJUST_CONFIRMED,
+          beforeData: {
+            status: row.status,
+            actualQty: row.actualQty,
+            expressNo: row.expressNo,
+          },
+          afterData: {
+            status: 'outbound',
+            actualQty: row.actualQty,
+            expressNo,
+          },
+          operatorId,
+          requestId,
+        });
+      }
+
+      await tx.fbaReplenishment.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          status: 'outbound',
+          outboundBy: operatorId,
+          outboundAt,
+          expressNo,
+        },
+      });
+
+      return {
+        updatedCount: rows.length,
+        expressNo,
       };
     });
   }
 
   async listFbaReplenishments(): Promise<unknown[]> {
-    const orders = await this.prisma.inventoryAdjustOrder.findMany({
-      where: { remark: FBA_REPLENISH_MARK },
+    const rows = await this.prisma.fbaReplenishment.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
         creator: {
@@ -351,103 +635,132 @@ export class InventoryService {
             username: true,
           },
         },
-        items: {
-          include: {
-            box: {
-              select: {
-                id: true,
-                boxCode: true,
-                shelf: { select: { id: true, shelfCode: true } },
-              },
-            },
-            sku: {
-              select: {
-                id: true,
-                sku: true,
-              },
-            },
+        sku: {
+          select: {
+            id: true,
+            sku: true,
+            model: true,
+            desc1: true,
           },
-          orderBy: { id: 'asc' },
+        },
+        box: {
+          select: {
+            id: true,
+            boxCode: true,
+            shelf: { select: { id: true, shelfCode: true } },
+          },
         },
       },
     });
 
-    return orders.map((order) => {
-      const firstItem = order.items[0] ?? null;
-      const totalQty = order.items.reduce((sum, item) => sum + Math.abs(item.qtyDelta || 0), 0);
+    return rows.map((row) => {
       return {
-        id: order.id.toString(),
-        requestNo: order.adjustNo,
-        status: order.status,
-        createdAt: order.createdAt,
-        creator: order.creator
+        id: row.id.toString(),
+        requestNo: row.requestNo,
+        status: row.status,
+        createdAt: row.createdAt,
+        creator: row.creator
           ? {
-              id: order.creator.id.toString(),
-              username: order.creator.username,
+              id: row.creator.id.toString(),
+              username: row.creator.username,
             }
           : null,
-        sku: firstItem?.sku
+        sku: row.sku
           ? {
-              id: firstItem.sku.id.toString(),
-              sku: firstItem.sku.sku,
+              id: row.sku.id.toString(),
+              sku: row.sku.sku,
+              model: row.sku.model,
+              desc1: row.sku.desc1,
             }
           : null,
-        box: firstItem?.box
+        box: row.box
           ? {
-              id: firstItem.box.id.toString(),
-              boxCode: firstItem.box.boxCode,
-              shelfCode: firstItem.box.shelf?.shelfCode ?? null,
+              id: row.box.id.toString(),
+              boxCode: row.box.boxCode,
+              shelfCode: row.box.shelf?.shelfCode ?? null,
             }
           : null,
-        qty: totalQty,
-        remark: firstItem?.reason ?? FBA_REPLENISH_MARK,
+        requestedQty: row.requestedQty,
+        actualQty: row.actualQty,
+        expressNo: row.expressNo,
       };
     });
   }
 
   async getFbaPendingSummary(): Promise<{
-    pendingCount: number;
+    pendingConfirmCount: number;
     pendingBySku: Record<string, number>;
     pendingByBoxSku: Record<string, number>;
   }> {
-    const pendingOrders = await this.prisma.inventoryAdjustOrder.findMany({
+    const pendingConfirmCount = await this.prisma.fbaReplenishment.count({
       where: {
-        remark: FBA_REPLENISH_MARK,
-        status: OrderStatus.draft,
+        status: 'pending_confirm',
+      },
+    });
+
+    const pendingRows = await this.prisma.fbaReplenishment.findMany({
+      where: {
+        status: { in: ['pending_confirm', 'pending_outbound'] },
       },
       select: {
-        id: true,
-        items: {
-          select: {
-            skuId: true,
-            boxId: true,
-            qtyDelta: true,
-          },
-        },
+        skuId: true,
+        boxId: true,
+        status: true,
+        requestedQty: true,
+        actualQty: true,
       },
     });
 
     const pendingBySku: Record<string, number> = {};
     const pendingByBoxSku: Record<string, number> = {};
 
-    pendingOrders.forEach((order) => {
-      order.items.forEach((item) => {
-        const qty = Math.abs(Number(item.qtyDelta ?? 0));
-        if (qty <= 0) return;
+    pendingRows.forEach((row) => {
+      const qty = Number(
+        row.status === 'pending_outbound'
+          ? (row.actualQty ?? row.requestedQty)
+          : row.requestedQty,
+      );
+      if (qty <= 0) return;
 
-        const skuKey = item.skuId.toString();
-        pendingBySku[skuKey] = (pendingBySku[skuKey] ?? 0) + qty;
+      const skuKey = row.skuId.toString();
+      pendingBySku[skuKey] = (pendingBySku[skuKey] ?? 0) + qty;
 
-        const boxSkuKey = `${item.boxId.toString()}-${skuKey}`;
-        pendingByBoxSku[boxSkuKey] = (pendingByBoxSku[boxSkuKey] ?? 0) + qty;
-      });
+      const boxSkuKey = `${row.boxId.toString()}-${skuKey}`;
+      pendingByBoxSku[boxSkuKey] = (pendingByBoxSku[boxSkuKey] ?? 0) + qty;
     });
 
     return {
-      pendingCount: pendingOrders.length,
+      pendingConfirmCount,
       pendingBySku,
       pendingByBoxSku,
     };
+  }
+
+  private formatFbaRequestNo(date: Date): string {
+    const pad = (num: number) => String(num).padStart(2, '0');
+    const yyyy = date.getFullYear();
+    const mm = pad(date.getMonth() + 1);
+    const dd = pad(date.getDate());
+    const hh = pad(date.getHours());
+    const mi = pad(date.getMinutes());
+    const ss = pad(date.getSeconds());
+    return `FBA-${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
+  }
+
+  private async generateFbaRequestNo(tx: Prisma.TransactionClient): Promise<string> {
+    let candidate = new Date();
+    for (let i = 0; i < 5; i += 1) {
+      const requestNo = this.formatFbaRequestNo(candidate);
+      const exists = await tx.fbaReplenishment.findUnique({
+        where: { requestNo },
+        select: { id: true },
+      });
+      if (!exists) {
+        return requestNo;
+      }
+      candidate = new Date(candidate.getTime() + 1000);
+    }
+    throw new ConflictException('申请单号重复，请稍后重试');
   }
 
   private normalizeAdjustItem(item: CreateAdjustOrderItemDto): {

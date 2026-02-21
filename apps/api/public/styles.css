@@ -228,6 +228,12 @@ body {
   align-items: center;
 }
 
+.panel-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 h2 {
   margin: 2px 0 14px;
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
@@ -426,6 +432,15 @@ td {
   background: #fff;
   border-color: var(--line);
   color: var(--ink);
+}
+
+.tiny-input {
+  width: 88px;
+  min-width: 88px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
 }
 
 .tiny-btn.danger {

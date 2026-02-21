@@ -16,6 +16,7 @@ const state = {
   fbaPendingCount: 0,
   fbaPendingBySku: {},
   fbaPendingByBoxSku: {},
+  selectedFbaIds: new Set(),
   plainPasswords: (() => {
     try {
       const raw = localStorage.getItem("wms_plain_password_map");
@@ -121,9 +122,9 @@ function getRoleText(role) {
 }
 
 function getFbaStatusText(status) {
-  if (status === "draft") return "待确认";
-  if (status === "confirmed") return "已确认";
-  if (status === "void") return "已作废";
+  if (status === "pending_confirm") return "待确认";
+  if (status === "pending_outbound") return "待出库";
+  if (status === "outbound") return "已出库";
   return displayText(status);
 }
 
@@ -1340,7 +1341,7 @@ async function loadFbaPendingSummary() {
   }
 
   const summary = await request("/inventory/fba-replenishments/pending-summary");
-  state.fbaPendingCount = Number(summary?.pendingCount || 0);
+  state.fbaPendingCount = Number(summary?.pendingConfirmCount || 0);
   state.fbaPendingBySku = summary?.pendingBySku || {};
   state.fbaPendingByBoxSku = summary?.pendingByBoxSku || {};
   renderFbaPendingBadge();
@@ -1349,8 +1350,12 @@ async function loadFbaPendingSummary() {
 function renderFbaReplenishmentList() {
   const tbody = $("fbaReplenishmentBody");
   if (!tbody) return;
+  syncSelectedFbaIds();
+
   if (!state.fbaReplenishments.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">-</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="muted">-</td></tr>';
+    updateFbaSelectAll();
+    updateFbaOutboundButtonState();
     return;
   }
 
@@ -1358,24 +1363,50 @@ function renderFbaReplenishmentList() {
     .map(
       (item) => `
       <tr>
+        <td>
+          ${
+            item.status === "pending_outbound"
+              ? `<input type="checkbox" data-action="fbaToggleRow" data-id="${escapeHtml(item.id)}" ${
+                  state.selectedFbaIds.has(String(item.id)) ? "checked" : ""
+                } />`
+              : "-"
+          }
+        </td>
         <td>${escapeHtml(item.requestNo)}</td>
         <td>${escapeHtml(getFbaStatusText(item.status))}</td>
         <td>${escapeHtml(displayText(item.sku?.sku))}</td>
+        <td>${escapeHtml(displayText(item.sku?.model))}</td>
+        <td>${escapeHtml(displayText(item.sku?.desc1))}</td>
         <td>${escapeHtml(displayText(item.box?.boxCode))}</td>
         <td>${escapeHtml(displayText(item.box?.shelfCode))}</td>
-        <td>${escapeHtml(displayText(item.qty))}</td>
-        <td>${escapeHtml(displayText(item.remark))}</td>
-        <td>${escapeHtml(displayText(item.creator?.username))}</td>
-        <td>${formatDate(item.createdAt)}</td>
+        <td>${escapeHtml(displayText(item.requestedQty))}</td>
+        <td>
+          ${
+            item.status === "pending_confirm"
+              ? `<input id="fbaActualQty-${escapeHtml(item.id)}" class="tiny-input" type="number" min="1" step="1" value="${escapeHtml(item.requestedQty)}" />`
+              : escapeHtml(displayText(item.actualQty ?? item.requestedQty))
+          }
+        </td>
+        <td>
+          ${
+            item.status === "pending_confirm"
+              ? `<button class="tiny-btn" data-action="fbaConfirmRow" data-id="${escapeHtml(item.id)}" data-input-id="fbaActualQty-${escapeHtml(item.id)}">确认</button>`
+              : '<span class="muted">-</span>'
+          }
+        </td>
       </tr>
     `,
     )
     .join("");
+
+  updateFbaSelectAll();
+  updateFbaOutboundButtonState();
 }
 
 async function loadFbaReplenishments() {
   if (!state.token) {
     state.fbaReplenishments = [];
+    state.selectedFbaIds = new Set();
     renderFbaReplenishmentList();
     return;
   }
@@ -1386,7 +1417,7 @@ async function loadFbaReplenishments() {
 }
 
 async function createFbaReplenishmentRequest({ skuId, boxCode, qty, remark }) {
-  await request("/inventory/fba-replenishments", {
+  return request("/inventory/fba-replenishments", {
     method: "POST",
     body: JSON.stringify({
       skuId,
@@ -1395,6 +1426,62 @@ async function createFbaReplenishmentRequest({ skuId, boxCode, qty, remark }) {
       remark,
     }),
   });
+}
+
+async function confirmFbaReplenishmentRequest(id, actualQty) {
+  return request(`/inventory/fba-replenishments/${id}/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ actualQty }),
+  });
+}
+
+async function outboundFbaReplenishmentRequests(ids, expressNo) {
+  return request("/inventory/fba-replenishments/outbound", {
+    method: "POST",
+    body: JSON.stringify({ ids, expressNo }),
+  });
+}
+
+function syncSelectedFbaIds() {
+  const selectableIds = new Set(
+    state.fbaReplenishments
+      .filter((item) => item.status === "pending_outbound")
+      .map((item) => String(item.id)),
+  );
+  state.selectedFbaIds = new Set(
+    Array.from(state.selectedFbaIds).filter((id) => selectableIds.has(String(id))),
+  );
+}
+
+function updateFbaSelectAll() {
+  const selectAll = $("fbaSelectAll");
+  if (!selectAll) return;
+  const selectable = state.fbaReplenishments.filter((item) => item.status === "pending_outbound");
+  if (!selectable.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+
+  const selectedCount = selectable.filter((item) => state.selectedFbaIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === selectable.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
+}
+
+function updateFbaOutboundButtonState() {
+  const button = $("fbaBatchOutboundBtn");
+  if (!button) return;
+  const count = state.selectedFbaIds.size;
+  button.disabled = count <= 0;
+  button.textContent = count > 0 ? `出库（${count}）` : "出库";
+}
+
+function openFbaOutboundModal() {
+  if (!state.selectedFbaIds.size) {
+    throw new Error("请先选择待出库申请单");
+  }
+  $("fbaOutboundExpressNo").value = "";
+  openModal("fbaOutboundModal");
 }
 
 function openAdjustModal(direction, skuId, presetBoxCode = "") {
@@ -1566,7 +1653,10 @@ async function reloadAll() {
     state.fbaPendingCount = 0;
     state.fbaPendingBySku = {};
     state.fbaPendingByBoxSku = {};
+    state.selectedFbaIds = new Set();
     renderFbaPendingBadge();
+    updateFbaSelectAll();
+    updateFbaOutboundButtonState();
     setInventoryDisplayMode(false);
     return;
   }
@@ -1760,6 +1850,56 @@ function bindForms() {
       switchPanel("fbaReplenishment");
       await loadFbaReplenishments();
       await loadFbaPendingSummary();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("fbaBatchOutboundBtn").addEventListener("click", () => {
+    try {
+      openFbaOutboundModal();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("fbaSelectAll").addEventListener("change", (event) => {
+    const checked = Boolean(event.target.checked);
+    const selectableIds = state.fbaReplenishments
+      .filter((item) => item.status === "pending_outbound")
+      .map((item) => String(item.id));
+    state.selectedFbaIds = checked ? new Set(selectableIds) : new Set();
+    renderFbaReplenishmentList();
+  });
+
+  $("fbaOutboundForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const expressNo = String($("fbaOutboundExpressNo").value || "").trim();
+      if (!expressNo) {
+        throw new Error("请输入快递号");
+      }
+      const ids = Array.from(state.selectedFbaIds)
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (!ids.length) {
+        throw new Error("请先选择待出库申请单");
+      }
+
+      await outboundFbaReplenishmentRequests(ids, expressNo);
+      closeModal("fbaOutboundModal");
+      state.selectedFbaIds = new Set();
+      showToast("出库完成");
+      await loadFbaReplenishments();
+      await loadFbaPendingSummary();
+      await loadInventory();
+      await loadBoxes();
+
+      const keyword = $("inventoryKeyword").value.trim();
+      if (state.inventorySearchMode && keyword) {
+        await searchInventoryProducts(keyword);
+      }
+      await loadAudit();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -2043,6 +2183,54 @@ function bindDelegates() {
     }
   });
 
+  $("fbaReplenishmentBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='fbaConfirmRow']");
+    if (!button) return;
+
+    try {
+      const id = Number(button.dataset.id);
+      const inputId = button.dataset.inputId || "";
+      const input = $(inputId);
+      const actualQty = Number(String(input?.value || "").trim());
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new Error("申请单ID无效");
+      }
+      if (!Number.isInteger(actualQty) || actualQty <= 0) {
+        throw new Error("实际数量必须是大于0的整数");
+      }
+
+      await confirmFbaReplenishmentRequest(id, actualQty);
+      showToast("已转为待出库");
+      await loadFbaReplenishments();
+      await loadFbaPendingSummary();
+      await loadInventory();
+      await loadBoxes();
+
+      const keyword = $("inventoryKeyword").value.trim();
+      if (state.inventorySearchMode && keyword) {
+        await searchInventoryProducts(keyword);
+      }
+      await loadAudit();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("fbaReplenishmentBody").addEventListener("change", (event) => {
+    const checkbox = event.target.closest("input[data-action='fbaToggleRow']");
+    if (!checkbox) return;
+
+    const id = String(checkbox.dataset.id || "");
+    if (!id) return;
+    if (checkbox.checked) {
+      state.selectedFbaIds.add(id);
+    } else {
+      state.selectedFbaIds.delete(id);
+    }
+    updateFbaSelectAll();
+    updateFbaOutboundButtonState();
+  });
+
   const openAdjustByAction = async (event) => {
     const button = event.target.closest(
       "button[data-action='inventoryInbound'], button[data-action='inventoryOutbound'], button[data-action='inventoryOutboundOne']",
@@ -2140,6 +2328,13 @@ function bindDelegates() {
     );
     if (batchInboundDetailModalClose) {
       closeModal("batchInboundDetailModal");
+      return;
+    }
+    const fbaOutboundModalClose = event.target.closest(
+      "button[data-action='closeFbaOutboundModal']",
+    );
+    if (fbaOutboundModalClose) {
+      closeModal("fbaOutboundModal");
     }
   });
 
@@ -2188,6 +2383,12 @@ function bindDelegates() {
   $("batchInboundDetailModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("batchInboundDetailModal");
+    }
+  });
+
+  $("fbaOutboundModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("fbaOutboundModal");
     }
   });
 
@@ -2248,5 +2449,7 @@ bindForms();
 bindDelegates();
 bindScrollLoad();
 bindRefresh();
+updateFbaOutboundButtonState();
+updateFbaSelectAll();
 switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));
