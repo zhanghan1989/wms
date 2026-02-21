@@ -14,6 +14,7 @@ import {
   CreateAdjustOrderDto,
   CreateAdjustOrderItemDto,
 } from './dto/create-adjust-order.dto';
+import { CreateFbaReplenishmentDto } from './dto/create-fba-replenishment.dto';
 import { ManualAdjustDto } from './dto/manual-adjust.dto';
 
 interface AdjustOrderResult {
@@ -22,6 +23,8 @@ interface AdjustOrderResult {
   idempotent: boolean;
   changedRows: number;
 }
+
+const FBA_REPLENISH_MARK = 'FBA补货';
 
 @Injectable()
 export class InventoryService {
@@ -233,6 +236,218 @@ export class InventoryService {
         adjustNo: order.adjustNo,
       };
     });
+  }
+
+  async createFbaReplenishment(
+    payload: CreateFbaReplenishmentDto,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<unknown> {
+    const skuId = BigInt(payload.skuId);
+    const boxCode = payload.boxCode.trim();
+    const qty = Number(payload.qty);
+    const remark = payload.remark?.trim() || FBA_REPLENISH_MARK;
+
+    if (!boxCode) {
+      throw new BadRequestException('箱号不能为空');
+    }
+    if (!Number.isInteger(qty) || qty <= 0) {
+      throw new BadRequestException('补货数量必须是大于0的整数');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const [sku, box] = await Promise.all([
+        tx.sku.findUnique({
+          where: { id: skuId },
+          select: { id: true, sku: true },
+        }),
+        tx.box.findUnique({
+          where: { boxCode },
+          select: { id: true, boxCode: true, shelf: { select: { shelfCode: true } } },
+        }),
+      ]);
+      if (!sku) {
+        throw new NotFoundException('SKU不存在');
+      }
+      if (!box) {
+        throw new NotFoundException('箱号不存在');
+      }
+
+      const inventory = await tx.inventoryBoxSku.findUnique({
+        where: {
+          boxId_skuId: {
+            boxId: box.id,
+            skuId: sku.id,
+          },
+        },
+        select: { qty: true },
+      });
+      if (!inventory || inventory.qty <= 0) {
+        throw new ConflictException('当前箱号下该SKU无可用库存，无法创建FBA补货申请');
+      }
+
+      const order = await tx.inventoryAdjustOrder.create({
+        data: {
+          adjustNo: generateOrderNo('FBA'),
+          status: OrderStatus.draft,
+          remark: FBA_REPLENISH_MARK,
+          createdBy: operatorId,
+        },
+      });
+
+      const item = await tx.inventoryAdjustOrderItem.create({
+        data: {
+          orderId: order.id,
+          boxId: box.id,
+          skuId: sku.id,
+          qtyDelta: -qty,
+          reason: remark,
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'inventory_adjust_order',
+        entityId: order.id,
+        action: AuditAction.create,
+        eventType: AuditEventType.INVENTORY_ADJUST_CREATED,
+        beforeData: null,
+        afterData: {
+          adjustNo: order.adjustNo,
+          status: order.status,
+          mode: 'fba_replenish',
+          skuId: sku.id.toString(),
+          boxId: box.id.toString(),
+          qty,
+        },
+        operatorId,
+        requestId,
+      });
+
+      return {
+        id: order.id.toString(),
+        requestNo: order.adjustNo,
+        status: order.status,
+        skuId: sku.id.toString(),
+        sku: sku.sku,
+        boxId: box.id.toString(),
+        boxCode: box.boxCode,
+        shelfCode: box.shelf?.shelfCode ?? null,
+        qty,
+        remark: item.reason ?? FBA_REPLENISH_MARK,
+        createdAt: order.createdAt,
+      };
+    });
+  }
+
+  async listFbaReplenishments(): Promise<unknown[]> {
+    const orders = await this.prisma.inventoryAdjustOrder.findMany({
+      where: { remark: FBA_REPLENISH_MARK },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        creator: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+        items: {
+          include: {
+            box: {
+              select: {
+                id: true,
+                boxCode: true,
+                shelf: { select: { id: true, shelfCode: true } },
+              },
+            },
+            sku: {
+              select: {
+                id: true,
+                sku: true,
+              },
+            },
+          },
+          orderBy: { id: 'asc' },
+        },
+      },
+    });
+
+    return orders.map((order) => {
+      const firstItem = order.items[0] ?? null;
+      const totalQty = order.items.reduce((sum, item) => sum + Math.abs(item.qtyDelta || 0), 0);
+      return {
+        id: order.id.toString(),
+        requestNo: order.adjustNo,
+        status: order.status,
+        createdAt: order.createdAt,
+        creator: order.creator
+          ? {
+              id: order.creator.id.toString(),
+              username: order.creator.username,
+            }
+          : null,
+        sku: firstItem?.sku
+          ? {
+              id: firstItem.sku.id.toString(),
+              sku: firstItem.sku.sku,
+            }
+          : null,
+        box: firstItem?.box
+          ? {
+              id: firstItem.box.id.toString(),
+              boxCode: firstItem.box.boxCode,
+              shelfCode: firstItem.box.shelf?.shelfCode ?? null,
+            }
+          : null,
+        qty: totalQty,
+        remark: firstItem?.reason ?? FBA_REPLENISH_MARK,
+      };
+    });
+  }
+
+  async getFbaPendingSummary(): Promise<{
+    pendingCount: number;
+    pendingBySku: Record<string, number>;
+    pendingByBoxSku: Record<string, number>;
+  }> {
+    const pendingOrders = await this.prisma.inventoryAdjustOrder.findMany({
+      where: {
+        remark: FBA_REPLENISH_MARK,
+        status: OrderStatus.draft,
+      },
+      select: {
+        id: true,
+        items: {
+          select: {
+            skuId: true,
+            boxId: true,
+            qtyDelta: true,
+          },
+        },
+      },
+    });
+
+    const pendingBySku: Record<string, number> = {};
+    const pendingByBoxSku: Record<string, number> = {};
+
+    pendingOrders.forEach((order) => {
+      order.items.forEach((item) => {
+        const qty = Math.abs(Number(item.qtyDelta ?? 0));
+        if (qty <= 0) return;
+
+        const skuKey = item.skuId.toString();
+        pendingBySku[skuKey] = (pendingBySku[skuKey] ?? 0) + qty;
+
+        const boxSkuKey = `${item.boxId.toString()}-${skuKey}`;
+        pendingByBoxSku[boxSkuKey] = (pendingByBoxSku[boxSkuKey] ?? 0) + qty;
+      });
+    });
+
+    return {
+      pendingCount: pendingOrders.length,
+      pendingBySku,
+      pendingByBoxSku,
+    };
   }
 
   private normalizeAdjustItem(item: CreateAdjustOrderItemDto): {

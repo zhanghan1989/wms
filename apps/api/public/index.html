@@ -44,6 +44,10 @@
         <button type="button" id="openCreateSkuModal">新增产品</button>
         <button type="button" id="openCreateBoxQuick">新增箱号</button>
         <button type="button" id="openCreateShelfQuick">新增货架</button>
+        <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
+          FBA补货
+          <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
+        </button>
         <button type="button" id="openBatchInboundModal">批量入库</button>
         <button type="button" id="openMyAuditLog" class="ghost">我的日志</button>
         <button type="button" id="openProfileModal" class="ghost">个人设置</button>
@@ -54,6 +58,7 @@
   <main id="appLayout" class="layout hidden">
     <aside class="sidebar">
       <button class="nav-btn active" data-target="inventory">库存管理</button>
+      <button class="nav-btn" data-target="fbaReplenishment">FBA补货</button>
       <button class="nav-btn" data-target="batchInbound">批量入库</button>
       <button class="nav-btn" data-target="overview">总览</button>
       <button class="nav-btn" data-target="users">员工</button>
@@ -172,6 +177,29 @@
           </table>
         </div>
 
+      </section>
+
+      <section class="panel" id="fbaReplenishment">
+        <div class="panel-head">
+          <h2>FBA补货申请一览</h2>
+          <button id="refreshFbaReplenishment" class="ghost">刷新</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>申请单号</th>
+              <th>状态</th>
+              <th>SKU</th>
+              <th>箱号</th>
+              <th>货架号</th>
+              <th>申请数量</th>
+              <th>备注</th>
+              <th>申请人</th>
+              <th>申请时间</th>
+            </tr>
+          </thead>
+          <tbody id="fbaReplenishmentBody"></tbody>
+        </table>
       </section>
 
       <section class="panel" id="overview">

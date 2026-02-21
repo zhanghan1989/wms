@@ -12,6 +12,10 @@ const state = {
   batchInboundOrders: [],
   selectedBatchInboundOrderId: "",
   selectedBatchInboundOrderDetail: null,
+  fbaReplenishments: [],
+  fbaPendingCount: 0,
+  fbaPendingBySku: {},
+  fbaPendingByBoxSku: {},
   plainPasswords: (() => {
     try {
       const raw = localStorage.getItem("wms_plain_password_map");
@@ -114,6 +118,13 @@ function getStatusText(status) {
 
 function getRoleText(role) {
   return role === "admin" ? "管理者" : "员工";
+}
+
+function getFbaStatusText(status) {
+  if (status === "draft") return "待确认";
+  if (status === "confirmed") return "已确认";
+  if (status === "void") return "已作废";
+  return displayText(status);
 }
 
 function parseFixedDigits(raw, length, fieldName) {
@@ -421,7 +432,7 @@ function renderOutboundButton(
   skuId,
   totalQty,
   boxCode = "",
-  { label = "出库", ghost = true, lockBox = false, action = "inventoryOutbound" } = {},
+  { label = "FBA补货", ghost = true, lockBox = false, action = "inventoryOutbound" } = {},
 ) {
   if (Number(totalQty) <= 0) {
     return "";
@@ -430,6 +441,23 @@ function renderOutboundButton(
   const lockAttr = lockBox ? ' data-lock-box="1"' : "";
   const className = ghost ? "tiny-btn ghost" : "tiny-btn";
   return `<button class="${className}" data-action="${action}" data-sku-id="${skuId}"${boxAttr}${lockAttr}>${escapeHtml(label)}</button>`;
+}
+
+function getFbaPendingQtyBySku(skuId) {
+  return Number(state.fbaPendingBySku[String(skuId)] || 0);
+}
+
+function getFbaPendingQtyByBoxSku(boxId, skuId) {
+  return Number(state.fbaPendingByBoxSku[`${String(boxId)}-${String(skuId)}`] || 0);
+}
+
+function renderQtyWithPending(qty, pendingQty) {
+  const safeQty = Number(qty || 0);
+  const safePending = Number(pendingQty || 0);
+  if (safePending <= 0) {
+    return escapeHtml(safeQty);
+  }
+  return `${escapeHtml(safeQty)}<span class="qty-pending">(-${escapeHtml(safePending)})</span>`;
 }
 
 function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
@@ -470,8 +498,10 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
     if (!boxRows.length) {
       return [
         {
+          boxId: box.boxId,
           boxCode: "",
           shelfCode: "",
+          skuId: 0,
           sku: "-",
           qty: 0,
           isCurrentSku: false,
@@ -479,8 +509,10 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
       ];
     }
     return boxRows.map((row) => ({
+      boxId: box.boxId,
       boxCode: Number(row.sku?.id) === currentSkuId ? box.boxCode : "",
       shelfCode: Number(row.sku?.id) === currentSkuId ? box.shelfCode : "",
+      skuId: Number(row.sku?.id || 0),
       sku: row.sku?.sku || "-",
       qty: Number(row.qty ?? 0),
       isCurrentSku: Number(row.sku?.id) === currentSkuId,
@@ -502,7 +534,7 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
             .map((row) => {
               const inboundButton = renderInboundButton(currentSkuId, row.boxCode, "入库", true);
               const outboundPrimaryButton = renderOutboundButton(currentSkuId, row.qty, row.boxCode, {
-                label: "出库",
+                label: "FBA补货",
                 ghost: false,
                 lockBox: true,
                 action: "inventoryOutbound",
@@ -527,7 +559,7 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
                   <td>${escapeHtml(row.boxCode)}</td>
                   <td>${escapeHtml(row.shelfCode)}</td>
                   <td>${escapeHtml(row.sku)}</td>
-                  <td>${escapeHtml(row.qty)}</td>
+                  <td>${renderQtyWithPending(row.qty, row.isCurrentSku ? getFbaPendingQtyByBoxSku(row.boxId, currentSkuId) : 0)}</td>
                   <td>${actionButtons}</td>
                 </tr>
               `;
@@ -545,6 +577,7 @@ function renderInventoryTable() {
     .map((sku) => {
       const rows = state.inventoryLocations.get(String(sku.id)) || [];
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
+      const pendingQty = getFbaPendingQtyBySku(sku.id);
       return `
       <tr class="inventory-main-row">
         <td>${escapeHtml(displayText(sku.model))}</td>
@@ -553,7 +586,7 @@ function renderInventoryTable() {
         <td>${escapeHtml(displayText(sku.remark))}</td>
         <td>${escapeHtml(sku.sku)}</td>
         <td>${escapeHtml(displayText(sku.shop))}</td>
-        <td>${escapeHtml(totalQty)}</td>
+        <td>${renderQtyWithPending(totalQty, pendingQty)}</td>
         <td>
           <div class="action-row">
             ${renderEditButton(sku.id)}
@@ -581,6 +614,7 @@ async function loadInventory() {
   const skus = await request("/skus");
   state.inventorySkus = skus;
   $("statSkus").textContent = skus.length;
+  await loadFbaPendingSummary();
 
   const locationEntries = await Promise.all(
     skus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
@@ -614,6 +648,7 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
     .map((sku) => {
       const rows = locationMap.get(String(sku.id)) || [];
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
+      const pendingQty = getFbaPendingQtyBySku(sku.id);
       const leftRows = [
         ["型号", displayText(sku.model)],
         ["说明1", displayText(sku.desc1)],
@@ -651,7 +686,11 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
                 ([name, value]) => `
               <div class="inventory-search-field">
                 <span class="inventory-search-field-name">${escapeHtml(name)}：</span>
-                <span class="inventory-search-field-value">${escapeHtml(value)}</span>
+                <span class="inventory-search-field-value">${
+                  name === "库存总数量"
+                    ? renderQtyWithPending(value, pendingQty)
+                    : escapeHtml(value)
+                }</span>
               </div>
             `,
               )
@@ -692,6 +731,7 @@ async function searchInventoryProducts(keyword) {
   const boxSkuEntries = await Promise.all(
     boxIds.map(async (boxId) => [String(boxId), await getBoxSkuInventoryRows(boxId)]),
   );
+  await loadFbaPendingSummary();
   renderInventorySearchResults(skus, new Map(locationEntries), new Map(boxSkuEntries));
 }
 
@@ -1282,6 +1322,81 @@ async function loadMyAudit() {
     .join("");
 }
 
+function renderFbaPendingBadge() {
+  const badge = $("fbaPendingBadge");
+  if (!badge) return;
+  const count = Number(state.fbaPendingCount || 0);
+  badge.textContent = String(count);
+  badge.classList.toggle("hidden", count <= 0);
+}
+
+async function loadFbaPendingSummary() {
+  if (!state.token) {
+    state.fbaPendingCount = 0;
+    state.fbaPendingBySku = {};
+    state.fbaPendingByBoxSku = {};
+    renderFbaPendingBadge();
+    return;
+  }
+
+  const summary = await request("/inventory/fba-replenishments/pending-summary");
+  state.fbaPendingCount = Number(summary?.pendingCount || 0);
+  state.fbaPendingBySku = summary?.pendingBySku || {};
+  state.fbaPendingByBoxSku = summary?.pendingByBoxSku || {};
+  renderFbaPendingBadge();
+}
+
+function renderFbaReplenishmentList() {
+  const tbody = $("fbaReplenishmentBody");
+  if (!tbody) return;
+  if (!state.fbaReplenishments.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">-</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = state.fbaReplenishments
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(item.requestNo)}</td>
+        <td>${escapeHtml(getFbaStatusText(item.status))}</td>
+        <td>${escapeHtml(displayText(item.sku?.sku))}</td>
+        <td>${escapeHtml(displayText(item.box?.boxCode))}</td>
+        <td>${escapeHtml(displayText(item.box?.shelfCode))}</td>
+        <td>${escapeHtml(displayText(item.qty))}</td>
+        <td>${escapeHtml(displayText(item.remark))}</td>
+        <td>${escapeHtml(displayText(item.creator?.username))}</td>
+        <td>${formatDate(item.createdAt)}</td>
+      </tr>
+    `,
+    )
+    .join("");
+}
+
+async function loadFbaReplenishments() {
+  if (!state.token) {
+    state.fbaReplenishments = [];
+    renderFbaReplenishmentList();
+    return;
+  }
+
+  const list = await request("/inventory/fba-replenishments");
+  state.fbaReplenishments = Array.isArray(list) ? list : [];
+  renderFbaReplenishmentList();
+}
+
+async function createFbaReplenishmentRequest({ skuId, boxCode, qty, remark }) {
+  await request("/inventory/fba-replenishments", {
+    method: "POST",
+    body: JSON.stringify({
+      skuId,
+      boxCode,
+      qty,
+      remark,
+    }),
+  });
+}
+
 function openAdjustModal(direction, skuId, presetBoxCode = "") {
   const normalizedPresetBoxCode = normalizeBoxCodeInput(presetBoxCode);
   $("adjustSkuId").value = String(skuId);
@@ -1304,9 +1419,9 @@ function openAdjustModal(direction, skuId, presetBoxCode = "") {
   }
   $("adjustQty").min = "1";
   $("adjustQty").value = "1";
-  $("adjustReason").value = direction === "inbound" ? "退货入库" : "库存出库";
-  $("adjustModalTitle").textContent = direction === "inbound" ? "库存入库" : "库存出库";
-  $("adjustSubmitBtn").textContent = direction === "inbound" ? "确认入库" : "确认出库";
+  $("adjustReason").value = direction === "inbound" ? "退货入库" : "FBA补货";
+  $("adjustModalTitle").textContent = direction === "inbound" ? "库存入库" : "FBA补货";
+  $("adjustSubmitBtn").textContent = direction === "inbound" ? "确认入库" : "生成FBA补货申请单";
   openModal("adjustModal");
 }
 
@@ -1352,12 +1467,22 @@ async function submitAdjustForm() {
     throw new Error("备注最多 10 个字");
   }
 
+  if (direction === "outbound") {
+    await createFbaReplenishmentRequest({
+      skuId,
+      boxCode,
+      qty,
+      remark: reason || "FBA补货",
+    });
+    return;
+  }
+
   await request("/inventory/manual-adjust", {
     method: "POST",
     body: JSON.stringify({
       skuId,
       boxCode,
-      qtyDelta: direction === "outbound" ? -qty : qty,
+      qtyDelta: qty,
       reason,
     }),
   });
@@ -1435,14 +1560,25 @@ async function reloadAll() {
     $("auditBody").innerHTML = "";
     $("inventoryBody").innerHTML = "";
     $("batchInboundBody").innerHTML = "";
+    $("fbaReplenishmentBody").innerHTML = "";
     renderBatchInboundDetail(null);
     $("inventorySearchResults").textContent = "-";
+    state.fbaPendingCount = 0;
+    state.fbaPendingBySku = {};
+    state.fbaPendingByBoxSku = {};
+    renderFbaPendingBadge();
     setInventoryDisplayMode(false);
     return;
   }
 
   const isAdmin = state.me?.role === "admin";
-  const tasks = [loadInventory(), loadShelves(), loadBoxes(), loadBatchInboundOrders()];
+  const tasks = [
+    loadInventory(),
+    loadShelves(),
+    loadBoxes(),
+    loadBatchInboundOrders(),
+    loadFbaReplenishments(),
+  ];
   if (isAdmin) {
     tasks.push(loadUsers(), loadAudit());
   } else {
@@ -1614,6 +1750,16 @@ function bindForms() {
       } else {
         renderBatchInboundDetail(null);
       }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openFbaReplenishmentPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("fbaReplenishment");
+      await loadFbaReplenishments();
+      await loadFbaPendingSummary();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -1792,11 +1938,13 @@ function bindForms() {
     try {
       const keyword = $("inventoryKeyword").value.trim();
       const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+      const direction = $("adjustDirection").value;
       await submitAdjustForm();
       closeModal("adjustModal");
-      showToast($("adjustDirection").value === "outbound" ? "出库成功" : "入库成功");
+      showToast(direction === "outbound" ? "FBA补货申请单已生成" : "入库成功");
       await loadInventory();
       await loadBoxes();
+      await loadFbaReplenishments();
       await loadAudit();
       if (shouldRefreshSearch) {
         await searchInventoryProducts(keyword);
@@ -2085,6 +2233,11 @@ function bindRefresh() {
   $("refreshBoxes").addEventListener("click", () => loadBoxes().catch((error) => showToast(error.message, true)));
   $("refreshBatchInbound").addEventListener("click", () =>
     loadBatchInboundOrders().catch((error) => showToast(error.message, true)),
+  );
+  $("refreshFbaReplenishment").addEventListener("click", () =>
+    Promise.all([loadFbaReplenishments(), loadFbaPendingSummary()]).catch((error) =>
+      showToast(error.message, true),
+    ),
   );
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((error) => showToast(error.message, true)));
 }

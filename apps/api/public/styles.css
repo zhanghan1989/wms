@@ -140,6 +140,25 @@ body {
   font-size: 12px;
 }
 
+.btn-with-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--danger);
+  border: 1px solid #9e2f2f;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 180px 1fr;
@@ -491,6 +510,12 @@ td {
 
 .inventory-search-field-value {
   color: var(--ink);
+}
+
+.qty-pending {
+  color: var(--danger);
+  margin-left: 4px;
+  font-weight: 600;
 }
 
 .inventory-search-locations {

@@ -13,6 +13,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { CreateAdjustOrderDto } from './dto/create-adjust-order.dto';
+import { CreateFbaReplenishmentDto } from './dto/create-fba-replenishment.dto';
 import { ManualAdjustDto } from './dto/manual-adjust.dto';
 import { BoxSkusQueryDto, ProductBoxesQueryDto, SearchSkuDto } from './dto/search-sku.dto';
 import { InventoryService } from './inventory.service';
@@ -62,5 +63,24 @@ export class InventoryController {
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
     return this.inventoryService.manualAdjust(payload, user.id, req.requestId);
+  }
+
+  @Post('fba-replenishments')
+  async createFbaReplenishment(
+    @Body() payload: CreateFbaReplenishmentDto,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.inventoryService.createFbaReplenishment(payload, user.id, req.requestId);
+  }
+
+  @Get('fba-replenishments')
+  async listFbaReplenishments(): Promise<unknown[]> {
+    return this.inventoryService.listFbaReplenishments();
+  }
+
+  @Get('fba-replenishments/pending-summary')
+  async getFbaPendingSummary(): Promise<unknown> {
+    return this.inventoryService.getFbaPendingSummary();
   }
 }
