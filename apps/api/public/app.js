@@ -397,6 +397,16 @@ async function getSkuInventoryRows(skuId) {
   }
 }
 
+async function getCurrentBoxSkuQty(skuId, boxCode) {
+  const normalizedBoxCode = normalizeBoxCodeInput(boxCode);
+  if (!normalizedBoxCode) return 0;
+  const rows = await getSkuInventoryRows(skuId);
+  const matched = rows.find(
+    (row) => String(row?.box?.boxCode || "").toUpperCase() === normalizedBoxCode,
+  );
+  return Math.max(0, Number(matched?.qty ?? 0));
+}
+
 async function getBoxSkuInventoryRows(boxId) {
   try {
     return await request(`/inventory/box-skus?boxId=${boxId}`);
@@ -1530,10 +1540,8 @@ function openAdjustModal(direction, skuId, presetBoxCode = "", maxQty = null) {
   qtyInput.value = "1";
   const normalizedMaxQty = Number(maxQty);
   if (direction === "outbound" && Number.isInteger(normalizedMaxQty) && normalizedMaxQty > 0) {
-    qtyInput.max = String(normalizedMaxQty);
     qtyInput.dataset.maxQty = String(normalizedMaxQty);
   } else {
-    qtyInput.removeAttribute("max");
     qtyInput.dataset.maxQty = "";
   }
   $("adjustReason").value = direction === "inbound" ? "退货入库" : "FBA补货";
@@ -1581,9 +1589,14 @@ async function submitAdjustForm() {
     throw new Error("数量必须为正整数");
   }
   if (direction === "outbound") {
-    const maxQty = Number($("adjustQty").dataset.maxQty || 0);
-    if (Number.isInteger(maxQty) && maxQty > 0 && qty > maxQty) {
-      throw new Error(`FBA\u8865\u8d27\u6570\u91cf\u4e0d\u80fd\u5927\u4e8e\u5f53\u524d\u7bb1\u53f7\u8be5SKU\u53ef\u7528\u6570\u91cf\uff08${maxQty}\uff09`);
+    const latestQty = await getCurrentBoxSkuQty(skuId, boxCode);
+    $("adjustQty").dataset.maxQty = String(latestQty);
+
+    if (latestQty <= 0) {
+      throw new Error("\u5f53\u524d\u7bb1\u53f7\u8be5SKU\u53ef\u7528\u5e93\u5b58\u4e3a0\uff0c\u4e0d\u80fd\u751f\u6210FBA\u8865\u8d27\u7533\u8bf7\u5355");
+    }
+    if (qty > latestQty) {
+      throw new Error(`FBA\u8865\u8d27\u6570\u91cf\u4e0d\u80fd\u5927\u4e8e\u5f53\u524d\u7bb1\u53f7\u8be5SKU\u53ef\u7528\u6570\u91cf\uff08${latestQty}\uff09`);
     }
   }
   if (reason && reason.length > 10) {
@@ -2006,10 +2019,6 @@ function bindForms() {
       return;
     }
 
-    const maxQty = Number(input.dataset.maxQty || 0);
-    if (Number.isInteger(maxQty) && maxQty > 0 && value > maxQty) {
-      value = maxQty;
-    }
     input.value = String(value);
   });
   $("adjustQty").addEventListener("blur", (event) => {
