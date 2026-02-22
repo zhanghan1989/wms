@@ -420,20 +420,20 @@
         <button type="button" class="ghost" data-action="closeCreateSkuModal">关闭</button>
       </div>
       <form id="createSkuModalForm" class="form-grid modal-grid">
-        <label>型号<input id="modalNewModel" /></label>
-        <label>SKU<input id="modalNewSku" required /></label>
-        <label>品牌
-          <select id="modalNewBrand"></select>
-        </label>
-        <label>erpSKU<input id="modalNewErpSku" /></label>
-        <label>类型
+        <label class="create-sku-left-col">型号<input id="modalNewModel" /></label>
+        <label class="create-sku-right-col">SKU<input id="modalNewSku" required /></label>
+        <label class="create-sku-left-col">颜色<input id="modalNewColor" /></label>
+        <label class="create-sku-right-col">ASIN<input id="modalNewAsin" /></label>
+        <label class="create-sku-left-col">类型
           <select id="modalNewType"></select>
         </label>
-        <label>颜色<input id="modalNewColor" /></label>
-        <label>ASIN<input id="modalNewAsin" /></label>
-        <label>备注<input id="modalNewRemark" /></label>
-        <label>FNSKU<input id="modalNewFnsku" /></label>
-        <label>所属亚马逊店铺
+        <label class="create-sku-right-col">FNSKU<input id="modalNewFnsku" /></label>
+        <label class="create-sku-left-col">品牌
+          <select id="modalNewBrand"></select>
+        </label>
+        <label class="create-sku-right-col">erpSKU<input id="modalNewErpSku" /></label>
+        <label class="create-sku-left-col">备注<input id="modalNewRemark" /></label>
+        <label class="create-sku-left-col">所属亚马逊店铺
           <select id="modalNewShop"></select>
         </label>
         <label class="create-sku-left-col">箱号
