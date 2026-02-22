@@ -43,7 +43,10 @@
       <div class="session-actions hidden" id="employeeQuickActions">
         <button type="button" id="openInventoryHome">首页</button>
         <button type="button" id="openOverseasWarehousePanel">海外仓管理</button>
-        <button type="button" id="openProductManagementPanel">产品管理</button>
+        <button type="button" id="openProductManagementPanel" class="btn-with-badge">
+          产品管理
+          <span id="productEditPendingBadge" class="quick-badge hidden">0</span>
+        </button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -216,11 +219,10 @@
           <table>
             <thead>
               <tr>
-                <th>申请ID</th>
+                <th>申请时间</th>
                 <th>SKU</th>
                 <th>状态</th>
                 <th>申请人</th>
-                <th>申请时间</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -517,6 +519,10 @@
       </div>
       <div id="productEditRequestMeta" class="batch-detail-meta"></div>
       <div id="productEditRequestCompare" class="edit-request-compare-grid"></div>
+      <div id="productEditRequestActions" class="modal-actions">
+        <button type="button" id="confirmProductEditRequestBtn">确认</button>
+        <button type="button" id="deleteProductEditRequestBtn" class="danger-solid">删除</button>
+      </div>
     </div>
   </div>
 

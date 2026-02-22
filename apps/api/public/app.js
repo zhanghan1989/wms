@@ -18,8 +18,10 @@ const state = {
   selectedBatchInboundOrderDetail: null,
   fbaReplenishments: [],
   fbaPendingCount: 0,
+  productEditPendingCount: 0,
   fbaPendingBySku: {},
   fbaPendingByBoxSku: {},
+  selectedProductEditRequestId: null,
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
@@ -139,6 +141,8 @@ function getFbaStatusText(status) {
 
 function getProductEditRequestStatusText(status) {
   if (status === "pending") return "待处理";
+  if (status === "confirmed") return "已确认";
+  if (status === "deleted") return "已删除";
   return displayText(status);
 }
 
@@ -1088,10 +1092,6 @@ function renderShopsTable() {
       .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
 }
 
-function getProductEditRequestDisplayNo(item) {
-  return `PER-${displayText(item?.id)}`;
-}
-
 function renderProductEditRequestTable() {
   const body = $("productEditRequestBody");
   if (!body) return;
@@ -1104,36 +1104,41 @@ function renderProductEditRequestTable() {
         const creatorText = item?.creator?.username || "-";
         return `
       <tr>
-        <td>${escapeHtml(getProductEditRequestDisplayNo(item))}</td>
+        <td>${escapeHtml(formatDate(item?.createdAt))}</td>
         <td>${escapeHtml(displayText(skuText))}</td>
         <td><span class="edit-request-status">${escapeHtml(statusText)}</span></td>
         <td>${escapeHtml(displayText(creatorText))}</td>
-        <td>${escapeHtml(formatDate(item?.createdAt))}</td>
         <td>
           <button class="tiny-btn" data-action="openProductEditRequestDetail" data-id="${escapeHtml(item?.id)}">编辑详情</button>
         </td>
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
 }
 
 function renderProductEditRequestDetail(item) {
   const meta = $("productEditRequestMeta");
   const compare = $("productEditRequestCompare");
-  if (!meta || !compare) return;
+  const confirmBtn = $("confirmProductEditRequestBtn");
+  const deleteBtn = $("deleteProductEditRequestBtn");
+  if (!meta || !compare || !confirmBtn || !deleteBtn) return;
 
   if (!item) {
+    state.selectedProductEditRequestId = null;
     meta.innerHTML = "";
     compare.innerHTML = '<div class="muted">暂无数据</div>';
+    confirmBtn.classList.add("hidden");
+    deleteBtn.classList.add("hidden");
     return;
   }
 
+  state.selectedProductEditRequestId = Number(item.id);
   meta.innerHTML = `
-    <div><strong>申请ID：</strong>${escapeHtml(getProductEditRequestDisplayNo(item))}</div>
     <div><strong>SKU：</strong>${escapeHtml(displayText(item?.sku?.sku))}</div>
     <div><strong>申请人：</strong>${escapeHtml(displayText(item?.creator?.username))}</div>
     <div><strong>申请时间：</strong>${escapeHtml(formatDate(item?.createdAt))}</div>
+    <div><strong>状态：</strong>${escapeHtml(getProductEditRequestStatusText(item?.status))}</div>
   `;
 
   const fieldDefs = [
@@ -1174,6 +1179,9 @@ function renderProductEditRequestDetail(item) {
   `;
 
   compare.innerHTML = `${renderCol("变更前", beforeData, "before")}${renderCol("变更后", afterData, "after")}`;
+  const canOperate = item?.status === "pending";
+  confirmBtn.classList.toggle("hidden", !canOperate);
+  deleteBtn.classList.toggle("hidden", !canOperate);
 }
 
 function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
@@ -1401,6 +1409,18 @@ async function loadProductEditRequests() {
 
 async function loadProductEditRequestDetail(id) {
   return request(`/sku-edit-requests/${id}`);
+}
+
+async function confirmProductEditRequest(id) {
+  return request(`/sku-edit-requests/${id}/confirm`, {
+    method: "POST",
+  });
+}
+
+async function deleteProductEditRequest(id) {
+  return request(`/sku-edit-requests/${id}/delete`, {
+    method: "POST",
+  });
 }
 
 function renderAdjustBoxSuggestions(keyword = "") {
@@ -1935,6 +1955,26 @@ async function loadFbaPendingSummary() {
   renderFbaPendingBadge();
 }
 
+function renderProductEditPendingBadge() {
+  const badge = $("productEditPendingBadge");
+  if (!badge) return;
+  const count = Number(state.productEditPendingCount || 0);
+  badge.textContent = String(count);
+  badge.classList.toggle("hidden", count <= 0);
+}
+
+async function loadProductEditPendingSummary() {
+  if (!state.token) {
+    state.productEditPendingCount = 0;
+    renderProductEditPendingBadge();
+    return;
+  }
+
+  const summary = await request("/sku-edit-requests/pending-summary");
+  state.productEditPendingCount = Number(summary?.pendingCount || 0);
+  renderProductEditPendingBadge();
+}
+
 function renderFbaReplenishmentList() {
   const tbody = $("fbaReplenishmentBody");
   if (!tbody) return;
@@ -2422,13 +2462,16 @@ async function reloadAll() {
     state.shops = [];
     state.skuEditRequests = [];
     state.fbaPendingCount = 0;
+    state.productEditPendingCount = 0;
     state.fbaPendingBySku = {};
     state.fbaPendingByBoxSku = {};
     state.selectedFbaIds = new Set();
+    state.selectedProductEditRequestId = null;
     state.brandEditingIds = new Set();
     state.skuTypeEditingIds = new Set();
     state.shopEditingIds = new Set();
     renderFbaPendingBadge();
+    renderProductEditPendingBadge();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
     setInventoryDisplayMode(false);
@@ -2442,6 +2485,7 @@ async function reloadAll() {
     loadSkuTypes(),
     loadShops(),
     loadProductEditRequests(),
+    loadProductEditPendingSummary(),
     loadShelves(),
     loadBoxes(),
     loadBatchInboundOrders(),
@@ -2708,6 +2752,7 @@ function bindForms() {
         loadSkuTypes(),
         loadShops(),
         loadProductEditRequests(),
+        loadProductEditPendingSummary(),
       ]);
     } catch (error) {
       showToast(error.message, true);
@@ -2981,7 +3026,7 @@ function bindForms() {
       await submitEditSkuForm();
       closeModal("editSkuModal");
       showToast("编辑申请已提交");
-      await loadProductEditRequests();
+      await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3485,6 +3530,51 @@ function bindDelegates() {
     }
   });
 
+  $("confirmProductEditRequestBtn").addEventListener("click", async () => {
+    try {
+      const id = Number(state.selectedProductEditRequestId || 0);
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new Error("请先选择编辑申请");
+      }
+      const ok = await openActionConfirmModal(
+        "确认后会正式更新产品数据，是否继续？",
+        "确认编辑申请",
+        "确认",
+      );
+      if (!ok) return;
+      await confirmProductEditRequest(id);
+      showToast("编辑申请已确认并更新数据库");
+      const detail = await loadProductEditRequestDetail(id);
+      renderProductEditRequestDetail(detail);
+      await Promise.all([
+        loadProductEditRequests(),
+        loadProductEditPendingSummary(),
+        loadInventory(),
+        loadAudit(),
+      ]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("deleteProductEditRequestBtn").addEventListener("click", async () => {
+    try {
+      const id = Number(state.selectedProductEditRequestId || 0);
+      if (!Number.isInteger(id) || id <= 0) {
+        throw new Error("请先选择编辑申请");
+      }
+      const ok = await openDeleteConfirmModal("确认删除该编辑申请？");
+      if (!ok) return;
+      await deleteProductEditRequest(id);
+      showToast("编辑申请已删除");
+      closeModal("productEditRequestDetailModal");
+      renderProductEditRequestDetail(null);
+      await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("inventorySearchResults").addEventListener("click", openAdjustByAction);
 
   document.addEventListener("click", (event) => {
@@ -3716,6 +3806,7 @@ function bindRefresh() {
       loadSkuTypes(),
       loadShops(),
       loadProductEditRequests(),
+      loadProductEditPendingSummary(),
     ]).catch((error) =>
       showToast(error.message, true),
     ),

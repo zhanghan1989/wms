@@ -51,6 +51,8 @@ enum FbaReplenishmentStatus {
 
 enum ProductEditRequestStatus {
   pending
+  confirmed
+  deleted
 }
 
 enum StocktakeScopeType {

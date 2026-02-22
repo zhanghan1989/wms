@@ -11,6 +11,11 @@ import { SkuEditRequestsService } from './sku-edit-requests.service';
 export class SkuEditRequestsController {
   constructor(private readonly skuEditRequestsService: SkuEditRequestsService) {}
 
+  @Get('pending-summary')
+  async pendingSummary(): Promise<{ pendingCount: number }> {
+    return this.skuEditRequestsService.pendingSummary();
+  }
+
   @Get()
   async list(): Promise<unknown[]> {
     return this.skuEditRequestsService.list();
@@ -28,5 +33,23 @@ export class SkuEditRequestsController {
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
     return this.skuEditRequestsService.create(payload, user.id, req.requestId);
+  }
+
+  @Post(':id/confirm')
+  async confirm(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.skuEditRequestsService.confirm(id, user.id, req.requestId);
+  }
+
+  @Post(':id/delete')
+  async markDeleted(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.skuEditRequestsService.markDeleted(id, user.id, req.requestId);
   }
 }
