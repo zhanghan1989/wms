@@ -340,7 +340,6 @@ function bindInputRules() {
   bindDigitInput("newBoxCodeDigits", 4);
   bindDigitInput("modalNewBoxCodeDigits", 4);
   bindDigitInput("modalNewShelfCodeDigits", 3);
-  bindDigitInput("moveCodeNewDigits", 4);
   bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
   bindBatchNoInput("batchCollectBatchNo");
 }
@@ -632,6 +631,7 @@ async function loadInventory() {
   const skus = await request("/skus");
   state.inventorySkus = skus;
   $("statSkus").textContent = skus.length;
+  renderSkuOptionsForSelect("moveProductSkuId", "请选择SKU");
   await loadFbaPendingSummary();
 
   const locationEntries = await Promise.all(
@@ -653,6 +653,7 @@ async function loadInventory() {
   state.inventoryVisibleCount = state.inventoryPageSize;
   setInventoryDisplayMode(false);
   renderInventoryTable();
+  await refreshMoveProductOldBoxOptionsBySku();
 }
 
 function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
@@ -837,6 +838,22 @@ function renderBoxOptionsForSelect(selectId, placeholder) {
   }
 }
 
+function renderSkuOptionsForSelect(selectId, placeholder) {
+  const select = $(selectId);
+  if (!select) return;
+
+  const prev = select.value;
+  const options = [...state.inventorySkus]
+    .sort((a, b) => String(a.sku || "").localeCompare(String(b.sku || ""), "en", { numeric: true }))
+    .map((sku) => `<option value="${escapeHtml(sku.id)}">${escapeHtml(sku.sku)}</option>`)
+    .join("");
+
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+  if (prev && state.inventorySkus.some((sku) => String(sku.id) === String(prev))) {
+    select.value = prev;
+  }
+}
+
 function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
   const input = $(inputId);
   const datalist = $(listId);
@@ -964,6 +981,78 @@ function syncMoveShelfCurrentDisplay() {
   currentInput.value = box?.shelf?.shelfCode || "";
 }
 
+function renderMoveProductNewBoxOptions(keyword = "") {
+  const input = $("moveProductNewBoxCode");
+  const datalist = $("moveProductNewBoxCodeList");
+  if (!input || !datalist) return;
+
+  const prev = input.value;
+  const raw = String(keyword ?? "").trim().toUpperCase();
+  const digits = raw.replace(/\D/g, "");
+  const matches = getEnabledBoxesSorted().filter((box) => {
+    if (!raw) return true;
+    if (digits) return String(box.boxCode).replace(/\D/g, "").includes(digits);
+    return String(box.boxCode).toUpperCase().includes(raw);
+  });
+  datalist.innerHTML = matches
+    .map((box) => `<option value="${escapeHtml(box.boxCode)}"></option>`)
+    .join("");
+  if (prev) input.value = prev;
+}
+
+function syncMoveProductOldShelfDisplay() {
+  const shelfInput = $("moveProductOldShelfCode");
+  if (!shelfInput) return;
+  const selectedBoxCode = resolveEnabledBoxCode($("moveProductOldBoxCode")?.value || "");
+  const box = findEnabledBoxByCode(selectedBoxCode);
+  shelfInput.value = box?.shelf?.shelfCode || "";
+}
+
+function syncMoveProductNewShelfDisplay() {
+  const shelfInput = $("moveProductNewShelfCode");
+  if (!shelfInput) return;
+  const newBoxCode = resolveEnabledBoxCode($("moveProductNewBoxCode")?.value || "");
+  const box = findEnabledBoxByCode(newBoxCode);
+  shelfInput.value = box?.shelf?.shelfCode || "";
+}
+
+async function refreshMoveProductOldBoxOptionsBySku() {
+  const skuId = Number($("moveProductSkuId")?.value || 0);
+  const select = $("moveProductOldBoxCode");
+  const hint = $("moveProductOldBoxHint");
+  if (!select) return;
+
+  if (!Number.isInteger(skuId) || skuId <= 0) {
+    select.innerHTML = '<option value="">请先选择SKU</option>';
+    if (hint) hint.classList.add("hidden");
+    syncMoveProductOldShelfDisplay();
+    return;
+  }
+
+  const rows = (await getSkuInventoryRows(skuId))
+    .filter((row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode)
+    .sort((a, b) => String(a.box.boxCode).localeCompare(String(b.box.boxCode), "en", { numeric: true }));
+
+  const prev = resolveEnabledBoxCode(select.value);
+  const options = rows
+    .map((row) => `<option value="${escapeHtml(row.box.boxCode)}">${escapeHtml(row.box.boxCode)}</option>`)
+    .join("");
+  select.innerHTML = `<option value="">请选择旧箱号</option>${options}`;
+
+  if (rows.length === 1) {
+    select.value = rows[0].box.boxCode;
+    if (hint) hint.classList.add("hidden");
+  } else if (prev && rows.some((row) => String(row.box.boxCode) === String(prev))) {
+    select.value = prev;
+    if (hint) hint.classList.add("hidden");
+  } else {
+    select.value = "";
+    if (hint) hint.classList.toggle("hidden", rows.length <= 1);
+  }
+
+  syncMoveProductOldShelfDisplay();
+}
+
 function filterAdjustBoxes(keyword) {
   const boxes = getEnabledBoxesSorted();
   const raw = String(keyword ?? "").trim().toUpperCase();
@@ -1029,7 +1118,9 @@ async function loadBoxes() {
   renderMoveShelfBoxOptions($("moveShelfBoxCode")?.value || "");
   syncMoveShelfCurrentDisplay();
   renderMoveShelfTargetOptions($("moveShelfTargetCode")?.value || "");
-  renderBoxOptionsForSelect("moveCodeBoxId", "请选择箱号");
+  renderMoveProductNewBoxOptions($("moveProductNewBoxCode")?.value || "");
+  syncMoveProductOldShelfDisplay();
+  syncMoveProductNewShelfDisplay();
   $("boxesBody").innerHTML = boxes
     .map(
       (box) => `
@@ -1520,7 +1611,7 @@ function renderFbaReplenishmentList() {
             }
             ${
               item.status === "pending_outbound"
-                ? `<button class="tiny-btn ghost" data-action="fbaReopenRow" data-id="${escapeHtml(item.id)}">变更</button>`
+                ? `<button class="tiny-btn" data-action="fbaReopenRow" data-id="${escapeHtml(item.id)}">变更</button>`
                 : ""
             }
             ${
@@ -1852,21 +1943,70 @@ async function submitMoveBoxShelfForm() {
 }
 
 async function submitMoveBoxCodeForm() {
-  const boxId = Number($("moveCodeBoxId").value);
-  const boxCode = buildBoxCode($("moveCodeNewDigits").value);
-  if (!Number.isInteger(boxId) || boxId <= 0) {
-    throw new Error("请选择箱号");
+  const skuId = Number($("moveProductSkuId").value);
+  if (!Number.isInteger(skuId) || skuId <= 0) {
+    throw new Error("请选择SKU");
   }
 
-  const source = state.boxes.find((item) => String(item.id) === String(boxId));
-  if (source && String(source.boxCode).toUpperCase() === String(boxCode).toUpperCase()) {
-    throw new Error("新箱号不能与当前箱号相同");
+  const rows = (await getSkuInventoryRows(skuId)).filter(
+    (row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode,
+  );
+  if (!rows.length) {
+    throw new Error("该SKU当前没有可移动库存");
   }
 
-  await request(`/boxes/${boxId}`, {
-    method: "PUT",
-    body: JSON.stringify({ boxCode }),
+  const oldBoxCode = resolveEnabledBoxCode($("moveProductOldBoxCode").value);
+  if (!oldBoxCode) {
+    throw new Error("请选择旧箱号");
+  }
+  const oldRow = rows.find(
+    (row) => String(row.box.boxCode).toUpperCase() === String(oldBoxCode).toUpperCase(),
+  );
+  if (!oldRow) {
+    if (rows.length > 1) {
+      throw new Error("该SKU存在多个箱号，请手动指定旧箱号");
+    }
+    throw new Error("旧箱号与SKU不匹配");
+  }
+
+  const newBoxCode = resolveEnabledBoxCode($("moveProductNewBoxCode").value);
+  if (!newBoxCode) {
+    throw new Error("请选择新箱号");
+  }
+  if (String(newBoxCode).toUpperCase() === String(oldRow.box.boxCode).toUpperCase()) {
+    throw new Error("新箱号不能与旧箱号相同");
+  }
+
+  const qty = Number(oldRow.qty ?? 0);
+  if (!Number.isInteger(qty) || qty <= 0) {
+    throw new Error("旧箱号下该SKU库存不足");
+  }
+
+  await request("/inventory/manual-adjust", {
+    method: "POST",
+    body: JSON.stringify({
+      skuId,
+      boxCode: oldRow.box.boxCode,
+      qtyDelta: -qty,
+      reason: "移动产品到新箱子-转出",
+    }),
   });
+
+  await request("/inventory/manual-adjust", {
+    method: "POST",
+    body: JSON.stringify({
+      skuId,
+      boxCode: newBoxCode,
+      qtyDelta: qty,
+      reason: "移动产品到新箱子-转入",
+    }),
+  });
+
+  return {
+    qty,
+    oldBoxCode: oldRow.box.boxCode,
+    newBoxCode,
+  };
 }
 
 async function reloadAll() {
@@ -2143,7 +2283,7 @@ function bindForms() {
   $("openOverseasWarehousePanel").addEventListener("click", async () => {
     try {
       switchPanel("overseasWarehouse");
-      await Promise.all([loadShelves(), loadBoxes()]);
+      await Promise.all([loadShelves(), loadBoxes(), loadInventory()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -2227,6 +2367,30 @@ function bindForms() {
     if (resolved) {
       event.target.value = resolved;
     }
+  });
+  $("moveProductSkuId").addEventListener("change", async () => {
+    try {
+      await refreshMoveProductOldBoxOptionsBySku();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("moveProductOldBoxCode").addEventListener("change", () => {
+    syncMoveProductOldShelfDisplay();
+  });
+  $("moveProductNewBoxCode").addEventListener("input", (event) => {
+    renderMoveProductNewBoxOptions(event.target.value);
+    syncMoveProductNewShelfDisplay();
+  });
+  $("moveProductNewBoxCode").addEventListener("focus", (event) => {
+    renderMoveProductNewBoxOptions(event.target.value);
+  });
+  $("moveProductNewBoxCode").addEventListener("blur", (event) => {
+    const resolved = resolveEnabledBoxCode(event.target.value);
+    if (resolved) {
+      event.target.value = resolved;
+    }
+    syncMoveProductNewShelfDisplay();
   });
   $("adjustBoxCode").addEventListener("input", (event) => {
     renderAdjustBoxSuggestions(event.target.value);
@@ -2480,9 +2644,11 @@ function bindDelegates() {
     try {
       const keyword = $("inventoryKeyword").value.trim();
       const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
-      await submitMoveBoxCodeForm();
-      $("moveCodeNewDigits").value = "";
-      showToast("箱号已移动至新箱号");
+      const result = await submitMoveBoxCodeForm();
+      $("moveProductNewBoxCode").value = "";
+      $("moveProductNewShelfCode").value = "";
+      await refreshMoveProductOldBoxOptionsBySku();
+      showToast(`已将${result.qty}件产品从 ${result.oldBoxCode} 移动到 ${result.newBoxCode}`);
       await loadBoxes();
       await loadInventory();
       if (shouldRefreshSearch) {

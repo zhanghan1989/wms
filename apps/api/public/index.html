@@ -120,7 +120,7 @@
         </article>
 
         <article class="card">
-          <h3>移动至新货架</h3>
+          <h3>移动箱子到新货架</h3>
           <form id="moveBoxShelfForm" class="form-grid overseas-form overseas-form-three">
             <label>
               箱号
@@ -148,30 +148,46 @@
               />
               <datalist id="moveShelfTargetCodeList"></datalist>
             </label>
-            <button type="submit">移动至新货架</button>
+            <button type="submit">移动箱子到新货架</button>
           </form>
         </article>
 
         <article class="card">
-          <h3>移动至新箱号</h3>
+          <h3>移动产品到新箱子</h3>
           <form id="moveBoxCodeForm" class="form-grid overseas-form">
             <label>
-              当前箱号
-              <select id="moveCodeBoxId" required>
-                <option value="">请选择箱号</option>
+              SKU
+              <select id="moveProductSkuId" required>
+                <option value="">请选择SKU</option>
               </select>
             </label>
             <label>
-              新箱号（B-）
+              旧箱号
+              <select id="moveProductOldBoxCode" required>
+                <option value="">请先选择SKU</option>
+              </select>
+            </label>
+            <label>
+              旧货架
+              <input id="moveProductOldShelfCode" readonly placeholder="请先选择旧箱号" />
+            </label>
+            <label>
+              新箱号
               <input
-                id="moveCodeNewDigits"
+                id="moveProductNewBoxCode"
+                list="moveProductNewBoxCodeList"
                 inputmode="numeric"
-                maxlength="4"
-                placeholder="4位数字"
+                placeholder="输入数字或选择新箱号"
                 required
               />
+              <datalist id="moveProductNewBoxCodeList"></datalist>
             </label>
-            <button type="submit">移动至新箱号</button>
+            <label>
+              新货架
+              <input id="moveProductNewShelfCode" readonly placeholder="根据新箱号自动显示" />
+            </label>
+            <div id="moveProductOldBoxHint" class="muted hidden">该SKU存在多个箱号，请手动指定旧箱号。</div>
+            <button type="submit">移动产品到新箱子</button>
           </form>
         </article>
       </section>
