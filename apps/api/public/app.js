@@ -340,6 +340,7 @@ function bindInputRules() {
   bindDigitInput("newBoxCodeDigits", 4);
   bindDigitInput("modalNewBoxCodeDigits", 4);
   bindDigitInput("modalNewShelfCodeDigits", 3);
+  bindDigitInput("moveCodeNewDigits", 4);
   bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
   bindBatchNoInput("batchCollectBatchNo");
 }
@@ -818,6 +819,24 @@ function renderShelfOptionsForSelect(selectId, placeholder) {
   }
 }
 
+function renderBoxOptionsForSelect(selectId, placeholder) {
+  const select = $(selectId);
+  if (!select) return;
+
+  const prev = select.value;
+  const options = getEnabledBoxesSorted()
+    .map((box) => {
+      const shelfCode = box?.shelf?.shelfCode ? ` / ${box.shelf.shelfCode}` : "";
+      return `<option value="${escapeHtml(box.id)}">${escapeHtml(box.boxCode)}${escapeHtml(shelfCode)}</option>`;
+    })
+    .join("");
+
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+  if (prev && getEnabledBoxesSorted().some((box) => String(box.id) === String(prev))) {
+    select.value = prev;
+  }
+}
+
 function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
   const input = $(inputId);
   const datalist = $(listId);
@@ -902,6 +921,7 @@ async function loadShelves() {
 
   renderShelfOptionsForSelect("newBoxShelfId", "请选择货架号");
   renderShelfOptionsForSelect("modalNewBoxShelfId", "请选择货架号");
+  renderShelfOptionsForSelect("moveShelfTargetId", "请选择目标货架号");
 
   $("shelvesBody").innerHTML = shelves
     .map(
@@ -922,6 +942,8 @@ async function loadBoxes() {
   $("statBoxes").textContent = boxes.length;
   renderBoxOptionsForInput("modalNewSkuBoxCode", "modalNewSkuBoxCodeList", "请选择已有箱号或者新增箱号");
   renderAdjustBoxSuggestions($("adjustBoxCode")?.value || "");
+  renderBoxOptionsForSelect("moveShelfBoxId", "请选择箱号");
+  renderBoxOptionsForSelect("moveCodeBoxId", "请选择箱号");
   $("boxesBody").innerHTML = boxes
     .map(
       (box) => `
@@ -1699,6 +1721,40 @@ async function createShelfFromInventoryModal() {
   });
 }
 
+async function submitMoveBoxShelfForm() {
+  const boxId = Number($("moveShelfBoxId").value);
+  const shelfId = Number($("moveShelfTargetId").value);
+  if (!Number.isInteger(boxId) || boxId <= 0) {
+    throw new Error("请选择箱号");
+  }
+  if (!Number.isInteger(shelfId) || shelfId <= 0) {
+    throw new Error("请选择目标货架号");
+  }
+
+  await request(`/boxes/${boxId}`, {
+    method: "PUT",
+    body: JSON.stringify({ shelfId }),
+  });
+}
+
+async function submitMoveBoxCodeForm() {
+  const boxId = Number($("moveCodeBoxId").value);
+  const boxCode = buildBoxCode($("moveCodeNewDigits").value);
+  if (!Number.isInteger(boxId) || boxId <= 0) {
+    throw new Error("请选择箱号");
+  }
+
+  const source = state.boxes.find((item) => String(item.id) === String(boxId));
+  if (source && String(source.boxCode).toUpperCase() === String(boxCode).toUpperCase()) {
+    throw new Error("新箱号不能与当前箱号相同");
+  }
+
+  await request(`/boxes/${boxId}`, {
+    method: "PUT",
+    body: JSON.stringify({ boxCode }),
+  });
+}
+
 async function reloadAll() {
   await loadMe();
   if (!state.token) {
@@ -1970,6 +2026,15 @@ function bindForms() {
     focusInventorySearch();
   });
 
+  $("openOverseasWarehousePanel").addEventListener("click", async () => {
+    try {
+      switchPanel("overseasWarehouse");
+      await Promise.all([loadShelves(), loadBoxes()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openCreateSkuModal").addEventListener("click", async () => {
     await Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true));
     $("createSkuModalForm").reset();
@@ -2234,6 +2299,43 @@ function bindDelegates() {
         }
         await loadBatchInboundOrders();
       }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("moveBoxShelfForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const keyword = $("inventoryKeyword").value.trim();
+      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+      await submitMoveBoxShelfForm();
+      showToast("箱号已移动至新货架");
+      await loadBoxes();
+      await loadInventory();
+      if (shouldRefreshSearch) {
+        await searchInventoryProducts(keyword);
+      }
+      await loadAudit();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("moveBoxCodeForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const keyword = $("inventoryKeyword").value.trim();
+      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+      await submitMoveBoxCodeForm();
+      $("moveCodeNewDigits").value = "";
+      showToast("箱号已移动至新箱号");
+      await loadBoxes();
+      await loadInventory();
+      if (shouldRefreshSearch) {
+        await searchInventoryProducts(keyword);
+      }
+      await loadAudit();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -2540,6 +2642,9 @@ function bindScrollLoad() {
 
 function bindRefresh() {
   $("refreshInventory").addEventListener("click", () => loadInventory().catch((error) => showToast(error.message, true)));
+  $("refreshOverseasWarehouse").addEventListener("click", () =>
+    Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true)),
+  );
   $("refreshUsers").addEventListener("click", () => loadUsers().catch((error) => showToast(error.message, true)));
   $("refreshShelves").addEventListener("click", () => loadShelves().catch((error) => showToast(error.message, true)));
   $("refreshBoxes").addEventListener("click", () => loadBoxes().catch((error) => showToast(error.message, true)));

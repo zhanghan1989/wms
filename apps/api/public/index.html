@@ -42,8 +42,7 @@
       </div>
       <div class="session-actions hidden" id="employeeQuickActions">
         <button type="button" id="openInventoryHome">首页</button>
-        <button type="button" id="openCreateSkuModal">新增产品</button>
-        <button type="button" id="openCreateBoxQuick">新增箱号</button>
+        <button type="button" id="openOverseasWarehousePanel">海外仓管理</button>
         <button type="button" id="openCreateShelfQuick">新增货架</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
@@ -59,6 +58,7 @@
   <main id="appLayout" class="layout hidden">
     <aside class="sidebar">
       <button class="nav-btn active" data-target="inventory">库存管理</button>
+      <button class="nav-btn" data-target="overseasWarehouse">海外仓管理</button>
       <button class="nav-btn" data-target="fbaReplenishment">FBA补货</button>
       <button class="nav-btn" data-target="batchInbound">批量入库</button>
       <button class="nav-btn" data-target="overview">总览</button>
@@ -102,6 +102,63 @@
             <tbody id="inventoryBody"></tbody>
           </table>
         </div>
+      </section>
+
+      <section class="panel" id="overseasWarehouse">
+        <div class="panel-head">
+          <h2>海外仓管理</h2>
+          <button id="refreshOverseasWarehouse" class="ghost">刷新</button>
+        </div>
+
+        <article class="card">
+          <h3>基础操作</h3>
+          <div class="action-row">
+            <button type="button" id="openCreateSkuModal">新增产品</button>
+            <button type="button" id="openCreateBoxQuick">新增箱号</button>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>移动至新货架</h3>
+          <form id="moveBoxShelfForm" class="form-grid overseas-form">
+            <label>
+              箱号
+              <select id="moveShelfBoxId" required>
+                <option value="">请选择箱号</option>
+              </select>
+            </label>
+            <label>
+              新货架号
+              <select id="moveShelfTargetId" required>
+                <option value="">请选择目标货架号</option>
+              </select>
+            </label>
+            <button type="submit">移动至新货架</button>
+          </form>
+        </article>
+
+        <article class="card">
+          <h3>移动至新箱号</h3>
+          <form id="moveBoxCodeForm" class="form-grid overseas-form">
+            <label>
+              当前箱号
+              <select id="moveCodeBoxId" required>
+                <option value="">请选择箱号</option>
+              </select>
+            </label>
+            <label>
+              新箱号（B-）
+              <input
+                id="moveCodeNewDigits"
+                inputmode="numeric"
+                maxlength="4"
+                placeholder="4位数字"
+                required
+              />
+            </label>
+            <button type="submit">移动至新箱号</button>
+          </form>
+        </article>
       </section>
 
       <section class="panel" id="batchInbound">

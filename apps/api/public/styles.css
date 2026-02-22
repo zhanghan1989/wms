@@ -376,6 +376,15 @@ button.ghost {
   margin-bottom: 10px;
 }
 
+.overseas-form {
+  align-items: end;
+}
+
+.overseas-form > button {
+  grid-column: 1 / -1;
+  width: 180px;
+}
+
 .stats {
   list-style: none;
   margin: 0;
