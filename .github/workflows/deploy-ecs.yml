@@ -80,5 +80,5 @@ jobs:
             else
               echo "No migration changes detected. Skip prisma migrate deploy."
             fi
-            docker compose up -d api
+            docker compose up -d --build api
             docker compose ps
