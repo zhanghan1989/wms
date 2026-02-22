@@ -302,11 +302,17 @@ export class InventoryService {
         select: {
           requestNo: true,
           status: true,
+          boxId: true,
           requestedQty: true,
           actualQty: true,
         },
       });
       if (existingActive) {
+        if (existingActive.boxId !== box.id) {
+          throw new ConflictException(
+            '\u76f8\u540cSKU\u7684\u5df2\u7533\u8bf7FBA\u8865\u8d27\uff0c\u53ef\u4ee5\u5220\u9664\u8865\u8d27\u5355\uff0c\u6267\u884c\u5408\u7bb1\u64cd\u4f5c\u540e\u91cd\u65b0\u7533\u8bf7FBA\u8865\u8d27\u3002',
+          );
+        }
         const activeQty =
           existingActive.status === 'pending_outbound'
             ? (existingActive.actualQty ?? existingActive.requestedQty)
