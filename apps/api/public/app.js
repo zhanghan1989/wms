@@ -29,6 +29,7 @@ const state = {
 };
 
 let deleteConfirmResolver = null;
+let actionConfirmResolver = null;
 let toastTimer = null;
 
 const $ = (id) => document.getElementById(id);
@@ -242,6 +243,38 @@ function resolveDeleteConfirm(confirmed) {
   if (typeof deleteConfirmResolver === "function") {
     const resolve = deleteConfirmResolver;
     deleteConfirmResolver = null;
+    resolve(Boolean(confirmed));
+  }
+}
+
+function openActionConfirmModal(messageText, titleText = "确认操作", confirmText = "确认") {
+  const title = $("actionConfirmTitle");
+  const message = $("actionConfirmMessage");
+  const okBtn = $("actionConfirmOkBtn");
+  if (title) {
+    title.innerHTML = `<span class="confirm-icon">!</span>${escapeHtml(titleText)}`;
+  }
+  if (message) {
+    message.textContent = String(messageText || "确认执行当前操作？");
+  }
+  if (okBtn) {
+    okBtn.textContent = String(confirmText || "确认");
+  }
+  if (typeof actionConfirmResolver === "function") {
+    actionConfirmResolver(false);
+    actionConfirmResolver = null;
+  }
+  openModal("actionConfirmModal");
+  return new Promise((resolve) => {
+    actionConfirmResolver = resolve;
+  });
+}
+
+function resolveActionConfirm(confirmed) {
+  closeModal("actionConfirmModal");
+  if (typeof actionConfirmResolver === "function") {
+    const resolve = actionConfirmResolver;
+    actionConfirmResolver = null;
     resolve(Boolean(confirmed));
   }
 }
@@ -2014,6 +2047,24 @@ async function submitMoveBoxCodeForm() {
   };
 }
 
+async function initOverseasWarehousePage() {
+  await Promise.all([loadShelves(), loadBoxes(), loadInventory()]);
+  $("moveBoxShelfForm")?.reset();
+  $("moveShelfCurrentCode").value = "";
+  $("moveShelfTargetCode").value = "";
+  renderMoveShelfBoxOptions("");
+  renderMoveShelfTargetOptions("");
+  syncMoveShelfCurrentDisplay();
+
+  $("moveBoxCodeForm")?.reset();
+  $("moveProductOldBoxCode").innerHTML = '<option value="">请先选择SKU</option>';
+  $("moveProductOldShelfCode").value = "";
+  $("moveProductNewShelfCode").value = "";
+  const hint = $("moveProductOldBoxHint");
+  if (hint) hint.classList.add("hidden");
+  renderMoveProductNewBoxOptions("");
+}
+
 async function reloadAll() {
   await loadMe();
   if (!state.token) {
@@ -2629,15 +2680,15 @@ function bindDelegates() {
   $("moveBoxShelfForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      const keyword = $("inventoryKeyword").value.trim();
-      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+      const confirmed = await openActionConfirmModal(
+        "确认执行“移动箱子到新货架”？",
+        "确认操作",
+        "确认",
+      );
+      if (!confirmed) return;
       await submitMoveBoxShelfForm();
       showToast("箱号已移动至新货架");
-      await loadBoxes();
-      await loadInventory();
-      if (shouldRefreshSearch) {
-        await searchInventoryProducts(keyword);
-      }
+      await initOverseasWarehousePage();
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);
@@ -2647,18 +2698,15 @@ function bindDelegates() {
   $("moveBoxCodeForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      const keyword = $("inventoryKeyword").value.trim();
-      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+      const confirmed = await openActionConfirmModal(
+        "确认执行“移动产品到新箱子”？",
+        "确认操作",
+        "确认",
+      );
+      if (!confirmed) return;
       const result = await submitMoveBoxCodeForm();
-      $("moveProductNewBoxCode").value = "";
-      $("moveProductNewShelfCode").value = "";
-      await refreshMoveProductOldBoxOptionsBySku();
       showToast(`已将${result.qty}件产品从 ${result.oldBoxCode} 移动到 ${result.newBoxCode}`);
-      await loadBoxes();
-      await loadInventory();
-      if (shouldRefreshSearch) {
-        await searchInventoryProducts(keyword);
-      }
+      await initOverseasWarehousePage();
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);
@@ -2855,6 +2903,11 @@ function bindDelegates() {
       resolveDeleteConfirm(false);
       return;
     }
+    const actionConfirmClose = event.target.closest("button[data-action='closeActionConfirmModal']");
+    if (actionConfirmClose) {
+      resolveActionConfirm(false);
+      return;
+    }
     const errorModalClose = event.target.closest("button[data-action='closeErrorModal']");
     if (errorModalClose) {
       closeErrorModal();
@@ -2940,6 +2993,20 @@ function bindDelegates() {
   $("deleteConfirmModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       resolveDeleteConfirm(false);
+    }
+  });
+
+  $("actionConfirmOkBtn").addEventListener("click", () => {
+    resolveActionConfirm(true);
+  });
+
+  $("actionConfirmCancelBtn").addEventListener("click", () => {
+    resolveActionConfirm(false);
+  });
+
+  $("actionConfirmModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      resolveActionConfirm(false);
     }
   });
 
