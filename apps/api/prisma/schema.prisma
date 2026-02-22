@@ -96,6 +96,9 @@ enum AuditEventType {
   sku_type_created
   sku_type_updated
   sku_type_deleted
+  shop_created
+  shop_updated
+  shop_deleted
   user_created
   user_updated
   user_disabled
@@ -222,6 +225,16 @@ model SkuType {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("sku_types")
+}
+
+model Shop {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  name      String   @unique @db.VarChar(128)
+  status    Int      @default(1) @db.TinyInt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("shops")
 }
 
 model Shelf {

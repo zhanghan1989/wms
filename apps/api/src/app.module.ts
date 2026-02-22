@@ -9,6 +9,7 @@ import { InboundModule } from './inbound/inbound.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ShelvesModule } from './shelves/shelves.module';
+import { ShopsModule } from './shops/shops.module';
 import { SkuTypesModule } from './sku-types/sku-types.module';
 import { SkusModule } from './skus/skus.module';
 import { UsersModule } from './users/users.module';
@@ -24,6 +25,7 @@ import { UsersModule } from './users/users.module';
     SkusModule,
     BrandsModule,
     SkuTypesModule,
+    ShopsModule,
     ShelvesModule,
     BoxesModule,
     BatchInboundModule,

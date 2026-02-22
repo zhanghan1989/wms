@@ -6,6 +6,7 @@ const state = {
   inventorySkus: [],
   brands: [],
   skuTypes: [],
+  shops: [],
   inventoryLocations: new Map(),
   inventorySortedSkus: [],
   inventoryVisibleCount: 0,
@@ -21,6 +22,7 @@ const state = {
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
+  shopEditingIds: new Set(),
   plainPasswords: (() => {
     try {
       const raw = localStorage.getItem("wms_plain_password_map");
@@ -802,14 +804,14 @@ async function openEditSkuModal(skuId) {
   if (!sku) {
     throw new Error("未找到产品");
   }
-  await Promise.all([loadBrands(), loadSkuTypes()]);
+  await Promise.all([loadBrands(), loadSkuTypes(), loadShops()]);
 
   $("editSkuId").value = String(sku.id);
   $("editModel").value = sku.model || "";
   renderBrandOptionsForSelect("editBrand", "请选择品牌", sku.brand || "");
   renderSkuTypeOptionsForSelect("editType", "请选择类型", sku.type || "");
   $("editColor").value = sku.color || "";
-  $("editShop").value = sku.shop || "";
+  renderShopOptionsForSelect("editShop", "请选择店铺", sku.shop || "");
   $("editRemark").value = sku.remark || "";
   $("editSku").value = sku.sku || "";
   $("editErpSku").value = sku.erpSku || "";
@@ -908,6 +910,12 @@ function getEnabledSkuTypesSorted() {
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }));
 }
 
+function getEnabledShopsSorted() {
+  return state.shops
+    .filter((item) => Number(item.status) === 1)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }));
+}
+
 function renderBrandOptionsForSelect(selectId, placeholder, selectedValue = "") {
   const select = $(selectId);
   if (!select) return;
@@ -936,6 +944,27 @@ function renderSkuTypeOptionsForSelect(selectId, placeholder, selectedValue = ""
   const prev = selectedValue || select.value;
   const options = getEnabledSkuTypesSorted()
     .map((skuType) => `<option value="${escapeHtml(skuType.name)}">${escapeHtml(skuType.name)}</option>`)
+    .join("");
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+  if (prev) {
+    const exists = Array.from(select.options).some((option) => option.value === prev);
+    if (!exists) {
+      const extra = document.createElement("option");
+      extra.value = prev;
+      extra.textContent = `${prev}（历史值）`;
+      select.appendChild(extra);
+    }
+    select.value = prev;
+  }
+}
+
+function renderShopOptionsForSelect(selectId, placeholder, selectedValue = "") {
+  const select = $(selectId);
+  if (!select) return;
+
+  const prev = selectedValue || select.value;
+  const options = getEnabledShopsSorted()
+    .map((shop) => `<option value="${escapeHtml(shop.name)}">${escapeHtml(shop.name)}</option>`)
     .join("");
   select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
   if (prev) {
@@ -1011,6 +1040,39 @@ function renderSkuTypesTable() {
         <td>
           <button class="tiny-btn" data-action="editSkuType" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteSkuType" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
+        </td>
+      </tr>
+    `;
+      })
+      .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
+}
+
+function renderShopsTable() {
+  const body = $("shopsBody");
+  if (!body) return;
+  const rows = [...state.shops].sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
+  );
+
+  body.innerHTML =
+    rows
+      .map((item) => {
+        const itemId = String(item.id);
+        const editing = state.shopEditingIds.has(itemId);
+        return `
+      <tr>
+        <td>
+          <input
+            id="shopName-${escapeHtml(item.id)}"
+            value="${escapeHtml(item.name)}"
+            maxlength="128"
+            ${editing ? "" : "readonly"}
+            data-original-name="${escapeHtml(item.name)}"
+          />
+        </td>
+        <td>
+          <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
+          <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
     `;
@@ -1278,6 +1340,18 @@ async function loadSkuTypes() {
   renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
   renderSkuTypeOptionsForSelect("editType", "请选择类型");
   renderSkuTypesTable();
+}
+
+async function loadShops() {
+  const shops = await request("/shops");
+  state.shops = shops;
+  const latestIds = new Set((Array.isArray(shops) ? shops : []).map((item) => String(item.id)));
+  state.shopEditingIds = new Set(
+    [...state.shopEditingIds].filter((id) => latestIds.has(String(id))),
+  );
+  renderShopOptionsForSelect("modalNewShop", "请选择店铺");
+  renderShopOptionsForSelect("editShop", "请选择店铺");
+  renderShopsTable();
 }
 
 async function loadShelves() {
@@ -2234,14 +2308,17 @@ async function reloadAll() {
     $("inventorySearchResults").textContent = "-";
     $("brandsBody").innerHTML = "";
     $("skuTypesBody").innerHTML = "";
+    $("shopsBody").innerHTML = "";
     state.brands = [];
     state.skuTypes = [];
+    state.shops = [];
     state.fbaPendingCount = 0;
     state.fbaPendingBySku = {};
     state.fbaPendingByBoxSku = {};
     state.selectedFbaIds = new Set();
     state.brandEditingIds = new Set();
     state.skuTypeEditingIds = new Set();
+    state.shopEditingIds = new Set();
     renderFbaPendingBadge();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
@@ -2254,6 +2331,7 @@ async function reloadAll() {
     loadInventory(),
     loadBrands(),
     loadSkuTypes(),
+    loadShops(),
     loadShelves(),
     loadBoxes(),
     loadBatchInboundOrders(),
@@ -2512,7 +2590,7 @@ function bindForms() {
   $("openProductManagementPanel").addEventListener("click", async () => {
     try {
       switchPanel("productManagement");
-      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadBrands(), loadSkuTypes()]);
+      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadBrands(), loadSkuTypes(), loadShops()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -2538,13 +2616,24 @@ function bindForms() {
     }
   });
 
+  $("openShopManageModal").addEventListener("click", async () => {
+    try {
+      state.shopEditingIds = new Set();
+      await loadShops();
+      openModal("shopManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openCreateSkuModal").addEventListener("click", async () => {
-    await Promise.all([loadShelves(), loadBoxes(), loadBrands(), loadSkuTypes()]).catch((error) =>
+    await Promise.all([loadShelves(), loadBoxes(), loadBrands(), loadSkuTypes(), loadShops()]).catch((error) =>
       showToast(error.message, true),
     );
     $("createSkuModalForm").reset();
     renderBrandOptionsForSelect("modalNewBrand", "请选择品牌");
     renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
+    renderShopOptionsForSelect("modalNewShop", "请选择店铺");
     $("modalNewSkuQty").value = "1";
     openModal("createSkuModal");
   });
@@ -3013,6 +3102,78 @@ function bindDelegates() {
     }
   });
 
+  $("shopsBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const action = button.dataset.action;
+    const id = button.dataset.id;
+    if (!id) return;
+    try {
+      if (action === "editShop") {
+        const input = $(`shopName-${id}`);
+        if (!input) return;
+        const isEditing = state.shopEditingIds.has(String(id));
+        if (!isEditing) {
+          state.shopEditingIds.add(String(id));
+          renderShopsTable();
+          const focusInput = $(`shopName-${id}`);
+          if (focusInput) {
+            focusInput.focus();
+            focusInput.select?.();
+          }
+          return;
+        }
+
+        const name = String(input?.value || "").trim();
+        if (!name) {
+          throw new Error("请输入店铺名称");
+        }
+        const originalName = String(input.getAttribute("data-original-name") || "").trim();
+        if (name === originalName) {
+          state.shopEditingIds.delete(String(id));
+          renderShopsTable();
+          return;
+        }
+        await request(`/shops/${id}`, {
+          method: "PUT",
+          body: JSON.stringify({ name }),
+        });
+        state.shopEditingIds.delete(String(id));
+        showToast("店铺已变更");
+        await Promise.all([loadShops(), loadInventory(), loadAudit()]);
+      } else if (action === "deleteShop") {
+        const shopName = button.dataset.name || id;
+        const ok = await openActionConfirmModal(`确认删除店铺 ${shopName} ？`, "确认操作", "确认删除");
+        if (!ok) return;
+        await request(`/shops/${id}`, { method: "DELETE" });
+        state.shopEditingIds.delete(String(id));
+        showToast("店铺已删除");
+        await Promise.all([loadShops(), loadInventory(), loadAudit()]);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("shopForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const name = String($("shopNameInput").value || "").trim();
+      if (!name) {
+        throw new Error("请输入店铺名称");
+      }
+      await request("/shops", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      $("shopNameInput").value = "";
+      showToast("店铺已新增");
+      await Promise.all([loadShops(), loadInventory(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("moveBoxShelfForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -3244,6 +3405,11 @@ function bindDelegates() {
       closeModal("skuTypeManageModal");
       return;
     }
+    const shopManageClose = event.target.closest("button[data-action='closeShopManageModal']");
+    if (shopManageClose) {
+      closeModal("shopManageModal");
+      return;
+    }
     const deleteConfirmClose = event.target.closest("button[data-action='closeDeleteConfirmModal']");
     if (deleteConfirmClose) {
       resolveDeleteConfirm(false);
@@ -3328,6 +3494,12 @@ function bindDelegates() {
     }
   });
 
+  $("shopManageModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("shopManageModal");
+    }
+  });
+
   $("batchInboundDetailModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("batchInboundDetailModal");
@@ -3395,7 +3567,7 @@ function bindRefresh() {
     Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true)),
   );
   $("refreshProductManagement").addEventListener("click", () =>
-    Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadBrands(), loadSkuTypes()]).catch((error) =>
+    Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadBrands(), loadSkuTypes(), loadShops()]).catch((error) =>
       showToast(error.message, true),
     ),
   );

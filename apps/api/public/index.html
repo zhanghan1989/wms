@@ -207,6 +207,7 @@
             <button type="button" id="openCreateSkuModal">新增产品</button>
             <button type="button" id="openBrandManageModal">品牌管理</button>
             <button type="button" id="openSkuTypeManageModal">类型管理</button>
+            <button type="button" id="openShopManageModal">店铺管理</button>
           </div>
         </article>
       </section>
@@ -432,7 +433,9 @@
         <label>ASIN<input id="modalNewAsin" /></label>
         <label>备注<input id="modalNewRemark" /></label>
         <label>FNSKU<input id="modalNewFnsku" /></label>
-        <label>所属亚马逊店铺<input id="modalNewShop" /></label>
+        <label>所属亚马逊店铺
+          <select id="modalNewShop"></select>
+        </label>
         <label class="create-sku-left-col">箱号
           <input
             id="modalNewSkuBoxCode"
@@ -476,7 +479,9 @@
         <label>ASIN<input id="editAsin" /></label>
         <label>备注<input id="editRemark" /></label>
         <label>FNSKU<input id="editFnsku" /></label>
-        <label>所属亚马逊店铺<input id="editShop" /></label>
+        <label>所属亚马逊店铺
+          <select id="editShop"></select>
+        </label>
         <div class="modal-actions">
           <button type="submit">保存</button>
           <button type="button" class="ghost" data-action="closeEditSkuModal">取消</button>
@@ -624,6 +629,23 @@
       <table>
         <thead><tr><th>类型</th><th>操作</th></tr></thead>
         <tbody id="skuTypesBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="shopManageModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>店铺管理</h3>
+        <button type="button" class="ghost" data-action="closeShopManageModal">关闭</button>
+      </div>
+      <form id="shopForm" class="manage-inline-form">
+        <input id="shopNameInput" maxlength="128" placeholder="请输入店铺名称" required />
+        <button type="submit" class="small-btn manage-create-btn">新增店铺</button>
+      </form>
+      <table>
+        <thead><tr><th>店铺</th><th>操作</th></tr></thead>
+        <tbody id="shopsBody"></tbody>
       </table>
     </div>
   </div>
