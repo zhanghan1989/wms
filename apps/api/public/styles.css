@@ -483,6 +483,14 @@ td {
   gap: 6px;
 }
 
+.manage-inline-form {
+  display: grid;
+  grid-template-columns: minmax(240px, 360px) auto;
+  gap: 8px;
+  align-items: end;
+  margin: 0 0 12px;
+}
+
 .sku-result-btn {
   display: inline-flex;
   flex-direction: column;
@@ -873,6 +881,7 @@ button.danger-solid {
   .form-grid,
   .form-grid.compact,
   .inventory-search-form,
+  .manage-inline-form,
   .modal-grid,
   .cards {
     grid-template-columns: 1fr;

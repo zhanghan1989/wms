@@ -4,6 +4,8 @@ const state = {
   shelves: [],
   boxes: [],
   inventorySkus: [],
+  brands: [],
+  skuTypes: [],
   inventoryLocations: new Map(),
   inventorySortedSkus: [],
   inventoryVisibleCount: 0,
@@ -703,8 +705,8 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
       const pendingQty = getFbaPendingQtyBySku(sku.id);
       const leftRows = [
         ["型号", displayText(sku.model)],
-        ["说明1", displayText(sku.desc1)],
-        ["说明2", displayText(sku.desc2)],
+        ["品牌", displayText(sku.desc1)],
+        ["类型", displayText(sku.desc2)],
         ["备注", displayText(sku.remark)],
         ["店铺", displayText(sku.shop)],
       ];
@@ -791,16 +793,17 @@ function findSkuById(skuId) {
   return state.inventorySkus.find((sku) => Number(sku.id) === Number(skuId));
 }
 
-function openEditSkuModal(skuId) {
+async function openEditSkuModal(skuId) {
   const sku = findSkuById(skuId);
   if (!sku) {
     throw new Error("未找到产品");
   }
+  await Promise.all([loadBrands(), loadSkuTypes()]);
 
   $("editSkuId").value = String(sku.id);
   $("editModel").value = sku.model || "";
-  $("editDesc1").value = sku.desc1 || "";
-  $("editDesc2").value = sku.desc2 || "";
+  renderBrandOptionsForSelect("editDesc1", "请选择品牌", sku.desc1 || "");
+  renderSkuTypeOptionsForSelect("editDesc2", "请选择类型", sku.desc2 || "");
   $("editShop").value = sku.shop || "";
   $("editRemark").value = sku.remark || "";
   $("editSku").value = sku.sku || "";
@@ -885,6 +888,106 @@ function renderSkuOptionsForSelect(selectId, placeholder) {
   if (prev && state.inventorySkus.some((sku) => String(sku.id) === String(prev))) {
     select.value = prev;
   }
+}
+
+function getEnabledBrandsSorted() {
+  return state.brands
+    .filter((item) => Number(item.status) === 1)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }));
+}
+
+function getEnabledSkuTypesSorted() {
+  return state.skuTypes
+    .filter((item) => Number(item.status) === 1)
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }));
+}
+
+function renderBrandOptionsForSelect(selectId, placeholder, selectedValue = "") {
+  const select = $(selectId);
+  if (!select) return;
+
+  const prev = selectedValue || select.value;
+  const options = getEnabledBrandsSorted()
+    .map((brand) => `<option value="${escapeHtml(brand.name)}">${escapeHtml(brand.name)}</option>`)
+    .join("");
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+  if (prev) {
+    const exists = Array.from(select.options).some((option) => option.value === prev);
+    if (!exists) {
+      const extra = document.createElement("option");
+      extra.value = prev;
+      extra.textContent = `${prev}（历史值）`;
+      select.appendChild(extra);
+    }
+    select.value = prev;
+  }
+}
+
+function renderSkuTypeOptionsForSelect(selectId, placeholder, selectedValue = "") {
+  const select = $(selectId);
+  if (!select) return;
+
+  const prev = selectedValue || select.value;
+  const options = getEnabledSkuTypesSorted()
+    .map((skuType) => `<option value="${escapeHtml(skuType.name)}">${escapeHtml(skuType.name)}</option>`)
+    .join("");
+  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+  if (prev) {
+    const exists = Array.from(select.options).some((option) => option.value === prev);
+    if (!exists) {
+      const extra = document.createElement("option");
+      extra.value = prev;
+      extra.textContent = `${prev}（历史值）`;
+      select.appendChild(extra);
+    }
+    select.value = prev;
+  }
+}
+
+function renderBrandsTable() {
+  const body = $("brandsBody");
+  if (!body) return;
+  const rows = [...state.brands].sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
+  );
+
+  body.innerHTML =
+    rows
+      .map(
+        (item) => `
+      <tr>
+        <td><input id="brandName-${escapeHtml(item.id)}" value="${escapeHtml(item.name)}" maxlength="128" /></td>
+        <td>
+          <button class="tiny-btn" data-action="saveBrand" data-id="${escapeHtml(item.id)}">保存</button>
+          <button class="tiny-btn danger" data-action="deleteBrand" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
+        </td>
+      </tr>
+    `,
+      )
+      .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
+}
+
+function renderSkuTypesTable() {
+  const body = $("skuTypesBody");
+  if (!body) return;
+  const rows = [...state.skuTypes].sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
+  );
+
+  body.innerHTML =
+    rows
+      .map(
+        (item) => `
+      <tr>
+        <td><input id="skuTypeName-${escapeHtml(item.id)}" value="${escapeHtml(item.name)}" maxlength="128" /></td>
+        <td>
+          <button class="tiny-btn" data-action="saveSkuType" data-id="${escapeHtml(item.id)}">保存</button>
+          <button class="tiny-btn danger" data-action="deleteSkuType" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
+        </td>
+      </tr>
+    `,
+      )
+      .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
 }
 
 function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
@@ -1123,6 +1226,22 @@ function renderAdjustBoxSuggestions(keyword = "") {
   }
 
   hint.classList.toggle("hidden", matches.length > 0);
+}
+
+async function loadBrands() {
+  const brands = await request("/brands");
+  state.brands = brands;
+  renderBrandOptionsForSelect("modalNewDesc1", "请选择品牌");
+  renderBrandOptionsForSelect("editDesc1", "请选择品牌");
+  renderBrandsTable();
+}
+
+async function loadSkuTypes() {
+  const skuTypes = await request("/sku-types");
+  state.skuTypes = skuTypes;
+  renderSkuTypeOptionsForSelect("modalNewDesc2", "请选择类型");
+  renderSkuTypeOptionsForSelect("editDesc2", "请选择类型");
+  renderSkuTypesTable();
 }
 
 async function loadShelves() {
@@ -2076,6 +2195,10 @@ async function reloadAll() {
     $("fbaReplenishmentBody").innerHTML = "";
     renderBatchInboundDetail(null);
     $("inventorySearchResults").textContent = "-";
+    $("brandsBody").innerHTML = "";
+    $("skuTypesBody").innerHTML = "";
+    state.brands = [];
+    state.skuTypes = [];
     state.fbaPendingCount = 0;
     state.fbaPendingBySku = {};
     state.fbaPendingByBoxSku = {};
@@ -2090,6 +2213,8 @@ async function reloadAll() {
   const isAdmin = state.me?.role === "admin";
   const tasks = [
     loadInventory(),
+    loadBrands(),
+    loadSkuTypes(),
     loadShelves(),
     loadBoxes(),
     loadBatchInboundOrders(),
@@ -2348,15 +2473,37 @@ function bindForms() {
   $("openProductManagementPanel").addEventListener("click", async () => {
     try {
       switchPanel("productManagement");
-      await Promise.all([loadShelves(), loadBoxes(), loadInventory()]);
+      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadBrands(), loadSkuTypes()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openBrandManageModal").addEventListener("click", async () => {
+    try {
+      await loadBrands();
+      openModal("brandManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openSkuTypeManageModal").addEventListener("click", async () => {
+    try {
+      await loadSkuTypes();
+      openModal("skuTypeManageModal");
     } catch (error) {
       showToast(error.message, true);
     }
   });
 
   $("openCreateSkuModal").addEventListener("click", async () => {
-    await Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true));
+    await Promise.all([loadShelves(), loadBoxes(), loadBrands(), loadSkuTypes()]).catch((error) =>
+      showToast(error.message, true),
+    );
     $("createSkuModalForm").reset();
+    renderBrandOptionsForSelect("modalNewDesc1", "请选择品牌");
+    renderSkuTypeOptionsForSelect("modalNewDesc2", "请选择类型");
     $("modalNewSkuQty").value = "1";
     openModal("createSkuModal");
   });
@@ -2621,6 +2768,70 @@ function bindForms() {
 }
 
 function bindDelegates() {
+  $("brandsBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const action = button.dataset.action;
+    const id = button.dataset.id;
+    if (!id) return;
+    try {
+      if (action === "saveBrand") {
+        const input = $(`brandName-${id}`);
+        const name = String(input?.value || "").trim();
+        if (!name) {
+          throw new Error("品牌名称不能为空");
+        }
+        await request(`/brands/${id}`, {
+          method: "PUT",
+          body: JSON.stringify({ name }),
+        });
+        showToast("品牌已更新");
+        await Promise.all([loadBrands(), loadInventory(), loadAudit()]);
+      } else if (action === "deleteBrand") {
+        const brandName = button.dataset.name || id;
+        const ok = await openActionConfirmModal(`确认删除品牌 ${brandName}？`, "确认操作", "确认删除");
+        if (!ok) return;
+        await request(`/brands/${id}`, { method: "DELETE" });
+        showToast("品牌已删除");
+        await Promise.all([loadBrands(), loadInventory(), loadAudit()]);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("skuTypesBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const action = button.dataset.action;
+    const id = button.dataset.id;
+    if (!id) return;
+    try {
+      if (action === "saveSkuType") {
+        const input = $(`skuTypeName-${id}`);
+        const name = String(input?.value || "").trim();
+        if (!name) {
+          throw new Error("类型名称不能为空");
+        }
+        await request(`/sku-types/${id}`, {
+          method: "PUT",
+          body: JSON.stringify({ name }),
+        });
+        showToast("类型已更新");
+        await Promise.all([loadSkuTypes(), loadInventory(), loadAudit()]);
+      } else if (action === "deleteSkuType") {
+        const skuTypeName = button.dataset.name || id;
+        const ok = await openActionConfirmModal(`确认删除类型 ${skuTypeName}？`, "确认操作", "确认删除");
+        if (!ok) return;
+        await request(`/sku-types/${id}`, { method: "DELETE" });
+        showToast("类型已删除");
+        await Promise.all([loadSkuTypes(), loadInventory(), loadAudit()]);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("batchInboundBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -2672,6 +2883,44 @@ function bindDelegates() {
         }
         await loadBatchInboundOrders();
       }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("brandForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const name = String($("brandNameInput").value || "").trim();
+      if (!name) {
+        throw new Error("请输入品牌名称");
+      }
+      await request("/brands", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      $("brandNameInput").value = "";
+      showToast("品牌已新增");
+      await Promise.all([loadBrands(), loadInventory(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("skuTypeForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const name = String($("skuTypeNameInput").value || "").trim();
+      if (!name) {
+        throw new Error("请输入类型名称");
+      }
+      await request("/sku-types", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      $("skuTypeNameInput").value = "";
+      showToast("类型已新增");
+      await Promise.all([loadSkuTypes(), loadInventory(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -2849,13 +3098,13 @@ function bindDelegates() {
     }
   };
 
-  $("inventoryBody").addEventListener("click", (event) => {
+  $("inventoryBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action='inventoryEdit']");
     if (!button) return;
     const skuId = Number(button.dataset.skuId);
     if (!Number.isInteger(skuId) || skuId <= 0) return;
     try {
-      openEditSkuModal(skuId);
+      await openEditSkuModal(skuId);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -2896,6 +3145,16 @@ function bindDelegates() {
     const editClose = event.target.closest("button[data-action='closeEditSkuModal']");
     if (editClose) {
       closeModal("editSkuModal");
+      return;
+    }
+    const brandManageClose = event.target.closest("button[data-action='closeBrandManageModal']");
+    if (brandManageClose) {
+      closeModal("brandManageModal");
+      return;
+    }
+    const skuTypeManageClose = event.target.closest("button[data-action='closeSkuTypeManageModal']");
+    if (skuTypeManageClose) {
+      closeModal("skuTypeManageModal");
       return;
     }
     const deleteConfirmClose = event.target.closest("button[data-action='closeDeleteConfirmModal']");
@@ -2970,6 +3229,18 @@ function bindDelegates() {
     }
   });
 
+  $("brandManageModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("brandManageModal");
+    }
+  });
+
+  $("skuTypeManageModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("skuTypeManageModal");
+    }
+  });
+
   $("batchInboundDetailModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("batchInboundDetailModal");
@@ -3037,7 +3308,7 @@ function bindRefresh() {
     Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true)),
   );
   $("refreshProductManagement").addEventListener("click", () =>
-    Promise.all([loadShelves(), loadBoxes(), loadInventory()]).catch((error) =>
+    Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadBrands(), loadSkuTypes()]).catch((error) =>
       showToast(error.message, true),
     ),
   );

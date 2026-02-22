@@ -91,8 +91,8 @@
             <thead>
               <tr>
                 <th>型号</th>
-                <th>说明1</th>
-                <th>说明2</th>
+                <th>品牌</th>
+                <th>类型</th>
                 <th>备注</th>
                 <th>SKU</th>
                 <th>店铺</th>
@@ -204,6 +204,8 @@
           <h3>基础操作</h3>
           <div class="action-row">
             <button type="button" id="openCreateSkuModal">新增产品</button>
+            <button type="button" id="openBrandManageModal">品牌管理</button>
+            <button type="button" id="openSkuTypeManageModal">类型管理</button>
           </div>
         </article>
       </section>
@@ -300,7 +302,7 @@
               <th>状态</th>
               <th>SKU</th>
               <th>型号</th>
-              <th>说明1</th>
+              <th>品牌</th>
               <th>箱号</th>
               <th>货架号</th>
               <th>申请数量</th>
@@ -418,9 +420,13 @@
       <form id="createSkuModalForm" class="form-grid modal-grid">
         <label>型号<input id="modalNewModel" /></label>
         <label>SKU<input id="modalNewSku" required /></label>
-        <label>说明1<input id="modalNewDesc1" /></label>
+        <label>品牌
+          <select id="modalNewDesc1"></select>
+        </label>
         <label>erpSKU<input id="modalNewErpSku" /></label>
-        <label>说明2<input id="modalNewDesc2" /></label>
+        <label>类型
+          <select id="modalNewDesc2"></select>
+        </label>
         <label>ASIN<input id="modalNewAsin" /></label>
         <label>备注<input id="modalNewRemark" /></label>
         <label>FNSKU<input id="modalNewFnsku" /></label>
@@ -457,9 +463,13 @@
         <input id="editSkuId" type="hidden" />
         <label>型号<input id="editModel" /></label>
         <label>SKU<input id="editSku" readonly /></label>
-        <label>说明1<input id="editDesc1" /></label>
+        <label>品牌
+          <select id="editDesc1"></select>
+        </label>
         <label>erpSKU<input id="editErpSku" /></label>
-        <label>说明2<input id="editDesc2" /></label>
+        <label>类型
+          <select id="editDesc2"></select>
+        </label>
         <label>ASIN<input id="editAsin" /></label>
         <label>备注<input id="editRemark" /></label>
         <label>FNSKU<input id="editFnsku" /></label>
@@ -578,6 +588,40 @@
           <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">取消</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="brandManageModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>品牌管理</h3>
+        <button type="button" class="ghost" data-action="closeBrandManageModal">关闭</button>
+      </div>
+      <form id="brandForm" class="manage-inline-form">
+        <input id="brandNameInput" maxlength="128" placeholder="请输入品牌名称" required />
+        <button type="submit">新增品牌</button>
+      </form>
+      <table>
+        <thead><tr><th>品牌</th><th>操作</th></tr></thead>
+        <tbody id="brandsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="skuTypeManageModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>类型管理</h3>
+        <button type="button" class="ghost" data-action="closeSkuTypeManageModal">关闭</button>
+      </div>
+      <form id="skuTypeForm" class="manage-inline-form">
+        <input id="skuTypeNameInput" maxlength="128" placeholder="请输入类型名称" required />
+        <button type="submit">新增类型</button>
+      </form>
+      <table>
+        <thead><tr><th>类型</th><th>操作</th></tr></thead>
+        <tbody id="skuTypesBody"></tbody>
+      </table>
     </div>
   </div>
 

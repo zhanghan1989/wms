@@ -90,6 +90,12 @@ enum AuditEventType {
   shelf_field_updated
   shelf_disabled
   shelf_deleted
+  brand_created
+  brand_updated
+  brand_deleted
+  sku_type_created
+  sku_type_updated
+  sku_type_deleted
   user_created
   user_updated
   user_disabled
@@ -195,6 +201,26 @@ model Sku {
   fbaReplenishments FbaReplenishment[]
 
   @@map("skus")
+}
+
+model Brand {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  name      String   @unique @db.VarChar(128)
+  status    Int      @default(1) @db.TinyInt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("brands")
+}
+
+model SkuType {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  name      String   @unique @db.VarChar(128)
+  status    Int      @default(1) @db.TinyInt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("sku_types")
 }
 
 model Shelf {
