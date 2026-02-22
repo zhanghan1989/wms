@@ -1102,6 +1102,7 @@ function renderProductEditRequestTable() {
         const skuText = item?.sku?.sku || "-";
         const statusText = getProductEditRequestStatusText(item?.status);
         const creatorText = item?.creator?.username || "-";
+        const canDelete = item?.status === "pending";
         return `
       <tr>
         <td>${escapeHtml(formatDate(item?.createdAt))}</td>
@@ -1110,6 +1111,7 @@ function renderProductEditRequestTable() {
         <td>${escapeHtml(displayText(creatorText))}</td>
         <td>
           <button class="tiny-btn" data-action="openProductEditRequestDetail" data-id="${escapeHtml(item?.id)}">编辑详情</button>
+          <button class="tiny-btn danger" data-action="deleteProductEditRequestRow" data-id="${escapeHtml(item?.id)}" ${canDelete ? "" : "disabled"}>删除</button>
         </td>
       </tr>
     `;
@@ -1121,15 +1123,13 @@ function renderProductEditRequestDetail(item) {
   const meta = $("productEditRequestMeta");
   const compare = $("productEditRequestCompare");
   const confirmBtn = $("confirmProductEditRequestBtn");
-  const deleteBtn = $("deleteProductEditRequestBtn");
-  if (!meta || !compare || !confirmBtn || !deleteBtn) return;
+  if (!meta || !compare || !confirmBtn) return;
 
   if (!item) {
     state.selectedProductEditRequestId = null;
     meta.innerHTML = "";
     compare.innerHTML = '<div class="muted">暂无数据</div>';
     confirmBtn.classList.add("hidden");
-    deleteBtn.classList.add("hidden");
     return;
   }
 
@@ -1181,7 +1181,6 @@ function renderProductEditRequestDetail(item) {
   compare.innerHTML = `${renderCol("变更前", beforeData, "before")}${renderCol("变更后", afterData, "after")}`;
   const canOperate = item?.status === "pending";
   confirmBtn.classList.toggle("hidden", !canOperate);
-  deleteBtn.classList.toggle("hidden", !canOperate);
 }
 
 function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
@@ -3516,15 +3515,26 @@ function bindDelegates() {
   });
 
   $("productEditRequestBody").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action='openProductEditRequestDetail']");
+    const button = event.target.closest("button[data-action]");
     if (!button) return;
     const requestId = Number(button.dataset.id || 0);
     if (!Number.isInteger(requestId) || requestId <= 0) return;
 
     try {
-      const detail = await loadProductEditRequestDetail(requestId);
-      renderProductEditRequestDetail(detail);
-      openModal("productEditRequestDetailModal");
+      if (button.dataset.action === "openProductEditRequestDetail") {
+        const detail = await loadProductEditRequestDetail(requestId);
+        renderProductEditRequestDetail(detail);
+        openModal("productEditRequestDetailModal");
+        return;
+      }
+
+      if (button.dataset.action === "deleteProductEditRequestRow") {
+        const ok = await openDeleteConfirmModal("确认删除该编辑申请？");
+        if (!ok) return;
+        await deleteProductEditRequest(requestId);
+        showToast("编辑申请已删除");
+        await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
+      }
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3552,24 +3562,6 @@ function bindDelegates() {
         loadInventory(),
         loadAudit(),
       ]);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("deleteProductEditRequestBtn").addEventListener("click", async () => {
-    try {
-      const id = Number(state.selectedProductEditRequestId || 0);
-      if (!Number.isInteger(id) || id <= 0) {
-        throw new Error("请先选择编辑申请");
-      }
-      const ok = await openDeleteConfirmModal("确认删除该编辑申请？");
-      if (!ok) return;
-      await deleteProductEditRequest(id);
-      showToast("编辑申请已删除");
-      closeModal("productEditRequestDetailModal");
-      renderProductEditRequestDetail(null);
-      await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
     } catch (error) {
       showToast(error.message, true);
     }
