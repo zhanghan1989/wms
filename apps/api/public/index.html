@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>库存管理系统</title>
+  <title>蠎灘ｭ倡ｮ｡逅・ｳｻ扈・/title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
@@ -15,14 +15,14 @@
       <div class="login-brand">
         <div class="brand-mark">W</div>
         <div>
-          <p class="brand-title">库存管理系统</p>
-          <p class="brand-sub">登录后进入仓库管理系统</p>
+          <p class="brand-title">蠎灘ｭ倡ｮ｡逅・ｳｻ扈・/p>
+          <p class="brand-sub">逋ｻ蠖募錘霑帛・莉灘ｺ鍋ｮ｡逅・ｳｻ扈・/p>
         </div>
       </div>
       <form id="loginGateForm" class="form-grid login-grid">
-        <label>用户名<input id="gateUsername" value="admin" autocomplete="username" /></label>
-        <label>密码<input id="gatePassword" type="password" value="Admin@123" autocomplete="current-password" /></label>
-        <button type="submit">登录系统</button>
+        <label>逕ｨ謌ｷ蜷・input id="gateUsername" value="admin" autocomplete="username" /></label>
+        <label>蟇・・input id="gatePassword" type="password" value="Admin@123" autocomplete="current-password" /></label>
+        <button type="submit">逋ｻ蠖慕ｳｻ扈・/button>
       </form>
     </article>
   </section>
@@ -31,57 +31,57 @@
     <div class="brand">
       <div class="brand-mark">W</div>
       <div>
-        <p class="brand-title">库存管理系统</p>
+        <p class="brand-title">蠎灘ｭ倡ｮ｡逅・ｳｻ扈・/p>
         <p class="brand-sub">Warehouse operations preview</p>
       </div>
     </div>
     <div class="session-wrap">
       <div class="session-main">
-        <div class="session" id="sessionInfo">未登录</div>
-        <button type="button" id="topLogoutBtn" class="ghost">登出</button>
+        <div class="session" id="sessionInfo">譛ｪ逋ｻ蠖・/div>
+        <button type="button" id="topLogoutBtn" class="ghost">逋ｻ蜃ｺ</button>
       </div>
       <div class="session-actions hidden" id="employeeQuickActions">
-        <button type="button" id="openInventoryHome">首页</button>
-        <button type="button" id="openOverseasWarehousePanel">海外仓管理</button>
-        <button type="button" id="openProductManagementPanel">产品管理</button>
+        <button type="button" id="openInventoryHome">鬥夜｡ｵ</button>
+        <button type="button" id="openOverseasWarehousePanel">豬ｷ螟紋ｻ鍋ｮ｡逅・/button>
+        <button type="button" id="openProductManagementPanel">莠ｧ蜩∫ｮ｡逅・/button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
-          FBA补货
+          FBA陦･雍ｧ
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
         </button>
-        <button type="button" id="openBatchInboundModal">批量入库</button>
-        <button type="button" id="openMyAuditLog" class="ghost">我的日志</button>
-        <button type="button" id="openProfileModal" class="ghost">个人设置</button>
+        <button type="button" id="openBatchInboundModal">謇ｹ驥丞・蠎・/button>
+        <button type="button" id="openMyAuditLog" class="ghost">謌醍噪譌･蠢・/button>
+        <button type="button" id="openProfileModal" class="ghost">荳ｪ莠ｺ隶ｾ鄂ｮ</button>
       </div>
     </div>
   </header>
 
   <main id="appLayout" class="layout hidden">
     <aside class="sidebar">
-      <button class="nav-btn active" data-target="inventory">库存管理</button>
-      <button class="nav-btn" data-target="overseasWarehouse">海外仓管理</button>
-      <button class="nav-btn" data-target="productManagement">产品管理</button>
-      <button class="nav-btn" data-target="fbaReplenishment">FBA补货</button>
-      <button class="nav-btn" data-target="batchInbound">批量入库</button>
-      <button class="nav-btn" data-target="overview">总览</button>
-      <button class="nav-btn" data-target="users">员工</button>
-      <button class="nav-btn" data-target="audit">操作日志</button>
+      <button class="nav-btn active" data-target="inventory">蠎灘ｭ倡ｮ｡逅・/button>
+      <button class="nav-btn" data-target="overseasWarehouse">豬ｷ螟紋ｻ鍋ｮ｡逅・/button>
+      <button class="nav-btn" data-target="productManagement">莠ｧ蜩∫ｮ｡逅・/button>
+      <button class="nav-btn" data-target="fbaReplenishment">FBA陦･雍ｧ</button>
+      <button class="nav-btn" data-target="batchInbound">謇ｹ驥丞・蠎・/button>
+      <button class="nav-btn" data-target="overview">諤ｻ隗・/button>
+      <button class="nav-btn" data-target="users">蜻伜ｷ･</button>
+      <button class="nav-btn" data-target="audit">謫堺ｽ懈律蠢・/button>
     </aside>
 
     <section class="panel-wrap">
       <section class="panel active" id="inventory">
         <div class="panel-head">
-          <h2>产品检索</h2>
-          <button id="refreshInventory" class="ghost">刷新</button>
+          <h2>莠ｧ蜩∵｣邏｢</h2>
+          <button id="refreshInventory" class="ghost">蛻ｷ譁ｰ</button>
         </div>
 
         <div class="inventory-toolbar">
           <form id="inventorySearchForm" class="form-grid inventory-search-form">
             <label><input id="inventoryKeyword" placeholder="SKU/erpSKU/ASIN/FNSKU" /></label>
-            <button type="submit">检索</button>
+            <button type="submit">譽邏｢</button>
           </form>
 
           <div id="inventorySearchSection" class="card inventory-search-card hidden">
-            <h3>检索结果</h3>
+            <h3>譽邏｢扈捺棡</h3>
             <div id="inventorySearchResults" class="inventory-search-results">-</div>
           </div>
         </div>
@@ -90,15 +90,15 @@
           <table class="inventory-table">
             <thead>
               <tr>
-                <th>型号</th>
-                <th>品牌</th>
-                <th>类型</th>
-                <th>颜色</th>
-                <th>备注</th>
+                <th>蝙句捷</th>
+                <th>蜩∫煙</th>
+                <th>邀ｻ蝙・/th>
+                <th>鬚懆牡</th>
+                <th>螟・ｳｨ</th>
                 <th>SKU</th>
-                <th>店铺</th>
-                <th>在库数</th>
-                <th>操作</th>
+                <th>蠎鈴銅</th>
+                <th>蝨ｨ蠎捺焚</th>
+                <th>謫堺ｽ・/th>
               </tr>
             </thead>
             <tbody id="inventoryBody"></tbody>
@@ -108,178 +108,178 @@
 
       <section class="panel" id="overseasWarehouse">
         <div class="panel-head">
-          <h2>海外仓管理</h2>
-          <button id="refreshOverseasWarehouse" class="ghost">刷新</button>
+          <h2>豬ｷ螟紋ｻ鍋ｮ｡逅・/h2>
+          <button id="refreshOverseasWarehouse" class="ghost">蛻ｷ譁ｰ</button>
         </div>
 
         <article class="card">
-          <h3>基础操作</h3>
+          <h3>蝓ｺ遑謫堺ｽ・/h3>
           <div class="action-row">
-            <button type="button" id="openCreateBoxQuick">新增箱号</button>
-            <button type="button" id="openCreateShelfQuick">新增货架</button>
+            <button type="button" id="openCreateBoxQuick">譁ｰ蠅樒ｮｱ蜿ｷ</button>
+            <button type="button" id="openCreateShelfQuick">譁ｰ蠅櫁ｴｧ譫ｶ</button>
           </div>
         </article>
 
         <article class="card">
-          <h3>移动箱子到新货架</h3>
+          <h3>遘ｻ蜉ｨ邂ｱ蟄仙芦譁ｰ雍ｧ譫ｶ</h3>
           <form id="moveBoxShelfForm" class="form-grid overseas-form overseas-form-three">
             <label>
-              箱号
+              邂ｱ蜿ｷ
               <input
                 id="moveShelfBoxCode"
                 list="moveShelfBoxCodeList"
-                placeholder="输入数字或选择箱号"
+                placeholder="霎灘・謨ｰ蟄玲・騾画叫邂ｱ蜿ｷ"
                 inputmode="numeric"
                 required
               />
               <datalist id="moveShelfBoxCodeList"></datalist>
             </label>
             <label>
-              旧货架号
-              <input id="moveShelfCurrentCode" readonly placeholder="请先选择箱号" />
+              譌ｧ雍ｧ譫ｶ蜿ｷ
+              <input id="moveShelfCurrentCode" readonly placeholder="隸ｷ蜈磯画叫邂ｱ蜿ｷ" />
             </label>
             <label>
-              新货架号
+              譁ｰ雍ｧ譫ｶ蜿ｷ
               <input
                 id="moveShelfTargetCode"
                 list="moveShelfTargetCodeList"
-                placeholder="输入数字或选择新货架号"
+                placeholder="霎灘・謨ｰ蟄玲・騾画叫譁ｰ雍ｧ譫ｶ蜿ｷ"
                 inputmode="numeric"
                 required
               />
               <datalist id="moveShelfTargetCodeList"></datalist>
             </label>
-            <button type="submit">移动箱子到新货架</button>
+            <button type="submit">遘ｻ蜉ｨ邂ｱ蟄仙芦譁ｰ雍ｧ譫ｶ</button>
           </form>
         </article>
 
         <article class="card">
-          <h3>移动产品到新箱子</h3>
+          <h3>遘ｻ蜉ｨ莠ｧ蜩∝芦譁ｰ邂ｱ蟄・/h3>
           <form id="moveBoxCodeForm" class="form-grid overseas-form overseas-form-five">
             <label>
               SKU
               <select id="moveProductSkuId" required>
-                <option value="">请选择SKU</option>
+                <option value="">隸ｷ騾画叫SKU</option>
               </select>
             </label>
             <label>
               <span class="label-inline-note">
-                旧箱号
-                <span id="moveProductOldBoxHint" class="inline-note hidden">（该SKU存在多个箱号，请手动指定旧箱号。）</span>
+                譌ｧ邂ｱ蜿ｷ
+                <span id="moveProductOldBoxHint" class="inline-note hidden">・郁ｯ･SKU蟄伜惠螟壻ｸｪ邂ｱ蜿ｷ・瑚ｯｷ謇句勘謖・ｮ壽立邂ｱ蜿ｷ縲ゑｼ・/span>
               </span>
               <select id="moveProductOldBoxCode" required>
-                <option value="">请先选择SKU</option>
+                <option value="">隸ｷ蜈磯画叫SKU</option>
               </select>
             </label>
             <label>
-              旧货架
-              <input id="moveProductOldShelfCode" readonly placeholder="请先选择旧箱号" />
+              譌ｧ雍ｧ譫ｶ
+              <input id="moveProductOldShelfCode" readonly placeholder="隸ｷ蜈磯画叫譌ｧ邂ｱ蜿ｷ" />
             </label>
             <label>
-              新箱号
+              譁ｰ邂ｱ蜿ｷ
               <input
                 id="moveProductNewBoxCode"
                 list="moveProductNewBoxCodeList"
                 inputmode="numeric"
-                placeholder="输入数字或选择新箱号"
+                placeholder="霎灘・謨ｰ蟄玲・騾画叫譁ｰ邂ｱ蜿ｷ"
                 required
               />
               <datalist id="moveProductNewBoxCodeList"></datalist>
             </label>
             <label>
-              新货架
-              <input id="moveProductNewShelfCode" readonly placeholder="根据新箱号自动显示" />
+              譁ｰ雍ｧ譫ｶ
+              <input id="moveProductNewShelfCode" readonly placeholder="譬ｹ謐ｮ譁ｰ邂ｱ蜿ｷ閾ｪ蜉ｨ譏ｾ遉ｺ" />
             </label>
-            <button type="submit">移动产品到新箱子</button>
+            <button type="submit">遘ｻ蜉ｨ莠ｧ蜩∝芦譁ｰ邂ｱ蟄・/button>
           </form>
         </article>
       </section>
 
       <section class="panel" id="productManagement">
         <div class="panel-head">
-          <h2>产品管理</h2>
-          <button id="refreshProductManagement" class="ghost">刷新</button>
+          <h2>莠ｧ蜩∫ｮ｡逅・/h2>
+          <button id="refreshProductManagement" class="ghost">蛻ｷ譁ｰ</button>
         </div>
 
         <article class="card">
-          <h3>基础操作</h3>
+          <h3>蝓ｺ遑謫堺ｽ・/h3>
           <div class="action-row">
-            <button type="button" id="openCreateSkuModal">新增产品</button>
-            <button type="button" id="openBrandManageModal">品牌管理</button>
-            <button type="button" id="openSkuTypeManageModal">类型管理</button>
-            <button type="button" id="openShopManageModal">店铺管理</button>
+            <button type="button" id="openCreateSkuModal">譁ｰ蠅樔ｺｧ蜩・/button>
+            <button type="button" id="openBrandManageModal">蜩∫煙邂｡逅・/button>
+            <button type="button" id="openSkuTypeManageModal">邀ｻ蝙狗ｮ｡逅・/button>
+            <button type="button" id="openShopManageModal">蠎鈴銅邂｡逅・/button>
           </div>
         </article>
       </section>
 
       <section class="panel" id="batchInbound">
         <div class="panel-head">
-          <h2>批量入库</h2>
-          <button id="refreshBatchInbound" class="ghost">刷新</button>
+          <h2>謇ｹ驥丞・蠎・/h2>
+          <button id="refreshBatchInbound" class="ghost">蛻ｷ譁ｰ</button>
         </div>
 
         <div class="batch-inbound-layout">
           <article class="card">
-            <h3>第一步：输入批号并采集箱号</h3>
+            <h3>隨ｬ荳豁･・夊ｾ灘・謇ｹ蜿ｷ蟷ｶ驥・寔邂ｱ蜿ｷ</h3>
             <form id="collectBatchInboundForm" class="form-grid batch-collect-form">
               <label>
-                批号
+                謇ｹ蜿ｷ
                 <input
                   id="batchCollectBatchNo"
                   type="text"
                   inputmode="numeric"
                   maxlength="20"
-                  placeholder="例如：1"
+                  placeholder="萓句ｦゑｼ・"
                   autocomplete="off"
                   required
                 />
               </label>
               <label>
-                采集总箱数
+                驥・寔諤ｻ邂ｱ謨ｰ
                 <input
                   id="batchCollectBoxCount"
                   type="text"
                   inputmode="numeric"
-                  placeholder="例如：20"
+                  placeholder="萓句ｦゑｼ・0"
                   autocomplete="off"
                   required
                 />
               </label>
-              <button type="submit" class="batch-collect-submit">采集</button>
+              <button type="submit" class="batch-collect-submit">驥・寔</button>
             </form>
-            <p id="batchCollectHint" class="batch-hint muted">点击采集后系统会分配连续可用箱号范围。</p>
+            <p id="batchCollectHint" class="batch-hint muted">轤ｹ蜃ｻ驥・寔蜷守ｳｻ扈滉ｼ壼・驟崎ｿ樒ｻｭ蜿ｯ逕ｨ邂ｱ蜿ｷ闌・峩縲・/p>
           </article>
 
           <article class="card">
-            <h3>第二步：上传批量入库文档</h3>
+            <h3>隨ｬ莠梧ｭ･・壻ｸ贋ｼ謇ｹ驥丞・蠎捺枚譯｣</h3>
             <form id="uploadBatchInboundForm" class="form-grid batch-upload-form">
               <label>
-                选择批量入库单
+                騾画叫謇ｹ驥丞・蠎灘黒
                 <select id="batchUploadOrderId" required>
-                  <option value="">请选择入库单</option>
+                  <option value="">隸ｷ騾画叫蜈･蠎灘黒</option>
                 </select>
               </label>
               <label>
-                Excel 文件
+                Excel 譁・ｻｶ
                 <input id="batchInboundFile" type="file" accept=".xlsx,.xls,.csv" required />
               </label>
-              <button type="submit">上传并校验箱号</button>
+              <button type="submit">荳贋ｼ蟷ｶ譬｡鬪檎ｮｱ蜿ｷ</button>
             </form>
           </article>
         </div>
 
         <div class="card">
-          <h3>批量入库单列表</h3>
+          <h3>謇ｹ驥丞・蠎灘黒蛻苓｡ｨ</h3>
           <table>
             <thead>
               <tr>
-                <th>单号</th>
-                <th>状态</th>
-                <th>采集箱号范围</th>
-                <th>国内单号</th>
-                <th>海运单号</th>
-                <th>明细进度</th>
-                <th>操作</th>
+                <th>蜊募捷</th>
+                <th>迥ｶ諤・/th>
+                <th>驥・寔邂ｱ蜿ｷ闌・峩</th>
+                <th>蝗ｽ蜀・黒蜿ｷ</th>
+                <th>豬ｷ霑仙黒蜿ｷ</th>
+                <th>譏守ｻ・ｿ帛ｺｦ</th>
+                <th>謫堺ｽ・/th>
               </tr>
             </thead>
             <tbody id="batchInboundBody"></tbody>
@@ -290,26 +290,26 @@
 
       <section class="panel" id="fbaReplenishment">
         <div class="panel-head">
-          <h2>FBA补货申请一览</h2>
+          <h2>FBA陦･雍ｧ逕ｳ隸ｷ荳隗・/h2>
           <div class="panel-tools">
-            <button id="fbaBatchOutboundBtn" type="button">出库</button>
-            <button id="refreshFbaReplenishment" class="ghost">刷新</button>
+            <button id="fbaBatchOutboundBtn" type="button">蜃ｺ蠎・/button>
+            <button id="refreshFbaReplenishment" class="ghost">蛻ｷ譁ｰ</button>
           </div>
         </div>
         <table>
           <thead>
             <tr>
               <th><input id="fbaSelectAll" type="checkbox" /></th>
-              <th>申请单号</th>
-              <th>状态</th>
+              <th>逕ｳ隸ｷ蜊募捷</th>
+              <th>迥ｶ諤・/th>
               <th>SKU</th>
-              <th>型号</th>
-              <th>品牌</th>
-              <th>箱号</th>
-              <th>货架号</th>
-              <th>申请数量</th>
-              <th>实际数量</th>
-              <th>操作</th>
+              <th>蝙句捷</th>
+              <th>蜩∫煙</th>
+              <th>邂ｱ蜿ｷ</th>
+              <th>雍ｧ譫ｶ蜿ｷ</th>
+              <th>逕ｳ隸ｷ謨ｰ驥・/th>
+              <th>螳樣刔謨ｰ驥・/th>
+              <th>謫堺ｽ・/th>
             </tr>
           </thead>
           <tbody id="fbaReplenishmentBody"></tbody>
@@ -318,23 +318,23 @@
 
       <section class="panel" id="overview">
         <div class="panel-head">
-          <h2>系统状态</h2>
-          <button type="button" id="logoutBtn" class="ghost">退出登录</button>
+          <h2>邉ｻ扈溽憾諤・/h2>
+          <button type="button" id="logoutBtn" class="ghost">騾蜃ｺ逋ｻ蠖・/button>
         </div>
 
         <div class="cards">
           <article class="card">
-            <h3>当前用户</h3>
+            <h3>蠖灘燕逕ｨ謌ｷ</h3>
             <pre id="meCard">-</pre>
           </article>
           <article class="card">
-            <h3>快速统计</h3>
+            <h3>蠢ｫ騾溽ｻ溯ｮ｡</h3>
             <ul class="stats">
-              <li><span>员工数</span><strong id="statUsers">-</strong></li>
-              <li><span>SKU 数</span><strong id="statSkus">-</strong></li>
-              <li><span>货架数</span><strong id="statShelves">-</strong></li>
-              <li><span>箱号数</span><strong id="statBoxes">-</strong></li>
-              <li><span>待确认入库单</span><strong id="statInboundDraft">-</strong></li>
+              <li><span>蜻伜ｷ･謨ｰ</span><strong id="statUsers">-</strong></li>
+              <li><span>SKU 謨ｰ</span><strong id="statSkus">-</strong></li>
+              <li><span>雍ｧ譫ｶ謨ｰ</span><strong id="statShelves">-</strong></li>
+              <li><span>邂ｱ蜿ｷ謨ｰ</span><strong id="statBoxes">-</strong></li>
+              <li><span>蠕・｡ｮ隶､蜈･蠎灘黒</span><strong id="statInboundDraft">-</strong></li>
             </ul>
           </article>
         </div>
@@ -342,71 +342,71 @@
 
       <section class="panel" id="users">
         <div class="panel-head">
-          <h2>员工管理</h2>
-          <button id="refreshUsers" class="ghost">刷新</button>
+          <h2>蜻伜ｷ･邂｡逅・/h2>
+          <button id="refreshUsers" class="ghost">蛻ｷ譁ｰ</button>
         </div>
         <form id="createUserForm" class="form-grid compact">
-          <label>用户名<input id="newUsername" required /></label>
-          <label>密码<input id="newPassword" type="text" required /></label>
-          <label>角色
+          <label>逕ｨ謌ｷ蜷・input id="newUsername" required /></label>
+          <label>蟇・・input id="newPassword" type="text" required /></label>
+          <label>隗定牡
             <select id="newRole">
-              <option value="employee">员工</option>
-              <option value="admin">管理者</option>
+              <option value="employee">蜻伜ｷ･</option>
+              <option value="admin">邂｡逅・・/option>
             </select>
           </label>
-          <button type="submit">新增员工</button>
+          <button type="submit">譁ｰ蠅槫遭蟾･</button>
         </form>
         <table>
-          <thead><tr><th>用户名</th><th>密码（明文）</th><th>角色</th><th>状态</th><th>更新时间</th></tr></thead>
+          <thead><tr><th>逕ｨ謌ｷ蜷・/th><th>蟇・・ｼ域・譁・ｼ・/th><th>隗定牡</th><th>迥ｶ諤・/th><th>譖ｴ譁ｰ譌ｶ髣ｴ</th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </section>
 
       <section class="panel" id="shelves">
         <div class="panel-head">
-          <h2>货架管理</h2>
-          <button id="refreshShelves" class="ghost">刷新</button>
+          <h2>雍ｧ譫ｶ邂｡逅・/h2>
+          <button id="refreshShelves" class="ghost">蛻ｷ譁ｰ</button>
         </div>
         <form id="createShelfForm" class="form-grid compact">
-          <label>货架号（S-）
-            <input id="newShelfCodeDigits" inputmode="numeric" maxlength="3" placeholder="3位数字" required />
+          <label>雍ｧ譫ｶ蜿ｷ・・-・・
+            <input id="newShelfCodeDigits" inputmode="numeric" maxlength="3" placeholder="3菴肴焚蟄・ required />
           </label>
-          <label>名称<input id="newShelfName" /></label>
-          <button type="submit">新增货架</button>
+          <label>蜷咲ｧｰ<input id="newShelfName" /></label>
+          <button type="submit">譁ｰ蠅櫁ｴｧ譫ｶ</button>
         </form>
         <table>
-          <thead><tr><th>货架号</th><th>名称</th><th>状态</th></tr></thead>
+          <thead><tr><th>雍ｧ譫ｶ蜿ｷ</th><th>蜷咲ｧｰ</th><th>迥ｶ諤・/th></tr></thead>
           <tbody id="shelvesBody"></tbody>
         </table>
       </section>
 
       <section class="panel" id="boxes">
         <div class="panel-head">
-          <h2>箱号管理</h2>
-          <button id="refreshBoxes" class="ghost">刷新</button>
+          <h2>邂ｱ蜿ｷ邂｡逅・/h2>
+          <button id="refreshBoxes" class="ghost">蛻ｷ譁ｰ</button>
         </div>
         <form id="createBoxForm" class="form-grid compact">
-          <label>箱号（B-）
-            <input id="newBoxCodeDigits" inputmode="numeric" maxlength="4" placeholder="4位数字" required />
+          <label>邂ｱ蜿ｷ・・-・・
+            <input id="newBoxCodeDigits" inputmode="numeric" maxlength="4" placeholder="4菴肴焚蟄・ required />
           </label>
-          <label>货架号
+          <label>雍ｧ譫ｶ蜿ｷ
             <select id="newBoxShelfId" required></select>
           </label>
-          <button type="submit">新增箱号</button>
+          <button type="submit">譁ｰ蠅樒ｮｱ蜿ｷ</button>
         </form>
         <table>
-          <thead><tr><th>箱号</th><th>货架号</th><th>状态</th></tr></thead>
+          <thead><tr><th>邂ｱ蜿ｷ</th><th>雍ｧ譫ｶ蜿ｷ</th><th>迥ｶ諤・/th></tr></thead>
           <tbody id="boxesBody"></tbody>
         </table>
       </section>
 
       <section class="panel" id="audit">
         <div class="panel-head">
-          <h2>操作日志</h2>
-          <button id="refreshAudit" class="ghost">刷新</button>
+          <h2>謫堺ｽ懈律蠢・/h2>
+          <button id="refreshAudit" class="ghost">蛻ｷ譁ｰ</button>
         </div>
         <table>
-          <thead><tr><th>时间</th><th>实体</th><th>动作</th><th>事件</th><th>操作人</th><th>请求ID</th></tr></thead>
+          <thead><tr><th>譌ｶ髣ｴ</th><th>螳樔ｽ・/th><th>蜉ｨ菴・/th><th>莠倶ｻｶ</th><th>謫堺ｽ應ｺｺ</th><th>隸ｷ豎・D</th></tr></thead>
           <tbody id="auditBody"></tbody>
         </table>
       </section>
@@ -416,43 +416,42 @@
   <div id="createSkuModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>新增产品</h3>
-        <button type="button" class="ghost" data-action="closeCreateSkuModal">关闭</button>
+        <h3>譁ｰ蠅樔ｺｧ蜩・/h3>
+        <button type="button" class="ghost" data-action="closeCreateSkuModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="createSkuModalForm" class="form-grid modal-grid">
-        <label>型号<input id="modalNewModel" /></label>
+        <label>蝙句捷<input id="modalNewModel" /></label>
         <label>SKU<input id="modalNewSku" required /></label>
-        <label>品牌
+        <label>蜩∫煙
           <select id="modalNewBrand"></select>
         </label>
         <label>erpSKU<input id="modalNewErpSku" /></label>
-        <label>类型
-          <select id="modalNewType"></select>
+        <label>邀ｻ蝙・          <select id="modalNewType"></select>
         </label>
-        <label>颜色<input id="modalNewColor" /></label>
+        <label>鬚懆牡<input id="modalNewColor" /></label>
         <label>ASIN<input id="modalNewAsin" /></label>
-        <label>备注<input id="modalNewRemark" /></label>
+        <label>螟・ｳｨ<input id="modalNewRemark" /></label>
         <label>FNSKU<input id="modalNewFnsku" /></label>
-        <label>所属亚马逊店铺
+        <label>謇螻樔ｺ夐ｩｬ騾雁ｺ鈴銅
           <select id="modalNewShop"></select>
         </label>
-        <label class="create-sku-left-col">箱号
+        <label class="create-sku-left-col">邂ｱ蜿ｷ
           <input
             id="modalNewSkuBoxCode"
             list="modalNewSkuBoxCodeList"
-            placeholder="请选择已有箱号或者新增箱号"
+            placeholder="隸ｷ騾画叫蟾ｲ譛臥ｮｱ蜿ｷ謌冶・眠蠅樒ｮｱ蜿ｷ"
             inputmode="numeric"
             required
           />
           <datalist id="modalNewSkuBoxCodeList"></datalist>
         </label>
         <div class="create-sku-box-action create-sku-right-col">
-          <button type="button" id="openCreateBoxFromSkuModal" class="small-btn">新增箱号</button>
+          <button type="button" id="openCreateBoxFromSkuModal" class="small-btn">譁ｰ蠅樒ｮｱ蜿ｷ</button>
         </div>
-        <label class="create-sku-left-col">入库数<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
+        <label class="create-sku-left-col">蜈･蠎捺焚<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
         <div class="modal-actions">
-          <button type="submit">确认新增</button>
-          <button type="button" class="ghost" data-action="closeCreateSkuModal">取消</button>
+          <button type="submit">遑ｮ隶､譁ｰ蠅・/button>
+          <button type="button" class="ghost" data-action="closeCreateSkuModal">蜿匁ｶ・/button>
         </div>
       </form>
     </div>
@@ -461,30 +460,32 @@
   <div id="editSkuModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>编辑产品</h3>
-        <button type="button" class="ghost" data-action="closeEditSkuModal">关闭</button>
+        <h3>郛冶ｾ台ｺｧ蜩・/h3>
+        <button type="button" class="ghost" data-action="closeEditSkuModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="editSkuForm" class="form-grid modal-grid">
         <input id="editSkuId" type="hidden" />
-        <label>型号<input id="editModel" /></label>
-        <label>SKU<input id="editSku" readonly /></label>
-        <label>品牌
-          <select id="editBrand"></select>
-        </label>
-        <label>erpSKU<input id="editErpSku" /></label>
-        <label>类型
+        <label class="create-sku-left-col">型号<input id="editModel" /></label>
+        <label class="create-sku-right-col">SKU<input id="editSku" readonly /></label>
+        <label class="create-sku-left-col">颜色<input id="editColor" /></label>
+        <label class="create-sku-right-col">ASIN<input id="editAsin" /></label>
+        <label class="create-sku-left-col">类型
           <select id="editType"></select>
         </label>
-        <label>颜色<input id="editColor" /></label>
-        <label>ASIN<input id="editAsin" /></label>
-        <label>备注<input id="editRemark" /></label>
-        <label>FNSKU<input id="editFnsku" /></label>
-        <label>所属亚马逊店铺
+        <label class="create-sku-right-col">FNSKU<input id="editFnsku" /></label>
+        <label class="create-sku-left-col">品牌
+          <select id="editBrand"></select>
+        </label>
+        <label class="create-sku-right-col">erpSKU<input id="editErpSku" /></label>
+        <label class="create-sku-left-col">备注<input id="editRemark" /></label>
+        <div class="create-sku-right-col" aria-hidden="true"></div>
+        <label class="create-sku-left-col">所属亚马逊店铺
           <select id="editShop"></select>
         </label>
+        <div class="create-sku-right-col" aria-hidden="true"></div>
         <div class="modal-actions">
-          <button type="submit">保存</button>
-          <button type="button" class="ghost" data-action="closeEditSkuModal">取消</button>
+          <button type="submit">菫晏ｭ・/button>
+          <button type="button" class="ghost" data-action="closeEditSkuModal">蜿匁ｶ・/button>
         </div>
       </form>
     </div>
@@ -493,15 +494,15 @@
   <div id="myAuditModal" class="modal hidden">
     <div class="modal-card modal-wide">
       <div class="modal-head">
-        <h3>我的操作日志</h3>
-        <button type="button" class="ghost" data-action="closeMyAuditModal">关闭</button>
+        <h3>謌醍噪謫堺ｽ懈律蠢・/h3>
+        <button type="button" class="ghost" data-action="closeMyAuditModal">蜈ｳ髣ｭ</button>
       </div>
       <div class="panel-head">
         <div></div>
-        <button id="refreshMyAudit" class="ghost" type="button">刷新</button>
+        <button id="refreshMyAudit" class="ghost" type="button">蛻ｷ譁ｰ</button>
       </div>
       <table>
-        <thead><tr><th>时间</th><th>实体</th><th>动作</th><th>事件</th><th>请求ID</th></tr></thead>
+        <thead><tr><th>譌ｶ髣ｴ</th><th>螳樔ｽ・/th><th>蜉ｨ菴・/th><th>莠倶ｻｶ</th><th>隸ｷ豎・D</th></tr></thead>
         <tbody id="myAuditBody"></tbody>
       </table>
     </div>
@@ -510,17 +511,17 @@
   <div id="profileModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>个人信息设置</h3>
-        <button type="button" class="ghost" data-action="closeProfileModal">关闭</button>
+        <h3>荳ｪ莠ｺ菫｡諱ｯ隶ｾ鄂ｮ</h3>
+        <button type="button" class="ghost" data-action="closeProfileModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="profileForm" class="form-grid modal-grid">
-        <label>用户名<input id="profileUsername" readonly /></label>
-        <label>角色<input id="profileRole" readonly /></label>
-        <label>当前密码<input id="profileCurrentPassword" type="password" required /></label>
-        <label>新密码<input id="profileNewPassword" type="password" minlength="6" required /></label>
+        <label>逕ｨ謌ｷ蜷・input id="profileUsername" readonly /></label>
+        <label>隗定牡<input id="profileRole" readonly /></label>
+        <label>蠖灘燕蟇・・input id="profileCurrentPassword" type="password" required /></label>
+        <label>譁ｰ蟇・・input id="profileNewPassword" type="password" minlength="6" required /></label>
         <div class="modal-actions">
-          <button type="submit">保存</button>
-          <button type="button" class="ghost" data-action="closeProfileModal">取消</button>
+          <button type="submit">菫晏ｭ・/button>
+          <button type="button" class="ghost" data-action="closeProfileModal">蜿匁ｶ・/button>
         </div>
       </form>
     </div>
@@ -529,31 +530,31 @@
   <div id="adjustModal" class="modal hidden">
     <div class="modal-card modal-adjust">
       <div class="modal-head">
-        <h3 id="adjustModalTitle">库存操作</h3>
-        <button type="button" class="ghost" data-action="closeAdjustModal">关闭</button>
+        <h3 id="adjustModalTitle">蠎灘ｭ俶桃菴・/h3>
+        <button type="button" class="ghost" data-action="closeAdjustModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="adjustForm" class="form-grid modal-grid adjust-single-col">
         <input id="adjustSkuId" type="hidden" />
         <input id="adjustDirection" type="hidden" />
-        <label>箱号
+        <label>邂ｱ蜿ｷ
           <div class="adjust-box-row">
             <input
               id="adjustBoxCode"
               list="adjustBoxCodeList"
               required
               autocomplete="off"
-              placeholder="输入数字或选择已有箱号"
+              placeholder="霎灘・謨ｰ蟄玲・騾画叫蟾ｲ譛臥ｮｱ蜿ｷ"
             />
             <datalist id="adjustBoxCodeList"></datalist>
-            <button id="openCreateBoxFromAdjust" type="button" class="ghost">新增箱号</button>
+            <button id="openCreateBoxFromAdjust" type="button" class="ghost">譁ｰ蠅樒ｮｱ蜿ｷ</button>
           </div>
-          <span id="adjustBoxHint" class="field-hint hidden">未找到匹配箱号，请点击右侧新增箱号</span>
+          <span id="adjustBoxHint" class="field-hint hidden">譛ｪ謇ｾ蛻ｰ蛹ｹ驟咲ｮｱ蜿ｷ・瑚ｯｷ轤ｹ蜃ｻ蜿ｳ萓ｧ譁ｰ蠅樒ｮｱ蜿ｷ</span>
         </label>
-        <label>数量<input id="adjustQty" type="number" min="1" step="1" required /></label>
-        <label>备注<input id="adjustReason" maxlength="10" /></label>
+        <label>謨ｰ驥・input id="adjustQty" type="number" min="1" step="1" required /></label>
+        <label>螟・ｳｨ<input id="adjustReason" maxlength="10" /></label>
         <div class="modal-actions">
-          <button id="adjustSubmitBtn" type="submit">提交</button>
-          <button type="button" class="ghost" data-action="closeAdjustModal">取消</button>
+          <button id="adjustSubmitBtn" type="submit">謠蝉ｺ､</button>
+          <button type="button" class="ghost" data-action="closeAdjustModal">蜿匁ｶ・/button>
         </div>
       </form>
     </div>
@@ -562,19 +563,19 @@
   <div id="createBoxFromSkuModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>新增箱号</h3>
-        <button type="button" class="ghost" data-action="closeCreateBoxFromSkuModal">关闭</button>
+        <h3>譁ｰ蠅樒ｮｱ蜿ｷ</h3>
+        <button type="button" class="ghost" data-action="closeCreateBoxFromSkuModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="createBoxFromSkuForm" class="form-grid modal-grid">
-        <label>箱号（B-）
-          <input id="modalNewBoxCodeDigits" inputmode="numeric" maxlength="4" placeholder="4位数字" required />
+        <label>邂ｱ蜿ｷ・・-・・
+          <input id="modalNewBoxCodeDigits" inputmode="numeric" maxlength="4" placeholder="4菴肴焚蟄・ required />
         </label>
-        <label>货架号
+        <label>雍ｧ譫ｶ蜿ｷ
           <select id="modalNewBoxShelfId" required></select>
         </label>
         <div class="modal-actions">
-          <button type="submit">确认新增箱号</button>
-          <button type="button" class="ghost" data-action="closeCreateBoxFromSkuModal">取消</button>
+          <button type="submit">遑ｮ隶､譁ｰ蠅樒ｮｱ蜿ｷ</button>
+          <button type="button" class="ghost" data-action="closeCreateBoxFromSkuModal">蜿匁ｶ・/button>
         </div>
       </form>
     </div>
@@ -583,17 +584,17 @@
   <div id="createShelfFromInventoryModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>新增货架</h3>
-        <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">关闭</button>
+        <h3>譁ｰ蠅櫁ｴｧ譫ｶ</h3>
+        <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="createShelfFromInventoryForm" class="form-grid modal-grid">
-        <label>货架号（S-）
-          <input id="modalNewShelfCodeDigits" inputmode="numeric" maxlength="3" placeholder="3位数字" required />
+        <label>雍ｧ譫ｶ蜿ｷ・・-・・
+          <input id="modalNewShelfCodeDigits" inputmode="numeric" maxlength="3" placeholder="3菴肴焚蟄・ required />
         </label>
-        <label>名称<input id="modalNewShelfName" /></label>
+        <label>蜷咲ｧｰ<input id="modalNewShelfName" /></label>
         <div class="modal-actions">
-          <button type="submit">确认新增货架</button>
-          <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">取消</button>
+          <button type="submit">遑ｮ隶､譁ｰ蠅櫁ｴｧ譫ｶ</button>
+          <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">蜿匁ｶ・/button>
         </div>
       </form>
     </div>
@@ -602,15 +603,15 @@
   <div id="brandManageModal" class="modal hidden">
     <div class="modal-card modal-wide">
       <div class="modal-head">
-        <h3>品牌管理</h3>
-        <button type="button" class="ghost" data-action="closeBrandManageModal">关闭</button>
+        <h3>蜩∫煙邂｡逅・/h3>
+        <button type="button" class="ghost" data-action="closeBrandManageModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="brandForm" class="manage-inline-form">
-        <input id="brandNameInput" maxlength="128" placeholder="请输入品牌名称" required />
-        <button type="submit" class="small-btn manage-create-btn">新增品牌</button>
+        <input id="brandNameInput" maxlength="128" placeholder="隸ｷ霎灘・蜩∫煙蜷咲ｧｰ" required />
+        <button type="submit" class="small-btn manage-create-btn">譁ｰ蠅槫刀迚・/button>
       </form>
       <table>
-        <thead><tr><th>品牌</th><th>操作</th></tr></thead>
+        <thead><tr><th>蜩∫煙</th><th>謫堺ｽ・/th></tr></thead>
         <tbody id="brandsBody"></tbody>
       </table>
     </div>
@@ -619,15 +620,15 @@
   <div id="skuTypeManageModal" class="modal hidden">
     <div class="modal-card modal-wide">
       <div class="modal-head">
-        <h3>类型管理</h3>
-        <button type="button" class="ghost" data-action="closeSkuTypeManageModal">关闭</button>
+        <h3>邀ｻ蝙狗ｮ｡逅・/h3>
+        <button type="button" class="ghost" data-action="closeSkuTypeManageModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="skuTypeForm" class="manage-inline-form">
-        <input id="skuTypeNameInput" maxlength="128" placeholder="请输入类型名称" required />
-        <button type="submit" class="small-btn manage-create-btn">新增类型</button>
+        <input id="skuTypeNameInput" maxlength="128" placeholder="隸ｷ霎灘・邀ｻ蝙句錐遘ｰ" required />
+        <button type="submit" class="small-btn manage-create-btn">譁ｰ蠅樒ｱｻ蝙・/button>
       </form>
       <table>
-        <thead><tr><th>类型</th><th>操作</th></tr></thead>
+        <thead><tr><th>邀ｻ蝙・/th><th>謫堺ｽ・/th></tr></thead>
         <tbody id="skuTypesBody"></tbody>
       </table>
     </div>
@@ -636,15 +637,15 @@
   <div id="shopManageModal" class="modal hidden">
     <div class="modal-card modal-wide">
       <div class="modal-head">
-        <h3>店铺管理</h3>
-        <button type="button" class="ghost" data-action="closeShopManageModal">关闭</button>
+        <h3>蠎鈴銅邂｡逅・/h3>
+        <button type="button" class="ghost" data-action="closeShopManageModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="shopForm" class="manage-inline-form">
-        <input id="shopNameInput" maxlength="128" placeholder="请输入店铺名称" required />
-        <button type="submit" class="small-btn manage-create-btn">新增店铺</button>
+        <input id="shopNameInput" maxlength="128" placeholder="隸ｷ霎灘・蠎鈴銅蜷咲ｧｰ" required />
+        <button type="submit" class="small-btn manage-create-btn">譁ｰ蠅槫ｺ鈴銅</button>
       </form>
       <table>
-        <thead><tr><th>店铺</th><th>操作</th></tr></thead>
+        <thead><tr><th>蠎鈴銅</th><th>謫堺ｽ・/th></tr></thead>
         <tbody id="shopsBody"></tbody>
       </table>
     </div>
@@ -653,13 +654,13 @@
   <div id="deleteConfirmModal" class="modal hidden">
     <div class="modal-card modal-confirm">
       <div class="modal-head">
-        <h3 class="confirm-title"><span class="confirm-icon">!</span>确认删除</h3>
-        <button type="button" class="ghost" data-action="closeDeleteConfirmModal">关闭</button>
+        <h3 class="confirm-title"><span class="confirm-icon">!</span>遑ｮ隶､蛻髯､</h3>
+        <button type="button" class="ghost" data-action="closeDeleteConfirmModal">蜈ｳ髣ｭ</button>
       </div>
-      <p id="deleteConfirmMessage" class="confirm-message">确认删除当前批量入库单？</p>
+      <p id="deleteConfirmMessage" class="confirm-message">遑ｮ隶､蛻髯､蠖灘燕謇ｹ驥丞・蠎灘黒・・/p>
       <div class="modal-actions">
-        <button id="deleteConfirmOkBtn" type="button" class="danger-solid">确认删除</button>
-        <button id="deleteConfirmCancelBtn" type="button" class="ghost">取消</button>
+        <button id="deleteConfirmOkBtn" type="button" class="danger-solid">遑ｮ隶､蛻髯､</button>
+        <button id="deleteConfirmCancelBtn" type="button" class="ghost">蜿匁ｶ・/button>
       </div>
     </div>
   </div>
@@ -667,13 +668,13 @@
   <div id="actionConfirmModal" class="modal hidden">
     <div class="modal-card modal-confirm">
       <div class="modal-head">
-        <h3 id="actionConfirmTitle" class="confirm-title"><span class="confirm-icon">!</span>确认操作</h3>
-        <button type="button" class="ghost" data-action="closeActionConfirmModal">关闭</button>
+        <h3 id="actionConfirmTitle" class="confirm-title"><span class="confirm-icon">!</span>遑ｮ隶､謫堺ｽ・/h3>
+        <button type="button" class="ghost" data-action="closeActionConfirmModal">蜈ｳ髣ｭ</button>
       </div>
-      <p id="actionConfirmMessage" class="confirm-message">确认执行当前操作？</p>
+      <p id="actionConfirmMessage" class="confirm-message">遑ｮ隶､謇ｧ陦悟ｽ灘燕謫堺ｽ懶ｼ・/p>
       <div class="modal-actions">
-        <button id="actionConfirmOkBtn" type="button">确认</button>
-        <button id="actionConfirmCancelBtn" type="button" class="ghost">取消</button>
+        <button id="actionConfirmOkBtn" type="button">遑ｮ隶､</button>
+        <button id="actionConfirmCancelBtn" type="button" class="ghost">蜿匁ｶ・/button>
       </div>
     </div>
   </div>
@@ -681,12 +682,12 @@
   <div id="errorModal" class="modal hidden">
     <div class="modal-card modal-error">
       <div class="modal-head">
-        <h3 class="confirm-title"><span class="confirm-icon">!</span>错误</h3>
-        <button type="button" class="ghost" data-action="closeErrorModal">关闭</button>
+        <h3 class="confirm-title"><span class="confirm-icon">!</span>髞呵ｯｯ</h3>
+        <button type="button" class="ghost" data-action="closeErrorModal">蜈ｳ髣ｭ</button>
       </div>
-      <p id="errorModalMessage" class="confirm-message">发生错误</p>
+      <p id="errorModalMessage" class="confirm-message">蜿醍函髞呵ｯｯ</p>
       <div class="modal-actions">
-        <button id="errorModalCloseBtn" type="button" class="danger-solid">我知道了</button>
+        <button id="errorModalCloseBtn" type="button" class="danger-solid">謌醍衍驕謎ｺ・/button>
       </div>
     </div>
   </div>
@@ -694,24 +695,24 @@
   <div id="batchInboundDetailModal" class="modal hidden">
     <div class="modal-card modal-wide batch-detail-modal-card">
       <div class="modal-head">
-        <h3>确认入库</h3>
-        <button type="button" class="ghost" data-action="closeBatchInboundDetailModal">关闭</button>
+        <h3>遑ｮ隶､蜈･蠎・/h3>
+        <button type="button" class="ghost" data-action="closeBatchInboundDetailModal">蜈ｳ髣ｭ</button>
       </div>
-      <div id="batchInboundDetail" class="batch-detail-empty muted">请先选择批量入库单。</div>
+      <div id="batchInboundDetail" class="batch-detail-empty muted">隸ｷ蜈磯画叫謇ｹ驥丞・蠎灘黒縲・/div>
     </div>
   </div>
 
   <div id="fbaOutboundModal" class="modal hidden">
     <div class="modal-card modal-adjust">
       <div class="modal-head">
-        <h3>FBA补货出库</h3>
-        <button type="button" class="ghost" data-action="closeFbaOutboundModal">关闭</button>
+        <h3>FBA陦･雍ｧ蜃ｺ蠎・/h3>
+        <button type="button" class="ghost" data-action="closeFbaOutboundModal">蜈ｳ髣ｭ</button>
       </div>
       <form id="fbaOutboundForm" class="form-grid modal-grid adjust-single-col">
-        <label>快递号<input id="fbaOutboundExpressNo" maxlength="128" required /></label>
+        <label>蠢ｫ騾貞捷<input id="fbaOutboundExpressNo" maxlength="128" required /></label>
         <div class="modal-actions">
-          <button id="fbaOutboundSubmitBtn" type="submit">确认出库</button>
-          <button type="button" class="ghost" data-action="closeFbaOutboundModal">取消</button>
+          <button id="fbaOutboundSubmitBtn" type="submit">遑ｮ隶､蜃ｺ蠎・/button>
+          <button type="button" class="ghost" data-action="closeFbaOutboundModal">蜿匁ｶ・/button>
         </div>
       </form>
     </div>
