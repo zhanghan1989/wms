@@ -20,6 +20,7 @@ const state = {
   fbaPendingByBoxSku: {},
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
+  skuTypeEditingIds: new Set(),
   plainPasswords: (() => {
     try {
       const raw = localStorage.getItem("wms_plain_password_map");
@@ -993,17 +994,27 @@ function renderSkuTypesTable() {
 
   body.innerHTML =
     rows
-      .map(
-        (item) => `
+      .map((item) => {
+        const itemId = String(item.id);
+        const editing = state.skuTypeEditingIds.has(itemId);
+        return `
       <tr>
-        <td><input id="skuTypeName-${escapeHtml(item.id)}" value="${escapeHtml(item.name)}" maxlength="128" /></td>
         <td>
-          <button class="tiny-btn" data-action="saveSkuType" data-id="${escapeHtml(item.id)}">保存</button>
+          <input
+            id="skuTypeName-${escapeHtml(item.id)}"
+            value="${escapeHtml(item.name)}"
+            maxlength="128"
+            ${editing ? "" : "readonly"}
+            data-original-name="${escapeHtml(item.name)}"
+          />
+        </td>
+        <td>
+          <button class="tiny-btn" data-action="editSkuType" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteSkuType" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
-    `,
-      )
+    `;
+      })
       .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
 }
 
@@ -1260,6 +1271,10 @@ async function loadBrands() {
 async function loadSkuTypes() {
   const skuTypes = await request("/sku-types");
   state.skuTypes = skuTypes;
+  const latestIds = new Set((Array.isArray(skuTypes) ? skuTypes : []).map((item) => String(item.id)));
+  state.skuTypeEditingIds = new Set(
+    [...state.skuTypeEditingIds].filter((id) => latestIds.has(String(id))),
+  );
   renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
   renderSkuTypeOptionsForSelect("editType", "请选择类型");
   renderSkuTypesTable();
@@ -2226,6 +2241,7 @@ async function reloadAll() {
     state.fbaPendingByBoxSku = {};
     state.selectedFbaIds = new Set();
     state.brandEditingIds = new Set();
+    state.skuTypeEditingIds = new Set();
     renderFbaPendingBadge();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
@@ -2514,6 +2530,7 @@ function bindForms() {
 
   $("openSkuTypeManageModal").addEventListener("click", async () => {
     try {
+      state.skuTypeEditingIds = new Set();
       await loadSkuTypes();
       openModal("skuTypeManageModal");
     } catch (error) {
@@ -2856,16 +2873,36 @@ function bindDelegates() {
     const id = button.dataset.id;
     if (!id) return;
     try {
-      if (action === "saveSkuType") {
+      if (action === "editSkuType") {
         const input = $(`skuTypeName-${id}`);
+        if (!input) return;
+        const isEditing = state.skuTypeEditingIds.has(String(id));
+        if (!isEditing) {
+          state.skuTypeEditingIds.add(String(id));
+          renderSkuTypesTable();
+          const focusInput = $(`skuTypeName-${id}`);
+          if (focusInput) {
+            focusInput.focus();
+            focusInput.select?.();
+          }
+          return;
+        }
+
         const name = String(input?.value || "").trim();
         if (!name) {
           throw new Error("类型名称不能为空");
+        }
+        const originalName = String(input.getAttribute("data-original-name") || "").trim();
+        if (name === originalName) {
+          state.skuTypeEditingIds.delete(String(id));
+          renderSkuTypesTable();
+          return;
         }
         await request(`/sku-types/${id}`, {
           method: "PUT",
           body: JSON.stringify({ name }),
         });
+        state.skuTypeEditingIds.delete(String(id));
         showToast("类型已更新");
         await Promise.all([loadSkuTypes(), loadInventory(), loadAudit()]);
       } else if (action === "deleteSkuType") {
@@ -2873,6 +2910,7 @@ function bindDelegates() {
         const ok = await openActionConfirmModal(`确认删除类型 ${skuTypeName}？`, "确认操作", "确认删除");
         if (!ok) return;
         await request(`/sku-types/${id}`, { method: "DELETE" });
+        state.skuTypeEditingIds.delete(String(id));
         showToast("类型已删除");
         await Promise.all([loadSkuTypes(), loadInventory(), loadAudit()]);
       }
