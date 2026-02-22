@@ -1399,7 +1399,7 @@ function renderFbaReplenishmentList() {
         <td>
           ${
             item.status === "pending_confirm"
-              ? `<input id="fbaActualQty-${escapeHtml(item.id)}" class="tiny-input" type="number" min="1" step="1" value="${escapeHtml(item.requestedQty)}" />`
+              ? `<input id="fbaActualQty-${escapeHtml(item.id)}" class="tiny-input" type="number" min="1" step="1" value="${escapeHtml(item.actualQty ?? item.requestedQty)}" />`
               : escapeHtml(displayText(item.actualQty ?? item.requestedQty))
           }
         </td>
@@ -1411,7 +1411,12 @@ function renderFbaReplenishmentList() {
                 : ""
             }
             ${
-              item.status !== "deleted"
+              item.status === "pending_outbound"
+                ? `<button class="tiny-btn ghost" data-action="fbaReopenRow" data-id="${escapeHtml(item.id)}">变更</button>`
+                : ""
+            }
+            ${
+              item.status === "pending_confirm"
                 ? `<button class="tiny-btn danger" data-action="fbaDeleteRow" data-id="${escapeHtml(item.id)}" data-request-no="${escapeHtml(item.requestNo)}">删除</button>`
                 : ""
             }
@@ -1468,6 +1473,12 @@ async function outboundFbaReplenishmentRequests(ids, expressNo) {
 
 async function deleteFbaReplenishmentRequest(id) {
   return request(`/inventory/fba-replenishments/${id}/delete`, {
+    method: "POST",
+  });
+}
+
+async function reopenFbaReplenishmentRequest(id) {
+  return request(`/inventory/fba-replenishments/${id}/reopen`, {
     method: "POST",
   });
 }
@@ -2281,6 +2292,9 @@ function bindDelegates() {
         }
         await confirmFbaReplenishmentRequest(id, actualQty);
         showToast("已转为待出库");
+      } else if (action === "fbaReopenRow") {
+        await reopenFbaReplenishmentRequest(id);
+        showToast("已回退到待确认，可重新修改实际数量");
       } else if (action === "fbaDeleteRow") {
         const requestNo = button.dataset.requestNo || `#${id}`;
         const ok = await openDeleteConfirmModal(`确认删除FBA补货申请单 ${requestNo} ？`);

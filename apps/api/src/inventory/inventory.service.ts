@@ -737,6 +737,104 @@ export class InventoryService {
     });
   }
 
+  async reopenFbaReplenishment(
+    idParam: string,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ id: string; requestNo: string; status: string; idempotent: boolean }> {
+    const id = parseId(idParam, 'fbaReplenishmentId');
+
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.fbaReplenishment.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          requestNo: true,
+          status: true,
+          requestedQty: true,
+          actualQty: true,
+          expressNo: true,
+          confirmedBy: true,
+          confirmedAt: true,
+        },
+      });
+
+      if (!row) {
+        throw new NotFoundException('FBA陦･雍ｧ逕ｳ隸ｷ荳榊ｭ伜惠');
+      }
+      if (String(row.status) === 'deleted') {
+        throw new UnprocessableEntityException(
+          '\u5df2\u5220\u9664\u7684FBA\u8865\u8d27\u7533\u8bf7\u5355\u4e0d\u80fd\u53d8\u66f4',
+        );
+      }
+      if (String(row.status) === 'outbound') {
+        throw new UnprocessableEntityException(
+          '\u5df2\u51fa\u5e93\u7684FBA\u8865\u8d27\u7533\u8bf7\u5355\u4e0d\u80fd\u53d8\u66f4',
+        );
+      }
+      if (String(row.status) === 'pending_confirm') {
+        return {
+          id: row.id.toString(),
+          requestNo: row.requestNo,
+          status: String(row.status),
+          idempotent: true,
+        };
+      }
+      if (String(row.status) !== 'pending_outbound') {
+        throw new ConflictException(
+          `\u7533\u8bf7\u5355 ${row.requestNo} \u5f53\u524d\u72b6\u6001\u4e0d\u652f\u6301\u53d8\u66f4`,
+        );
+      }
+
+      const updated = await tx.fbaReplenishment.update({
+        where: { id: row.id },
+        data: {
+          status: 'pending_confirm',
+          confirmedBy: null,
+          confirmedAt: null,
+        },
+        select: {
+          id: true,
+          requestNo: true,
+          status: true,
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'fba_replenishment',
+        entityId: row.id,
+        action: AuditAction.update,
+        eventType: AuditEventType.INVENTORY_ADJUST_CONFIRMED,
+        beforeData: {
+          status: row.status,
+          requestedQty: row.requestedQty,
+          actualQty: row.actualQty,
+          expressNo: row.expressNo,
+          confirmedBy: row.confirmedBy?.toString() ?? null,
+          confirmedAt: row.confirmedAt,
+        },
+        afterData: {
+          status: updated.status,
+          requestedQty: row.requestedQty,
+          actualQty: row.actualQty,
+          expressNo: row.expressNo,
+          confirmedBy: null,
+          confirmedAt: null,
+        },
+        operatorId,
+        requestId,
+      });
+
+      return {
+        id: updated.id.toString(),
+        requestNo: updated.requestNo,
+        status: updated.status,
+        idempotent: false,
+      };
+    });
+  }
+
   async listFbaReplenishments(): Promise<unknown[]> {
     const rows = await this.prisma.fbaReplenishment.findMany({
       orderBy: { createdAt: 'desc' },
