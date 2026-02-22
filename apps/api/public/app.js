@@ -1038,7 +1038,11 @@ async function refreshMoveProductOldBoxOptionsBySku() {
   const options = rows
     .map((row) => `<option value="${escapeHtml(row.box.boxCode)}">${escapeHtml(row.box.boxCode)}</option>`)
     .join("");
-  select.innerHTML = `<option value="">请选择旧箱号</option>${options}`;
+  if (rows.length === 1) {
+    select.innerHTML = options;
+  } else {
+    select.innerHTML = `<option value="">请选择旧箱号</option>${options}`;
+  }
   if (hint) {
     hint.classList.toggle("hidden", !hasMultiple);
   }
