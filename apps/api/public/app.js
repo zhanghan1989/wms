@@ -1592,6 +1592,18 @@ async function quickOutboundOne(skuId, boxCode) {
     throw new Error("请选择箱号");
   }
 
+  await loadFbaPendingSummary();
+  const rows = await getSkuInventoryRows(skuId);
+  const matched = rows.find(
+    (row) => String(row?.box?.boxCode || "").toUpperCase() === normalizedBoxCode,
+  );
+  const currentQty = Math.max(0, Number(matched?.qty ?? 0));
+  const boxId = Number(matched?.box?.id ?? 0);
+  const pendingQty = boxId > 0 ? getFbaPendingQtyByBoxSku(boxId, skuId) : 0;
+  if (currentQty <= pendingQty) {
+    throw new Error("数量不足，请对FBA出货单进行修改");
+  }
+
   await request("/inventory/manual-adjust", {
     method: "POST",
     body: JSON.stringify({

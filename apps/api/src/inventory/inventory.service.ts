@@ -437,8 +437,18 @@ export class InventoryService {
         throw new UnprocessableEntityException('已删除申请不可再次确认');
       }
 
-      if (actualQty > row.requestedQty) {
-        throw new ConflictException(`实际数量不能大于申请数量（${row.requestedQty}）`);
+      const inventory = await tx.inventoryBoxSku.findUnique({
+        where: {
+          boxId_skuId: {
+            boxId: row.box.id,
+            skuId: row.sku.id,
+          },
+        },
+        select: { qty: true },
+      });
+      const maxQty = Number(inventory?.qty ?? 0);
+      if (actualQty > maxQty) {
+        throw new ConflictException(`实际数量不能大于当前箱号里该SKU的最大数量（${maxQty}）`);
       }
 
       const updated = await tx.fbaReplenishment.update({
@@ -904,7 +914,7 @@ export class InventoryService {
   }> {
     const pendingConfirmCount = await this.prisma.fbaReplenishment.count({
       where: {
-        status: 'pending_confirm',
+        status: { in: ['pending_confirm', 'pending_outbound'] },
       },
     });
 
