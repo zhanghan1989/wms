@@ -82,3 +82,10 @@ jobs:
             fi
             docker compose up -d --build api
             docker compose ps
+            echo "Smoke check static assets..."
+            curl -fsS http://127.0.0.1:3000/ -o /tmp/wms_index.html
+            curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
+            grep -q "库存管理系统" /tmp/wms_index.html
+            grep -q "openShopManageModal" /tmp/wms_index.html
+            grep -q "normalizeErrorMessage" /tmp/wms_app.js
+            echo "Smoke check passed."

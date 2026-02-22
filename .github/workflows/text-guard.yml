@@ -1,0 +1,70 @@
+name: Text Guard
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/api/public/**"
+      - ".editorconfig"
+      - ".gitattributes"
+      - ".github/workflows/text-guard.yml"
+  pull_request:
+    paths:
+      - "apps/api/public/**"
+      - ".editorconfig"
+      - ".gitattributes"
+      - ".github/workflows/text-guard.yml"
+
+jobs:
+  utf8-and-copy-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate UTF-8 and key UI copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = [
+              Path("apps/api/public/index.html"),
+              Path("apps/api/public/app.js"),
+              Path("apps/api/public/styles.css"),
+          ]
+          for path in files:
+              data = path.read_bytes()
+              try:
+                  data.decode("utf-8")
+              except UnicodeDecodeError as exc:
+                  raise SystemExit(f"[utf8] {path} is not valid UTF-8: {exc}")
+
+          index_text = Path("apps/api/public/index.html").read_text(encoding="utf-8")
+          required_text = [
+              "库存管理系统",
+              "登录系统",
+              "店铺管理",
+              "openShopManageModal",
+          ]
+          for token in required_text:
+              if token not in index_text:
+                  raise SystemExit(f"[copy] missing required token in index.html: {token}")
+
+          # Known mojibake fingerprints seen in incident regressions
+          suspicious_fragments = [
+              "蠎灘ｭ倡ｮ｡逅",
+              "蜈ｳ髣ｭ",
+              "譁ｰ蠅",
+              "逕ｨ謌ｷ蜷",
+              "謇ｹ驥",
+              "蝙句捷",
+          ]
+          for fragment in suspicious_fragments:
+              if fragment in index_text:
+                  raise SystemExit(f"[mojibake] suspicious fragment found in index.html: {fragment}")
+
+          print("UTF-8 and UI copy guard passed.")
+          PY
