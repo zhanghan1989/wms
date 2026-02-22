@@ -384,9 +384,24 @@ button.ghost {
   grid-template-columns: repeat(3, minmax(140px, 1fr));
 }
 
+.overseas-form.overseas-form-five {
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+}
+
 .overseas-form > button {
   grid-column: 1 / -1;
   width: 180px;
+}
+
+.label-inline-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inline-note {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .stats {

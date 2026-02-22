@@ -1032,22 +1032,23 @@ async function refreshMoveProductOldBoxOptionsBySku() {
   const rows = (await getSkuInventoryRows(skuId))
     .filter((row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode)
     .sort((a, b) => String(a.box.boxCode).localeCompare(String(b.box.boxCode), "en", { numeric: true }));
+  const hasMultiple = rows.length > 1;
 
   const prev = resolveEnabledBoxCode(select.value);
   const options = rows
     .map((row) => `<option value="${escapeHtml(row.box.boxCode)}">${escapeHtml(row.box.boxCode)}</option>`)
     .join("");
   select.innerHTML = `<option value="">请选择旧箱号</option>${options}`;
+  if (hint) {
+    hint.classList.toggle("hidden", !hasMultiple);
+  }
 
   if (rows.length === 1) {
     select.value = rows[0].box.boxCode;
-    if (hint) hint.classList.add("hidden");
   } else if (prev && rows.some((row) => String(row.box.boxCode) === String(prev))) {
     select.value = prev;
-    if (hint) hint.classList.add("hidden");
   } else {
     select.value = "";
-    if (hint) hint.classList.toggle("hidden", rows.length <= 1);
   }
 
   syncMoveProductOldShelfDisplay();

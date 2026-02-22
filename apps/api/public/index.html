@@ -154,7 +154,7 @@
 
         <article class="card">
           <h3>移动产品到新箱子</h3>
-          <form id="moveBoxCodeForm" class="form-grid overseas-form">
+          <form id="moveBoxCodeForm" class="form-grid overseas-form overseas-form-five">
             <label>
               SKU
               <select id="moveProductSkuId" required>
@@ -162,7 +162,10 @@
               </select>
             </label>
             <label>
-              旧箱号
+              <span class="label-inline-note">
+                旧箱号
+                <span id="moveProductOldBoxHint" class="inline-note hidden">（该SKU存在多个箱号，请手动指定旧箱号。）</span>
+              </span>
               <select id="moveProductOldBoxCode" required>
                 <option value="">请先选择SKU</option>
               </select>
@@ -186,7 +189,6 @@
               新货架
               <input id="moveProductNewShelfCode" readonly placeholder="根据新箱号自动显示" />
             </label>
-            <div id="moveProductOldBoxHint" class="muted hidden">该SKU存在多个箱号，请手动指定旧箱号。</div>
             <button type="submit">移动产品到新箱子</button>
           </form>
         </article>
