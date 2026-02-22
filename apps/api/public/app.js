@@ -1111,7 +1111,11 @@ function renderProductEditRequestTable() {
         <td>${escapeHtml(displayText(creatorText))}</td>
         <td>
           <button class="tiny-btn" data-action="openProductEditRequestDetail" data-id="${escapeHtml(item?.id)}">编辑详情</button>
-          <button class="tiny-btn danger" data-action="deleteProductEditRequestRow" data-id="${escapeHtml(item?.id)}" ${canDelete ? "" : "disabled"}>删除</button>
+          ${
+            canDelete
+              ? `<button class="tiny-btn danger" data-action="deleteProductEditRequestRow" data-id="${escapeHtml(item?.id)}">删除</button>`
+              : ""
+          }
         </td>
       </tr>
     `;
