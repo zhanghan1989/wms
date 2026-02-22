@@ -43,7 +43,7 @@
       <div class="session-actions hidden" id="employeeQuickActions">
         <button type="button" id="openInventoryHome">首页</button>
         <button type="button" id="openOverseasWarehousePanel">海外仓管理</button>
-        <button type="button" id="openCreateShelfQuick">新增货架</button>
+        <button type="button" id="openProductManagementPanel">产品管理</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -59,6 +59,7 @@
     <aside class="sidebar">
       <button class="nav-btn active" data-target="inventory">库存管理</button>
       <button class="nav-btn" data-target="overseasWarehouse">海外仓管理</button>
+      <button class="nav-btn" data-target="productManagement">产品管理</button>
       <button class="nav-btn" data-target="fbaReplenishment">FBA补货</button>
       <button class="nav-btn" data-target="batchInbound">批量入库</button>
       <button class="nav-btn" data-target="overview">总览</button>
@@ -113,25 +114,39 @@
         <article class="card">
           <h3>基础操作</h3>
           <div class="action-row">
-            <button type="button" id="openCreateSkuModal">新增产品</button>
             <button type="button" id="openCreateBoxQuick">新增箱号</button>
+            <button type="button" id="openCreateShelfQuick">新增货架</button>
           </div>
         </article>
 
         <article class="card">
           <h3>移动至新货架</h3>
-          <form id="moveBoxShelfForm" class="form-grid overseas-form">
+          <form id="moveBoxShelfForm" class="form-grid overseas-form overseas-form-three">
             <label>
               箱号
-              <select id="moveShelfBoxId" required>
-                <option value="">请选择箱号</option>
-              </select>
+              <input
+                id="moveShelfBoxCode"
+                list="moveShelfBoxCodeList"
+                placeholder="输入数字或选择箱号"
+                inputmode="numeric"
+                required
+              />
+              <datalist id="moveShelfBoxCodeList"></datalist>
+            </label>
+            <label>
+              旧货架号
+              <input id="moveShelfCurrentCode" readonly placeholder="请先选择箱号" />
             </label>
             <label>
               新货架号
-              <select id="moveShelfTargetId" required>
-                <option value="">请选择目标货架号</option>
-              </select>
+              <input
+                id="moveShelfTargetCode"
+                list="moveShelfTargetCodeList"
+                placeholder="输入数字或选择新货架号"
+                inputmode="numeric"
+                required
+              />
+              <datalist id="moveShelfTargetCodeList"></datalist>
             </label>
             <button type="submit">移动至新货架</button>
           </form>
@@ -158,6 +173,20 @@
             </label>
             <button type="submit">移动至新箱号</button>
           </form>
+        </article>
+      </section>
+
+      <section class="panel" id="productManagement">
+        <div class="panel-head">
+          <h2>产品管理</h2>
+          <button id="refreshProductManagement" class="ghost">刷新</button>
+        </div>
+
+        <article class="card">
+          <h3>基础操作</h3>
+          <div class="action-row">
+            <button type="button" id="openCreateSkuModal">新增产品</button>
+          </div>
         </article>
       </section>
 

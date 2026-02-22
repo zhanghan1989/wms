@@ -380,6 +380,10 @@ button.ghost {
   align-items: end;
 }
 
+.overseas-form.overseas-form-three {
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+}
+
 .overseas-form > button {
   grid-column: 1 / -1;
   width: 180px;
