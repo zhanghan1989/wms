@@ -263,7 +263,7 @@ export class InventoryService {
             id: true,
             sku: true,
             model: true,
-            desc1: true,
+            brand: true,
           },
         }),
         tx.box.findUnique({
@@ -342,7 +342,7 @@ export class InventoryService {
         },
         include: {
           sku: {
-            select: { id: true, sku: true, model: true, desc1: true },
+            select: { id: true, sku: true, model: true, brand: true },
           },
           box: {
             select: {
@@ -381,7 +381,7 @@ export class InventoryService {
           id: created.sku.id.toString(),
           sku: created.sku.sku,
           model: created.sku.model,
-          desc1: created.sku.desc1,
+          brand: created.sku.brand,
         },
         box: {
           id: created.box.id.toString(),
@@ -419,7 +419,7 @@ export class InventoryService {
       const row = await tx.fbaReplenishment.findUnique({
         where: { id },
         include: {
-          sku: { select: { id: true, sku: true, model: true, desc1: true } },
+          sku: { select: { id: true, sku: true, model: true, brand: true } },
           box: {
             select: {
               id: true,
@@ -460,7 +460,7 @@ export class InventoryService {
           confirmedAt: new Date(),
         },
         include: {
-          sku: { select: { id: true, sku: true, model: true, desc1: true } },
+          sku: { select: { id: true, sku: true, model: true, brand: true } },
           box: {
             select: {
               id: true,
@@ -500,7 +500,7 @@ export class InventoryService {
           id: updated.sku.id.toString(),
           sku: updated.sku.sku,
           model: updated.sku.model,
-          desc1: updated.sku.desc1,
+          brand: updated.sku.brand,
         },
         box: {
           id: updated.box.id.toString(),
@@ -770,7 +770,7 @@ export class InventoryService {
       });
 
       if (!row) {
-        throw new NotFoundException('FBA陦･雍ｧ逕ｳ隸ｷ荳榊ｭ伜惠');
+        throw new NotFoundException('FBA补货申请不存在');
       }
       if (String(row.status) === 'deleted') {
         throw new UnprocessableEntityException(
@@ -860,7 +860,7 @@ export class InventoryService {
             id: true,
             sku: true,
             model: true,
-            desc1: true,
+            brand: true,
           },
         },
         box: {
@@ -890,7 +890,7 @@ export class InventoryService {
               id: row.sku.id.toString(),
               sku: row.sku.sku,
               model: row.sku.model,
-              desc1: row.sku.desc1,
+              brand: row.sku.brand,
             }
           : null,
         box: row.box

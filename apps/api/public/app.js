@@ -19,6 +19,7 @@ const state = {
   fbaPendingBySku: {},
   fbaPendingByBoxSku: {},
   selectedFbaIds: new Set(),
+  brandEditingIds: new Set(),
   plainPasswords: (() => {
     try {
       const raw = localStorage.getItem("wms_plain_password_map");
@@ -633,8 +634,9 @@ function renderInventoryTable() {
       return `
       <tr class="inventory-main-row">
         <td>${escapeHtml(displayText(sku.model))}</td>
-        <td>${escapeHtml(displayText(sku.desc1))}</td>
-        <td>${escapeHtml(displayText(sku.desc2))}</td>
+        <td>${escapeHtml(displayText(sku.brand))}</td>
+        <td>${escapeHtml(displayText(sku.type))}</td>
+        <td>${escapeHtml(displayText(sku.color))}</td>
         <td>${escapeHtml(displayText(sku.remark))}</td>
         <td>${escapeHtml(sku.sku)}</td>
         <td>${escapeHtml(displayText(sku.shop))}</td>
@@ -649,7 +651,7 @@ function renderInventoryTable() {
     })
     .join("");
 
-  $("inventoryBody").innerHTML = html || '<tr><td colspan="8" class="muted">-</td></tr>';
+  $("inventoryBody").innerHTML = html || '<tr><td colspan="9" class="muted">-</td></tr>';
 }
 
 function loadMoreInventoryIfNeeded() {
@@ -705,8 +707,9 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
       const pendingQty = getFbaPendingQtyBySku(sku.id);
       const leftRows = [
         ["型号", displayText(sku.model)],
-        ["品牌", displayText(sku.desc1)],
-        ["类型", displayText(sku.desc2)],
+        ["品牌", displayText(sku.brand)],
+        ["类型", displayText(sku.type)],
+        ["颜色", displayText(sku.color)],
         ["备注", displayText(sku.remark)],
         ["店铺", displayText(sku.shop)],
       ];
@@ -802,8 +805,9 @@ async function openEditSkuModal(skuId) {
 
   $("editSkuId").value = String(sku.id);
   $("editModel").value = sku.model || "";
-  renderBrandOptionsForSelect("editDesc1", "请选择品牌", sku.desc1 || "");
-  renderSkuTypeOptionsForSelect("editDesc2", "请选择类型", sku.desc2 || "");
+  renderBrandOptionsForSelect("editBrand", "请选择品牌", sku.brand || "");
+  renderSkuTypeOptionsForSelect("editType", "请选择类型", sku.type || "");
+  $("editColor").value = sku.color || "";
   $("editShop").value = sku.shop || "";
   $("editRemark").value = sku.remark || "";
   $("editSku").value = sku.sku || "";
@@ -821,8 +825,9 @@ async function submitEditSkuForm() {
 
   const payload = {
     model: $("editModel").value.trim() || undefined,
-    desc1: $("editDesc1").value.trim() || undefined,
-    desc2: $("editDesc2").value.trim() || undefined,
+    brand: $("editBrand").value.trim() || undefined,
+    type: $("editType").value.trim() || undefined,
+    color: $("editColor").value.trim() || undefined,
     shop: $("editShop").value.trim() || undefined,
     remark: $("editRemark").value.trim() || undefined,
     erpSku: $("editErpSku").value.trim() || undefined,
@@ -954,15 +959,27 @@ function renderBrandsTable() {
   body.innerHTML =
     rows
       .map(
-        (item) => `
+        (item) => {
+          const itemId = String(item.id);
+          const editing = state.brandEditingIds.has(itemId);
+          return `
       <tr>
-        <td><input id="brandName-${escapeHtml(item.id)}" value="${escapeHtml(item.name)}" maxlength="128" /></td>
         <td>
-          <button class="tiny-btn" data-action="saveBrand" data-id="${escapeHtml(item.id)}">保存</button>
+          <input
+            id="brandName-${escapeHtml(item.id)}"
+            value="${escapeHtml(item.name)}"
+            maxlength="128"
+            ${editing ? "" : "readonly"}
+            data-original-name="${escapeHtml(item.name)}"
+          />
+        </td>
+        <td>
+          <button class="tiny-btn" data-action="editBrand" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteBrand" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
-    `,
+    `;
+        },
       )
       .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
 }
@@ -1231,16 +1248,20 @@ function renderAdjustBoxSuggestions(keyword = "") {
 async function loadBrands() {
   const brands = await request("/brands");
   state.brands = brands;
-  renderBrandOptionsForSelect("modalNewDesc1", "请选择品牌");
-  renderBrandOptionsForSelect("editDesc1", "请选择品牌");
+  const latestIds = new Set((Array.isArray(brands) ? brands : []).map((item) => String(item.id)));
+  state.brandEditingIds = new Set(
+    [...state.brandEditingIds].filter((id) => latestIds.has(String(id))),
+  );
+  renderBrandOptionsForSelect("modalNewBrand", "请选择品牌");
+  renderBrandOptionsForSelect("editBrand", "请选择品牌");
   renderBrandsTable();
 }
 
 async function loadSkuTypes() {
   const skuTypes = await request("/sku-types");
   state.skuTypes = skuTypes;
-  renderSkuTypeOptionsForSelect("modalNewDesc2", "请选择类型");
-  renderSkuTypeOptionsForSelect("editDesc2", "请选择类型");
+  renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
+  renderSkuTypeOptionsForSelect("editType", "请选择类型");
   renderSkuTypesTable();
 }
 
@@ -1748,7 +1769,7 @@ function renderFbaReplenishmentList() {
         <td>${escapeHtml(getFbaStatusText(item.status))}</td>
         <td>${escapeHtml(displayText(item.sku?.sku))}</td>
         <td>${escapeHtml(displayText(item.sku?.model))}</td>
-        <td>${escapeHtml(displayText(item.sku?.desc1))}</td>
+        <td>${escapeHtml(displayText(item.sku?.brand))}</td>
         <td>${escapeHtml(displayText(item.box?.boxCode))}</td>
         <td>${escapeHtml(displayText(item.box?.shelfCode))}</td>
         <td>${escapeHtml(displayText(item.requestedQty))}</td>
@@ -2005,8 +2026,9 @@ async function submitAdjustForm() {
 
 async function createSkuFromModal() {
   const model = $("modalNewModel").value.trim() || undefined;
-  const desc1 = $("modalNewDesc1").value.trim() || undefined;
-  const desc2 = $("modalNewDesc2").value.trim() || undefined;
+  const brand = $("modalNewBrand").value.trim() || undefined;
+  const type = $("modalNewType").value.trim() || undefined;
+  const color = $("modalNewColor").value.trim() || undefined;
   const shop = $("modalNewShop").value.trim() || undefined;
   const remark = $("modalNewRemark").value.trim() || undefined;
   const sku = $("modalNewSku").value.trim();
@@ -2030,7 +2052,7 @@ async function createSkuFromModal() {
 
   const createdSku = await request("/skus", {
     method: "POST",
-    body: JSON.stringify({ model, desc1, desc2, shop, remark, sku, erpSku, asin, fnsku }),
+    body: JSON.stringify({ model, brand, type, color, shop, remark, sku, erpSku, asin, fnsku }),
   });
 
   await request("/inventory/manual-adjust", {
@@ -2203,6 +2225,7 @@ async function reloadAll() {
     state.fbaPendingBySku = {};
     state.fbaPendingByBoxSku = {};
     state.selectedFbaIds = new Set();
+    state.brandEditingIds = new Set();
     renderFbaPendingBadge();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
@@ -2481,6 +2504,7 @@ function bindForms() {
 
   $("openBrandManageModal").addEventListener("click", async () => {
     try {
+      state.brandEditingIds = new Set();
       await loadBrands();
       openModal("brandManageModal");
     } catch (error) {
@@ -2502,8 +2526,8 @@ function bindForms() {
       showToast(error.message, true),
     );
     $("createSkuModalForm").reset();
-    renderBrandOptionsForSelect("modalNewDesc1", "请选择品牌");
-    renderSkuTypeOptionsForSelect("modalNewDesc2", "请选择类型");
+    renderBrandOptionsForSelect("modalNewBrand", "请选择品牌");
+    renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
     $("modalNewSkuQty").value = "1";
     openModal("createSkuModal");
   });
@@ -2775,23 +2799,48 @@ function bindDelegates() {
     const id = button.dataset.id;
     if (!id) return;
     try {
-      if (action === "saveBrand") {
+      if (action === "editBrand") {
         const input = $(`brandName-${id}`);
-        const name = String(input?.value || "").trim();
+        if (!input) return;
+        const isEditing = state.brandEditingIds.has(String(id));
+        if (!isEditing) {
+          state.brandEditingIds.add(String(id));
+          renderBrandsTable();
+          const nextInput = $(`brandName-${id}`);
+          if (nextInput) {
+            nextInput.focus();
+            nextInput.select();
+          }
+          return;
+        }
+
+        const name = String(input.value || "").trim();
         if (!name) {
           throw new Error("品牌名称不能为空");
         }
+        const originalName = String(input.dataset.originalName || "").trim();
+        if (!originalName) {
+          throw new Error("品牌原始值不存在");
+        }
+        if (name === originalName) {
+          state.brandEditingIds.delete(String(id));
+          renderBrandsTable();
+          return;
+        }
+
         await request(`/brands/${id}`, {
           method: "PUT",
           body: JSON.stringify({ name }),
         });
-        showToast("品牌已更新");
+        state.brandEditingIds.delete(String(id));
+        showToast("品牌已更新，关联 SKU 品牌已同步");
         await Promise.all([loadBrands(), loadInventory(), loadAudit()]);
       } else if (action === "deleteBrand") {
         const brandName = button.dataset.name || id;
         const ok = await openActionConfirmModal(`确认删除品牌 ${brandName}？`, "确认操作", "确认删除");
         if (!ok) return;
         await request(`/brands/${id}`, { method: "DELETE" });
+        state.brandEditingIds.delete(String(id));
         showToast("品牌已删除");
         await Promise.all([loadBrands(), loadInventory(), loadAudit()]);
       }

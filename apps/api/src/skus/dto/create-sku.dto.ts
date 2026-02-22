@@ -28,12 +28,17 @@ export class CreateSkuDto {
   @IsOptional()
   @IsString()
   @Length(1, 255)
-  desc1?: string;
+  brand?: string;
 
   @IsOptional()
   @IsString()
   @Length(1, 255)
-  desc2?: string;
+  type?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 64)
+  color?: string;
 
   @IsOptional()
   @IsString()

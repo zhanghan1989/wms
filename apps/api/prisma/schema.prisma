@@ -184,8 +184,9 @@ model Sku {
   asin              String?                    @db.VarChar(32)
   fnsku             String?                    @db.VarChar(32)
   model             String?                    @db.VarChar(255)
-  desc1             String?                    @db.VarChar(255)
-  desc2             String?                    @db.VarChar(255)
+  brand             String?                    @db.VarChar(255)
+  type              String?                    @db.VarChar(255)
+  color             String?                    @db.VarChar(64)
   shop              String?                    @db.VarChar(128)
   remark            String?                    @db.VarChar(255)
   status            Int                        @default(1) @db.TinyInt

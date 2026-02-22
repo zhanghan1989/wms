@@ -491,6 +491,13 @@ td {
   margin: 0 0 12px;
 }
 
+.manage-create-btn {
+  width: auto;
+  justify-self: start;
+  padding: 6px 12px;
+  line-height: 1.2;
+}
+
 .sku-result-btn {
   display: inline-flex;
   flex-direction: column;

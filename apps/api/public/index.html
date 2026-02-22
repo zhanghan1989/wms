@@ -93,6 +93,7 @@
                 <th>型号</th>
                 <th>品牌</th>
                 <th>类型</th>
+                <th>颜色</th>
                 <th>备注</th>
                 <th>SKU</th>
                 <th>店铺</th>
@@ -421,12 +422,13 @@
         <label>型号<input id="modalNewModel" /></label>
         <label>SKU<input id="modalNewSku" required /></label>
         <label>品牌
-          <select id="modalNewDesc1"></select>
+          <select id="modalNewBrand"></select>
         </label>
         <label>erpSKU<input id="modalNewErpSku" /></label>
         <label>类型
-          <select id="modalNewDesc2"></select>
+          <select id="modalNewType"></select>
         </label>
+        <label>颜色<input id="modalNewColor" /></label>
         <label>ASIN<input id="modalNewAsin" /></label>
         <label>备注<input id="modalNewRemark" /></label>
         <label>FNSKU<input id="modalNewFnsku" /></label>
@@ -464,12 +466,13 @@
         <label>型号<input id="editModel" /></label>
         <label>SKU<input id="editSku" readonly /></label>
         <label>品牌
-          <select id="editDesc1"></select>
+          <select id="editBrand"></select>
         </label>
         <label>erpSKU<input id="editErpSku" /></label>
         <label>类型
-          <select id="editDesc2"></select>
+          <select id="editType"></select>
         </label>
+        <label>颜色<input id="editColor" /></label>
         <label>ASIN<input id="editAsin" /></label>
         <label>备注<input id="editRemark" /></label>
         <label>FNSKU<input id="editFnsku" /></label>
@@ -599,7 +602,7 @@
       </div>
       <form id="brandForm" class="manage-inline-form">
         <input id="brandNameInput" maxlength="128" placeholder="请输入品牌名称" required />
-        <button type="submit">新增品牌</button>
+        <button type="submit" class="small-btn manage-create-btn">新增品牌</button>
       </form>
       <table>
         <thead><tr><th>品牌</th><th>操作</th></tr></thead>

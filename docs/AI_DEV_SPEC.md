@@ -93,8 +93,9 @@
 - `asin` varchar(32)
 - `fnsku` varchar(32)
 - `model` varchar(255)
-- `desc1` varchar(255)
-- `desc2` varchar(255)
+- `brand` varchar(255)
+- `type` varchar(255)
+- `color` varchar(64)
 - `shop` varchar(128)
 - `remark` varchar(255)
 - `created_at` datetime

@@ -1,0 +1,4 @@
+ALTER TABLE `skus`
+  CHANGE COLUMN `desc1` `brand` VARCHAR(255) NULL,
+  CHANGE COLUMN `desc2` `type` VARCHAR(255) NULL,
+  ADD COLUMN `color` VARCHAR(64) NULL AFTER `type`;
