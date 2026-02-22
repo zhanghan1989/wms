@@ -49,6 +49,10 @@ enum FbaReplenishmentStatus {
   deleted
 }
 
+enum ProductEditRequestStatus {
+  pending
+}
+
 enum StocktakeScopeType {
   sample
 }
@@ -135,6 +139,7 @@ model User {
   confirmedFbaReplenishments FbaReplenishment[]     @relation("fba_confirmed_by")
   outboundFbaReplenishments  FbaReplenishment[]     @relation("fba_outbound_by")
   deletedFbaReplenishments   FbaReplenishment[]     @relation("fba_deleted_by")
+  productEditRequests        ProductEditRequest[]   @relation("product_edit_created_by")
   stockMovements             StockMovement[]
   auditLogs                  OperationAuditLog[]
 
@@ -203,6 +208,7 @@ model Sku {
   stockMovements    StockMovement[]
   adjustItems       InventoryAdjustOrderItem[]
   fbaReplenishments FbaReplenishment[]
+  productEditRequests ProductEditRequest[]
 
   @@map("skus")
 }
@@ -464,6 +470,25 @@ model FbaReplenishment {
   @@index([skuId, status])
   @@index([boxId, status])
   @@map("fba_replenishments")
+}
+
+model ProductEditRequest {
+  id            BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  skuId         BigInt                   @map("sku_id") @db.UnsignedBigInt
+  status        ProductEditRequestStatus @default(pending)
+  beforeData    Json                     @map("before_data")
+  afterData     Json                     @map("after_data")
+  changedFields Json                     @map("changed_fields")
+  createdBy     BigInt                   @map("created_by") @db.UnsignedBigInt
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
+  sku           Sku                      @relation(fields: [skuId], references: [id])
+  creator       User                     @relation("product_edit_created_by", fields: [createdBy], references: [id])
+
+  @@index([skuId, createdAt])
+  @@index([createdBy, createdAt])
+  @@index([status, createdAt])
+  @@map("product_edit_requests")
 }
 
 model OperationAuditLog {

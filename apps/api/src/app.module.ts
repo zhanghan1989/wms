@@ -11,6 +11,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ShelvesModule } from './shelves/shelves.module';
 import { ShopsModule } from './shops/shops.module';
 import { SkuTypesModule } from './sku-types/sku-types.module';
+import { SkuEditRequestsModule } from './sku-edit-requests/sku-edit-requests.module';
 import { SkusModule } from './skus/skus.module';
 import { UsersModule } from './users/users.module';
 
@@ -23,6 +24,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     UsersModule,
     SkusModule,
+    SkuEditRequestsModule,
     BrandsModule,
     SkuTypesModule,
     ShopsModule,

@@ -7,6 +7,7 @@ const state = {
   brands: [],
   skuTypes: [],
   shops: [],
+  skuEditRequests: [],
   inventoryLocations: new Map(),
   inventorySortedSkus: [],
   inventoryVisibleCount: 0,
@@ -133,6 +134,11 @@ function getFbaStatusText(status) {
   if (status === "pending_outbound") return "待出库";
   if (status === "outbound") return "已出库";
   if (status === "deleted") return "已删除";
+  return displayText(status);
+}
+
+function getProductEditRequestStatusText(status) {
+  if (status === "pending") return "待处理";
   return displayText(status);
 }
 
@@ -827,6 +833,8 @@ async function submitEditSkuForm() {
   }
 
   const payload = {
+    skuId,
+    sku: $("editSku").value.trim() || undefined,
     model: $("editModel").value.trim() || undefined,
     brand: $("editBrand").value.trim() || undefined,
     type: $("editType").value.trim() || undefined,
@@ -838,8 +846,8 @@ async function submitEditSkuForm() {
     fnsku: $("editFnsku").value.trim() || undefined,
   };
 
-  await request(`/skus/${skuId}`, {
-    method: "PUT",
+  await request("/sku-edit-requests", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }
@@ -1080,6 +1088,94 @@ function renderShopsTable() {
       .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
 }
 
+function getProductEditRequestDisplayNo(item) {
+  return `PER-${displayText(item?.id)}`;
+}
+
+function renderProductEditRequestTable() {
+  const body = $("productEditRequestBody");
+  if (!body) return;
+
+  body.innerHTML =
+    state.skuEditRequests
+      .map((item) => {
+        const skuText = item?.sku?.sku || "-";
+        const statusText = getProductEditRequestStatusText(item?.status);
+        const creatorText = item?.creator?.username || "-";
+        return `
+      <tr>
+        <td>${escapeHtml(getProductEditRequestDisplayNo(item))}</td>
+        <td>${escapeHtml(displayText(skuText))}</td>
+        <td><span class="edit-request-status">${escapeHtml(statusText)}</span></td>
+        <td>${escapeHtml(displayText(creatorText))}</td>
+        <td>${escapeHtml(formatDate(item?.createdAt))}</td>
+        <td>
+          <button class="tiny-btn" data-action="openProductEditRequestDetail" data-id="${escapeHtml(item?.id)}">编辑详情</button>
+        </td>
+      </tr>
+    `;
+      })
+      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
+}
+
+function renderProductEditRequestDetail(item) {
+  const meta = $("productEditRequestMeta");
+  const compare = $("productEditRequestCompare");
+  if (!meta || !compare) return;
+
+  if (!item) {
+    meta.innerHTML = "";
+    compare.innerHTML = '<div class="muted">暂无数据</div>';
+    return;
+  }
+
+  meta.innerHTML = `
+    <div><strong>申请ID：</strong>${escapeHtml(getProductEditRequestDisplayNo(item))}</div>
+    <div><strong>SKU：</strong>${escapeHtml(displayText(item?.sku?.sku))}</div>
+    <div><strong>申请人：</strong>${escapeHtml(displayText(item?.creator?.username))}</div>
+    <div><strong>申请时间：</strong>${escapeHtml(formatDate(item?.createdAt))}</div>
+  `;
+
+  const fieldDefs = [
+    ["model", "型号"],
+    ["brand", "品牌"],
+    ["type", "类型"],
+    ["color", "颜色"],
+    ["shop", "所属亚马逊店铺"],
+    ["remark", "备注"],
+    ["sku", "SKU"],
+    ["erpSku", "erpSKU"],
+    ["asin", "ASIN"],
+    ["fnsku", "FNSKU"],
+  ];
+  const changedSet = new Set(Array.isArray(item?.changedFields) ? item.changedFields : []);
+  const beforeData = item?.beforeData || {};
+  const afterData = item?.afterData || {};
+
+  const renderCol = (title, data, side) => `
+    <div class="edit-request-compare-col">
+      <h4>${escapeHtml(title)}</h4>
+      <div class="edit-request-field-list">
+        ${fieldDefs
+          .map(([fieldKey, label]) => {
+            const changed = changedSet.has(fieldKey);
+            const value = displayText(data?.[fieldKey]);
+            const changedClass = changed ? " changed" : "";
+            return `
+              <div class="edit-request-field">
+                <span class="edit-request-field-name">${escapeHtml(label)}：</span>
+                <span class="edit-request-field-value${changedClass}" data-side="${escapeHtml(side)}">${escapeHtml(value)}</span>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+
+  compare.innerHTML = `${renderCol("变更前", beforeData, "before")}${renderCol("变更后", afterData, "after")}`;
+}
+
 function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
   const input = $(inputId);
   const datalist = $(listId);
@@ -1295,6 +1391,16 @@ function filterAdjustBoxes(keyword) {
   }
 
   return boxes.filter((box) => String(box.boxCode).toUpperCase().includes(raw));
+}
+
+async function loadProductEditRequests() {
+  const rows = await request("/sku-edit-requests");
+  state.skuEditRequests = Array.isArray(rows) ? rows : [];
+  renderProductEditRequestTable();
+}
+
+async function loadProductEditRequestDetail(id) {
+  return request(`/sku-edit-requests/${id}`);
 }
 
 function renderAdjustBoxSuggestions(keyword = "") {
@@ -2309,9 +2415,12 @@ async function reloadAll() {
     $("brandsBody").innerHTML = "";
     $("skuTypesBody").innerHTML = "";
     $("shopsBody").innerHTML = "";
+    $("productEditRequestBody").innerHTML = "";
+    renderProductEditRequestDetail(null);
     state.brands = [];
     state.skuTypes = [];
     state.shops = [];
+    state.skuEditRequests = [];
     state.fbaPendingCount = 0;
     state.fbaPendingBySku = {};
     state.fbaPendingByBoxSku = {};
@@ -2332,6 +2441,7 @@ async function reloadAll() {
     loadBrands(),
     loadSkuTypes(),
     loadShops(),
+    loadProductEditRequests(),
     loadShelves(),
     loadBoxes(),
     loadBatchInboundOrders(),
@@ -2590,7 +2700,15 @@ function bindForms() {
   $("openProductManagementPanel").addEventListener("click", async () => {
     try {
       switchPanel("productManagement");
-      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadBrands(), loadSkuTypes(), loadShops()]);
+      await Promise.all([
+        loadShelves(),
+        loadBoxes(),
+        loadInventory(),
+        loadBrands(),
+        loadSkuTypes(),
+        loadShops(),
+        loadProductEditRequests(),
+      ]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -2860,16 +2978,10 @@ function bindForms() {
   $("editSkuForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      const keyword = $("inventoryKeyword").value.trim();
-      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
       await submitEditSkuForm();
       closeModal("editSkuModal");
-      showToast("产品已更新");
-      await loadInventory();
-      await loadAudit();
-      if (shouldRefreshSearch) {
-        await searchInventoryProducts(keyword);
-      }
+      showToast("编辑申请已提交");
+      await loadProductEditRequests();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3357,6 +3469,22 @@ function bindDelegates() {
       showToast(error.message, true);
     }
   });
+
+  $("productEditRequestBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='openProductEditRequestDetail']");
+    if (!button) return;
+    const requestId = Number(button.dataset.id || 0);
+    if (!Number.isInteger(requestId) || requestId <= 0) return;
+
+    try {
+      const detail = await loadProductEditRequestDetail(requestId);
+      renderProductEditRequestDetail(detail);
+      openModal("productEditRequestDetailModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("inventorySearchResults").addEventListener("click", openAdjustByAction);
 
   document.addEventListener("click", (event) => {
@@ -3408,6 +3536,13 @@ function bindDelegates() {
     const shopManageClose = event.target.closest("button[data-action='closeShopManageModal']");
     if (shopManageClose) {
       closeModal("shopManageModal");
+      return;
+    }
+    const productEditRequestDetailClose = event.target.closest(
+      "button[data-action='closeProductEditRequestDetailModal']",
+    );
+    if (productEditRequestDetailClose) {
+      closeModal("productEditRequestDetailModal");
       return;
     }
     const deleteConfirmClose = event.target.closest("button[data-action='closeDeleteConfirmModal']");
@@ -3500,6 +3635,12 @@ function bindDelegates() {
     }
   });
 
+  $("productEditRequestDetailModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("productEditRequestDetailModal");
+    }
+  });
+
   $("batchInboundDetailModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("batchInboundDetailModal");
@@ -3567,7 +3708,15 @@ function bindRefresh() {
     Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true)),
   );
   $("refreshProductManagement").addEventListener("click", () =>
-    Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadBrands(), loadSkuTypes(), loadShops()]).catch((error) =>
+    Promise.all([
+      loadShelves(),
+      loadBoxes(),
+      loadInventory(),
+      loadBrands(),
+      loadSkuTypes(),
+      loadShops(),
+      loadProductEditRequests(),
+    ]).catch((error) =>
       showToast(error.message, true),
     ),
   );

@@ -68,29 +68,11 @@ export class SkusService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<unknown> {
-    const id = parseId(idParam, 'skuId');
-    const sku = await this.prisma.sku.findUnique({ where: { id } });
-    if (!sku) throw new NotFoundException('SKU不存在');
-
-    return this.prisma.$transaction(async (tx) => {
-      const updated = await tx.sku.update({
-        where: { id },
-        data: payload,
-      });
-      const eventType = updated.status === 0 ? AuditEventType.SKU_DISABLED : AuditEventType.SKU_FIELD_UPDATED;
-      await this.auditService.create({
-        db: tx,
-        entityType: 'sku',
-        entityId: updated.id,
-        action: AuditAction.update,
-        eventType,
-        beforeData: sku as unknown as Record<string, unknown>,
-        afterData: updated as unknown as Record<string, unknown>,
-        operatorId,
-        requestId,
-      });
-      return updated;
-    });
+    void idParam;
+    void payload;
+    void operatorId;
+    void requestId;
+    throw new BadRequestException('请通过产品管理页面提交编辑申请，不能直接修改产品数据');
   }
 
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {

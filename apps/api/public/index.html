@@ -210,6 +210,23 @@
             <button type="button" id="openShopManageModal">店铺管理</button>
           </div>
         </article>
+
+        <article class="card">
+          <h3>编辑产品申请一览表</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>申请ID</th>
+                <th>SKU</th>
+                <th>状态</th>
+                <th>申请人</th>
+                <th>申请时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="productEditRequestBody"></tbody>
+          </table>
+        </article>
       </section>
 
       <section class="panel" id="batchInbound">
@@ -489,6 +506,17 @@
           <button type="button" class="ghost" data-action="closeEditSkuModal">取消</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="productEditRequestDetailModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>编辑详情</h3>
+        <button type="button" class="ghost" data-action="closeProductEditRequestDetailModal">关闭</button>
+      </div>
+      <div id="productEditRequestMeta" class="batch-detail-meta"></div>
+      <div id="productEditRequestCompare" class="edit-request-compare-grid"></div>
     </div>
   </div>
 

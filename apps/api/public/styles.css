@@ -498,6 +498,55 @@ td {
   line-height: 1.2;
 }
 
+.edit-request-status {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  background: #f8fcfa;
+}
+
+.edit-request-compare-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.edit-request-compare-col {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fff;
+}
+
+.edit-request-compare-col h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.edit-request-field-list {
+  display: grid;
+  gap: 6px;
+}
+
+.edit-request-field {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.edit-request-field-name {
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+.edit-request-field-value.changed {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .sku-result-btn {
   display: inline-flex;
   flex-direction: column;
@@ -890,7 +939,8 @@ button.danger-solid {
   .inventory-search-form,
   .manage-inline-form,
   .modal-grid,
-  .cards {
+  .cards,
+  .edit-request-compare-grid {
     grid-template-columns: 1fr;
   }
 
