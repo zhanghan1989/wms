@@ -39,36 +39,37 @@ const state = {
 
 let deleteConfirmResolver = null;
 let actionConfirmResolver = null;
-let toastTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
 function showToast(message, isError = false) {
-  if (isError) {
-    showErrorModal(message);
-    return;
-  }
-
-  const toast = $("toast");
-  if (!toast) return;
-  toast.textContent = message;
-  toast.classList.remove("hidden");
-  toast.classList.remove("error");
-  if (toastTimer) {
-    clearTimeout(toastTimer);
-    toastTimer = null;
-  }
-  toastTimer = setTimeout(() => {
-    toast.classList.add("hidden");
-    toastTimer = null;
-  }, 3000);
+  showErrorModal(message, isError);
 }
 
-function showErrorModal(message) {
+function showErrorModal(message, isError = true) {
   const text = String(message || "发生未知错误");
+  const modalCard = document.querySelector("#errorModal .modal-card");
+  const title = $("errorModalTitle");
+  const icon = $("errorModalIcon");
   const messageEl = $("errorModalMessage");
+  const closeBtn = $("errorModalCloseBtn");
+  if (modalCard) {
+    modalCard.classList.toggle("is-info", !isError);
+  }
+  if (title) {
+    title.innerHTML = `<span id="errorModalIcon" class="confirm-icon">${isError ? "!" : "i"}</span>${
+      isError ? "错误" : "提示"
+    }`;
+  }
+  if (icon && !title) {
+    icon.textContent = isError ? "!" : "i";
+  }
   if (messageEl) {
     messageEl.textContent = text;
+  }
+  if (closeBtn) {
+    closeBtn.textContent = isError ? "我知道了" : "关闭";
+    closeBtn.classList.toggle("danger-solid", isError);
   }
   openModal("errorModal");
 }

@@ -868,6 +868,10 @@ pre {
   border-color: #e8b7b7;
 }
 
+.modal-card.modal-error.is-info {
+  border-color: var(--line);
+}
+
 .confirm-title {
   display: inline-flex;
   align-items: center;
@@ -885,6 +889,12 @@ pre {
   place-items: center;
   font-size: 14px;
   font-weight: 700;
+}
+
+.modal-card.modal-error.is-info .confirm-icon {
+  border-color: #8fc7b2;
+  background: #e8f6ef;
+  color: #0b6a48;
 }
 
 .confirm-message {
