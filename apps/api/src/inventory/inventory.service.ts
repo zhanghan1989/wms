@@ -46,6 +46,7 @@ export class InventoryService {
           { erpSku: { contains: key } },
           { asin: { contains: key } },
           { fnsku: { contains: key } },
+          { fbmSku: { contains: key } },
         ],
       },
       take: 20,

@@ -13,10 +13,19 @@ const state = {
   inventoryVisibleCount: 0,
   inventoryPageSize: 30,
   inventorySearchMode: false,
+  users: [],
+  usersVisibleCount: 0,
+  auditLogs: [],
+  auditVisibleCount: 0,
+  myAuditLogs: [],
+  myAuditVisibleCount: 0,
   batchInboundOrders: [],
+  batchInboundVisibleCount: 0,
   selectedBatchInboundOrderId: "",
   selectedBatchInboundOrderDetail: null,
   fbaReplenishments: [],
+  fbaReplenishmentsVisibleCount: 0,
+  skuEditRequestsVisibleCount: 0,
   fbaPendingCount: 0,
   productEditPendingCount: 0,
   fbaPendingBySku: {},
@@ -440,12 +449,14 @@ async function loadMe() {
   }
 }
 
-async function loadUsers() {
-  const users = await request("/users");
-  $("statUsers").textContent = users.length;
-  $("usersBody").innerHTML = users
-    .map(
-      (user) => `
+function renderUsersTable() {
+  const body = $("usersBody");
+  if (!body) return;
+  const users = state.users.slice(0, state.usersVisibleCount);
+  body.innerHTML =
+    users
+      .map(
+        (user) => `
       <tr>
         <td>${escapeHtml(user.username)}</td>
         <td>${escapeHtml(getRoleText(user.role))}</td>
@@ -495,8 +506,24 @@ async function loadUsers() {
         </td>
       </tr>
     `,
-    )
-    .join("");
+      )
+      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+}
+
+async function loadUsers() {
+  const users = await request("/users");
+  state.users = Array.isArray(users) ? users : [];
+  state.usersVisibleCount = state.inventoryPageSize;
+  $("statUsers").textContent = state.users.length;
+  renderUsersTable();
+}
+
+function loadMoreUsersIfNeeded() {
+  const panel = $("users");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.usersVisibleCount >= state.users.length) return;
+  state.usersVisibleCount += state.inventoryPageSize;
+  renderUsersTable();
 }
 
 function openEditUserModal(userId, username, role) {
@@ -1172,9 +1199,10 @@ function renderShopsTable() {
 function renderProductEditRequestTable() {
   const body = $("productEditRequestBody");
   if (!body) return;
+  const rows = state.skuEditRequests.slice(0, state.skuEditRequestsVisibleCount);
 
   body.innerHTML =
-    state.skuEditRequests
+    rows
       .map((item) => {
         const skuText = item?.sku?.sku || "-";
         const statusText = getProductEditRequestStatusText(item?.status);
@@ -1198,6 +1226,14 @@ function renderProductEditRequestTable() {
     `;
       })
       .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+}
+
+function loadMoreProductEditRequestsIfNeeded() {
+  const panel = $("productManagement");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.skuEditRequestsVisibleCount >= state.skuEditRequests.length) return;
+  state.skuEditRequestsVisibleCount += state.inventoryPageSize;
+  renderProductEditRequestTable();
 }
 
 function renderProductEditRequestDetail(item) {
@@ -1485,6 +1521,7 @@ function filterAdjustBoxes(keyword) {
 async function loadProductEditRequests() {
   const rows = await request("/sku-edit-requests");
   state.skuEditRequests = Array.isArray(rows) ? rows : [];
+  state.skuEditRequestsVisibleCount = state.inventoryPageSize;
   renderProductEditRequestTable();
 }
 
@@ -1661,12 +1698,13 @@ function renderBatchInboundUploadOptions() {
 function renderBatchInboundOrders() {
   const tbody = $("batchInboundBody");
   if (!tbody) return;
-  if (!state.batchInboundOrders.length) {
+  const orders = state.batchInboundOrders.slice(0, state.batchInboundVisibleCount);
+  if (!orders.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="muted">-</td></tr>';
     return;
   }
 
-  tbody.innerHTML = state.batchInboundOrders
+  tbody.innerHTML = orders
     .map((order) => {
       const actions = [
         `<button class="tiny-btn ghost" data-action="batchInboundSelectOrder" data-order-id="${escapeHtml(
@@ -1737,6 +1775,14 @@ function renderBatchInboundOrders() {
       `;
     })
     .join("");
+}
+
+function loadMoreBatchInboundOrdersIfNeeded() {
+  const panel = $("batchInbound");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.batchInboundVisibleCount >= state.batchInboundOrders.length) return;
+  state.batchInboundVisibleCount += state.inventoryPageSize;
+  renderBatchInboundOrders();
 }
 
 function renderBatchInboundDetail(detail) {
@@ -1840,6 +1886,7 @@ function renderBatchInboundDetail(detail) {
 async function loadBatchInboundOrders({ keepSelection = true } = {}) {
   const orders = await request("/batch-inbound/orders");
   state.batchInboundOrders = Array.isArray(orders) ? orders : [];
+  state.batchInboundVisibleCount = state.inventoryPageSize;
   $("statInboundDraft").textContent = state.batchInboundOrders.filter(
     (order) => order.status === "waiting_upload" || order.status === "waiting_inbound",
   ).length;
@@ -1970,13 +2017,14 @@ function formatAuditEntity(item) {
   return `${escapeHtml(item.entityType || "-")}#${escapeHtml(item.entityId || "-")}`;
 }
 
-async function loadAudit() {
-  const result = await request("/audit-logs?page=1&pageSize=20");
-  const items = result.items || [];
-
-  $("auditBody").innerHTML = items
-    .map(
-      (item) => `
+function renderAuditTable() {
+  const body = $("auditBody");
+  if (!body) return;
+  const items = state.auditLogs.slice(0, state.auditVisibleCount);
+  body.innerHTML =
+    items
+      .map(
+        (item) => `
       <tr>
         <td>${formatDate(item.createdAt)}</td>
         <td>${formatAuditEntity(item)}</td>
@@ -1986,20 +2034,33 @@ async function loadAudit() {
         <td>${escapeHtml(item.requestId)}</td>
       </tr>
     `,
-    )
-    .join("");
+      )
+      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
 }
 
-async function loadMyAudit() {
-  if (!state.me?.id) {
-    $("myAuditBody").innerHTML = "";
-    return;
-  }
-  const result = await request(`/audit-logs?page=1&pageSize=20&operatorId=${state.me.id}`);
-  const items = result.items || [];
-  $("myAuditBody").innerHTML = items
-    .map(
-      (item) => `
+function loadMoreAuditIfNeeded() {
+  const panel = $("audit");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.auditVisibleCount >= state.auditLogs.length) return;
+  state.auditVisibleCount += state.inventoryPageSize;
+  renderAuditTable();
+}
+
+async function loadAudit() {
+  const result = await request("/audit-logs?page=1&pageSize=2000");
+  state.auditLogs = Array.isArray(result.items) ? result.items : [];
+  state.auditVisibleCount = state.inventoryPageSize;
+  renderAuditTable();
+}
+
+function renderMyAuditTable() {
+  const body = $("myAuditBody");
+  if (!body) return;
+  const items = state.myAuditLogs.slice(0, state.myAuditVisibleCount);
+  body.innerHTML =
+    items
+      .map(
+        (item) => `
       <tr>
         <td>${formatDate(item.createdAt)}</td>
         <td>${formatAuditEntity(item)}</td>
@@ -2008,8 +2069,34 @@ async function loadMyAudit() {
         <td>${escapeHtml(item.requestId)}</td>
       </tr>
     `,
-    )
-    .join("");
+      )
+      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+}
+
+function loadMoreMyAuditIfNeeded() {
+  const modal = $("myAuditModal");
+  if (!modal || modal.classList.contains("hidden")) return;
+  const card = modal.querySelector(".modal-card");
+  if (!card) return;
+  const threshold = 80;
+  const nearBottom = card.scrollTop + card.clientHeight >= card.scrollHeight - threshold;
+  if (!nearBottom) return;
+  if (state.myAuditVisibleCount >= state.myAuditLogs.length) return;
+  state.myAuditVisibleCount += state.inventoryPageSize;
+  renderMyAuditTable();
+}
+
+async function loadMyAudit() {
+  if (!state.me?.id) {
+    state.myAuditLogs = [];
+    state.myAuditVisibleCount = 0;
+    renderMyAuditTable();
+    return;
+  }
+  const result = await request(`/audit-logs?page=1&pageSize=2000&operatorId=${state.me.id}`);
+  state.myAuditLogs = Array.isArray(result.items) ? result.items : [];
+  state.myAuditVisibleCount = state.inventoryPageSize;
+  renderMyAuditTable();
 }
 
 function renderFbaPendingBadge() {
@@ -2060,15 +2147,16 @@ function renderFbaReplenishmentList() {
   const tbody = $("fbaReplenishmentBody");
   if (!tbody) return;
   syncSelectedFbaIds();
+  const list = state.fbaReplenishments.slice(0, state.fbaReplenishmentsVisibleCount);
 
-  if (!state.fbaReplenishments.length) {
+  if (!list.length) {
     tbody.innerHTML = '<tr><td colspan="11" class="muted">-</td></tr>';
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
     return;
   }
 
-  tbody.innerHTML = state.fbaReplenishments
+  tbody.innerHTML = list
     .map(
       (item) => `
       <tr>
@@ -2125,9 +2213,18 @@ function renderFbaReplenishmentList() {
   updateFbaOutboundButtonState();
 }
 
+function loadMoreFbaReplenishmentsIfNeeded() {
+  const panel = $("fbaReplenishment");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.fbaReplenishmentsVisibleCount >= state.fbaReplenishments.length) return;
+  state.fbaReplenishmentsVisibleCount += state.inventoryPageSize;
+  renderFbaReplenishmentList();
+}
+
 async function loadFbaReplenishments() {
   if (!state.token) {
     state.fbaReplenishments = [];
+    state.fbaReplenishmentsVisibleCount = 0;
     state.selectedFbaIds = new Set();
     renderFbaReplenishmentList();
     return;
@@ -2135,6 +2232,7 @@ async function loadFbaReplenishments() {
 
   const list = await request("/inventory/fba-replenishments");
   state.fbaReplenishments = Array.isArray(list) ? list : [];
+  state.fbaReplenishmentsVisibleCount = state.inventoryPageSize;
   renderFbaReplenishmentList();
 }
 
@@ -2541,6 +2639,7 @@ async function reloadAll() {
     clearStats();
     $("usersBody").innerHTML = "";
     $("auditBody").innerHTML = "";
+    $("myAuditBody").innerHTML = "";
     $("inventoryBody").innerHTML = "";
     $("batchInboundBody").innerHTML = "";
     $("fbaReplenishmentBody").innerHTML = "";
@@ -2554,7 +2653,16 @@ async function reloadAll() {
     state.brands = [];
     state.skuTypes = [];
     state.shops = [];
+    state.users = [];
+    state.auditLogs = [];
+    state.myAuditLogs = [];
     state.skuEditRequests = [];
+    state.usersVisibleCount = 0;
+    state.auditVisibleCount = 0;
+    state.myAuditVisibleCount = 0;
+    state.skuEditRequestsVisibleCount = 0;
+    state.batchInboundVisibleCount = 0;
+    state.fbaReplenishmentsVisibleCount = 0;
     state.fbaPendingCount = 0;
     state.productEditPendingCount = 0;
     state.fbaPendingBySku = {};
@@ -2588,6 +2696,10 @@ async function reloadAll() {
   if (isAdmin) {
     tasks.push(loadUsers(), loadAudit());
   } else {
+    state.users = [];
+    state.auditLogs = [];
+    state.usersVisibleCount = 0;
+    state.auditVisibleCount = 0;
     $("usersBody").innerHTML = "";
     $("auditBody").innerHTML = "";
     $("statUsers").textContent = "-";
@@ -4095,7 +4207,19 @@ function bindScrollLoad() {
       window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - threshold;
     if (!nearBottom) return;
     loadMoreInventoryIfNeeded();
+    loadMoreProductEditRequestsIfNeeded();
+    loadMoreBatchInboundOrdersIfNeeded();
+    loadMoreFbaReplenishmentsIfNeeded();
+    loadMoreUsersIfNeeded();
+    loadMoreAuditIfNeeded();
   });
+
+  const myAuditCard = document.querySelector("#myAuditModal .modal-card");
+  if (myAuditCard) {
+    myAuditCard.addEventListener("scroll", () => {
+      loadMoreMyAuditIfNeeded();
+    });
+  }
 }
 
 function bindRefresh() {
