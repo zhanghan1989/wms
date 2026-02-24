@@ -418,7 +418,6 @@ async function loadMe() {
   if (!state.token) {
     state.me = null;
     $("sessionInfo").textContent = "未登录";
-    $("meCard").textContent = "-";
     setAuthGate(false);
     applyRoleView();
     return;
@@ -426,8 +425,7 @@ async function loadMe() {
 
   try {
     state.me = await request("/auth/me");
-    $("sessionInfo").textContent = `${state.me.username} (${state.me.role})`;
-    $("meCard").textContent = JSON.stringify(state.me, null, 2);
+    $("sessionInfo").textContent = `${state.me.username}`;
     setAuthGate(true);
     applyRoleView();
   } catch {
@@ -435,7 +433,6 @@ async function loadMe() {
     state.me = null;
     localStorage.removeItem("wms_token");
     $("sessionInfo").textContent = "登录失效";
-    $("meCard").textContent = "-";
     setAuthGate(false);
     applyRoleView();
   }
