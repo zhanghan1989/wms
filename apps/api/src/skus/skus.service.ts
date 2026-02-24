@@ -228,6 +228,8 @@ export class SkusService {
 
       const sku = this.pickField(normalized, [
         'sku',
+        'sku(fba编码)',
+        'skufba编码',
         '产品sku',
         '商品sku',
       ]);
@@ -238,10 +240,10 @@ export class SkusService {
 
       result.push({
         sku,
-        erpSku: this.pickField(normalized, ['erpsku', 'erp sku', 'erp_sku']),
+        erpSku: this.pickField(normalized, ['erpsku', 'erp sku', 'erp_sku', 'rb编码', 'rbcode', 'rb']),
         asin: this.pickField(normalized, ['asin']),
         fnsku: this.pickField(normalized, ['fnsku']),
-        fbmSku: this.pickField(normalized, ['fbmsku', 'fbm sku', 'fbm_sku', 'fbm']),
+        fbmSku: this.pickField(normalized, ['fbmsku', 'fbm sku', 'fbm_sku', 'fbm', 'fbm编码', 'fbmcode']),
         model: this.pickField(normalized, ['model', '型号']),
         brand: this.pickField(normalized, ['brand', '品牌', '说明1']),
         type: this.pickField(normalized, ['type', '类型', '说明2']),
@@ -260,7 +262,7 @@ export class SkusService {
 
   private normalizeHeader(header: string): string {
     return String(header || '')
-      .replace(/[\s_\-]/g, '')
+      .replace(/[\s_\-()（）\[\]【】]/g, '')
       .toLowerCase();
   }
 
