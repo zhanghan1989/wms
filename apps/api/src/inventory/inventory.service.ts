@@ -41,6 +41,7 @@ export class InventoryService {
     return this.prisma.sku.findMany({
       where: {
         OR: [
+          { model: { contains: key } },
           { sku: { contains: key } },
           { erpSku: { contains: key } },
           { asin: { contains: key } },
