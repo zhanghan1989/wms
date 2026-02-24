@@ -213,6 +213,26 @@ function focusInventorySearch() {
   setTimeout(() => input.focus(), 0);
 }
 
+async function openInventoryHomeDefault() {
+  switchPanel("inventory");
+  const keywordInput = $("inventoryKeyword");
+  if (keywordInput) {
+    keywordInput.value = "";
+  }
+
+  setInventoryDisplayMode(false);
+
+  if (state.inventorySortedSkus.length) {
+    state.inventoryVisibleCount = state.inventoryPageSize;
+    renderInventoryTable();
+    focusInventorySearch();
+    return;
+  }
+
+  await loadInventory();
+  focusInventorySearch();
+}
+
 function switchPanel(targetId) {
   document.querySelectorAll(".nav-btn").forEach((button) => button.classList.remove("active"));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
@@ -2730,9 +2750,12 @@ function bindForms() {
     }
   });
 
-  $("openInventoryHome").addEventListener("click", () => {
-    switchPanel("inventory");
-    focusInventorySearch();
+  $("openInventoryHome").addEventListener("click", async () => {
+    try {
+      await openInventoryHomeDefault();
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   $("openOverseasWarehousePanel").addEventListener("click", async () => {
