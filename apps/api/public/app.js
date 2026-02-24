@@ -688,9 +688,6 @@ function renderInventoryTable() {
       return `
       <tr class="inventory-main-row">
         <td>${escapeHtml(displayText(sku.model))}</td>
-        <td>${escapeHtml(displayText(sku.color))}</td>
-        <td>${escapeHtml(displayText(sku.type))}</td>
-        <td>${escapeHtml(displayText(sku.brand))}</td>
         <td>${escapeHtml(displayText(sku.remark))}</td>
         <td>${escapeHtml(displayText(sku.shop))}</td>
         <td>${escapeHtml(sku.sku)}</td>
@@ -705,7 +702,7 @@ function renderInventoryTable() {
     })
     .join("");
 
-  $("inventoryBody").innerHTML = html || '<tr><td colspan="9" class="muted">-</td></tr>';
+  $("inventoryBody").innerHTML = html || '<tr><td colspan="6" class="muted">-</td></tr>';
 }
 
 function loadMoreInventoryIfNeeded() {
