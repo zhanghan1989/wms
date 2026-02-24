@@ -572,6 +572,24 @@
     </div>
   </div>
 
+  <div id="resetUserPasswordModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>初始化密码</h3>
+        <button type="button" class="ghost" data-action="closeResetUserPasswordModal">关闭</button>
+      </div>
+      <form id="resetUserPasswordForm" class="form-grid modal-grid">
+        <input id="resetPasswordUserId" type="hidden" />
+        <label>用户名<input id="resetPasswordUsername" readonly /></label>
+        <label>新密码<input id="resetPasswordNewPassword" type="text" minlength="6" maxlength="64" required /></label>
+        <div class="modal-actions">
+          <button type="submit">确认</button>
+          <button type="button" class="ghost" data-action="closeResetUserPasswordModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="adjustModal" class="modal hidden">
     <div class="modal-card modal-adjust">
       <div class="modal-head">

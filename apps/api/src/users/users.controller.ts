@@ -6,6 +6,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CreateUserDto } from './dto/create-user.dto';
+import { ResetUserPasswordDto } from './dto/reset-user-password.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
@@ -37,6 +38,16 @@ export class UsersController {
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
     return this.usersService.update(id, payload, user.id, user.role, req.requestId);
+  }
+
+  @Post(':id/reset-password')
+  async resetPassword(
+    @Param('id') id: string,
+    @Body() payload: ResetUserPasswordDto,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<{ success: boolean }> {
+    return this.usersService.resetPassword(id, payload.password, user.id, req.requestId);
   }
 
   @Delete(':id')

@@ -23,6 +23,7 @@ const state = {
   fbaPendingByBoxSku: {},
   selectedProductEditRequestId: null,
   selectedEditUserId: null,
+  selectedResetPasswordUserId: null,
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
@@ -465,6 +466,15 @@ async function loadUsers() {
             <button
               type="button"
               class="tiny-btn"
+              data-action="resetUserPassword"
+              data-id="${escapeHtml(user.id)}"
+              data-username="${escapeHtml(user.username)}"
+            >
+              初始化密码
+            </button>
+            <button
+              type="button"
+              class="tiny-btn"
               data-action="toggleUserStatus"
               data-id="${escapeHtml(user.id)}"
               data-username="${escapeHtml(user.username)}"
@@ -496,6 +506,14 @@ function openEditUserModal(userId, username, role) {
   $("editUsername").dataset.original = String(username || "");
   $("editUserRole").value = role === "admin" ? "admin" : "employee";
   openModal("editUserModal");
+}
+
+function openResetUserPasswordModal(userId, username) {
+  state.selectedResetPasswordUserId = String(userId);
+  $("resetPasswordUserId").value = String(userId);
+  $("resetPasswordUsername").value = String(username || "");
+  $("resetPasswordNewPassword").value = "";
+  openModal("resetUserPasswordModal");
 }
 
 async function getSkuInventoryRows(skuId) {
@@ -2672,6 +2690,38 @@ function bindForms() {
     }
   });
 
+  $("resetUserPasswordForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const userId = String($("resetPasswordUserId").value || "").trim();
+      if (!userId) {
+        throw new Error("未选择员工");
+      }
+      const username = String($("resetPasswordUsername").value || "").trim();
+      const password = String($("resetPasswordNewPassword").value || "").trim();
+      if (password.length < 6 || password.length > 64) {
+        throw new Error("密码长度需为6到64位");
+      }
+
+      await request(`/users/${encodeURIComponent(userId)}/reset-password`, {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+
+      if (username) {
+        state.plainPasswords[username] = password;
+        localStorage.setItem("wms_plain_password_map", JSON.stringify(state.plainPasswords));
+      }
+
+      closeModal("resetUserPasswordModal");
+      state.selectedResetPasswordUserId = null;
+      showToast("密码已更新");
+      await Promise.all([loadUsers(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("createShelfForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -3638,6 +3688,11 @@ function bindDelegates() {
         return;
       }
 
+      if (button.dataset.action === "resetUserPassword") {
+        openResetUserPasswordModal(userId, username);
+        return;
+      }
+
       if (button.dataset.action === "toggleUserStatus") {
         const nextStatus = Number(button.dataset.nextStatus);
         if (![0, 1].includes(nextStatus)) {
@@ -3787,6 +3842,12 @@ function bindDelegates() {
       state.selectedEditUserId = null;
       return;
     }
+    const resetUserPasswordClose = event.target.closest("button[data-action='closeResetUserPasswordModal']");
+    if (resetUserPasswordClose) {
+      closeModal("resetUserPasswordModal");
+      state.selectedResetPasswordUserId = null;
+      return;
+    }
     const editClose = event.target.closest("button[data-action='closeEditSkuModal']");
     if (editClose) {
       closeModal("editSkuModal");
@@ -3884,6 +3945,13 @@ function bindDelegates() {
     if (event.target === event.currentTarget) {
       closeModal("editUserModal");
       state.selectedEditUserId = null;
+    }
+  });
+
+  $("resetUserPasswordModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("resetUserPasswordModal");
+      state.selectedResetPasswordUserId = null;
     }
   });
 

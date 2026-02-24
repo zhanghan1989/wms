@@ -192,4 +192,52 @@ export class UsersService {
     });
     return { success: true };
   }
+
+  async resetPassword(
+    idParam: string,
+    password: string,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ success: boolean }> {
+    const id = parseId(idParam, 'userId');
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('用户不存在');
+
+    const nextPassword = String(password || '').trim();
+    if (!nextPassword || nextPassword.length < 6 || nextPassword.length > 64) {
+      throw new BadRequestException('密码长度需为6到64位');
+    }
+
+    const passwordHash = await hash(nextPassword, 10);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: { passwordHash },
+      });
+      await this.auditService.create({
+        db: tx,
+        entityType: 'user',
+        entityId: id,
+        action: AuditAction.update,
+        eventType: AuditEventType.USER_UPDATED,
+        beforeData: {
+          username: user.username,
+          role: user.role,
+          status: user.status,
+          passwordReset: false,
+        },
+        afterData: {
+          username: user.username,
+          role: user.role,
+          status: user.status,
+          passwordReset: true,
+        },
+        operatorId,
+        requestId,
+      });
+    });
+
+    return { success: true };
+  }
 }
