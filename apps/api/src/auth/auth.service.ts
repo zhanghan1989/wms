@@ -28,7 +28,7 @@ export class AuthService {
         passwordHash: true,
       },
     });
-    if (!user || user.status === 0) {
+    if (!user || user.status !== 1) {
       throw new UnauthorizedException('用户名或密码错误');
     }
 
@@ -64,7 +64,7 @@ export class AuthService {
         status: true,
       },
     });
-    if (!user) {
+    if (!user || user.status !== 1) {
       throw new UnauthorizedException('用户不存在');
     }
     return user;
@@ -86,7 +86,7 @@ export class AuthService {
         passwordHash: true,
       },
     });
-    if (!user || user.status === 0) {
+    if (!user || user.status !== 1) {
       throw new UnauthorizedException('用户不存在');
     }
 

@@ -452,6 +452,29 @@ async function loadUsers() {
         <td>${escapeHtml(getRoleText(user.role))}</td>
         <td>${getStatusText(user.status)}</td>
         <td>${formatDate(user.updatedAt)}</td>
+        <td>
+          <div class="action-row">
+            <button
+              type="button"
+              class="tiny-btn"
+              data-action="toggleUserStatus"
+              data-id="${escapeHtml(user.id)}"
+              data-username="${escapeHtml(user.username)}"
+              data-next-status="${Number(user.status) === 1 ? 0 : 1}"
+            >
+              ${Number(user.status) === 1 ? "禁用" : "启用"}
+            </button>
+            <button
+              type="button"
+              class="tiny-btn danger"
+              data-action="deleteUser"
+              data-id="${escapeHtml(user.id)}"
+              data-username="${escapeHtml(user.username)}"
+            >
+              删除
+            </button>
+          </div>
+        </td>
       </tr>
     `,
     )
@@ -3536,6 +3559,71 @@ function bindDelegates() {
     if (!Number.isInteger(skuId) || skuId <= 0) return;
     try {
       await openEditSkuModal(skuId);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("usersBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const userId = String(button.dataset.id || "").trim();
+    const username = String(button.dataset.username || "").trim();
+    if (!userId) return;
+
+    try {
+      if (button.dataset.action === "toggleUserStatus") {
+        const nextStatus = Number(button.dataset.nextStatus);
+        if (![0, 1].includes(nextStatus)) {
+          throw new Error("状态值无效");
+        }
+        const actionLabel = nextStatus === 1 ? "启用" : "禁用";
+        const ok = await openActionConfirmModal(
+          `确认${actionLabel}员工 ${username} 吗？`,
+          `${actionLabel}员工`,
+          actionLabel,
+        );
+        if (!ok) return;
+
+        await request(`/users/${encodeURIComponent(userId)}`, {
+          method: "PUT",
+          body: JSON.stringify({ status: nextStatus }),
+        });
+        showToast(`员工已${actionLabel}`);
+        await Promise.all([loadUsers(), loadAudit()]);
+
+        if (String(state.me?.id || "") === userId && nextStatus !== 1) {
+          state.token = "";
+          state.me = null;
+          localStorage.removeItem("wms_token");
+          showToast("当前用户已被禁用，请重新登录");
+          await reloadAll();
+          switchPanel("overview");
+        }
+        return;
+      }
+
+      if (button.dataset.action === "deleteUser") {
+        const ok = await openDeleteConfirmModal(`确认删除员工 ${username} 吗？`);
+        if (!ok) return;
+
+        await request(`/users/${encodeURIComponent(userId)}`, {
+          method: "DELETE",
+        });
+        delete state.plainPasswords[username];
+        localStorage.setItem("wms_plain_password_map", JSON.stringify(state.plainPasswords));
+        showToast("员工已删除");
+        await Promise.all([loadUsers(), loadAudit()]);
+
+        if (String(state.me?.id || "") === userId) {
+          state.token = "";
+          state.me = null;
+          localStorage.removeItem("wms_token");
+          showToast("当前用户已被删除，请重新登录");
+          await reloadAll();
+          switchPanel("overview");
+        }
+      }
     } catch (error) {
       showToast(error.message, true);
     }

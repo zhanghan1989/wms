@@ -295,6 +295,15 @@ h3 {
   padding: 6px 10px;
   font-size: 14px;
   line-height: 1.2;
+  justify-self: start;
+}
+
+.create-user-btn {
+  width: auto;
+  padding: 6px 12px;
+  font-size: 14px;
+  line-height: 1.2;
+  justify-self: start;
 }
 
 .adjust-single-col {
