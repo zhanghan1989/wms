@@ -75,12 +75,16 @@ jobs:
             git reset --hard origin/main
             git rev-parse --short HEAD
             docker compose up -d db redis
-            if [ "${{ steps.migration_check.outputs.should_run }}" = "true" ]; then
-              echo "Migration changes detected. Running prisma migrate deploy..."
-              docker compose run --rm --build api npm run -w api prisma:migrate:deploy
-            else
-              echo "No migration changes detected. Skip prisma migrate deploy."
-            fi
+            SHOULD_RUN_MIGRATIONS="${{ steps.migration_check.outputs.should_run }}"
+            case "${SHOULD_RUN_MIGRATIONS}" in
+              true)
+                echo "Migration changes detected. Running prisma migrate deploy..."
+                docker compose run --rm --build api npm run -w api prisma:migrate:deploy
+                ;;
+              *)
+                echo "No migration changes detected. Skip prisma migrate deploy."
+                ;;
+            esac
             docker compose up -d --build api
             docker compose ps
             docker compose logs --tail=120 api || true
