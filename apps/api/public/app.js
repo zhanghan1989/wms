@@ -2617,8 +2617,8 @@ function bindForms() {
     switchPanel("overview");
   };
 
-  $("logoutBtn").addEventListener("click", handleLogout);
-  $("topLogoutBtn").addEventListener("click", handleLogout);
+  $("logoutBtn")?.addEventListener("click", handleLogout);
+  $("topLogoutBtn")?.addEventListener("click", handleLogout);
 
   $("createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
