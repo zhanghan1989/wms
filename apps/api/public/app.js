@@ -667,12 +667,12 @@ function renderInventoryTable() {
       return `
       <tr class="inventory-main-row">
         <td>${escapeHtml(displayText(sku.model))}</td>
-        <td>${escapeHtml(displayText(sku.brand))}</td>
-        <td>${escapeHtml(displayText(sku.type))}</td>
         <td>${escapeHtml(displayText(sku.color))}</td>
+        <td>${escapeHtml(displayText(sku.type))}</td>
+        <td>${escapeHtml(displayText(sku.brand))}</td>
         <td>${escapeHtml(displayText(sku.remark))}</td>
-        <td>${escapeHtml(sku.sku)}</td>
         <td>${escapeHtml(displayText(sku.shop))}</td>
+        <td>${escapeHtml(sku.sku)}</td>
         <td>${renderQtyWithPending(totalQty, pendingQty)}</td>
         <td>
           <div class="action-row">
