@@ -50,6 +50,21 @@ jobs:
             docker compose ps
             docker compose logs --tail=120 api || true
             echo "Smoke check static assets..."
+            READY=0
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:3000/ >/dev/null 2>&1; then
+                READY=1
+                echo "API is ready (attempt ${i})."
+                break
+              fi
+              sleep 2
+            done
+            if [ "${READY}" -ne 1 ]; then
+              echo "API readiness check timeout."
+              docker compose ps
+              docker compose logs --tail=200 api || true
+              exit 1
+            fi
             curl -fI http://127.0.0.1:3000/
             curl -fI http://127.0.0.1:3000/app.js
             curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
