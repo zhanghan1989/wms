@@ -1,4 +1,19 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  Req,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -24,6 +39,24 @@ export class SkusController {
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
     return this.skusService.create(payload, user.id, req.requestId);
+  }
+
+  @Post('import-excel')
+  @UseInterceptors(FileInterceptor('file'))
+  async importExcel(
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    if (!file?.buffer) {
+      throw new BadRequestException('请上传Excel文件');
+    }
+    return this.skusService.importExcel(
+      file.buffer,
+      file.originalname,
+      user.id,
+      req.requestId,
+    );
   }
 
   @Put(':id')

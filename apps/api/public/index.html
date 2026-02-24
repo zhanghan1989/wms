@@ -200,6 +200,7 @@
           <h3>基础操作</h3>
           <div class="action-row">
             <button type="button" id="openCreateSkuModal">新增产品</button>
+            <button type="button" id="openBulkSkuUploadModal">批量上传产品</button>
             <button type="button" id="openBrandManageModal">品牌管理</button>
             <button type="button" id="openSkuTypeManageModal">类型管理</button>
             <button type="button" id="openShopManageModal">店铺管理</button>
@@ -460,6 +461,25 @@
         <div class="modal-actions">
           <button type="submit">确认新增</button>
           <button type="button" class="ghost" data-action="closeCreateSkuModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="bulkSkuUploadModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>批量上传产品</h3>
+        <button type="button" class="ghost" data-action="closeBulkSkuUploadModal">关闭</button>
+      </div>
+      <form id="bulkSkuUploadForm" class="form-grid modal-grid">
+        <label class="create-sku-full-row">
+          Excel 文件
+          <input id="bulkSkuUploadFile" type="file" accept=".xlsx,.xls,.csv" required />
+        </label>
+        <div class="modal-actions">
+          <button type="submit">上传并处理</button>
+          <button type="button" class="ghost" data-action="closeBulkSkuUploadModal">取消</button>
         </div>
       </form>
     </div>

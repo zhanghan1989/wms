@@ -2379,6 +2379,18 @@ async function createSkuFromModal() {
   });
 }
 
+async function importSkusFromExcel(file) {
+  if (!file) {
+    throw new Error("请先选择Excel文件");
+  }
+  const formData = new FormData();
+  formData.append("file", file);
+  return request("/skus/import-excel", {
+    method: "POST",
+    body: formData,
+  });
+}
+
 async function createBoxFromSkuModal() {
   const boxCode = buildBoxCode($("modalNewBoxCodeDigits").value);
   const shelfId = Number($("modalNewBoxShelfId").value);
@@ -2960,6 +2972,11 @@ function bindForms() {
     openModal("createSkuModal");
   });
 
+  $("openBulkSkuUploadModal").addEventListener("click", () => {
+    $("bulkSkuUploadForm").reset();
+    openModal("bulkSkuUploadModal");
+  });
+
   const openCreateBoxModal = async () => {
     if (!state.shelves.length) {
       await loadShelves().catch((error) => showToast(error.message, true));
@@ -3091,6 +3108,26 @@ function bindForms() {
       await loadBoxes();
       await loadInventory();
       await loadAudit();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("bulkSkuUploadForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const file = $("bulkSkuUploadFile").files?.[0];
+      const result = await importSkusFromExcel(file);
+      closeModal("bulkSkuUploadModal");
+      showToast(
+        `上传完成：共${result.totalRows}行，新增${result.createdCount}条，生成编辑申请${result.editRequestCount}条`,
+      );
+      await Promise.all([
+        loadInventory(),
+        loadProductEditRequests(),
+        loadProductEditPendingSummary(),
+        loadAudit(),
+      ]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3811,6 +3848,11 @@ function bindDelegates() {
       closeModal("createSkuModal");
       return;
     }
+    const bulkSkuUploadClose = event.target.closest("button[data-action='closeBulkSkuUploadModal']");
+    if (bulkSkuUploadClose) {
+      closeModal("bulkSkuUploadModal");
+      return;
+    }
     const boxClose = event.target.closest("button[data-action='closeCreateBoxFromSkuModal']");
     if (boxClose) {
       closeModal("createBoxFromSkuModal");
@@ -3908,6 +3950,12 @@ function bindDelegates() {
   $("createSkuModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("createSkuModal");
+    }
+  });
+
+  $("bulkSkuUploadModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("bulkSkuUploadModal");
     }
   });
 
