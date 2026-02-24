@@ -4,6 +4,11 @@ import { IsEnum, IsOptional, IsString, Length, Max, Min } from 'class-validator'
 export class UpdateUserDto {
   @IsOptional()
   @IsString()
+  @Length(3, 64)
+  username?: string;
+
+  @IsOptional()
+  @IsString()
   @Length(6, 64)
   password?: string;
 

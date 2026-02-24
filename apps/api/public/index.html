@@ -361,10 +361,10 @@
               <option value="admin">管理者</option>
             </select>
           </label>
-          <button type="submit" class="create-user-btn">新增员工</button>
+          <button type="submit" class="create-user-btn">新增</button>
         </form>
         <table>
-          <thead><tr><th>用户名</th><th>密码（明文）</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </section>
@@ -544,6 +544,29 @@
         <div class="modal-actions">
           <button type="submit">保存</button>
           <button type="button" class="ghost" data-action="closeProfileModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="editUserModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>编辑员工</h3>
+        <button type="button" class="ghost" data-action="closeEditUserModal">关闭</button>
+      </div>
+      <form id="editUserForm" class="form-grid modal-grid">
+        <input id="editUserId" type="hidden" />
+        <label>用户名<input id="editUsername" required minlength="3" maxlength="64" /></label>
+        <label>角色
+          <select id="editUserRole" required>
+            <option value="employee">员工</option>
+            <option value="admin">管理者</option>
+          </select>
+        </label>
+        <div class="modal-actions">
+          <button type="submit">确认保存</button>
+          <button type="button" class="ghost" data-action="closeEditUserModal">取消</button>
         </div>
       </form>
     </div>
@@ -744,3 +767,4 @@
   <script type="module" src="/app.js"></script>
 </body>
 </html>
+

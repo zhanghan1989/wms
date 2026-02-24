@@ -88,6 +88,7 @@ export class UsersService {
     idParam: string,
     payload: UpdateUserDto,
     operatorId: bigint,
+    operatorRole: Role,
     requestId?: string,
   ): Promise<unknown> {
     const id = parseId(idParam, 'userId');
@@ -95,13 +96,34 @@ export class UsersService {
     if (!user) throw new NotFoundException('用户不存在');
 
     const data: {
+      username?: string;
       passwordHash?: string;
       role?: Role;
       status?: number;
     } = {};
+
+    const username = payload.username?.trim();
+    if (username && username !== user.username) {
+      const exists = await this.prisma.user.findUnique({
+        where: { username },
+      });
+      if (exists && exists.id !== user.id) {
+        throw new BadRequestException('用户名已存在');
+      }
+      data.username = username;
+    }
+
+    const nextRole = payload.role ?? user.role;
     if (payload.password) {
+      if (operatorRole !== Role.admin) {
+        throw new BadRequestException('仅管理者可初始化密码');
+      }
+      if (user.role !== Role.employee || nextRole !== Role.employee) {
+        throw new BadRequestException('仅可初始化员工账号密码，管理者账号不允许初始化');
+      }
       data.passwordHash = await hash(payload.password, 10);
     }
+
     if (payload.role) data.role = payload.role;
     if (typeof payload.status === 'number') data.status = payload.status;
 

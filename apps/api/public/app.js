@@ -22,6 +22,7 @@ const state = {
   fbaPendingBySku: {},
   fbaPendingByBoxSku: {},
   selectedProductEditRequestId: null,
+  selectedEditUserId: null,
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
@@ -446,12 +447,21 @@ async function loadUsers() {
       (user) => `
       <tr>
         <td>${escapeHtml(user.username)}</td>
-        <td>${escapeHtml(state.plainPasswords[user.username] || "-")}</td>
         <td>${escapeHtml(getRoleText(user.role))}</td>
         <td>${getStatusText(user.status)}</td>
         <td>${formatDate(user.updatedAt)}</td>
         <td>
           <div class="action-row">
+            <button
+              type="button"
+              class="tiny-btn"
+              data-action="editUser"
+              data-id="${escapeHtml(user.id)}"
+              data-username="${escapeHtml(user.username)}"
+              data-role="${escapeHtml(user.role)}"
+            >
+              编辑
+            </button>
             <button
               type="button"
               class="tiny-btn"
@@ -477,6 +487,15 @@ async function loadUsers() {
     `,
     )
     .join("");
+}
+
+function openEditUserModal(userId, username, role) {
+  state.selectedEditUserId = String(userId);
+  $("editUserId").value = String(userId);
+  $("editUsername").value = String(username || "");
+  $("editUsername").dataset.original = String(username || "");
+  $("editUserRole").value = role === "admin" ? "admin" : "employee";
+  openModal("editUserModal");
 }
 
 async function getSkuInventoryRows(skuId) {
@@ -2607,6 +2626,52 @@ function bindForms() {
     }
   });
 
+  $("editUserForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const userId = String($("editUserId").value || "").trim();
+      if (!userId) {
+        throw new Error("未选择员工");
+      }
+
+      const username = $("editUsername").value.trim();
+      const originalUsername = String($("editUsername").dataset.original || "").trim();
+      const role = $("editUserRole").value;
+      if (!username) {
+        throw new Error("请输入用户名");
+      }
+
+      const payload = {
+        username,
+        role,
+      };
+
+      await request(`/users/${encodeURIComponent(userId)}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+
+      if (originalUsername && originalUsername !== username) {
+        const hasOldPassword = Object.prototype.hasOwnProperty.call(
+          state.plainPasswords,
+          originalUsername,
+        );
+        if (hasOldPassword) {
+          state.plainPasswords[username] = state.plainPasswords[originalUsername];
+          delete state.plainPasswords[originalUsername];
+        }
+      }
+      localStorage.setItem("wms_plain_password_map", JSON.stringify(state.plainPasswords));
+
+      closeModal("editUserModal");
+      state.selectedEditUserId = null;
+      showToast("员工信息已更新");
+      await Promise.all([loadUsers(), loadAudit(), loadMe()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("createShelfForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -3567,6 +3632,12 @@ function bindDelegates() {
     if (!userId) return;
 
     try {
+      if (button.dataset.action === "editUser") {
+        const role = String(button.dataset.role || "employee");
+        openEditUserModal(userId, username, role);
+        return;
+      }
+
       if (button.dataset.action === "toggleUserStatus") {
         const nextStatus = Number(button.dataset.nextStatus);
         if (![0, 1].includes(nextStatus)) {
@@ -3710,6 +3781,12 @@ function bindDelegates() {
       closeModal("profileModal");
       return;
     }
+    const editUserClose = event.target.closest("button[data-action='closeEditUserModal']");
+    if (editUserClose) {
+      closeModal("editUserModal");
+      state.selectedEditUserId = null;
+      return;
+    }
     const editClose = event.target.closest("button[data-action='closeEditSkuModal']");
     if (editClose) {
       closeModal("editSkuModal");
@@ -3800,6 +3877,13 @@ function bindDelegates() {
   $("profileModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("profileModal");
+    }
+  });
+
+  $("editUserModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("editUserModal");
+      state.selectedEditUserId = null;
     }
   });
 
