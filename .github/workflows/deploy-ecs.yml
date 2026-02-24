@@ -68,7 +68,7 @@ jobs:
           key: ${{ secrets.ECS_SSH_KEY }}
           script_stop: true
           script: |
-            set -euxo pipefail
+            set -eu
             cd ~/wms
             git fetch --all --prune
             git checkout main
@@ -76,15 +76,13 @@ jobs:
             git rev-parse --short HEAD
             docker compose up -d db redis
             SHOULD_RUN_MIGRATIONS="${{ steps.migration_check.outputs.should_run }}"
-            case "${SHOULD_RUN_MIGRATIONS}" in
-              true)
-                echo "Migration changes detected. Running prisma migrate deploy..."
-                docker compose run --rm --build api npm run -w api prisma:migrate:deploy
-                ;;
-              *)
-                echo "No migration changes detected. Skip prisma migrate deploy."
-                ;;
-            esac
+            echo "SHOULD_RUN_MIGRATIONS=${SHOULD_RUN_MIGRATIONS}"
+            if [ "${SHOULD_RUN_MIGRATIONS}" = "true" ]; then
+              echo "Migration changes detected. Running prisma migrate deploy..."
+              docker compose run --rm --build api npm run -w api prisma:migrate:deploy
+            else
+              echo "No migration changes detected. Skip prisma migrate deploy."
+            fi
             docker compose up -d --build api
             docker compose ps
             docker compose logs --tail=120 api || true
