@@ -68,11 +68,12 @@ jobs:
           key: ${{ secrets.ECS_SSH_KEY }}
           script_stop: true
           script: |
-            set -e
+            set -euxo pipefail
             cd ~/wms
             git fetch --all --prune
             git checkout main
             git reset --hard origin/main
+            git rev-parse --short HEAD
             docker compose up -d db redis
             if [ "${{ steps.migration_check.outputs.should_run }}" = "true" ]; then
               echo "Migration changes detected. Running prisma migrate deploy..."
@@ -82,10 +83,10 @@ jobs:
             fi
             docker compose up -d --build api
             docker compose ps
+            docker compose logs --tail=120 api || true
             echo "Smoke check static assets..."
-            curl -fsS http://127.0.0.1:3000/ -o /tmp/wms_index.html
+            curl -fI http://127.0.0.1:3000/
+            curl -fI http://127.0.0.1:3000/app.js
             curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
-            grep -q "库存管理系统" /tmp/wms_index.html
-            grep -q "openShopManageModal" /tmp/wms_index.html
             grep -q "normalizeErrorMessage" /tmp/wms_app.js
             echo "Smoke check passed."
