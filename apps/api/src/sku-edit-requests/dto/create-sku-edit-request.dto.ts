@@ -56,4 +56,9 @@ export class CreateSkuEditRequestDto {
   @IsString()
   @Length(1, 32)
   fnsku?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 128)
+  fbmSku?: string;
 }

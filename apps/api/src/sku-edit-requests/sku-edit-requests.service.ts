@@ -11,6 +11,7 @@ type ProductSnapshot = {
   erpSku: string | null;
   asin: string | null;
   fnsku: string | null;
+  fbmSku: string | null;
   model: string | null;
   brand: string | null;
   type: string | null;
@@ -24,6 +25,7 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'erpSku',
   'asin',
   'fnsku',
+  'fbmSku',
   'model',
   'brand',
   'type',
@@ -45,6 +47,7 @@ function ensureSnapshot(value: unknown): ProductSnapshot {
     erpSku: normalizeNullableString(source.erpSku),
     asin: normalizeNullableString(source.asin),
     fnsku: normalizeNullableString(source.fnsku),
+    fbmSku: normalizeNullableString(source.fbmSku),
     model: normalizeNullableString(source.model),
     brand: normalizeNullableString(source.brand),
     type: normalizeNullableString(source.type),
@@ -131,6 +134,7 @@ export class SkuEditRequestsService {
       erpSku: normalizeNullableString(sku.erpSku),
       asin: normalizeNullableString(sku.asin),
       fnsku: normalizeNullableString(sku.fnsku),
+      fbmSku: normalizeNullableString(sku.fbmSku),
       model: normalizeNullableString(sku.model),
       brand: normalizeNullableString(sku.brand),
       type: normalizeNullableString(sku.type),
@@ -144,6 +148,7 @@ export class SkuEditRequestsService {
       erpSku: normalizeNullableString(payload.erpSku ?? sku.erpSku),
       asin: normalizeNullableString(payload.asin ?? sku.asin),
       fnsku: normalizeNullableString(payload.fnsku ?? sku.fnsku),
+      fbmSku: normalizeNullableString(payload.fbmSku ?? sku.fbmSku),
       model: normalizeNullableString(payload.model ?? sku.model),
       brand: normalizeNullableString(payload.brand ?? sku.brand),
       type: normalizeNullableString(payload.type ?? sku.type),
@@ -227,6 +232,7 @@ export class SkuEditRequestsService {
         erpSku: afterSnapshot.erpSku,
         asin: afterSnapshot.asin,
         fnsku: afterSnapshot.fnsku,
+        fbmSku: afterSnapshot.fbmSku,
         model: afterSnapshot.model,
         brand: afterSnapshot.brand,
         type: afterSnapshot.type,

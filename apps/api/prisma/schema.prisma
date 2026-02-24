@@ -193,6 +193,7 @@ model Sku {
   erpSku            String?                    @map("erp_sku") @db.VarChar(128)
   asin              String?                    @db.VarChar(32)
   fnsku             String?                    @db.VarChar(32)
+  fbmSku            String?                    @map("fbm_sku") @db.VarChar(128)
   model             String?                    @db.VarChar(255)
   brand             String?                    @db.VarChar(255)
   type              String?                    @db.VarChar(255)

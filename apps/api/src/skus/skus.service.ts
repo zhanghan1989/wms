@@ -18,6 +18,7 @@ type ImportSkuRow = {
   erpSku: string | null;
   asin: string | null;
   fnsku: string | null;
+  fbmSku: string | null;
   model: string | null;
   brand: string | null;
   type: string | null;
@@ -31,6 +32,7 @@ type ProductSnapshot = {
   erpSku: string | null;
   asin: string | null;
   fnsku: string | null;
+  fbmSku: string | null;
   model: string | null;
   brand: string | null;
   type: string | null;
@@ -44,6 +46,7 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'erpSku',
   'asin',
   'fnsku',
+  'fbmSku',
   'model',
   'brand',
   'type',
@@ -67,6 +70,7 @@ export class SkusService {
         { erpSku: { contains: q } },
         { asin: { contains: q } },
         { fnsku: { contains: q } },
+        { fbmSku: { contains: q } },
       ];
     }
     return this.prisma.sku.findMany({
@@ -237,6 +241,7 @@ export class SkusService {
         erpSku: this.pickField(normalized, ['erpsku', 'erp sku', 'erp_sku']),
         asin: this.pickField(normalized, ['asin']),
         fnsku: this.pickField(normalized, ['fnsku']),
+        fbmSku: this.pickField(normalized, ['fbmsku', 'fbm sku', 'fbm_sku', 'fbm']),
         model: this.pickField(normalized, ['model', '型号']),
         brand: this.pickField(normalized, ['brand', '品牌', '说明1']),
         type: this.pickField(normalized, ['type', '类型', '说明2']),
@@ -275,6 +280,7 @@ export class SkusService {
     erpSku: string | null;
     asin: string | null;
     fnsku: string | null;
+    fbmSku: string | null;
     model: string | null;
     brand: string | null;
     type: string | null;
@@ -287,6 +293,7 @@ export class SkusService {
       erpSku: this.normalizeNullableString(sku.erpSku),
       asin: this.normalizeNullableString(sku.asin),
       fnsku: this.normalizeNullableString(sku.fnsku),
+      fbmSku: this.normalizeNullableString(sku.fbmSku),
       model: this.normalizeNullableString(sku.model),
       brand: this.normalizeNullableString(sku.brand),
       type: this.normalizeNullableString(sku.type),
@@ -302,6 +309,7 @@ export class SkusService {
       erpSku: this.normalizeNullableString(row.erpSku) ?? beforeData.erpSku,
       asin: this.normalizeNullableString(row.asin) ?? beforeData.asin,
       fnsku: this.normalizeNullableString(row.fnsku) ?? beforeData.fnsku,
+      fbmSku: this.normalizeNullableString(row.fbmSku) ?? beforeData.fbmSku,
       model: this.normalizeNullableString(row.model) ?? beforeData.model,
       brand: this.normalizeNullableString(row.brand) ?? beforeData.brand,
       type: this.normalizeNullableString(row.type) ?? beforeData.type,
@@ -329,6 +337,7 @@ export class SkusService {
         erpSku: row.erpSku ?? undefined,
         asin: row.asin ?? undefined,
         fnsku: row.fnsku ?? undefined,
+        fbmSku: row.fbmSku ?? undefined,
         model: row.model ?? undefined,
         brand: row.brand ?? undefined,
         type: row.type ?? undefined,
@@ -352,3 +361,4 @@ export class SkusService {
     });
   }
 }
+

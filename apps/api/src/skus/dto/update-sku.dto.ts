@@ -18,6 +18,11 @@ export class UpdateSkuDto {
 
   @IsOptional()
   @IsString()
+  @Length(1, 128)
+  fbmSku?: string;
+
+  @IsOptional()
+  @IsString()
   @Length(1, 255)
   model?: string;
 

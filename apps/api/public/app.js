@@ -902,6 +902,7 @@ async function openEditSkuModal(skuId) {
   $("editErpSku").value = sku.erpSku || "";
   $("editAsin").value = sku.asin || "";
   $("editFnsku").value = sku.fnsku || "";
+  $("editFbmSku").value = sku.fbmSku || "";
   openModal("editSkuModal");
 }
 
@@ -923,6 +924,7 @@ async function submitEditSkuForm() {
     erpSku: $("editErpSku").value.trim() || undefined,
     asin: $("editAsin").value.trim() || undefined,
     fnsku: $("editFnsku").value.trim() || undefined,
+    fbmSku: $("editFbmSku").value.trim() || undefined,
   };
 
   await request("/sku-edit-requests", {
@@ -1228,9 +1230,10 @@ function renderProductEditRequestDetail(item) {
     ["shop", "所属亚马逊店铺"],
     ["remark", "备注"],
     ["sku", "SKU"],
-    ["erpSku", "erpSKU"],
     ["asin", "ASIN"],
     ["fnsku", "FNSKU"],
+    ["fbmSku", "FBMSKU"],
+    ["erpSku", "erpSKU"],
   ];
   const changedSet = new Set(Array.isArray(item?.changedFields) ? item.changedFields : []);
   const beforeData = item?.beforeData || {};
@@ -2348,6 +2351,7 @@ async function createSkuFromModal() {
   const erpSku = $("modalNewErpSku").value.trim() || undefined;
   const asin = $("modalNewAsin").value.trim() || undefined;
   const fnsku = $("modalNewFnsku").value.trim() || undefined;
+  const fbmSku = $("modalNewFbmSku").value.trim() || undefined;
   const rawBoxCode = $("modalNewSkuBoxCode").value;
   const boxCode = resolveEnabledBoxCode(rawBoxCode);
   const qty = Math.abs(Number($("modalNewSkuQty").value));
@@ -2365,7 +2369,7 @@ async function createSkuFromModal() {
 
   const createdSku = await request("/skus", {
     method: "POST",
-    body: JSON.stringify({ model, brand, type, color, shop, remark, sku, erpSku, asin, fnsku }),
+    body: JSON.stringify({ model, brand, type, color, shop, remark, sku, erpSku, asin, fnsku, fbmSku }),
   });
 
   await request("/inventory/manual-adjust", {
