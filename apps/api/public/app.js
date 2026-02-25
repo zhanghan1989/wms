@@ -134,9 +134,9 @@ const AUDIT_ENTITY_TEXT_MAP = {
   fba_replenishment: "FBA补货申请",
   product_edit_request: "产品编辑申请",
 };
-const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = "仅启用的佛山工厂管理者可确认编辑申请";
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = "仅佛山工厂管理者可确认编辑申请";
 const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_OVERSEAS =
-  "仅启用的日本海外仓管理者可确认erpSKU修改申请";
+  "仅日本海外仓管理者可确认erpSKU修改申请";
 
 function showToast(message, isError = false) {
   showErrorModal(message, isError);
@@ -429,9 +429,9 @@ function canCurrentUserConfirmOverseasProductEditRequest() {
 
 function getProductEditConfirmContactMessage(changedFields) {
   if (isErpSkuOnlyProductEditRequest(changedFields)) {
-    return "请联系启用的日本海外仓管理员确认";
+    return "请联系日本海外仓管理员确认";
   }
-  return "请联系启用的佛山工厂管理员确认";
+  return "请联系佛山工厂管理员确认";
 }
 
 function resolveProductEditConfirmPermission(changedFields) {
