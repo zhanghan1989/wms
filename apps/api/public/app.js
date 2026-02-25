@@ -13,6 +13,14 @@ const state = {
   inventoryVisibleCount: 0,
   inventoryPageSize: 30,
   inventorySearchMode: false,
+  inventorySearchKeyword: "",
+  inventorySearchPage: 0,
+  inventorySearchPageSize: 10,
+  inventorySearchHasMore: false,
+  inventorySearchLoading: false,
+  inventorySearchSkus: [],
+  inventorySearchLocationMap: new Map(),
+  inventorySearchBoxSkuMap: new Map(),
   users: [],
   usersById: new Map(),
   usersVisibleCount: 0,
@@ -275,6 +283,16 @@ function setInventoryDisplayMode(searchMode) {
   if (searchSection) searchSection.classList.toggle("hidden", !searchMode);
 }
 
+function resetInventorySearchState() {
+  state.inventorySearchKeyword = "";
+  state.inventorySearchPage = 0;
+  state.inventorySearchHasMore = false;
+  state.inventorySearchLoading = false;
+  state.inventorySearchSkus = [];
+  state.inventorySearchLocationMap = new Map();
+  state.inventorySearchBoxSkuMap = new Map();
+}
+
 function focusInventorySearch() {
   const panel = $("inventory");
   if (!panel || !panel.classList.contains("active")) return;
@@ -290,6 +308,7 @@ async function openInventoryHomeDefault() {
     keywordInput.value = "";
   }
 
+  resetInventorySearchState();
   setInventoryDisplayMode(false);
 
   if (state.inventorySortedSkus.length) {
@@ -1122,6 +1141,19 @@ function loadMoreInventoryIfNeeded() {
   renderInventoryTable();
 }
 
+function loadMoreInventorySearchIfNeeded() {
+  if (!state.inventorySearchMode) return;
+  if (!state.token) return;
+  if (!state.inventorySearchHasMore || state.inventorySearchLoading) return;
+  const inventoryPanel = $("inventory");
+  if (!inventoryPanel || !inventoryPanel.classList.contains("active")) return;
+  if (!state.inventorySearchKeyword) return;
+
+  searchInventoryProducts(state.inventorySearchKeyword, { append: true }).catch((error) => {
+    showToast(error.message, true);
+  });
+}
+
 async function loadInventory() {
   const skus = await request("/skus");
   state.inventorySkus = skus;
@@ -1146,6 +1178,7 @@ async function loadInventory() {
     return qtyB - qtyA;
   });
   state.inventoryVisibleCount = state.inventoryPageSize;
+  resetInventorySearchState();
   setInventoryDisplayMode(false);
   renderInventoryTable();
   await refreshMoveProductOldBoxOptionsBySku();
@@ -1221,33 +1254,94 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
     .join("");
 }
 
-async function searchInventoryProducts(keyword) {
-  const container = $("inventorySearchResults");
-  if (!keyword) {
+async function searchInventoryProducts(keyword, { append = false } = {}) {
+  const normalizedKeyword = String(keyword || "").trim();
+  if (!normalizedKeyword) {
+    resetInventorySearchState();
     setInventoryDisplayMode(false);
     renderInventoryTable();
     focusInventorySearch();
     return;
   }
 
-  setInventoryDisplayMode(true);
-  const skus = await request(`/inventory/search?keyword=${encodeURIComponent(keyword)}`);
-  const locationEntries = await Promise.all(
-    skus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
-  );
-  const boxIds = Array.from(
-    new Set(
-      locationEntries
-        .flatMap(([, rows]) => rows.map((row) => row.box?.id))
-        .filter((boxId) => boxId !== null && boxId !== undefined)
-        .map((boxId) => String(boxId)),
-    ),
-  );
-  const boxSkuEntries = await Promise.all(
-    boxIds.map(async (boxId) => [String(boxId), await getBoxSkuInventoryRows(boxId)]),
-  );
-  await loadFbaPendingSummary();
-  renderInventorySearchResults(skus, new Map(locationEntries), new Map(boxSkuEntries));
+  if (append && normalizedKeyword !== state.inventorySearchKeyword) {
+    return searchInventoryProducts(normalizedKeyword);
+  }
+
+  if (append) {
+    if (state.inventorySearchLoading || !state.inventorySearchHasMore) {
+      return;
+    }
+  } else {
+    state.inventorySearchKeyword = normalizedKeyword;
+    state.inventorySearchPage = 0;
+    state.inventorySearchHasMore = true;
+    state.inventorySearchSkus = [];
+    state.inventorySearchLocationMap = new Map();
+    state.inventorySearchBoxSkuMap = new Map();
+  }
+
+  const nextPage = append ? state.inventorySearchPage + 1 : 1;
+  const pageSize = state.inventorySearchPageSize;
+  state.inventorySearchLoading = true;
+
+  try {
+    const skus = await request(
+      `/inventory/search?keyword=${encodeURIComponent(normalizedKeyword)}&page=${nextPage}&pageSize=${pageSize}`,
+    );
+    const existingSkuIds = new Set(state.inventorySearchSkus.map((sku) => String(sku.id)));
+    const nextSkus = append ? [...state.inventorySearchSkus] : [];
+    const pageSkus = skus.filter((sku) => {
+      const skuId = String(sku?.id || "");
+      if (!skuId || existingSkuIds.has(skuId)) {
+        return false;
+      }
+      existingSkuIds.add(skuId);
+      return true;
+    });
+    nextSkus.push(...pageSkus);
+
+    const locationEntries = await Promise.all(
+      pageSkus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
+    );
+    const nextLocationMap = append ? new Map(state.inventorySearchLocationMap) : new Map();
+    locationEntries.forEach(([skuId, rows]) => {
+      nextLocationMap.set(String(skuId), rows);
+    });
+
+    const boxIds = Array.from(
+      new Set(
+        locationEntries
+          .flatMap(([, rows]) => rows.map((row) => row.box?.id))
+          .filter((boxId) => boxId !== null && boxId !== undefined)
+          .map((boxId) => String(boxId)),
+      ),
+    );
+    const boxSkuEntries = await Promise.all(
+      boxIds.map(async (boxId) => [String(boxId), await getBoxSkuInventoryRows(boxId)]),
+    );
+    const nextBoxSkuMap = append ? new Map(state.inventorySearchBoxSkuMap) : new Map();
+    boxSkuEntries.forEach(([boxId, rows]) => {
+      nextBoxSkuMap.set(String(boxId), rows);
+    });
+
+    await loadFbaPendingSummary();
+    state.inventorySearchKeyword = normalizedKeyword;
+    state.inventorySearchPage = nextPage;
+    state.inventorySearchHasMore = skus.length >= pageSize;
+    state.inventorySearchSkus = nextSkus;
+    state.inventorySearchLocationMap = nextLocationMap;
+    state.inventorySearchBoxSkuMap = nextBoxSkuMap;
+
+    setInventoryDisplayMode(true);
+    renderInventorySearchResults(
+      state.inventorySearchSkus,
+      state.inventorySearchLocationMap,
+      state.inventorySearchBoxSkuMap,
+    );
+  } finally {
+    state.inventorySearchLoading = false;
+  }
 }
 
 function findSkuById(skuId) {
@@ -3028,6 +3122,7 @@ async function reloadAll() {
     renderProductEditPendingBadge();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
+    resetInventorySearchState();
     setInventoryDisplayMode(false);
     return;
   }
@@ -3071,6 +3166,7 @@ async function reloadAll() {
   if (firstError && firstError.status === "rejected") {
     throw firstError.reason;
   }
+  resetInventorySearchState();
   setInventoryDisplayMode(false);
   focusInventorySearch();
 }
@@ -4740,6 +4836,7 @@ function bindScrollLoad() {
       window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - threshold;
     if (!nearBottom) return;
     loadMoreInventoryIfNeeded();
+    loadMoreInventorySearchIfNeeded();
     loadMoreProductEditRequestsIfNeeded();
     loadMoreBatchInboundOrdersIfNeeded();
     loadMoreFbaReplenishmentsIfNeeded();

@@ -35,9 +35,12 @@ export class InventoryService {
     private readonly auditService: AuditService,
   ) {}
 
-  async searchSkus(keyword?: string): Promise<unknown[]> {
+  async searchSkus(keyword?: string, page = 1, pageSize = 10): Promise<unknown[]> {
     if (!keyword?.trim()) return [];
     const key = keyword.trim();
+    const safePage = Number.isInteger(page) && page > 0 ? page : 1;
+    const safePageSizeRaw = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 10;
+    const safePageSize = Math.min(50, safePageSizeRaw);
     return this.prisma.sku.findMany({
       where: {
         OR: [
@@ -49,7 +52,8 @@ export class InventoryService {
           { fbmSku: { contains: key } },
         ],
       },
-      take: 20,
+      skip: (safePage - 1) * safePageSize,
+      take: safePageSize,
       orderBy: { id: 'desc' },
     });
   }

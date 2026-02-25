@@ -27,7 +27,7 @@ export class InventoryController {
 
   @Get('search')
   async search(@Query() query: SearchSkuDto): Promise<unknown[]> {
-    return this.inventoryService.searchSkus(query.keyword);
+    return this.inventoryService.searchSkus(query.keyword, query.page, query.pageSize);
   }
 
   @Get('product-boxes')
