@@ -9,10 +9,12 @@ import {
   Put,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -30,6 +32,22 @@ export class SkusController {
   @Get()
   async list(@Query('q') q?: string): Promise<unknown[]> {
     return this.skusService.list(q);
+  }
+
+  @Get('upload-template')
+  async downloadUploadTemplate(@Res() res: Response): Promise<void> {
+    const file = await this.skusService.getUploadTemplate();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
   }
 
   @Post()

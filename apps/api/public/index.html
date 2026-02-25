@@ -650,9 +650,12 @@
           Excel 文件
           <input id="bulkSkuUploadFile" type="file" accept=".xlsx,.xls,.csv" required />
         </label>
-        <div class="modal-actions">
-          <button type="submit">上传并处理</button>
-          <button type="button" class="ghost" data-action="closeBulkSkuUploadModal">取消</button>
+        <div class="modal-actions modal-actions-split">
+          <button id="downloadSkuUploadTemplateBtn" type="button" class="ghost">下载模板</button>
+          <div class="actions">
+            <button type="submit">上传并处理</button>
+            <button type="button" class="ghost" data-action="closeBulkSkuUploadModal">取消</button>
+          </div>
         </div>
       </form>
     </div>

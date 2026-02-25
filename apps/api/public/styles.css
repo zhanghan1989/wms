@@ -1032,6 +1032,11 @@ button.danger-solid {
   gap: 8px;
 }
 
+.modal-actions-split {
+  justify-content: space-between;
+  align-items: center;
+}
+
 .hidden {
   display: none;
 }

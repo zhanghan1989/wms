@@ -4,7 +4,9 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { readFile } from 'fs/promises';
 import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
+import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
@@ -55,6 +57,7 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'remark',
 ];
 const ERP_SKU_FIELD: keyof ProductSnapshot = 'erpSku';
+const SKU_UPLOAD_TEMPLATE_FILE = '批量更新产品.xlsx';
 
 @Injectable()
 export class SkusService {
@@ -78,6 +81,28 @@ export class SkusService {
       where,
       orderBy: { id: 'desc' },
     });
+  }
+
+  async getUploadTemplate(): Promise<{ fileName: string; content: Buffer }> {
+    const cwd = process.cwd();
+    const candidates = [
+      join(cwd, 'docs', SKU_UPLOAD_TEMPLATE_FILE),
+      join(cwd, '..', '..', 'docs', SKU_UPLOAD_TEMPLATE_FILE),
+    ];
+
+    for (const templatePath of candidates) {
+      try {
+        const content = await readFile(templatePath);
+        return {
+          fileName: SKU_UPLOAD_TEMPLATE_FILE,
+          content,
+        };
+      } catch {
+        // try next candidate
+      }
+    }
+
+    throw new NotFoundException(`模板文件不存在：${SKU_UPLOAD_TEMPLATE_FILE}`);
   }
 
   async importExcel(
