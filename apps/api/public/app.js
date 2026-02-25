@@ -68,6 +68,50 @@ const DEFAULT_ROLE_OPTIONS = [
   { code: "admin", name: "管理者", status: 1, sort: 20 },
 ];
 
+const AUDIT_EVENT_TEXT_MAP = {
+  box_created: "新增箱号",
+  box_field_updated: "箱号信息更新",
+  box_renamed: "箱号重命名",
+  box_disabled: "禁用箱号",
+  box_deleted: "删除箱号",
+  box_stock_increased: "箱内库存增加",
+  box_stock_outbound: "箱内库存出库",
+  sku_created: "新增产品",
+  sku_field_updated: "产品信息更新",
+  sku_disabled: "禁用产品",
+  sku_deleted: "删除产品",
+  shelf_created: "新增货架",
+  shelf_field_updated: "货架信息更新",
+  shelf_disabled: "禁用货架",
+  shelf_deleted: "删除货架",
+  brand_created: "新增品牌",
+  brand_updated: "更新品牌",
+  brand_deleted: "删除品牌",
+  sku_type_created: "新增类型",
+  sku_type_updated: "更新类型",
+  sku_type_deleted: "删除类型",
+  shop_created: "新增店铺",
+  shop_updated: "更新店铺",
+  shop_deleted: "删除店铺",
+  user_created: "新增用户",
+  user_updated: "更新用户",
+  user_disabled: "禁用用户",
+  user_deleted: "删除用户",
+  inbound_order_created: "创建入库单",
+  inbound_order_confirmed: "确认入库单",
+  inbound_order_voided: "作废入库单",
+  outbound_order_created: "创建出库单",
+  outbound_order_confirmed: "确认出库单",
+  outbound_order_voided: "作废出库单",
+  stocktake_task_created: "创建盘点任务",
+  stocktake_task_started: "开始盘点任务",
+  stocktake_task_finished: "完成盘点任务",
+  stocktake_task_voided: "作废盘点任务",
+  inventory_adjust_created: "创建库存调整单",
+  inventory_adjust_confirmed: "确认库存调整单",
+  inventory_adjust_voided: "作废库存调整单",
+};
+
 function showToast(message, isError = false) {
   showErrorModal(message, isError);
 }
@@ -2454,6 +2498,12 @@ function formatAuditEntity(item) {
   return `${escapeHtml(item.entityType || "-")}#${escapeHtml(item.entityId || "-")}`;
 }
 
+function getAuditEventText(eventType) {
+  const code = String(eventType || "").trim();
+  if (!code) return "-";
+  return AUDIT_EVENT_TEXT_MAP[code] || code;
+}
+
 function renderAuditTable() {
   const body = $("auditBody");
   if (!body) return;
@@ -2466,13 +2516,12 @@ function renderAuditTable() {
         <td>${formatDate(item.createdAt)}</td>
         <td>${formatAuditEntity(item)}</td>
         <td>${escapeHtml(item.action)}</td>
-        <td>${escapeHtml(item.eventType)}</td>
+        <td>${escapeHtml(getAuditEventText(item.eventType))}</td>
         <td>${escapeHtml(item.operator?.username)}</td>
-        <td>${escapeHtml(item.requestId)}</td>
       </tr>
     `,
       )
-      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
 }
 
 function loadMoreAuditIfNeeded() {
@@ -2502,12 +2551,11 @@ function renderMyAuditTable() {
         <td>${formatDate(item.createdAt)}</td>
         <td>${formatAuditEntity(item)}</td>
         <td>${escapeHtml(item.action)}</td>
-        <td>${escapeHtml(item.eventType)}</td>
-        <td>${escapeHtml(item.requestId)}</td>
+        <td>${escapeHtml(getAuditEventText(item.eventType))}</td>
       </tr>
     `,
       )
-      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
 }
 
 function loadMoreMyAuditIfNeeded() {
