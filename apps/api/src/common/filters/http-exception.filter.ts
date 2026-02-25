@@ -66,6 +66,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (exception.code === 'P2021' || exception.code === 'P2022') {
       return '数据库结构未更新，请先执行 prisma migrate deploy。';
     }
+    if (exception.code === 'P2003') {
+      return '存在关联数据，无法删除或修改。请先处理关联记录。';
+    }
     return '数据库错误';
   }
 

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { hash } from 'bcryptjs';
-import { AuditAction, Department, Role } from '@prisma/client';
+import { AuditAction, Department, Prisma, Role } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../constants/audit-event-type';
 import { parseId } from '../common/utils';
@@ -195,28 +195,102 @@ export class UsersService {
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('用户不存在');
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.user.delete({
-        where: { id },
+    if (id === operatorId) {
+      throw new BadRequestException('不能删除当前登录用户，请使用其他管理员账号操作');
+    }
+
+    const check = await this.getDeleteCheck(id);
+    if (!check.canDelete) {
+      throw new BadRequestException(`用户无法删除：${check.reasons.join('；')}`);
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.user.delete({
+          where: { id },
+        });
+        await this.auditService.create({
+          db: tx,
+          entityType: 'user',
+          entityId: id,
+          action: AuditAction.delete,
+          eventType: AuditEventType.USER_DELETED,
+          beforeData: {
+            username: user.username,
+            role: user.role,
+            department: user.department,
+            status: user.status,
+          },
+          afterData: null,
+          operatorId,
+          requestId,
+        });
       });
-      await this.auditService.create({
-        db: tx,
-        entityType: 'user',
-        entityId: id,
-        action: AuditAction.delete,
-        eventType: AuditEventType.USER_DELETED,
-        beforeData: {
-          username: user.username,
-          role: user.role,
-          department: user.department,
-          status: user.status,
-        },
-        afterData: null,
-        operatorId,
-        requestId,
-      });
-    });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+        throw new BadRequestException('用户存在关联历史记录，无法删除。建议改为禁用。');
+      }
+      throw error;
+    }
     return { success: true };
+  }
+
+  private async getDeleteCheck(id: bigint): Promise<{ canDelete: boolean; reasons: string[] }> {
+    const [
+      inboundCount,
+      outboundCount,
+      stocktakeCount,
+      adjustCount,
+      batchInboundCount,
+      productEditCount,
+      fbaCreatedCount,
+      fbaConfirmedCount,
+      fbaOutboundCount,
+      fbaDeletedCount,
+      stockMovementCount,
+      auditLogCount,
+    ] = await Promise.all([
+      this.prisma.inboundOrder.count({ where: { createdBy: id } }),
+      this.prisma.outboundOrder.count({ where: { createdBy: id } }),
+      this.prisma.stocktakeTask.count({ where: { createdBy: id } }),
+      this.prisma.inventoryAdjustOrder.count({ where: { createdBy: id } }),
+      this.prisma.batchInboundOrder.count({ where: { createdBy: id } }),
+      this.prisma.productEditRequest.count({ where: { createdBy: id } }),
+      this.prisma.fbaReplenishment.count({ where: { createdBy: id } }),
+      this.prisma.fbaReplenishment.count({ where: { confirmedBy: id } }),
+      this.prisma.fbaReplenishment.count({ where: { outboundBy: id } }),
+      this.prisma.fbaReplenishment.count({ where: { deletedBy: id } }),
+      this.prisma.stockMovement.count({ where: { operatorId: id } }),
+      this.prisma.operationAuditLog.count({ where: { operatorId: id } }),
+    ]);
+
+    const reasons: string[] = [];
+    const orderCount =
+      inboundCount +
+      outboundCount +
+      stocktakeCount +
+      adjustCount +
+      batchInboundCount +
+      productEditCount +
+      fbaCreatedCount +
+      fbaConfirmedCount +
+      fbaOutboundCount +
+      fbaDeletedCount;
+
+    if (orderCount > 0) {
+      reasons.push(`存在 ${orderCount} 条业务单据记录`);
+    }
+    if (stockMovementCount > 0) {
+      reasons.push(`存在 ${stockMovementCount} 条库存流水记录`);
+    }
+    if (auditLogCount > 0) {
+      reasons.push(`存在 ${auditLogCount} 条操作日志记录`);
+    }
+
+    return {
+      canDelete: reasons.length === 0,
+      reasons,
+    };
   }
 
   async resetPassword(
