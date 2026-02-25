@@ -130,6 +130,11 @@ export class InventoryController {
     return this.inventoryService.getSkuInventoryTotals();
   }
 
+  @Get('dashboard')
+  async getOverviewDashboard(): Promise<unknown> {
+    return this.inventoryService.getOverviewDashboard();
+  }
+
   @Get('stock-adjustment-csv')
   async downloadStockAdjustmentCsv(@Res() res: Response): Promise<void> {
     const csv = await this.inventoryService.buildStockAdjustmentCsv();

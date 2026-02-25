@@ -54,6 +54,7 @@ const state = {
   departmentOptionEditingCodes: new Set(),
   roleOptionEditingCodes: new Set(),
   auditFbaRequestNoById: {},
+  overviewDashboard: null,
 };
 
 let deleteConfirmResolver = null;
@@ -495,6 +496,154 @@ function clearStats() {
   $("statShelves").textContent = "-";
   $("statBoxes").textContent = "-";
   $("statInboundDraft").textContent = "-";
+}
+
+function setTextById(id, text) {
+  const el = $(id);
+  if (el) {
+    el.textContent = text;
+  }
+}
+
+function formatOverviewNumber(value, fractionDigits = 0) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "-";
+  }
+  return numeric.toLocaleString(undefined, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  });
+}
+
+function formatOverviewRatio(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "-";
+  }
+  if (numeric >= 999) {
+    return "999+";
+  }
+  return formatOverviewNumber(numeric, 1);
+}
+
+function renderOverviewTable(bodyId, html, colspan) {
+  const body = $(bodyId);
+  if (!body) return;
+  body.innerHTML = html || `<tr><td colspan="${colspan}" class="muted">-</td></tr>`;
+}
+
+function clearOverviewDashboard() {
+  state.overviewDashboard = null;
+  [
+    "overviewTotalStock",
+    "overviewAvailableStock",
+    "overviewLockedStock",
+    "overviewInTransitStock",
+    "overviewOutOfStockSkuCount",
+    "overviewLowCoverageSkuCount",
+    "overviewCoverageDays",
+    "overviewAvgDailyOutbound",
+    "overviewOutboundQty7d",
+    "overviewOutboundQty14d",
+    "overviewOutboundQty30d",
+    "overviewDemandAvgDailyOutbound",
+    "overviewRecommendationCount",
+    "overviewRecommendationUrgentCount",
+    "overviewRecommendationHighCount",
+    "overviewRecommendationMediumCount",
+    "overviewTargetDays",
+  ].forEach((id) => setTextById(id, "-"));
+  renderOverviewTable("overviewTopDemandBody", "", 5);
+  renderOverviewTable("overviewAnomalyBody", "", 6);
+  renderOverviewTable("overviewProductionBody", "", 9);
+}
+
+function renderOverviewDashboard(data) {
+  const health = data?.health || {};
+  const demand = data?.demand || {};
+  const production = data?.production || {};
+
+  setTextById("overviewTotalStock", formatOverviewNumber(health.totalStock));
+  setTextById("overviewAvailableStock", formatOverviewNumber(health.availableStock));
+  setTextById("overviewLockedStock", formatOverviewNumber(health.lockedStock));
+  setTextById("overviewInTransitStock", formatOverviewNumber(health.inTransitStock));
+  setTextById("overviewOutOfStockSkuCount", formatOverviewNumber(health.outOfStockSkuCount));
+  setTextById("overviewLowCoverageSkuCount", formatOverviewNumber(health.lowCoverageSkuCount));
+  setTextById("overviewCoverageDays", formatOverviewRatio(health.coverageDays));
+  setTextById("overviewAvgDailyOutbound", formatOverviewNumber(health.avgDailyOutbound, 1));
+
+  setTextById("overviewOutboundQty7d", formatOverviewNumber(demand.outboundQty7d));
+  setTextById("overviewOutboundQty14d", formatOverviewNumber(demand.outboundQty14d));
+  setTextById("overviewOutboundQty30d", formatOverviewNumber(demand.outboundQty30d));
+  setTextById("overviewDemandAvgDailyOutbound", formatOverviewNumber(demand.avgDailyOutbound, 1));
+
+  setTextById("overviewRecommendationCount", formatOverviewNumber(production.recommendationCount));
+  setTextById("overviewRecommendationUrgentCount", formatOverviewNumber(production.urgentCount));
+  setTextById("overviewRecommendationHighCount", formatOverviewNumber(production.highCount));
+  setTextById("overviewRecommendationMediumCount", formatOverviewNumber(production.mediumCount));
+  setTextById("overviewTargetDays", formatOverviewNumber(production.targetDays));
+
+  const topRows = (Array.isArray(demand.topSkus) ? demand.topSkus : [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.model))}</td>
+        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${formatOverviewNumber(item.qty30d)}</td>
+        <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
+      </tr>
+    `,
+    )
+    .join("");
+  renderOverviewTable("overviewTopDemandBody", topRows, 5);
+
+  const anomalyRows = (Array.isArray(demand.anomalySkus) ? demand.anomalySkus : [])
+    .map((item) => {
+      const ratio = Number(item.ratio);
+      const ratioText = Number.isFinite(ratio) ? `${formatOverviewNumber(ratio, 2)}x` : "NEW";
+      return `
+      <tr>
+        <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.model))}</td>
+        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${formatOverviewNumber(item.qty7d)}</td>
+        <td>${formatOverviewNumber(item.prev7d)}</td>
+        <td>${ratioText}</td>
+      </tr>
+    `;
+    })
+    .join("");
+  renderOverviewTable("overviewAnomalyBody", anomalyRows, 6);
+
+  const productionRows = (Array.isArray(production.recommendations) ? production.recommendations : [])
+    .map((item) => {
+      const priority = displayText(item.priority);
+      const priorityClass =
+        priority === "紧急" ? "urgent" : priority === "高" ? "high" : priority === "中" ? "medium" : "normal";
+      return `
+      <tr>
+        <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.model))}</td>
+        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${formatOverviewNumber(item.availableStock)}</td>
+        <td>${formatOverviewNumber(item.inTransitStock)}</td>
+        <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
+        <td>${formatOverviewRatio(item.coverageDays)}</td>
+        <td>${formatOverviewNumber(item.suggestedProductionQty)}</td>
+        <td><span class="priority-chip priority-${priorityClass}">${escapeHtml(priority)}</span></td>
+      </tr>
+    `;
+    })
+    .join("");
+  renderOverviewTable("overviewProductionBody", productionRows, 9);
+}
+
+async function loadOverviewDashboard() {
+  const data = await request("/inventory/dashboard");
+  state.overviewDashboard = data || null;
+  renderOverviewDashboard(state.overviewDashboard);
 }
 
 function displayText(value) {
@@ -3404,6 +3553,7 @@ async function reloadAll() {
   await loadMe();
   if (!state.token) {
     clearStats();
+    clearOverviewDashboard();
     $("usersBody").innerHTML = "";
     $("auditBody").innerHTML = "";
     $("myAuditBody").innerHTML = "";
@@ -3452,6 +3602,7 @@ async function reloadAll() {
     state.shopEditingIds = new Set();
     state.departmentOptionEditingCodes = new Set();
     state.roleOptionEditingCodes = new Set();
+    state.overviewDashboard = null;
     renderUserSelectOptions();
     renderUserOptionsTable();
     renderFbaPendingBadge();
@@ -3465,6 +3616,7 @@ async function reloadAll() {
 
   const isAdmin = state.me?.role === "admin";
   const tasks = [
+    loadOverviewDashboard(),
     loadInventory(),
     loadBrands(),
     loadSkuTypes(),
@@ -5242,6 +5394,9 @@ function bindScrollLoad() {
 }
 
 function bindRefresh() {
+  $("refreshOverviewDashboard").addEventListener("click", () =>
+    loadOverviewDashboard().catch((error) => showToast(error.message, true)),
+  );
   $("refreshInventory").addEventListener("click", () => loadInventory().catch((error) => showToast(error.message, true)));
   $("refreshOverseasWarehouse").addEventListener("click", () =>
     Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true)),

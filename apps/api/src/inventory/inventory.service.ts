@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { AuditAction, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
+import { AuditAction, BatchInboundOrderStatus, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import * as iconv from 'iconv-lite';
 import { AuditService } from '../audit/audit.service';
 import { generateOrderNo, parseId } from '../common/utils';
@@ -30,6 +30,11 @@ interface AdjustOrderResult {
 const FBA_REPLENISH_MARK = 'FBA补货';
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = '正在编辑产品申请中，请管理员确认后再执行相关操作。';
 const STOCK_ADJUSTMENT_WAREHOUSE_ID = '64774';
+const LOW_COVERAGE_DAYS = 14;
+const OUT_OF_STOCK_DAYS = 7;
+const PRODUCTION_TARGET_DAYS = 45;
+const ANOMALY_MIN_7D_QTY = 20;
+const ANOMALY_RATIO = 2;
 
 @Injectable()
 export class InventoryService {
@@ -983,6 +988,304 @@ export class InventoryService {
       totals[row.skuId.toString()] = Number(row._sum.qty ?? 0);
     });
     return totals;
+  }
+
+  async getOverviewDashboard(): Promise<unknown> {
+    const now = new Date();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const from7d = new Date(now.getTime() - 7 * dayMs);
+    const from14d = new Date(now.getTime() - 14 * dayMs);
+    const from30d = new Date(now.getTime() - 30 * dayMs);
+
+    const outboundWhereBase: Prisma.StockMovementWhereInput = {
+      qtyDelta: { lt: 0 },
+      OR: [{ refType: 'fba_replenishment' }, { movementType: 'outbound' }],
+    };
+
+    const [
+      activeSkus,
+      inventoryRows,
+      pendingRows,
+      inTransitRows,
+      outbound30Rows,
+      outbound14Rows,
+      outbound7Rows,
+    ] = await Promise.all([
+      this.prisma.sku.findMany({
+        where: { status: 1 },
+        select: {
+          id: true,
+          sku: true,
+          model: true,
+          erpSku: true,
+        },
+      }),
+      this.prisma.inventoryBoxSku.groupBy({
+        by: ['skuId'],
+        _sum: { qty: true },
+      }),
+      this.prisma.fbaReplenishment.findMany({
+        where: {
+          status: { in: ['pending_confirm', 'pending_outbound'] },
+        },
+        select: {
+          skuId: true,
+          status: true,
+          requestedQty: true,
+          actualQty: true,
+        },
+      }),
+      this.prisma.batchInboundItem.groupBy({
+        by: ['skuCode'],
+        where: {
+          status: 'pending',
+          order: {
+            status: BatchInboundOrderStatus.waiting_inbound,
+          },
+        },
+        _sum: { qty: true },
+      }),
+      this.prisma.stockMovement.groupBy({
+        by: ['skuId'],
+        where: {
+          ...outboundWhereBase,
+          createdAt: { gte: from30d },
+        },
+        _sum: { qtyDelta: true },
+      }),
+      this.prisma.stockMovement.groupBy({
+        by: ['skuId'],
+        where: {
+          ...outboundWhereBase,
+          createdAt: { gte: from14d },
+        },
+        _sum: { qtyDelta: true },
+      }),
+      this.prisma.stockMovement.groupBy({
+        by: ['skuId'],
+        where: {
+          ...outboundWhereBase,
+          createdAt: { gte: from7d },
+        },
+        _sum: { qtyDelta: true },
+      }),
+    ]);
+
+    const skuById = new Map(
+      activeSkus.map((item) => [item.id.toString(), item]),
+    );
+    const skuIdByCode = new Map(
+      activeSkus.map((item) => [String(item.sku || '').trim(), item.id.toString()]),
+    );
+
+    const inventoryBySku = new Map<string, number>();
+    inventoryRows.forEach((row) => {
+      inventoryBySku.set(row.skuId.toString(), Number(row._sum.qty ?? 0));
+    });
+
+    const lockedBySku = new Map<string, number>();
+    pendingRows.forEach((row) => {
+      const qty = Number(
+        row.status === 'pending_outbound'
+          ? (row.actualQty ?? row.requestedQty)
+          : row.requestedQty,
+      );
+      if (qty <= 0) return;
+      const key = row.skuId.toString();
+      lockedBySku.set(key, (lockedBySku.get(key) ?? 0) + qty);
+    });
+
+    const inTransitBySku = new Map<string, number>();
+    inTransitRows.forEach((row) => {
+      const skuCode = String(row.skuCode || '').trim();
+      const skuId = skuIdByCode.get(skuCode);
+      if (!skuId) return;
+      const qty = Number(row._sum.qty ?? 0);
+      if (qty <= 0) return;
+      inTransitBySku.set(skuId, (inTransitBySku.get(skuId) ?? 0) + qty);
+    });
+
+    const toOutboundMap = (rows: Array<{ skuId: bigint; _sum: { qtyDelta: number | null } }>) => {
+      const map = new Map<string, number>();
+      rows.forEach((row) => {
+        const qty = Math.max(0, -Number(row._sum.qtyDelta ?? 0));
+        if (qty <= 0) return;
+        map.set(row.skuId.toString(), qty);
+      });
+      return map;
+    };
+
+    const outbound30BySku = toOutboundMap(outbound30Rows);
+    const outbound14BySku = toOutboundMap(outbound14Rows);
+    const outbound7BySku = toOutboundMap(outbound7Rows);
+
+    let totalStock = 0;
+    let availableStock = 0;
+    let lockedStock = 0;
+    let inTransitStock = 0;
+    let outOfStockSkuCount = 0;
+    let lowCoverageSkuCount = 0;
+
+    const recommendations: Array<{
+      skuId: string;
+      sku: string;
+      model: string | null;
+      erpSku: string | null;
+      availableStock: number;
+      lockedStock: number;
+      inTransitStock: number;
+      avgDailyOutbound: number;
+      coverageDays: number;
+      targetStock: number;
+      suggestedProductionQty: number;
+      priority: string;
+    }> = [];
+
+    activeSkus.forEach((sku) => {
+      const skuId = sku.id.toString();
+      const stock = inventoryBySku.get(skuId) ?? 0;
+      const locked = lockedBySku.get(skuId) ?? 0;
+      const available = stock - locked;
+      const inTransit = inTransitBySku.get(skuId) ?? 0;
+      const outbound30 = outbound30BySku.get(skuId) ?? 0;
+      const avgDailyOutbound = outbound30 / 30;
+      const coverageDays = avgDailyOutbound > 0 ? available / avgDailyOutbound : Number.POSITIVE_INFINITY;
+
+      totalStock += stock;
+      availableStock += available;
+      lockedStock += locked;
+      inTransitStock += inTransit;
+
+      if (available <= 0) {
+        outOfStockSkuCount += 1;
+      }
+      if (avgDailyOutbound > 0 && coverageDays < LOW_COVERAGE_DAYS) {
+        lowCoverageSkuCount += 1;
+      }
+
+      if (avgDailyOutbound <= 0) {
+        return;
+      }
+
+      const targetStock = Math.ceil(avgDailyOutbound * PRODUCTION_TARGET_DAYS);
+      const suggestedProductionQty = Math.max(0, targetStock - (available + inTransit));
+
+      if (suggestedProductionQty <= 0 && coverageDays >= LOW_COVERAGE_DAYS) {
+        return;
+      }
+
+      let priority = '中';
+      if (coverageDays < OUT_OF_STOCK_DAYS || available <= 0) {
+        priority = '紧急';
+      } else if (coverageDays < LOW_COVERAGE_DAYS) {
+        priority = '高';
+      }
+
+      recommendations.push({
+        skuId,
+        sku: sku.sku,
+        model: sku.model,
+        erpSku: sku.erpSku,
+        availableStock: available,
+        lockedStock: locked,
+        inTransitStock: inTransit,
+        avgDailyOutbound,
+        coverageDays,
+        targetStock,
+        suggestedProductionQty,
+        priority,
+      });
+    });
+
+    const priorityWeight: Record<string, number> = { 紧急: 3, 高: 2, 中: 1 };
+    recommendations.sort((a, b) => {
+      const p = (priorityWeight[b.priority] ?? 0) - (priorityWeight[a.priority] ?? 0);
+      if (p !== 0) return p;
+      const s = b.suggestedProductionQty - a.suggestedProductionQty;
+      if (s !== 0) return s;
+      return b.avgDailyOutbound - a.avgDailyOutbound;
+    });
+
+    const topSkus = Array.from(outbound30BySku.entries())
+      .map(([skuId, qty30d]) => {
+        const sku = skuById.get(skuId);
+        return {
+          skuId,
+          sku: sku?.sku ?? skuId,
+          model: sku?.model ?? null,
+          erpSku: sku?.erpSku ?? null,
+          qty30d,
+          avgDailyOutbound: qty30d / 30,
+        };
+      })
+      .sort((a, b) => b.qty30d - a.qty30d)
+      .slice(0, 10);
+
+    const anomalySkus = Array.from(outbound7BySku.entries())
+      .map(([skuId, qty7d]) => {
+        const qty14d = outbound14BySku.get(skuId) ?? qty7d;
+        const prev7d = Math.max(0, qty14d - qty7d);
+        const ratio = prev7d > 0 ? qty7d / prev7d : null;
+        const delta = qty7d - prev7d;
+        return { skuId, qty7d, prev7d, ratio, delta };
+      })
+      .filter((item) => item.qty7d >= ANOMALY_MIN_7D_QTY)
+      .filter((item) => item.prev7d === 0 || (item.ratio ?? 0) >= ANOMALY_RATIO)
+      .map((item) => {
+        const sku = skuById.get(item.skuId);
+        return {
+          skuId: item.skuId,
+          sku: sku?.sku ?? item.skuId,
+          model: sku?.model ?? null,
+          erpSku: sku?.erpSku ?? null,
+          qty7d: item.qty7d,
+          prev7d: item.prev7d,
+          ratio: item.ratio,
+          delta: item.delta,
+        };
+      })
+      .sort((a, b) => b.delta - a.delta)
+      .slice(0, 10);
+
+    const outboundQty30d = Array.from(outbound30BySku.values()).reduce((sum, qty) => sum + qty, 0);
+    const outboundQty14d = Array.from(outbound14BySku.values()).reduce((sum, qty) => sum + qty, 0);
+    const outboundQty7d = Array.from(outbound7BySku.values()).reduce((sum, qty) => sum + qty, 0);
+    const avgDailyOutbound = outboundQty30d / 30;
+    const coverageDays = avgDailyOutbound > 0 ? availableStock / avgDailyOutbound : null;
+
+    const urgentCount = recommendations.filter((item) => item.priority === '紧急').length;
+    const highCount = recommendations.filter((item) => item.priority === '高').length;
+    const mediumCount = recommendations.filter((item) => item.priority === '中').length;
+
+    return {
+      generatedAt: now.toISOString(),
+      health: {
+        totalStock,
+        availableStock,
+        lockedStock,
+        inTransitStock,
+        outOfStockSkuCount,
+        lowCoverageSkuCount,
+        coverageDays,
+        avgDailyOutbound,
+      },
+      demand: {
+        outboundQty7d,
+        outboundQty14d,
+        outboundQty30d,
+        avgDailyOutbound,
+        topSkus,
+        anomalySkus,
+      },
+      production: {
+        targetDays: PRODUCTION_TARGET_DAYS,
+        recommendationCount: recommendations.length,
+        urgentCount,
+        highCount,
+        mediumCount,
+        recommendations: recommendations.slice(0, 50),
+      },
+    };
   }
 
   async buildStockAdjustmentCsv(): Promise<{ fileName: string; content: Buffer }> {

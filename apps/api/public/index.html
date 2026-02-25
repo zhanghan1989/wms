@@ -333,7 +333,10 @@
       <section class="panel" id="overview">
         <div class="panel-head">
           <h2>系统状态</h2>
-          <button type="button" id="logoutBtn" class="ghost hidden">退出登录</button>
+          <div class="panel-tools">
+            <button type="button" id="refreshOverviewDashboard" class="ghost">刷新看板</button>
+            <button type="button" id="logoutBtn" class="ghost hidden">退出登录</button>
+          </div>
         </div>
 
         <div class="cards">
@@ -346,6 +349,90 @@
               <li><span>箱号数</span><strong id="statBoxes">-</strong></li>
               <li><span>待确认入库单</span><strong id="statInboundDraft">-</strong></li>
             </ul>
+          </article>
+
+          <article class="card">
+            <h3>库存健康</h3>
+            <ul class="stats">
+              <li><span>总库存</span><strong id="overviewTotalStock">-</strong></li>
+              <li><span>可用库存</span><strong id="overviewAvailableStock">-</strong></li>
+              <li><span>锁定库存</span><strong id="overviewLockedStock">-</strong></li>
+              <li><span>在途库存</span><strong id="overviewInTransitStock">-</strong></li>
+              <li><span>缺货 SKU 数</span><strong id="overviewOutOfStockSkuCount">-</strong></li>
+              <li><span>低覆盖 SKU 数</span><strong id="overviewLowCoverageSkuCount">-</strong></li>
+              <li><span>覆盖天数</span><strong id="overviewCoverageDays">-</strong></li>
+              <li><span>日均消耗</span><strong id="overviewAvgDailyOutbound">-</strong></li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <h3>出库需求趋势</h3>
+            <ul class="stats">
+              <li><span>7天出库量</span><strong id="overviewOutboundQty7d">-</strong></li>
+              <li><span>14天出库量</span><strong id="overviewOutboundQty14d">-</strong></li>
+              <li><span>30天出库量</span><strong id="overviewOutboundQty30d">-</strong></li>
+              <li><span>日均消耗</span><strong id="overviewDemandAvgDailyOutbound">-</strong></li>
+            </ul>
+            <div class="overview-table-wrap">
+              <h4>Top SKU 消耗排行（30天）</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>型号</th>
+                    <th>erpSKU</th>
+                    <th>30天出库量</th>
+                    <th>日均消耗</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewTopDemandBody"></tbody>
+              </table>
+            </div>
+            <div class="overview-table-wrap">
+              <h4>异常波动 SKU（近7天 vs 前7天）</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>型号</th>
+                    <th>erpSKU</th>
+                    <th>近7天</th>
+                    <th>前7天</th>
+                    <th>波动倍数</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewAnomalyBody"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>工厂备货建议</h3>
+            <ul class="stats">
+              <li><span>建议备货 SKU 数</span><strong id="overviewRecommendationCount">-</strong></li>
+              <li><span>紧急</span><strong id="overviewRecommendationUrgentCount">-</strong></li>
+              <li><span>高优先</span><strong id="overviewRecommendationHighCount">-</strong></li>
+              <li><span>中优先</span><strong id="overviewRecommendationMediumCount">-</strong></li>
+              <li><span>备货目标天数</span><strong id="overviewTargetDays">-</strong></li>
+            </ul>
+            <div class="overview-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>型号</th>
+                    <th>erpSKU</th>
+                    <th>可用库存</th>
+                    <th>在途库存</th>
+                    <th>日均消耗</th>
+                    <th>覆盖天数</th>
+                    <th>建议生产量</th>
+                    <th>优先级</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewProductionBody"></tbody>
+              </table>
+            </div>
           </article>
         </div>
       </section>

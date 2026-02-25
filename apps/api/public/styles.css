@@ -428,6 +428,56 @@ button.ghost {
   justify-content: space-between;
 }
 
+.overview-table-wrap {
+  margin-top: 10px;
+  overflow-x: auto;
+}
+
+.overview-table-wrap h4 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#overview .cards {
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+}
+
+#overview .cards .card:nth-child(3),
+#overview .cards .card:nth-child(4) {
+  grid-column: 1 / -1;
+}
+
+.priority-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: #f2f7f4;
+}
+
+.priority-chip.priority-urgent {
+  background: #fdeeee;
+  border-color: #f1b3b3;
+  color: #b23232;
+}
+
+.priority-chip.priority-high {
+  background: #fff5e7;
+  border-color: #f0cf95;
+  color: #9d6a00;
+}
+
+.priority-chip.priority-medium {
+  background: #eef7f0;
+  border-color: #b7d9bd;
+  color: #2d7340;
+}
+
 .mini-list {
   display: flex;
   flex-wrap: wrap;
