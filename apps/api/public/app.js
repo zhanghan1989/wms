@@ -327,6 +327,38 @@ function closeModal(modalId) {
   modal.classList.add("hidden");
 }
 
+function getSubmitButton(form, event) {
+  if (event?.submitter instanceof HTMLButtonElement) {
+    return event.submitter;
+  }
+  if (!form) return null;
+  return form.querySelector("button[type='submit']");
+}
+
+async function withBusyButton(button, busyText, task) {
+  if (typeof task !== "function") return undefined;
+  if (!button) return task();
+  if (button.dataset.busy === "1") return undefined;
+
+  const previousText = button.textContent;
+  const previousDisabled = button.disabled;
+  button.dataset.busy = "1";
+  button.disabled = true;
+  if (busyText) {
+    button.textContent = busyText;
+  }
+
+  try {
+    return await task();
+  } finally {
+    button.disabled = previousDisabled;
+    if (busyText) {
+      button.textContent = previousText;
+    }
+    delete button.dataset.busy;
+  }
+}
+
 function openDeleteConfirmModal(messageText) {
   const message = $("deleteConfirmMessage");
   if (message) {
@@ -2982,19 +3014,22 @@ async function reloadAll() {
 function bindForms() {
   $("loginGateForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const data = await request("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({
-          username: $("gateUsername").value.trim(),
-          password: $("gatePassword").value,
-        }),
+      await withBusyButton(submitButton, "登录中...", async () => {
+        const data = await request("/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            username: $("gateUsername").value.trim(),
+            password: $("gatePassword").value,
+          }),
+        });
+        state.token = data.accessToken;
+        localStorage.setItem("wms_token", state.token);
+        showToast("登录成功");
+        await reloadAll();
+        switchPanel("inventory");
       });
-      state.token = data.accessToken;
-      localStorage.setItem("wms_token", state.token);
-      showToast("登录成功");
-      await reloadAll();
-      switchPanel("inventory");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3026,20 +3061,23 @@ function bindForms() {
 
   $("createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const username = $("newUsername").value.trim();
-      await request("/users", {
-        method: "POST",
-        body: JSON.stringify({
-          username,
-          department: $("newDepartment").value,
-          role: $("newRole").value,
-        }),
+      await withBusyButton(submitButton, "提交中...", async () => {
+        const username = $("newUsername").value.trim();
+        await request("/users", {
+          method: "POST",
+          body: JSON.stringify({
+            username,
+            department: $("newDepartment").value,
+            role: $("newRole").value,
+          }),
+        });
+        event.target.reset();
+        closeModal("createUserModal");
+        showToast("用户已新增，状态为禁用，请激活用户后登录");
+        await Promise.all([loadUsers(), loadAudit()]);
       });
-      event.target.reset();
-      closeModal("createUserModal");
-      showToast("用户已新增，状态为禁用，请激活用户后登录");
-      await Promise.all([loadUsers(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3047,34 +3085,37 @@ function bindForms() {
 
   $("editUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const userId = String($("editUserId").value || "").trim();
-      if (!userId) {
-        throw new Error("未选择用户");
-      }
+      await withBusyButton(submitButton, "保存中...", async () => {
+        const userId = String($("editUserId").value || "").trim();
+        if (!userId) {
+          throw new Error("未选择用户");
+        }
 
-      const username = $("editUsername").value.trim();
-      const role = $("editUserRole").value;
-      const department = $("editUserDepartment").value;
-      if (!username) {
-        throw new Error("请输入用户名");
-      }
+        const username = $("editUsername").value.trim();
+        const role = $("editUserRole").value;
+        const department = $("editUserDepartment").value;
+        if (!username) {
+          throw new Error("请输入用户名");
+        }
 
-      const payload = {
-        username,
-        department,
-        role,
-      };
+        const payload = {
+          username,
+          department,
+          role,
+        };
 
-      await request(`/users/${encodeURIComponent(userId)}`, {
-        method: "PUT",
-        body: JSON.stringify(payload),
+        await request(`/users/${encodeURIComponent(userId)}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+
+        closeModal("editUserModal");
+        state.selectedEditUserId = null;
+        showToast("用户信息已更新");
+        await Promise.all([loadUsers(), loadAudit(), loadMe()]);
       });
-
-      closeModal("editUserModal");
-      state.selectedEditUserId = null;
-      showToast("用户信息已更新");
-      await Promise.all([loadUsers(), loadAudit(), loadMe()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3126,26 +3167,29 @@ function bindForms() {
 
   $("resetUserPasswordForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const userId = String($("resetPasswordUserId").value || "").trim();
-      if (!userId) {
-        throw new Error("未选择用户");
-      }
-      const mode = String($("resetPasswordMode").value || "reset");
-      const password = String($("resetPasswordNewPassword").value || "").trim();
-      if (password.length < 6 || password.length > 64) {
-        throw new Error("密码长度需为6到64位");
-      }
+      await withBusyButton(submitButton, "提交中...", async () => {
+        const userId = String($("resetPasswordUserId").value || "").trim();
+        if (!userId) {
+          throw new Error("未选择用户");
+        }
+        const mode = String($("resetPasswordMode").value || "reset");
+        const password = String($("resetPasswordNewPassword").value || "").trim();
+        if (password.length < 6 || password.length > 64) {
+          throw new Error("密码长度需为6到64位");
+        }
 
-      await request(`/users/${encodeURIComponent(userId)}/reset-password`, {
-        method: "POST",
-        body: JSON.stringify({ password }),
+        await request(`/users/${encodeURIComponent(userId)}/reset-password`, {
+          method: "POST",
+          body: JSON.stringify({ password }),
+        });
+
+        closeModal("resetUserPasswordModal");
+        state.selectedResetPasswordUserId = null;
+        showToast(mode === "activate" ? "用户已激活并设置新密码" : "密码已重置");
+        await Promise.all([loadUsers(), loadAudit()]);
       });
-
-      closeModal("resetUserPasswordModal");
-      state.selectedResetPasswordUserId = null;
-      showToast(mode === "activate" ? "用户已激活并设置新密码" : "密码已重置");
-      await Promise.all([loadUsers(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3153,19 +3197,22 @@ function bindForms() {
 
   $("createShelfForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const shelfCode = buildShelfCode($("newShelfCodeDigits").value);
-      await request("/shelves", {
-        method: "POST",
-        body: JSON.stringify({
-          shelfCode,
-          name: $("newShelfName").value.trim() || undefined,
-        }),
+      await withBusyButton(submitButton, "创建中...", async () => {
+        const shelfCode = buildShelfCode($("newShelfCodeDigits").value);
+        await request("/shelves", {
+          method: "POST",
+          body: JSON.stringify({
+            shelfCode,
+            name: $("newShelfName").value.trim() || undefined,
+          }),
+        });
+        event.target.reset();
+        showToast("货架已创建");
+        await loadShelves();
+        await loadAudit();
       });
-      event.target.reset();
-      showToast("货架已创建");
-      await loadShelves();
-      await loadAudit();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3173,26 +3220,29 @@ function bindForms() {
 
   $("createBoxForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const boxCode = buildBoxCode($("newBoxCodeDigits").value);
-      const shelfId = Number($("newBoxShelfId").value);
-      if (!Number.isInteger(shelfId) || shelfId <= 0) {
-        throw new Error("请选择货架号");
-      }
+      await withBusyButton(submitButton, "创建中...", async () => {
+        const boxCode = buildBoxCode($("newBoxCodeDigits").value);
+        const shelfId = Number($("newBoxShelfId").value);
+        if (!Number.isInteger(shelfId) || shelfId <= 0) {
+          throw new Error("请选择货架号");
+        }
 
-      await request("/boxes", {
-        method: "POST",
-        body: JSON.stringify({
-          boxCode,
-          shelfId,
-        }),
+        await request("/boxes", {
+          method: "POST",
+          body: JSON.stringify({
+            boxCode,
+            shelfId,
+          }),
+        });
+
+        event.target.reset();
+        showToast("箱号已创建");
+        await loadShelves();
+        await loadBoxes();
+        await loadAudit();
       });
-
-      event.target.reset();
-      showToast("箱号已创建");
-      await loadShelves();
-      await loadBoxes();
-      await loadAudit();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3200,13 +3250,16 @@ function bindForms() {
 
   $("collectBatchInboundForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await submitCollectBatchInboundForm();
-      showToast("箱号采集完成，已创建批量入库单");
-      await loadBatchInboundOrders();
-      if (state.selectedBatchInboundOrderId) {
-        await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
-      }
+      await withBusyButton(submitButton, "采集中...", async () => {
+        await submitCollectBatchInboundForm();
+        showToast("箱号采集完成，已创建批量入库单");
+        await loadBatchInboundOrders();
+        if (state.selectedBatchInboundOrderId) {
+          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
+        }
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3214,16 +3267,19 @@ function bindForms() {
 
   $("uploadBatchInboundForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await submitUploadBatchInboundForm();
-      showToast("文档上传成功");
-      await loadBatchInboundOrders();
-      if (state.selectedBatchInboundOrderId) {
-        await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
-      }
-      await loadInventory();
-      await loadBoxes();
-      await loadAudit();
+      await withBusyButton(submitButton, "上传中...", async () => {
+        await submitUploadBatchInboundForm();
+        showToast("文档上传成功");
+        await loadBatchInboundOrders();
+        if (state.selectedBatchInboundOrderId) {
+          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
+        }
+        await loadInventory();
+        await loadBoxes();
+        await loadAudit();
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3231,8 +3287,11 @@ function bindForms() {
 
   $("inventorySearchForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await searchInventoryProducts($("inventoryKeyword").value.trim());
+      await withBusyButton(submitButton, "检索中...", async () => {
+        await searchInventoryProducts($("inventoryKeyword").value.trim());
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3281,32 +3340,35 @@ function bindForms() {
 
   $("fbaOutboundForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const expressNo = String($("fbaOutboundExpressNo").value || "").trim();
-      if (!expressNo) {
-        throw new Error("请输入快递号");
-      }
-      const ids = Array.from(state.selectedFbaIds)
-        .map((id) => Number(id))
-        .filter((id) => Number.isInteger(id) && id > 0);
-      if (!ids.length) {
-        throw new Error("请先选择待出库申请单");
-      }
+      await withBusyButton(submitButton, "处理中...", async () => {
+        const expressNo = String($("fbaOutboundExpressNo").value || "").trim();
+        if (!expressNo) {
+          throw new Error("请输入快递号");
+        }
+        const ids = Array.from(state.selectedFbaIds)
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0);
+        if (!ids.length) {
+          throw new Error("请先选择待出库申请单");
+        }
 
-      await outboundFbaReplenishmentRequests(ids, expressNo);
-      closeModal("fbaOutboundModal");
-      state.selectedFbaIds = new Set();
-      showToast("出库完成");
-      await loadFbaReplenishments();
-      await loadFbaPendingSummary();
-      await loadInventory();
-      await loadBoxes();
+        await outboundFbaReplenishmentRequests(ids, expressNo);
+        closeModal("fbaOutboundModal");
+        state.selectedFbaIds = new Set();
+        showToast("出库完成");
+        await loadFbaReplenishments();
+        await loadFbaPendingSummary();
+        await loadInventory();
+        await loadBoxes();
 
-      const keyword = $("inventoryKeyword").value.trim();
-      if (state.inventorySearchMode && keyword) {
-        await searchInventoryProducts(keyword);
-      }
-      await loadAudit();
+        const keyword = $("inventoryKeyword").value.trim();
+        if (state.inventorySearchMode && keyword) {
+          await searchInventoryProducts(keyword);
+        }
+        await loadAudit();
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3517,14 +3579,17 @@ function bindForms() {
 
   $("createSkuModalForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await createSkuFromModal();
-      closeModal("createSkuModal");
-      showToast("产品已创建并入库");
-      await loadShelves();
-      await loadBoxes();
-      await loadInventory();
-      await loadAudit();
+      await withBusyButton(submitButton, "提交中...", async () => {
+        await createSkuFromModal();
+        closeModal("createSkuModal");
+        showToast("产品已创建并入库");
+        await loadShelves();
+        await loadBoxes();
+        await loadInventory();
+        await loadAudit();
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3532,19 +3597,22 @@ function bindForms() {
 
   $("bulkSkuUploadForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const file = $("bulkSkuUploadFile").files?.[0];
-      const result = await importSkusFromExcel(file);
-      closeModal("bulkSkuUploadModal");
-      showToast(
-        `上传完成：共${result.totalRows}行，新增${result.createdCount}条，生成编辑申请${result.editRequestCount}条`,
-      );
-      await Promise.all([
-        loadInventory(),
-        loadProductEditRequests(),
-        loadProductEditPendingSummary(),
-        loadAudit(),
-      ]);
+      await withBusyButton(submitButton, "上传中...", async () => {
+        const file = $("bulkSkuUploadFile").files?.[0];
+        const result = await importSkusFromExcel(file);
+        closeModal("bulkSkuUploadModal");
+        showToast(
+          `上传完成：共${result.totalRows}行，新增${result.createdCount}条，生成编辑申请${result.editRequestCount}条`,
+        );
+        await Promise.all([
+          loadInventory(),
+          loadProductEditRequests(),
+          loadProductEditPendingSummary(),
+          loadAudit(),
+        ]);
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3552,28 +3620,31 @@ function bindForms() {
 
   $("createBoxFromSkuForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const createdBoxCode = await createBoxFromSkuModal();
-      closeModal("createBoxFromSkuModal");
-      showToast("箱号已创建");
-      await loadShelves();
-      await loadBoxes();
-      const createSkuModal = $("createSkuModal");
-      if (createSkuModal && !createSkuModal.classList.contains("hidden")) {
-        $("modalNewSkuBoxCode").value = createdBoxCode;
-        renderBoxOptionsForInput(
-          "modalNewSkuBoxCode",
-          "modalNewSkuBoxCodeList",
-          "请选择已有箱号或者新增箱号",
-          createdBoxCode,
-        );
-      }
-      const adjustModal = $("adjustModal");
-      if (adjustModal && !adjustModal.classList.contains("hidden")) {
-        $("adjustBoxCode").value = createdBoxCode;
-        renderAdjustBoxSuggestions(createdBoxCode);
-      }
-      await loadAudit();
+      await withBusyButton(submitButton, "创建中...", async () => {
+        const createdBoxCode = await createBoxFromSkuModal();
+        closeModal("createBoxFromSkuModal");
+        showToast("箱号已创建");
+        await loadShelves();
+        await loadBoxes();
+        const createSkuModal = $("createSkuModal");
+        if (createSkuModal && !createSkuModal.classList.contains("hidden")) {
+          $("modalNewSkuBoxCode").value = createdBoxCode;
+          renderBoxOptionsForInput(
+            "modalNewSkuBoxCode",
+            "modalNewSkuBoxCodeList",
+            "请选择已有箱号或者新增箱号",
+            createdBoxCode,
+          );
+        }
+        const adjustModal = $("adjustModal");
+        if (adjustModal && !adjustModal.classList.contains("hidden")) {
+          $("adjustBoxCode").value = createdBoxCode;
+          renderAdjustBoxSuggestions(createdBoxCode);
+        }
+        await loadAudit();
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3581,12 +3652,15 @@ function bindForms() {
 
   $("createShelfFromInventoryForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await createShelfFromInventoryModal();
-      closeModal("createShelfFromInventoryModal");
-      showToast("货架已创建");
-      await loadShelves();
-      await loadAudit();
+      await withBusyButton(submitButton, "创建中...", async () => {
+        await createShelfFromInventoryModal();
+        closeModal("createShelfFromInventoryModal");
+        showToast("货架已创建");
+        await loadShelves();
+        await loadAudit();
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3619,15 +3693,18 @@ function bindForms() {
 
   $("profileForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const currentPassword = $("profileCurrentPassword").value;
-      const newPassword = $("profileNewPassword").value;
-      await request("/auth/me/password", {
-        method: "POST",
-        body: JSON.stringify({ currentPassword, newPassword }),
+      await withBusyButton(submitButton, "保存中...", async () => {
+        const currentPassword = $("profileCurrentPassword").value;
+        const newPassword = $("profileNewPassword").value;
+        await request("/auth/me/password", {
+          method: "POST",
+          body: JSON.stringify({ currentPassword, newPassword }),
+        });
+        closeModal("profileModal");
+        showToast("密码已更新");
       });
-      closeModal("profileModal");
-      showToast("密码已更新");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3635,11 +3712,14 @@ function bindForms() {
 
   $("editSkuForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await submitEditSkuForm();
-      closeModal("editSkuModal");
-      showToast("编辑申请已提交");
-      await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
+      await withBusyButton(submitButton, "提交中...", async () => {
+        await submitEditSkuForm();
+        closeModal("editSkuModal");
+        showToast("编辑申请已提交");
+        await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3647,20 +3727,23 @@ function bindForms() {
 
   $("adjustForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const keyword = $("inventoryKeyword").value.trim();
-      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
-      const direction = $("adjustDirection").value;
-      await submitAdjustForm();
-      closeModal("adjustModal");
-      showToast(direction === "outbound" ? "FBA补货申请单已生成" : "入库成功");
-      await loadInventory();
-      await loadBoxes();
-      await loadFbaReplenishments();
-      await loadAudit();
-      if (shouldRefreshSearch) {
-        await searchInventoryProducts(keyword);
-      }
+      await withBusyButton(submitButton, "处理中...", async () => {
+        const keyword = $("inventoryKeyword").value.trim();
+        const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+        const direction = $("adjustDirection").value;
+        await submitAdjustForm();
+        closeModal("adjustModal");
+        showToast(direction === "outbound" ? "FBA补货申请单已生成" : "入库成功");
+        await loadInventory();
+        await loadBoxes();
+        await loadFbaReplenishments();
+        await loadAudit();
+        if (shouldRefreshSearch) {
+          await searchInventoryProducts(keyword);
+        }
+      });
     } catch (error) {
       showToast(error.message, true);
     }
