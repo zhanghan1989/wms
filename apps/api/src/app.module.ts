@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { BackupsModule } from './backups/backups.module';
 import { BatchInboundModule } from './batch-inbound/batch-inbound.module';
 import { BrandsModule } from './brands/brands.module';
 import { BoxesModule } from './boxes/boxes.module';
@@ -21,8 +23,10 @@ import { UsersModule } from './users/users.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
+    BackupsModule,
     UserOptionsModule,
     UsersModule,
     SkusModule,

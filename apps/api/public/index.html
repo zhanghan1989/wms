@@ -52,6 +52,7 @@
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
         </button>
         <button type="button" id="openBatchInboundModal">批量入库</button>
+        <button type="button" id="openDataBackupPanel">数据备份</button>
         <button type="button" id="openSystemDashboardPanel">系统看板</button>
         <button type="button" id="openMyAuditLog" class="ghost">我的日志</button>
         <button type="button" id="openProfileModal" class="ghost">个人设置</button>
@@ -496,6 +497,27 @@
             </div>
           </article>
         </div>
+      </section>
+
+      <section class="panel" id="dataBackup">
+        <div class="panel-head">
+          <h2>数据备份一览</h2>
+          <button id="refreshDataBackup" class="ghost">刷新</button>
+        </div>
+        <article class="card">
+          <p class="muted">系统会在每周日 23:59 自动执行数据库备份，并生成可下载 ZIP 文件。</p>
+        </article>
+        <table>
+          <thead>
+            <tr>
+              <th>备份时间</th>
+              <th>文件名</th>
+              <th>文件大小</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="dataBackupBody"></tbody>
+        </table>
       </section>
 
       <section class="panel" id="users">

@@ -56,6 +56,7 @@ const state = {
   roleOptionEditingCodes: new Set(),
   auditFbaRequestNoById: {},
   overviewDashboard: null,
+  dataBackups: [],
 };
 
 let deleteConfirmResolver = null;
@@ -708,6 +709,103 @@ async function loadOverviewDashboard() {
   const data = await request("/inventory/dashboard");
   state.overviewDashboard = data || null;
   renderOverviewDashboard(state.overviewDashboard);
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = size;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  const digits = idx === 0 ? 0 : value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[idx]}`;
+}
+
+function renderDataBackupTable() {
+  const body = $("dataBackupBody");
+  if (!body) return;
+  const rows = Array.isArray(state.dataBackups) ? state.dataBackups : [];
+  body.innerHTML =
+    rows
+      .map(
+        (item) => `
+      <tr>
+        <td>${escapeHtml(formatDate(item?.createdAt))}</td>
+        <td>${escapeHtml(displayText(item?.fileName))}</td>
+        <td>${escapeHtml(formatFileSize(item?.sizeBytes))}</td>
+        <td><button class="tiny-btn" data-action="downloadDataBackup" data-file-name="${escapeHtml(
+          String(item?.fileName || ""),
+        )}">下载</button></td>
+      </tr>
+    `,
+      )
+      .join("") || '<tr><td colspan="4" class="muted">暂无备份文件</td></tr>';
+}
+
+async function loadDataBackups() {
+  const rows = await request("/backups");
+  state.dataBackups = Array.isArray(rows) ? rows : [];
+  renderDataBackupTable();
+}
+
+async function downloadDataBackup(fileName) {
+  const normalizedFileName = String(fileName || "").trim();
+  if (!normalizedFileName) {
+    throw new Error("缺少备份文件名");
+  }
+  if (!state.token) {
+    throw new Error("请先登录");
+  }
+
+  let response;
+  try {
+    response = await fetch(`/api/backups/${encodeURIComponent(normalizedFileName)}/download`, {
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+      },
+    });
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || `HTTP ${response.status}`;
+    try {
+      const payload = text ? JSON.parse(text) : null;
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {}
+    throw new Error(normalizeErrorMessage(message));
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainNameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
+  let downloadName = normalizedFileName;
+  if (utf8NameMatch?.[1]) {
+    try {
+      downloadName = decodeURIComponent(utf8NameMatch[1]);
+    } catch {}
+  } else if (plainNameMatch?.[1]) {
+    downloadName = plainNameMatch[1];
+  }
+
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = downloadName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  showToast(`已下载备份 ${downloadName}`);
 }
 
 function displayText(value) {
@@ -3684,6 +3782,7 @@ async function reloadAll() {
     $("brandsBody").innerHTML = "";
     $("skuTypesBody").innerHTML = "";
     $("shopsBody").innerHTML = "";
+    $("dataBackupBody").innerHTML = "";
     $("productEditRequestBody").innerHTML = "";
     $("departmentOptionsBody").innerHTML = "";
     $("roleOptionsBody").innerHTML = "";
@@ -3702,6 +3801,7 @@ async function reloadAll() {
     state.inventorySortedSkus = [];
     state.inventoryLocations = new Map();
     state.inventoryTotalsBySku = {};
+    state.dataBackups = [];
     state.inventoryVisibleCount = 0;
     state.usersVisibleCount = 0;
     state.auditVisibleCount = 0;
@@ -4101,6 +4201,15 @@ function bindForms() {
       } else {
         renderBatchInboundDetail(null);
       }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openDataBackupPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("dataBackup");
+      await loadDataBackups();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -5311,6 +5420,18 @@ function bindDelegates() {
     }
   });
 
+  $("dataBackupBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='downloadDataBackup']");
+    if (!button) return;
+    const fileName = String(button.dataset.fileName || "").trim();
+    if (!fileName) return;
+    try {
+      await downloadDataBackup(fileName);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("inventorySearchResults").addEventListener("click", openAdjustByAction);
 
   document.addEventListener("click", (event) => {
@@ -5616,6 +5737,9 @@ function bindScrollLoad() {
 function bindRefresh() {
   $("refreshOverviewDashboard").addEventListener("click", () =>
     loadOverviewDashboard().catch((error) => showToast(error.message, true)),
+  );
+  $("refreshDataBackup").addEventListener("click", () =>
+    loadDataBackups().catch((error) => showToast(error.message, true)),
   );
   $("refreshInventory").addEventListener("click", () => loadInventory().catch((error) => showToast(error.message, true)));
   $("refreshOverseasWarehouse").addEventListener("click", () =>
