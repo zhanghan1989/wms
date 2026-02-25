@@ -9,6 +9,7 @@ const state = {
   shops: [],
   skuEditRequests: [],
   inventoryLocations: new Map(),
+  inventoryTotalsBySku: {},
   inventorySortedSkus: [],
   inventoryVisibleCount: 0,
   inventoryListPageSize: 20,
@@ -1249,8 +1250,7 @@ function renderInventoryTable() {
   const list = state.inventorySortedSkus.slice(0, state.inventoryVisibleCount);
   const html = list
     .map((sku) => {
-      const rows = state.inventoryLocations.get(String(sku.id)) || [];
-      const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
+      const totalQty = Number(state.inventoryTotalsBySku?.[String(sku.id)] ?? 0);
       const pendingQty = getFbaPendingQtyBySku(sku.id);
       return `
       <tr class="inventory-main-row">
@@ -1296,26 +1296,20 @@ function loadMoreInventorySearchIfNeeded() {
 }
 
 async function loadInventory() {
-  const skus = await request("/skus");
+  const [skus, totals] = await Promise.all([
+    request("/skus"),
+    request("/inventory/sku-totals"),
+    loadFbaPendingSummary(),
+  ]);
   state.inventorySkus = skus;
+  state.inventoryTotalsBySku = totals || {};
+  state.inventoryLocations = new Map();
   $("statSkus").textContent = skus.length;
   renderSkuOptionsForSelect("moveProductSkuId", "请选择SKU");
-  await loadFbaPendingSummary();
-
-  const locationEntries = await Promise.all(
-    skus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
-  );
-  state.inventoryLocations = new Map(locationEntries);
 
   state.inventorySortedSkus = [...skus].sort((a, b) => {
-    const qtyA = (state.inventoryLocations.get(String(a.id)) || []).reduce(
-      (sum, row) => sum + Number(row.qty ?? 0),
-      0,
-    );
-    const qtyB = (state.inventoryLocations.get(String(b.id)) || []).reduce(
-      (sum, row) => sum + Number(row.qty ?? 0),
-      0,
-    );
+    const qtyA = Number(state.inventoryTotalsBySku?.[String(a.id)] ?? 0);
+    const qtyB = Number(state.inventoryTotalsBySku?.[String(b.id)] ?? 0);
     return qtyB - qtyA;
   });
   state.inventoryVisibleCount = state.inventoryListPageSize;
@@ -3320,6 +3314,11 @@ async function reloadAll() {
     state.auditLogs = [];
     state.myAuditLogs = [];
     state.skuEditRequests = [];
+    state.inventorySkus = [];
+    state.inventorySortedSkus = [];
+    state.inventoryLocations = new Map();
+    state.inventoryTotalsBySku = {};
+    state.inventoryVisibleCount = 0;
     state.usersVisibleCount = 0;
     state.auditVisibleCount = 0;
     state.myAuditVisibleCount = 0;

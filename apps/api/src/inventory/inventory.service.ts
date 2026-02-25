@@ -970,6 +970,21 @@ export class InventoryService {
     };
   }
 
+  async getSkuInventoryTotals(): Promise<Record<string, number>> {
+    const rows = await this.prisma.inventoryBoxSku.groupBy({
+      by: ['skuId'],
+      _sum: {
+        qty: true,
+      },
+    });
+
+    const totals: Record<string, number> = {};
+    rows.forEach((row) => {
+      totals[row.skuId.toString()] = Number(row._sum.qty ?? 0);
+    });
+    return totals;
+  }
+
   async buildStockAdjustmentCsv(): Promise<{ fileName: string; content: Buffer }> {
     const [skus, inventoryRows, pendingRows] = await Promise.all([
       this.prisma.sku.findMany({

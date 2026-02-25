@@ -125,6 +125,11 @@ export class InventoryController {
     return this.inventoryService.getFbaPendingSummary();
   }
 
+  @Get('sku-totals')
+  async getSkuInventoryTotals(): Promise<Record<string, number>> {
+    return this.inventoryService.getSkuInventoryTotals();
+  }
+
   @Get('stock-adjustment-csv')
   async downloadStockAdjustmentCsv(@Res() res: Response): Promise<void> {
     const csv = await this.inventoryService.buildStockAdjustmentCsv();
