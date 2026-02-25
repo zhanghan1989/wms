@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -7,9 +8,12 @@ import {
   Query,
   Req,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -142,5 +146,39 @@ export class InventoryController {
     res.setHeader('Content-Disposition', `attachment; filename="${csv.fileName}"`);
     res.setHeader('Cache-Control', 'no-store');
     res.status(200).send(csv.content);
+  }
+
+  @Get('bulk-update-template')
+  async downloadBulkUpdateTemplate(@Res() res: Response): Promise<void> {
+    const file = await this.inventoryService.getBulkUpdateTemplate();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
+  @Post('bulk-update-excel')
+  @UseInterceptors(FileInterceptor('file'))
+  async importBulkUpdateExcel(
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    if (!file?.buffer) {
+      throw new BadRequestException('请上传Excel文件');
+    }
+    return this.inventoryService.importBulkUpdateExcel(
+      file.buffer,
+      file.originalname,
+      user.id,
+      req.requestId,
+    );
   }
 }

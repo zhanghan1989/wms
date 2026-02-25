@@ -114,6 +114,7 @@
             <button type="button" id="openCreateBoxQuick">新增箱号</button>
             <button type="button" id="openCreateShelfQuick">新增货架</button>
             <button id="downloadStockAdjustmentCsvBtn" type="button">erpSKU+库存下载</button>
+            <button type="button" id="openBulkInventoryUpdateModal">批量更新库存</button>
           </div>
         </article>
 
@@ -655,6 +656,28 @@
           <div class="actions">
             <button type="submit">上传并处理</button>
             <button type="button" class="ghost" data-action="closeBulkSkuUploadModal">取消</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="bulkInventoryUpdateModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>批量更新库存</h3>
+        <button type="button" class="ghost" data-action="closeBulkInventoryUpdateModal">关闭</button>
+      </div>
+      <form id="bulkInventoryUpdateForm" class="form-grid modal-grid">
+        <label class="create-sku-full-row">
+          Excel 文件
+          <input id="bulkInventoryUpdateFile" type="file" accept=".xlsx,.xls,.csv" required />
+        </label>
+        <div class="modal-actions modal-actions-split">
+          <button id="downloadInventoryUpdateTemplateBtn" type="button" class="ghost">下载模板</button>
+          <div class="actions">
+            <button type="submit">上传并处理</button>
+            <button type="button" class="ghost" data-action="closeBulkInventoryUpdateModal">取消</button>
           </div>
         </div>
       </form>

@@ -396,6 +396,57 @@ async function downloadSkuUploadTemplate() {
   showToast(`已下载模板 ${fileName}`);
 }
 
+async function downloadInventoryUpdateTemplate() {
+  if (!state.token) {
+    throw new Error("请先登录");
+  }
+  let response;
+  try {
+    response = await fetch("/api/inventory/bulk-update-template", {
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+      },
+    });
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || `HTTP ${response.status}`;
+    try {
+      const payload = text ? JSON.parse(text) : null;
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {}
+    throw new Error(normalizeErrorMessage(message));
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainNameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
+  let fileName = "批量更新库存.xlsx";
+  if (utf8NameMatch?.[1]) {
+    try {
+      fileName = decodeURIComponent(utf8NameMatch[1]);
+    } catch {}
+  } else if (plainNameMatch?.[1]) {
+    fileName = plainNameMatch[1];
+  }
+
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  const href = URL.createObjectURL(blob);
+  link.href = href;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  showToast(`已下载模板 ${fileName}`);
+}
+
 function getStatusText(status) {
   return Number(status) === 1 ? "启用" : "禁用";
 }
@@ -3705,6 +3756,18 @@ async function importSkusFromExcel(file) {
   });
 }
 
+async function importBulkInventoryUpdateFromExcel(file) {
+  if (!file) {
+    throw new Error("请先选择Excel文件");
+  }
+  const formData = new FormData();
+  formData.append("file", file);
+  return request("/inventory/bulk-update-excel", {
+    method: "POST",
+    body: formData,
+  });
+}
+
 async function createBoxFromSkuModal() {
   const boxCode = buildBoxCode($("modalNewBoxCodeDigits").value);
   const shelfId = Number($("modalNewBoxShelfId").value);
@@ -4259,6 +4322,17 @@ function bindForms() {
     }
   });
 
+  $("downloadInventoryUpdateTemplateBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadInventoryUpdateTemplate();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("inventorySearchForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
@@ -4488,6 +4562,11 @@ function bindForms() {
     openModal("bulkSkuUploadModal");
   });
 
+  $("openBulkInventoryUpdateModal").addEventListener("click", () => {
+    $("bulkInventoryUpdateForm").reset();
+    openModal("bulkInventoryUpdateModal");
+  });
+
   const openCreateBoxModal = async () => {
     if (!state.shelves.length) {
       await loadShelves().catch((error) => showToast(error.message, true));
@@ -4644,6 +4723,24 @@ function bindForms() {
           loadProductEditPendingSummary(),
           loadAudit(),
         ]);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("bulkInventoryUpdateForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "上传中...", async () => {
+        const file = $("bulkInventoryUpdateFile").files?.[0];
+        const result = await importBulkInventoryUpdateFromExcel(file);
+        closeModal("bulkInventoryUpdateModal");
+        showToast(
+          `上传完成：共${result.totalRows}行，调整SKU${result.changedSkuCount}个，库存变更明细${result.changedItemCount}条`,
+        );
+        await Promise.all([loadInventory(), loadAudit(), loadOverviewDashboard()]);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -5535,6 +5632,13 @@ function bindDelegates() {
       closeModal("bulkSkuUploadModal");
       return;
     }
+    const bulkInventoryUpdateClose = event.target.closest(
+      "button[data-action='closeBulkInventoryUpdateModal']",
+    );
+    if (bulkInventoryUpdateClose) {
+      closeModal("bulkInventoryUpdateModal");
+      return;
+    }
     const boxClose = event.target.closest("button[data-action='closeCreateBoxFromSkuModal']");
     if (boxClose) {
       closeModal("createBoxFromSkuModal");
@@ -5655,6 +5759,12 @@ function bindDelegates() {
   $("bulkSkuUploadModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("bulkSkuUploadModal");
+    }
+  });
+
+  $("bulkInventoryUpdateModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("bulkInventoryUpdateModal");
     }
   });
 

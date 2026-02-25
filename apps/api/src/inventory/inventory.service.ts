@@ -5,8 +5,11 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { readFile } from 'fs/promises';
 import { AuditAction, BatchInboundOrderStatus, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import * as iconv from 'iconv-lite';
+import { join } from 'path';
+import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
 import { APP_TIMEZONE, generateOrderNo, getZonedDateParts, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
@@ -27,9 +30,15 @@ interface AdjustOrderResult {
   changedRows: number;
 }
 
+interface BulkInventoryUpdateRow {
+  sku: string;
+  qty: number;
+}
+
 const FBA_REPLENISH_MARK = 'FBA补货';
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = '正在编辑产品申请中，请管理员确认后再执行相关操作。';
 const STOCK_ADJUSTMENT_WAREHOUSE_ID = '64774';
+const INVENTORY_BULK_UPDATE_TEMPLATE_FILE = '批量更新库存.xlsx';
 const LOW_COVERAGE_DAYS = 14;
 const OUT_OF_STOCK_DAYS = 7;
 const PRODUCTION_TARGET_DAYS = 45;
@@ -1411,6 +1420,238 @@ export class InventoryService {
     };
   }
 
+  async getBulkUpdateTemplate(): Promise<{ fileName: string; content: Buffer }> {
+    const cwd = process.cwd();
+    const candidates = [
+      join(cwd, 'docs', INVENTORY_BULK_UPDATE_TEMPLATE_FILE),
+      join(cwd, '..', '..', 'docs', INVENTORY_BULK_UPDATE_TEMPLATE_FILE),
+    ];
+
+    for (const templatePath of candidates) {
+      try {
+        const content = await readFile(templatePath);
+        return {
+          fileName: INVENTORY_BULK_UPDATE_TEMPLATE_FILE,
+          content,
+        };
+      } catch {
+        // try next candidate
+      }
+    }
+
+    throw new NotFoundException(`模板文件不存在：${INVENTORY_BULK_UPDATE_TEMPLATE_FILE}`);
+  }
+
+  async importBulkUpdateExcel(
+    fileBuffer: Buffer,
+    originalName: string | undefined,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{
+    totalRows: number;
+    changedSkuCount: number;
+    changedItemCount: number;
+    changedRows: number;
+    fileName: string | null;
+    adjustNo: string | null;
+  }> {
+    const rows = this.parseBulkInventoryUpdateRows(fileBuffer);
+    const skuCodes = Array.from(new Set(rows.map((row) => row.sku)));
+
+    return this.prisma.$transaction(async (tx) => {
+      const skus = await tx.sku.findMany({
+        where: {
+          sku: { in: skuCodes },
+        },
+        select: {
+          id: true,
+          sku: true,
+        },
+      });
+
+      const skuByCode = new Map(skus.map((item) => [item.sku, item]));
+      const missingSkuCodes = skuCodes.filter((skuCode) => !skuByCode.has(skuCode));
+      if (missingSkuCodes.length > 0) {
+        const preview = missingSkuCodes.slice(0, 20).join('、');
+        const suffix = missingSkuCodes.length > 20 ? ' 等' : '';
+        throw new UnprocessableEntityException(`以下SKU不存在：${preview}${suffix}`);
+      }
+
+      const targetQtyBySkuId = new Map<string, number>();
+      rows.forEach((row) => {
+        const sku = skuByCode.get(row.sku);
+        if (!sku) return;
+        targetQtyBySkuId.set(sku.id.toString(), row.qty);
+      });
+
+      const skuIds = Array.from(targetQtyBySkuId.keys()).map((id) => BigInt(id));
+      const inventoryRows = skuIds.length
+        ? await tx.inventoryBoxSku.findMany({
+            where: {
+              skuId: { in: skuIds },
+            },
+            select: {
+              boxId: true,
+              skuId: true,
+              qty: true,
+            },
+          })
+        : [];
+
+      const inventoryRowsBySkuId = new Map<string, Array<{ boxId: bigint; qty: number }>>();
+      inventoryRows.forEach((row) => {
+        const key = row.skuId.toString();
+        if (!inventoryRowsBySkuId.has(key)) {
+          inventoryRowsBySkuId.set(key, []);
+        }
+        inventoryRowsBySkuId.get(key)?.push({
+          boxId: row.boxId,
+          qty: Number(row.qty ?? 0),
+        });
+      });
+
+      const fallbackBox = await tx.box.findFirst({
+        where: {
+          status: 1,
+          shelf: {
+            status: 1,
+          },
+        },
+        orderBy: {
+          id: 'asc',
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const adjustItems: Array<{
+        boxId: bigint;
+        skuId: bigint;
+        qtyDelta: number;
+        reason: string;
+      }> = [];
+      let changedSkuCount = 0;
+
+      rows.forEach((row) => {
+        const sku = skuByCode.get(row.sku);
+        if (!sku) return;
+
+        const skuIdText = sku.id.toString();
+        const inventoryBySku = [...(inventoryRowsBySkuId.get(skuIdText) ?? [])];
+        const currentTotalQty = inventoryBySku.reduce((sum, item) => sum + item.qty, 0);
+        const targetQty = targetQtyBySkuId.get(skuIdText) ?? currentTotalQty;
+        const delta = targetQty - currentTotalQty;
+        if (delta === 0) {
+          return;
+        }
+
+        changedSkuCount += 1;
+        if (delta > 0) {
+          const addToBox = inventoryBySku.sort((a, b) => {
+            if (b.qty !== a.qty) return b.qty - a.qty;
+            if (a.boxId === b.boxId) return 0;
+            return a.boxId < b.boxId ? -1 : 1;
+          })[0];
+          const addToBoxId = addToBox?.boxId ?? fallbackBox?.id;
+          if (!addToBoxId) {
+            throw new UnprocessableEntityException(`SKU ${sku.sku} 无可用箱号，无法增加库存`);
+          }
+          adjustItems.push({
+            boxId: addToBoxId,
+            skuId: sku.id,
+            qtyDelta: delta,
+            reason: '批量更新库存',
+          });
+          return;
+        }
+
+        let remaining = -delta;
+        const reduceRows = inventoryBySku
+          .filter((item) => item.qty > 0)
+          .sort((a, b) => {
+            if (b.qty !== a.qty) return b.qty - a.qty;
+            if (a.boxId === b.boxId) return 0;
+            return a.boxId < b.boxId ? -1 : 1;
+          });
+        reduceRows.forEach((item) => {
+          if (remaining <= 0) return;
+          const takeQty = Math.min(remaining, item.qty);
+          if (takeQty <= 0) return;
+          adjustItems.push({
+            boxId: item.boxId,
+            skuId: sku.id,
+            qtyDelta: -takeQty,
+            reason: '批量更新库存',
+          });
+          remaining -= takeQty;
+        });
+
+        if (remaining > 0) {
+          throw new ConflictException(`SKU ${sku.sku} 库存不足，无法调整到目标数量`);
+        }
+      });
+
+      if (adjustItems.length === 0) {
+        return {
+          totalRows: rows.length,
+          changedSkuCount: 0,
+          changedItemCount: 0,
+          changedRows: 0,
+          fileName: originalName ?? null,
+          adjustNo: null,
+        };
+      }
+
+      const order = await tx.inventoryAdjustOrder.create({
+        data: {
+          adjustNo: generateOrderNo('ADJ'),
+          status: OrderStatus.draft,
+          remark: originalName ? `bulk-inventory-update:${originalName}` : 'bulk-inventory-update',
+          createdBy: operatorId,
+        },
+      });
+
+      await tx.inventoryAdjustOrderItem.createMany({
+        data: adjustItems.map((item) => ({
+          orderId: order.id,
+          boxId: item.boxId,
+          skuId: item.skuId,
+          qtyDelta: item.qtyDelta,
+          reason: item.reason,
+        })),
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'inventory_adjust_order',
+        entityId: order.id,
+        action: AuditAction.create,
+        eventType: AuditEventType.INVENTORY_ADJUST_CREATED,
+        beforeData: null,
+        afterData: {
+          adjustNo: order.adjustNo,
+          status: order.status,
+          itemCount: adjustItems.length,
+          mode: 'bulk_inventory_update',
+          fileName: originalName ?? null,
+        },
+        operatorId,
+        requestId,
+      });
+
+      const result = await this.applyAdjustOrder(tx, order.id, operatorId, requestId, false);
+      return {
+        totalRows: rows.length,
+        changedSkuCount,
+        changedItemCount: adjustItems.length,
+        changedRows: result.changedRows,
+        fileName: originalName ?? null,
+        adjustNo: order.adjustNo,
+      };
+    });
+  }
+
   async buildStockAdjustmentCsv(): Promise<{ fileName: string; content: Buffer }> {
     const [skus, inventoryRows, pendingRows] = await Promise.all([
       this.prisma.sku.findMany({
@@ -1480,6 +1721,93 @@ export class InventoryService {
       fileName,
       content: iconv.encode(csvText, 'shift_jis'),
     };
+  }
+
+  private parseBulkInventoryUpdateRows(fileBuffer: Buffer): BulkInventoryUpdateRow[] {
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+    } catch {
+      throw new BadRequestException('无法读取Excel文件');
+    }
+
+    const firstSheet = workbook.SheetNames[0];
+    if (!firstSheet) {
+      throw new BadRequestException('Excel中没有工作表');
+    }
+    const sheet = workbook.Sheets[firstSheet];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+    if (rows.length === 0) {
+      throw new BadRequestException('Excel中没有数据');
+    }
+
+    const errors: string[] = [];
+    const result: BulkInventoryUpdateRow[] = [];
+    const seenSkuCodes = new Set<string>();
+
+    rows.forEach((rawRow, idx) => {
+      const rowNo = idx + 2;
+      const normalized: Record<string, string> = {};
+      Object.entries(rawRow).forEach(([key, value]) => {
+        normalized[this.normalizeImportHeader(key)] = String(value ?? '').trim();
+      });
+
+      const sku = this.pickImportField(normalized, [
+        'sku',
+        'sku(fba编码)',
+        'sku（fba编码）',
+        'sku编码',
+        '产品sku',
+        '商品sku',
+      ]);
+      if (!sku) {
+        errors.push(`第${rowNo}行：SKU为必填字段`);
+        return;
+      }
+
+      if (seenSkuCodes.has(sku)) {
+        errors.push(`第${rowNo}行：SKU ${sku} 重复，请保留一行`);
+        return;
+      }
+
+      const qtyText = this.pickImportField(normalized, ['数量', 'qty', '库存数量', '库存数', '在库数']);
+      if (qtyText === null) {
+        errors.push(`第${rowNo}行：数量为必填字段`);
+        return;
+      }
+
+      const qty = Number(String(qtyText || '').replaceAll(',', '').trim());
+      if (!Number.isInteger(qty) || qty < 0) {
+        errors.push(`第${rowNo}行：数量必须是大于等于0的整数`);
+        return;
+      }
+
+      seenSkuCodes.add(sku);
+      result.push({ sku, qty });
+    });
+
+    if (errors.length > 0) {
+      throw new UnprocessableEntityException(errors.join(' | '));
+    }
+
+    return result;
+  }
+
+  private normalizeImportHeader(header: string): string {
+    return String(header || '')
+      .replace(/[\s_\-()（）\[\]【】]/g, '')
+      .toLowerCase();
+  }
+
+  private pickImportField(row: Record<string, string>, aliases: string[]): string | null {
+    for (const alias of aliases) {
+      const normalizedAlias = this.normalizeImportHeader(alias);
+      const value = String(row[normalizedAlias] ?? '').trim();
+      if (value) {
+        return value;
+      }
+    }
+    return null;
   }
 
   private formatFbaRequestNo(date: Date): string {
