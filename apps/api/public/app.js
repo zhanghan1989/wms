@@ -558,7 +558,7 @@ function renderDepartmentOptionsTable() {
           <td>
             <input
               id="departmentOptionName-${escapeHtml(code)}"
-              class="tiny-input wide"
+              class="tiny-input user-option-input"
               data-field="name"
               maxlength="64"
               value="${escapeHtml(item.name || "")}"
@@ -599,7 +599,7 @@ function renderRoleOptionsTable() {
           <td>
             <input
               id="roleOptionName-${escapeHtml(code)}"
-              class="tiny-input wide"
+              class="tiny-input user-option-input"
               data-field="name"
               maxlength="64"
               value="${escapeHtml(item.name || "")}"

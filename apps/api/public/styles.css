@@ -487,6 +487,12 @@ td {
   min-width: 180px;
 }
 
+.tiny-input.user-option-input {
+  width: 160px;
+  min-width: 120px;
+  max-width: 100%;
+}
+
 .tiny-btn.danger {
   background: #fff0f0;
   border-color: #e2a7a7;
@@ -857,6 +863,10 @@ pre {
 
 .modal-card.modal-wide {
   width: min(1100px, 100%);
+}
+
+.modal-card.modal-wide.modal-manage {
+  width: min(820px, 100%);
 }
 
 .batch-detail-modal-card {
