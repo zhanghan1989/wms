@@ -556,6 +556,24 @@ td {
   gap: 6px;
 }
 
+.product-actions {
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.product-actions-left,
+.product-actions-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.product-actions-right {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
 .manage-inline-form {
   display: grid;
   grid-template-columns: minmax(240px, 360px) auto;
@@ -1062,5 +1080,15 @@ button.danger-solid {
 
   .modal-actions {
     justify-content: stretch;
+  }
+
+  .product-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .product-actions-right {
+    margin-left: 0;
+    justify-content: flex-start;
   }
 }
