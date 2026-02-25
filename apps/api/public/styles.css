@@ -569,6 +569,10 @@ td {
   font-weight: 700;
 }
 
+#productEditRequestActions {
+  margin-top: 8px;
+}
+
 .sku-result-btn {
   display: inline-flex;
   flex-direction: column;
