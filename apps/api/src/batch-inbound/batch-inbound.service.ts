@@ -80,16 +80,25 @@ export class BatchInboundService {
   ) {}
 
   async getUploadTemplate(): Promise<{ fileName: string; content: Buffer }> {
-    const templatePath = join(process.cwd(), 'docs', BATCH_INBOUND_TEMPLATE_FILE);
-    try {
-      const content = await readFile(templatePath);
-      return {
-        fileName: BATCH_INBOUND_TEMPLATE_FILE,
-        content,
-      };
-    } catch {
-      throw new NotFoundException(`模板文件不存在：${BATCH_INBOUND_TEMPLATE_FILE}`);
+    const cwd = process.cwd();
+    const candidates = [
+      join(cwd, 'docs', BATCH_INBOUND_TEMPLATE_FILE),
+      join(cwd, '..', '..', 'docs', BATCH_INBOUND_TEMPLATE_FILE),
+    ];
+
+    for (const templatePath of candidates) {
+      try {
+        const content = await readFile(templatePath);
+        return {
+          fileName: BATCH_INBOUND_TEMPLATE_FILE,
+          content,
+        };
+      } catch {
+        // try next candidate
+      }
     }
+
+    throw new NotFoundException(`模板文件不存在：${BATCH_INBOUND_TEMPLATE_FILE}`);
   }
 
   async list(): Promise<BatchInboundOrderSummary[]> {
