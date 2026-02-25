@@ -1178,7 +1178,7 @@ export class BatchInboundService {
     }
 
     if (/^\d{1,6}$/.test(value)) {
-      return this.formatBoxCode(Number(value));
+      return this.formatBoxCodeFromDigits(value);
     }
 
     const matched = value.match(/^B[-_\s]?(\d{1,6})$/);
@@ -1186,11 +1186,19 @@ export class BatchInboundService {
       return '';
     }
 
-    return this.formatBoxCode(Number(matched[1]));
+    return this.formatBoxCodeFromDigits(matched[1]);
   }
 
   private formatBoxCode(num: number): string {
-    return `B-${num.toString().padStart(4, '0')}`;
+    return `B-${num.toString().padStart(3, '0')}`;
+  }
+
+  private formatBoxCodeFromDigits(rawDigits: string): string {
+    const digits = String(rawDigits ?? '').replace(/\D/g, '');
+    if (!digits) {
+      return '';
+    }
+    return `B-${digits.padStart(Math.max(3, digits.length), '0')}`;
   }
 
   private normalizeHeader(header: string): string {
