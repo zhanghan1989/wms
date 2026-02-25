@@ -427,16 +427,25 @@ function canCurrentUserConfirmOverseasProductEditRequest() {
   return roleEnabled && departmentEnabled;
 }
 
+function getProductEditConfirmContactMessage(changedFields) {
+  if (isErpSkuOnlyProductEditRequest(changedFields)) {
+    return "请联系启用的日本海外仓管理员确认";
+  }
+  return "请联系启用的佛山工厂管理员确认";
+}
+
 function resolveProductEditConfirmPermission(changedFields) {
   if (isErpSkuOnlyProductEditRequest(changedFields)) {
     return {
       allowed: canCurrentUserConfirmOverseasProductEditRequest(),
       message: PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_OVERSEAS,
+      contactMessage: getProductEditConfirmContactMessage(changedFields),
     };
   }
   return {
     allowed: canCurrentUserConfirmFactoryProductEditRequest(),
     message: PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY,
+    contactMessage: getProductEditConfirmContactMessage(changedFields),
   };
 }
 
@@ -2242,9 +2251,8 @@ function renderProductEditRequestDetail(item) {
   `;
 
   compare.innerHTML = `${renderCol("变更前", beforeData, "before")}${renderCol("变更后", afterData, "after")}`;
-  const permission = resolveProductEditConfirmPermission(state.selectedProductEditRequestChangedFields);
-  const canOperate = item?.status === "pending" && permission.allowed;
-  confirmBtn.classList.toggle("hidden", !canOperate);
+  const canShowConfirmButton = item?.status === "pending";
+  confirmBtn.classList.toggle("hidden", !canShowConfirmButton);
 }
 
 function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
@@ -5276,7 +5284,7 @@ function bindDelegates() {
         state.selectedProductEditRequestChangedFields,
       );
       if (!permission.allowed) {
-        throw new Error(permission.message);
+        throw new Error(permission.contactMessage || permission.message);
       }
       const id = Number(state.selectedProductEditRequestId || 0);
       if (!Number.isInteger(id) || id <= 0) {
