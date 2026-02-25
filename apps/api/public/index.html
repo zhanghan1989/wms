@@ -502,7 +502,10 @@
       <section class="panel" id="dataBackup">
         <div class="panel-head">
           <h2>数据备份一览</h2>
-          <button id="refreshDataBackup" class="ghost">刷新</button>
+          <div class="panel-tools">
+            <button id="runDataBackupBtn" type="button">立即备份</button>
+            <button id="refreshDataBackup" class="ghost">刷新</button>
+          </div>
         </div>
         <article class="card">
           <p class="muted">系统会在每周日 23:59 自动执行数据库备份，并生成可下载 ZIP 文件。</p>

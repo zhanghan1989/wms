@@ -752,6 +752,14 @@ async function loadDataBackups() {
   renderDataBackupTable();
 }
 
+async function runDataBackupNow(button) {
+  await withBusyButton(button, "备份中...", async () => {
+    const result = await request("/backups/run", { method: "POST" });
+    await loadDataBackups();
+    showToast(`备份完成：${displayText(result?.fileName)}`);
+  });
+}
+
 async function downloadDataBackup(fileName) {
   const normalizedFileName = String(fileName || "").trim();
   if (!normalizedFileName) {
@@ -5738,6 +5746,13 @@ function bindRefresh() {
   $("refreshOverviewDashboard").addEventListener("click", () =>
     loadOverviewDashboard().catch((error) => showToast(error.message, true)),
   );
+  $("runDataBackupBtn").addEventListener("click", async (event) => {
+    try {
+      await runDataBackupNow(event.currentTarget);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
   $("refreshDataBackup").addEventListener("click", () =>
     loadDataBackups().catch((error) => showToast(error.message, true)),
   );
