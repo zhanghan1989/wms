@@ -888,6 +888,7 @@ export class InventoryService {
           select: {
             id: true,
             sku: true,
+            fnsku: true,
             model: true,
             brand: true,
           },
@@ -918,6 +919,7 @@ export class InventoryService {
           ? {
               id: row.sku.id.toString(),
               sku: row.sku.sku,
+              fnsku: row.sku.fnsku,
               model: row.sku.model,
               brand: row.sku.brand,
             }
