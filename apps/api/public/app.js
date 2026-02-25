@@ -2143,19 +2143,54 @@ function renderBoxOptionsForSelect(selectId, placeholder) {
 }
 
 function renderSkuOptionsForSelect(selectId, placeholder) {
-  const select = $(selectId);
-  if (!select) return;
+  const control = $(selectId);
+  if (!control) return;
 
-  const prev = select.value;
-  const options = [...state.inventorySkus]
-    .sort((a, b) => String(a.sku || "").localeCompare(String(b.sku || ""), "en", { numeric: true }))
-    .map((sku) => `<option value="${escapeHtml(sku.id)}">${escapeHtml(sku.sku)}</option>`)
-    .join("");
+  const rows = [...state.inventorySkus].sort((a, b) =>
+    String(a.sku || "").localeCompare(String(b.sku || ""), "en", { numeric: true }),
+  );
 
-  select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
-  if (prev && state.inventorySkus.some((sku) => String(sku.id) === String(prev))) {
-    select.value = prev;
+  if (String(control.tagName || "").toUpperCase() === "SELECT") {
+    const prev = control.value;
+    const options = rows
+      .map((sku) => `<option value="${escapeHtml(sku.id)}">${escapeHtml(sku.sku)}</option>`)
+      .join("");
+    control.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>${options}`;
+    if (prev && state.inventorySkus.some((sku) => String(sku.id) === String(prev))) {
+      control.value = prev;
+    }
+    return;
   }
+
+  const listId = control.getAttribute("list");
+  const datalist = listId ? $(listId) : null;
+  if (!datalist) return;
+  const prev = String(control.value || "").trim();
+  datalist.innerHTML = rows
+    .map((sku) => `<option value="${escapeHtml(sku.sku)}"></option>`)
+    .join("");
+  if (prev) {
+    const exact = rows.find(
+      (sku) => String(sku.sku || "").trim().toUpperCase() === prev.toUpperCase(),
+    );
+    if (exact?.sku) {
+      control.value = exact.sku;
+    }
+  }
+}
+
+function resolveMoveProductSkuId() {
+  const control = $("moveProductSkuId");
+  if (!control) return 0;
+  if (String(control.tagName || "").toUpperCase() === "SELECT") {
+    return Number(control.value || 0);
+  }
+  const rawSku = String(control.value || "").trim().toUpperCase();
+  if (!rawSku) return 0;
+  const matched = state.inventorySkus.find(
+    (item) => String(item?.sku || "").trim().toUpperCase() === rawSku,
+  );
+  return matched ? Number(matched.id || 0) : 0;
 }
 
 function getEnabledBrandsSorted() {
@@ -2769,7 +2804,7 @@ function syncMoveProductNewShelfDisplay() {
 }
 
 async function refreshMoveProductOldBoxOptionsBySku() {
-  const skuId = Number($("moveProductSkuId")?.value || 0);
+  const skuId = resolveMoveProductSkuId();
   const select = $("moveProductOldBoxCode");
   const hint = $("moveProductOldBoxHint");
   if (!select) return;
@@ -3959,7 +3994,7 @@ async function submitMoveBoxShelfForm() {
 }
 
 async function submitMoveBoxCodeForm() {
-  const skuId = Number($("moveProductSkuId").value);
+  const skuId = resolveMoveProductSkuId();
   if (!Number.isInteger(skuId) || skuId <= 0) {
     throw new Error("请选择SKU");
   }
@@ -4788,13 +4823,39 @@ function bindForms() {
       event.target.value = resolved;
     }
   });
-  $("moveProductSkuId").addEventListener("change", async () => {
+  const moveProductSkuControl = $("moveProductSkuId");
+  moveProductSkuControl.addEventListener("change", async () => {
     try {
       await refreshMoveProductOldBoxOptionsBySku();
     } catch (error) {
       showToast(error.message, true);
     }
   });
+  if (String(moveProductSkuControl.tagName || "").toUpperCase() !== "SELECT") {
+    moveProductSkuControl.addEventListener("input", async () => {
+      try {
+        await refreshMoveProductOldBoxOptionsBySku();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+    moveProductSkuControl.addEventListener("blur", async (event) => {
+      const raw = String(event.target?.value || "").trim();
+      if (raw) {
+        const matched = state.inventorySkus.find(
+          (item) => String(item?.sku || "").trim().toUpperCase() === raw.toUpperCase(),
+        );
+        if (matched?.sku) {
+          event.target.value = matched.sku;
+        }
+      }
+      try {
+        await refreshMoveProductOldBoxOptionsBySku();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  }
   $("moveProductOldBoxCode").addEventListener("change", () => {
     syncMoveProductOldShelfDisplay();
   });
