@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { AuditAction, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
+import * as iconv from 'iconv-lite';
 import { AuditService } from '../audit/audit.service';
 import { generateOrderNo, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
@@ -28,6 +29,7 @@ interface AdjustOrderResult {
 
 const FBA_REPLENISH_MARK = 'FBA补货';
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = '正在编辑产品申请中，请管理员确认后再执行相关操作。';
+const STOCK_ADJUSTMENT_WAREHOUSE_ID = '64774';
 
 @Injectable()
 export class InventoryService {
@@ -968,6 +970,77 @@ export class InventoryService {
     };
   }
 
+  async buildStockAdjustmentCsv(): Promise<{ fileName: string; content: Buffer }> {
+    const [skus, inventoryRows, pendingRows] = await Promise.all([
+      this.prisma.sku.findMany({
+        select: {
+          id: true,
+          sku: true,
+        },
+      }),
+      this.prisma.inventoryBoxSku.groupBy({
+        by: ['skuId'],
+        _sum: {
+          qty: true,
+        },
+      }),
+      this.prisma.fbaReplenishment.findMany({
+        where: {
+          status: { in: ['pending_confirm', 'pending_outbound'] },
+        },
+        select: {
+          skuId: true,
+          status: true,
+          requestedQty: true,
+          actualQty: true,
+        },
+      }),
+    ]);
+
+    const inventoryBySku = new Map<string, number>();
+    inventoryRows.forEach((row) => {
+      inventoryBySku.set(row.skuId.toString(), Number(row._sum.qty ?? 0));
+    });
+
+    const pendingBySku = new Map<string, number>();
+    pendingRows.forEach((row) => {
+      const qty = Number(
+        row.status === 'pending_outbound'
+          ? (row.actualQty ?? row.requestedQty)
+          : row.requestedQty,
+      );
+      if (qty <= 0) return;
+      const key = row.skuId.toString();
+      pendingBySku.set(key, (pendingBySku.get(key) ?? 0) + qty);
+    });
+
+    const lines: string[] = [
+      ['SKUコード', '倉庫ID', '実在庫数', '差分指定']
+        .map((cell) => this.escapeCsvCell(cell))
+        .join(','),
+    ];
+
+    const sortedSkus = [...skus].sort((a, b) =>
+      String(a.sku || '').localeCompare(String(b.sku || ''), 'en', { numeric: true }),
+    );
+
+    sortedSkus.forEach((sku) => {
+      const skuKey = sku.id.toString();
+      const totalQty = inventoryBySku.get(skuKey) ?? 0;
+      const pendingQty = pendingBySku.get(skuKey) ?? 0;
+      const actualQty = totalQty - pendingQty;
+      const row = [sku.sku || '', STOCK_ADJUSTMENT_WAREHOUSE_ID, actualQty, ''];
+      lines.push(row.map((cell) => this.escapeCsvCell(cell)).join(','));
+    });
+
+    const csvText = `${lines.join('\r\n')}\r\n`;
+    const fileName = `stock_ajustment_${this.formatDateForFilename(new Date())}.csv`;
+    return {
+      fileName,
+      content: iconv.encode(csvText, 'shift_jis'),
+    };
+  }
+
   private formatFbaRequestNo(date: Date): string {
     const pad = (num: number) => String(num).padStart(2, '0');
     const yyyy = date.getFullYear();
@@ -1001,6 +1074,19 @@ export class InventoryService {
     if (status === 'outbound') return '已出库';
     if (status === 'deleted') return '已删除';
     return status;
+  }
+
+  private formatDateForFilename(date: Date): string {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  private escapeCsvCell(value: string | number): string {
+    const text = String(value ?? '');
+    if (/[",\r\n]/.test(text)) {
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+    return text;
   }
 
   private async ensureSkusNotUnderPendingEdit(

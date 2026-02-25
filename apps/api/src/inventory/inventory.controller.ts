@@ -6,8 +6,10 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -121,5 +123,14 @@ export class InventoryController {
   @Get('fba-replenishments/pending-summary')
   async getFbaPendingSummary(): Promise<unknown> {
     return this.inventoryService.getFbaPendingSummary();
+  }
+
+  @Get('stock-adjustment-csv')
+  async downloadStockAdjustmentCsv(@Res() res: Response): Promise<void> {
+    const csv = await this.inventoryService.buildStockAdjustmentCsv();
+    res.setHeader('Content-Type', 'text/csv; charset=Shift_JIS');
+    res.setHeader('Content-Disposition', `attachment; filename="${csv.fileName}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(csv.content);
   }
 }

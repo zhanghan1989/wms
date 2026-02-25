@@ -131,7 +131,6 @@ const AUDIT_ENTITY_TEXT_MAP = {
   product_edit_request: "产品编辑申请",
 };
 const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE = "仅启用的佛山工厂管理者可确认编辑申请";
-const STOCK_ADJUSTMENT_WAREHOUSE_ID = "64774";
 
 function showToast(message, isError = false) {
   showErrorModal(message, isError);
@@ -220,47 +219,46 @@ function formatDateForFilename(date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-function escapeCsvCell(value) {
-  const text = String(value ?? "");
-  if (/[",\r\n]/.test(text)) {
-    return `"${text.replaceAll('"', '""')}"`;
-  }
-  return text;
-}
-
-function getSkuInventoryTotalQty(skuId) {
-  const rows = state.inventoryLocations.get(String(skuId)) || [];
-  return rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
-}
-
-function buildStockAdjustmentCsvContent() {
-  const header = ["SKUコード", "倉庫ID", "実在庫数", "差分指定"];
-  const lines = [header.map(escapeCsvCell).join(",")];
-  const skus = [...state.inventorySkus].sort((a, b) =>
-    String(a?.sku || "").localeCompare(String(b?.sku || ""), "en", { numeric: true }),
-  );
-
-  skus.forEach((sku) => {
-    const totalQty = getSkuInventoryTotalQty(sku.id);
-    const pendingQty = getFbaPendingQtyBySku(sku.id);
-    const actualQty = totalQty - pendingQty;
-    const row = [sku.sku || "", STOCK_ADJUSTMENT_WAREHOUSE_ID, actualQty, ""];
-    lines.push(row.map(escapeCsvCell).join(","));
-  });
-
-  return lines.join("\r\n");
-}
-
 async function downloadStockAdjustmentCsv() {
   if (!state.token) {
     throw new Error("请先登录");
   }
-  await loadInventory();
+  let response;
+  try {
+    response = await fetch("/api/inventory/stock-adjustment-csv", {
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+      },
+    });
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+  }
 
-  const fileDate = formatDateForFilename(new Date());
-  const fileName = `stock_ajustment_${fileDate}.csv`;
-  const csvContent = buildStockAdjustmentCsvContent();
-  const blob = new Blob([`\uFEFF${csvContent}`], { type: "text/csv;charset=utf-8;" });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || `HTTP ${response.status}`;
+    try {
+      const payload = text ? JSON.parse(text) : null;
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {}
+    throw new Error(normalizeErrorMessage(message));
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainNameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  let fileName = `stock_ajustment_${formatDateForFilename(new Date())}.csv`;
+  if (utf8NameMatch?.[1]) {
+    try {
+      fileName = decodeURIComponent(utf8NameMatch[1]);
+    } catch {}
+  } else if (plainNameMatch?.[1]) {
+    fileName = plainNameMatch[1];
+  }
+
+  const blob = await response.blob();
   const link = document.createElement("a");
   const href = URL.createObjectURL(blob);
   link.href = href;
