@@ -8,7 +8,7 @@ import {
 import { AuditAction, BatchInboundOrderStatus, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import * as iconv from 'iconv-lite';
 import { AuditService } from '../audit/audit.service';
-import { generateOrderNo, parseId } from '../common/utils';
+import { APP_TIMEZONE, generateOrderNo, getZonedDateParts, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -1483,14 +1483,8 @@ export class InventoryService {
   }
 
   private formatFbaRequestNo(date: Date): string {
-    const pad = (num: number) => String(num).padStart(2, '0');
-    const yyyy = date.getFullYear();
-    const mm = pad(date.getMonth() + 1);
-    const dd = pad(date.getDate());
-    const hh = pad(date.getHours());
-    const mi = pad(date.getMinutes());
-    const ss = pad(date.getSeconds());
-    return `FBA-${yyyy}${mm}${dd}-${hh}${mi}${ss}`;
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `FBA-${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}`;
   }
 
   private async generateFbaRequestNo(tx: Prisma.TransactionClient): Promise<string> {
@@ -1518,8 +1512,8 @@ export class InventoryService {
   }
 
   private formatDateForFilename(date: Date): string {
-    const pad = (value: number) => String(value).padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `${parts.year}-${parts.month}-${parts.day}`;
   }
 
   private escapeCsvCell(value: string | number): string {

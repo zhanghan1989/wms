@@ -14,7 +14,7 @@ import {
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
-import { parseId } from '../common/utils';
+import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CollectBatchInboundDto } from './dto/collect-batch-inbound.dto';
@@ -1226,11 +1226,8 @@ export class BatchInboundService {
   }
 
   private buildBatchInboundOrderNo(batchNo: string, boxCount: number): string {
-    const now = new Date();
-    const yyyy = now.getFullYear().toString();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const dd = String(now.getDate()).padStart(2, '0');
-    return `BINB-${yyyy}${mm}${dd}-${batchNo}-${boxCount}`;
+    const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
+    return `BINB-${parts.year}${parts.month}${parts.day}-${batchNo}-${boxCount}`;
   }
 
   private async loadOrderDetailInTx(tx: Tx, orderId: bigint): Promise<BatchInboundOrderDetail> {

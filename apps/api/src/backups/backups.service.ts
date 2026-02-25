@@ -10,6 +10,7 @@ import { Cron } from '@nestjs/schedule';
 import JSZip = require('jszip');
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { join, resolve } from 'path';
+import { APP_TIMEZONE, getZonedDateParts } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
 
 type BackupSource = 'manual' | 'schedule' | 'legacy';
@@ -24,7 +25,7 @@ export type BackupSummary = {
 };
 
 const WEEKLY_BACKUP_CRON = '0 59 23 * * 0';
-const BACKUP_TIMEZONE = process.env.BACKUP_TIMEZONE || 'Asia/Shanghai';
+const BACKUP_TIMEZONE = APP_TIMEZONE;
 const DEFAULT_KEEP_ZIP_COUNT = 5;
 
 @Injectable()
@@ -373,10 +374,8 @@ export class BackupsService implements OnModuleInit {
   }
 
   private formatTimestamp(date: Date): string {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(
-      date.getHours(),
-    )}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}`;
   }
 
   private normalizeBackupFileName(fileNameRaw: string): string {
