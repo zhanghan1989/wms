@@ -1826,19 +1826,24 @@ async function submitEditSkuForm() {
     throw new Error("请选择产品");
   }
 
+  const toNullableValue = (id) => {
+    const value = String($(id)?.value ?? "").trim();
+    return value ? value : null;
+  };
+
   const payload = {
     skuId,
-    sku: $("editSku").value.trim() || undefined,
-    model: $("editModel").value.trim() || undefined,
-    brand: $("editBrand").value.trim() || undefined,
-    type: $("editType").value.trim() || undefined,
-    color: $("editColor").value.trim() || undefined,
-    shop: $("editShop").value.trim() || undefined,
-    remark: $("editRemark").value.trim() || undefined,
-    erpSku: $("editErpSku").value.trim() || undefined,
-    asin: $("editAsin").value.trim() || undefined,
-    fnsku: $("editFnsku").value.trim() || undefined,
-    fbmSku: $("editFbmSku").value.trim() || undefined,
+    // SKU is read-only and not submitted for editing.
+    model: toNullableValue("editModel"),
+    brand: toNullableValue("editBrand"),
+    type: toNullableValue("editType"),
+    color: toNullableValue("editColor"),
+    shop: toNullableValue("editShop"),
+    remark: toNullableValue("editRemark"),
+    erpSku: toNullableValue("editErpSku"),
+    asin: toNullableValue("editAsin"),
+    fnsku: toNullableValue("editFnsku"),
+    fbmSku: toNullableValue("editFbmSku"),
   };
 
   await request("/sku-edit-requests", {

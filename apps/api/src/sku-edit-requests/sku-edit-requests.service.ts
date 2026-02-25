@@ -19,6 +19,7 @@ type ProductSnapshot = {
   shop: string | null;
   remark: string | null;
 };
+type EditableProductField = Exclude<keyof ProductSnapshot, 'sku'>;
 
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'sku',
@@ -148,18 +149,30 @@ export class SkuEditRequestsService {
       remark: normalizeNullableString(sku.remark),
     };
 
+    const resolveEditableField = (
+      field: EditableProductField,
+      fallback: string | null,
+    ): string | null => {
+      const rawPayload = payload as unknown as Record<string, unknown>;
+      if (Object.prototype.hasOwnProperty.call(rawPayload, field)) {
+        return normalizeNullableString(rawPayload[field]);
+      }
+      return fallback;
+    };
+
     const afterData: ProductSnapshot = {
-      sku: normalizeNullableString(payload.sku ?? sku.sku),
-      erpSku: normalizeNullableString(payload.erpSku ?? sku.erpSku),
-      asin: normalizeNullableString(payload.asin ?? sku.asin),
-      fnsku: normalizeNullableString(payload.fnsku ?? sku.fnsku),
-      fbmSku: normalizeNullableString(payload.fbmSku ?? sku.fbmSku),
-      model: normalizeNullableString(payload.model ?? sku.model),
-      brand: normalizeNullableString(payload.brand ?? sku.brand),
-      type: normalizeNullableString(payload.type ?? sku.type),
-      color: normalizeNullableString(payload.color ?? sku.color),
-      shop: normalizeNullableString(payload.shop ?? sku.shop),
-      remark: normalizeNullableString(payload.remark ?? sku.remark),
+      // SKU cannot be edited in product edit requests.
+      sku: beforeData.sku,
+      erpSku: resolveEditableField('erpSku', beforeData.erpSku),
+      asin: resolveEditableField('asin', beforeData.asin),
+      fnsku: resolveEditableField('fnsku', beforeData.fnsku),
+      fbmSku: resolveEditableField('fbmSku', beforeData.fbmSku),
+      model: resolveEditableField('model', beforeData.model),
+      brand: resolveEditableField('brand', beforeData.brand),
+      type: resolveEditableField('type', beforeData.type),
+      color: resolveEditableField('color', beforeData.color),
+      shop: resolveEditableField('shop', beforeData.shop),
+      remark: resolveEditableField('remark', beforeData.remark),
     };
 
     const changedFields = SNAPSHOT_FIELDS.filter((field) => beforeData[field] !== afterData[field]);
