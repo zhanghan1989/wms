@@ -31,7 +31,7 @@ const DEFAULT_KEEP_ZIP_COUNT = 5;
 @Injectable()
 export class BackupsService implements OnModuleInit {
   private readonly logger = new Logger(BackupsService.name);
-  private readonly backupDir = resolve(process.cwd(), 'storage', 'backups');
+  private readonly backupDir = this.resolveBackupDir();
   private readonly keepZipCount = this.resolveKeepZipCount();
   private isCreating = false;
 
@@ -417,5 +417,13 @@ export class BackupsService implements OnModuleInit {
     const normalized = Math.floor(parsed);
     if (normalized < 1) return DEFAULT_KEEP_ZIP_COUNT;
     return normalized;
+  }
+
+  private resolveBackupDir(): string {
+    const raw = String(process.env.BACKUP_DIR ?? '').trim();
+    if (raw) {
+      return resolve(raw);
+    }
+    return resolve(process.cwd(), 'storage', 'backups');
   }
 }

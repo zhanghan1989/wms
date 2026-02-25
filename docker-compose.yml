@@ -8,11 +8,14 @@ services:
       PORT: 3000
       DATABASE_URL: mysql://root:root@db:3306/wms_v1
       JWT_SECRET: wms-dev-secret
+      BACKUP_DIR: /app/storage/backups
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "3000:3000"
+    volumes:
+      - backup_data:/app/storage/backups
     restart: unless-stopped
 
   db:
@@ -42,3 +45,4 @@ services:
 
 volumes:
   mysql_data:
+  backup_data:
