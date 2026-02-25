@@ -357,40 +357,10 @@
           <h3>基础操作</h3>
           <div class="action-row">
             <button type="button" id="openCreateUserModal">新增用户</button>
+            <button type="button" id="openDepartmentManageModal">部门管理</button>
+            <button type="button" id="openRoleManageModal">角色管理</button>
           </div>
         </article>
-        <div class="cards">
-          <article class="card">
-            <h3>部门配置</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>编码</th>
-                  <th>名称</th>
-                  <th>排序</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody id="departmentOptionsBody"></tbody>
-            </table>
-          </article>
-          <article class="card">
-            <h3>角色配置</h3>
-            <table>
-              <thead>
-                <tr>
-                  <th>编码</th>
-                  <th>名称</th>
-                  <th>排序</th>
-                  <th>状态</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody id="roleOptionsBody"></tbody>
-            </table>
-          </article>
-        </div>
         <table>
           <thead><tr><th>用户名</th><th>部门</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
           <tbody id="usersBody"></tbody>
@@ -793,6 +763,48 @@
     </div>
   </div>
 
+  <div id="departmentManageModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>部门管理</h3>
+        <button type="button" class="ghost" data-action="closeDepartmentManageModal">关闭</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>编码</th>
+            <th>名称</th>
+            <th>排序</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="departmentOptionsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="roleManageModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>角色管理</h3>
+        <button type="button" class="ghost" data-action="closeRoleManageModal">关闭</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>编码</th>
+            <th>名称</th>
+            <th>排序</th>
+            <th>状态</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="roleOptionsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div id="deleteConfirmModal" class="modal hidden">
     <div class="modal-card modal-confirm">
       <div class="modal-head">
@@ -864,4 +876,3 @@
   <script type="module" src="/app.js"></script>
 </body>
 </html>
-

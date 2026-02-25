@@ -3439,6 +3439,24 @@ function bindForms() {
     }
   });
 
+  $("openDepartmentManageModal").addEventListener("click", async () => {
+    try {
+      await loadUserOptions();
+      openModal("departmentManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openRoleManageModal").addEventListener("click", async () => {
+    try {
+      await loadUserOptions();
+      openModal("roleManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openCreateSkuModal").addEventListener("click", async () => {
     await Promise.all([loadShelves(), loadBoxes(), loadBrands(), loadSkuTypes(), loadShops()]).catch((error) =>
       showToast(error.message, true),
@@ -4427,6 +4445,18 @@ function bindDelegates() {
       closeModal("shopManageModal");
       return;
     }
+
+    const departmentManageClose = event.target.closest("button[data-action='closeDepartmentManageModal']");
+    if (departmentManageClose) {
+      closeModal("departmentManageModal");
+      return;
+    }
+
+    const roleManageClose = event.target.closest("button[data-action='closeRoleManageModal']");
+    if (roleManageClose) {
+      closeModal("roleManageModal");
+      return;
+    }
     const productEditRequestDetailClose = event.target.closest(
       "button[data-action='closeProductEditRequestDetailModal']",
     );
@@ -4547,6 +4577,18 @@ function bindDelegates() {
   $("shopManageModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("shopManageModal");
+    }
+  });
+
+  $("departmentManageModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("departmentManageModal");
+    }
+  });
+
+  $("roleManageModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("roleManageModal");
     }
   });
 
