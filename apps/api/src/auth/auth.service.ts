@@ -16,7 +16,7 @@ export class AuthService {
 
   async login(username: string, password: string): Promise<{
     accessToken: string;
-    user: Pick<User, 'id' | 'username' | 'role' | 'status'>;
+    user: Pick<User, 'id' | 'username' | 'role' | 'status' | 'department'>;
   }> {
     const user = await this.prisma.user.findUnique({
       where: { username },
@@ -24,11 +24,12 @@ export class AuthService {
         id: true,
         username: true,
         role: true,
+        department: true,
         status: true,
         passwordHash: true,
       },
     });
-    if (!user || user.status !== 1) {
+    if (!user || user.status !== 1 || !user.passwordHash) {
       throw new UnauthorizedException('用户名或密码错误');
     }
 
@@ -49,25 +50,34 @@ export class AuthService {
         id: user.id,
         username: user.username,
         role: user.role,
+        department: user.department,
         status: user.status,
       },
     };
   }
 
-  async getMe(id: bigint): Promise<Pick<User, 'id' | 'username' | 'role' | 'status'>> {
+  async getMe(id: bigint): Promise<Pick<User, 'id' | 'username' | 'role' | 'status' | 'department'>> {
     const user = await this.prisma.user.findUnique({
       where: { id },
       select: {
         id: true,
         username: true,
         role: true,
+        department: true,
         status: true,
+        passwordHash: true,
       },
     });
-    if (!user || user.status !== 1) {
+    if (!user || user.status !== 1 || !user.passwordHash) {
       throw new UnauthorizedException('用户不存在');
     }
-    return user;
+    return {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      department: user.department,
+      status: user.status,
+    };
   }
 
   async changePassword(
@@ -86,7 +96,7 @@ export class AuthService {
         passwordHash: true,
       },
     });
-    if (!user || user.status !== 1) {
+    if (!user || user.status !== 1 || !user.passwordHash) {
       throw new UnauthorizedException('用户不存在');
     }
 

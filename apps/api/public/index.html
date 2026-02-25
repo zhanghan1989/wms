@@ -355,7 +355,13 @@
         </div>
         <form id="createUserForm" class="form-grid compact">
           <label>用户名<input id="newUsername" required /></label>
-          <label>密码<input id="newPassword" type="text" required /></label>
+          <label>部门
+            <select id="newDepartment">
+              <option value="factory">工厂</option>
+              <option value="overseas_warehouse">海外仓</option>
+              <option value="china_warehouse" selected>中国仓</option>
+            </select>
+          </label>
           <label>角色
             <select id="newRole">
               <option value="employee">员工</option>
@@ -365,7 +371,7 @@
           <button type="submit" class="create-user-btn">新增</button>
         </form>
         <table>
-          <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>用户名</th><th>部门</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
           <tbody id="usersBody"></tbody>
         </table>
       </section>
@@ -579,6 +585,13 @@
       <form id="editUserForm" class="form-grid modal-grid">
         <input id="editUserId" type="hidden" />
         <label>用户名<input id="editUsername" required minlength="3" maxlength="64" /></label>
+        <label>部门
+          <select id="editUserDepartment" required>
+            <option value="factory">工厂</option>
+            <option value="overseas_warehouse">海外仓</option>
+            <option value="china_warehouse">中国仓</option>
+          </select>
+        </label>
         <label>角色
           <select id="editUserRole" required>
             <option value="employee">员工</option>
@@ -596,15 +609,16 @@
   <div id="resetUserPasswordModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>初始化密码</h3>
+        <h3 id="resetUserPasswordModalTitle">重置密码</h3>
         <button type="button" class="ghost" data-action="closeResetUserPasswordModal">关闭</button>
       </div>
       <form id="resetUserPasswordForm" class="form-grid modal-grid">
         <input id="resetPasswordUserId" type="hidden" />
+        <input id="resetPasswordMode" type="hidden" />
         <label>用户名<input id="resetPasswordUsername" readonly /></label>
         <label>新密码<input id="resetPasswordNewPassword" type="text" minlength="6" maxlength="64" required /></label>
         <div class="modal-actions">
-          <button type="submit">确认</button>
+          <button id="resetPasswordSubmitBtn" type="submit">确认</button>
           <button type="button" class="ghost" data-action="closeResetUserPasswordModal">取消</button>
         </div>
       </form>

@@ -37,7 +37,7 @@ export class UsersController {
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.usersService.update(id, payload, user.id, user.role, req.requestId);
+    return this.usersService.update(id, payload, user.id, req.requestId);
   }
 
   @Post(':id/reset-password')

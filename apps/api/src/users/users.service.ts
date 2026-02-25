@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { hash } from 'bcryptjs';
-import { AuditAction, Role } from '@prisma/client';
+import { AuditAction, Department, Role } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../constants/audit-event-type';
 import { parseId } from '../common/utils';
@@ -20,19 +20,32 @@ export class UsersService {
   ) {}
 
   async findAll(): Promise<unknown[]> {
-    return this.prisma.user.findMany({
+    const users = await this.prisma.user.findMany({
       select: {
         id: true,
         username: true,
         role: true,
+        department: true,
         status: true,
         createdAt: true,
         updatedAt: true,
+        passwordHash: true,
       },
       orderBy: {
         id: 'desc',
       },
     });
+
+    return users.map((user) => ({
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      department: user.department,
+      status: user.status,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      passwordInitialized: Boolean(user.passwordHash),
+    }));
   }
 
   async create(
@@ -46,14 +59,14 @@ export class UsersService {
     if (exists) {
       throw new BadRequestException('用户名已存在');
     }
-    const passwordHash = await hash(payload.password, 10);
     const created = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           username: payload.username,
-          passwordHash,
+          passwordHash: null,
           role: payload.role ?? Role.employee,
-          status: payload.status ?? 1,
+          department: payload.department ?? Department.china_warehouse,
+          status: 0,
         },
       });
       await this.auditService.create({
@@ -66,6 +79,7 @@ export class UsersService {
         afterData: {
           username: user.username,
           role: user.role,
+          department: user.department,
           status: user.status,
         },
         operatorId,
@@ -78,9 +92,11 @@ export class UsersService {
       id: created.id,
       username: created.username,
       role: created.role,
+      department: created.department,
       status: created.status,
       createdAt: created.createdAt,
       updatedAt: created.updatedAt,
+      passwordInitialized: false,
     };
   }
 
@@ -88,7 +104,6 @@ export class UsersService {
     idParam: string,
     payload: UpdateUserDto,
     operatorId: bigint,
-    operatorRole: Role,
     requestId?: string,
   ): Promise<unknown> {
     const id = parseId(idParam, 'userId');
@@ -97,8 +112,8 @@ export class UsersService {
 
     const data: {
       username?: string;
-      passwordHash?: string;
       role?: Role;
+      department?: Department;
       status?: number;
     } = {};
 
@@ -113,18 +128,8 @@ export class UsersService {
       data.username = username;
     }
 
-    const nextRole = payload.role ?? user.role;
-    if (payload.password) {
-      if (operatorRole !== Role.admin) {
-        throw new BadRequestException('仅管理者可初始化密码');
-      }
-      if (user.role !== Role.employee || nextRole !== Role.employee) {
-        throw new BadRequestException('仅可初始化员工账号密码，管理者账号不允许初始化');
-      }
-      data.passwordHash = await hash(payload.password, 10);
-    }
-
     if (payload.role) data.role = payload.role;
+    if (payload.department) data.department = payload.department;
     if (typeof payload.status === 'number') data.status = payload.status;
 
     const updated = await this.prisma.$transaction(async (tx) => {
@@ -142,11 +147,13 @@ export class UsersService {
         beforeData: {
           username: user.username,
           role: user.role,
+          department: user.department,
           status: user.status,
         },
         afterData: {
           username: next.username,
           role: next.role,
+          department: next.department,
           status: next.status,
         },
         operatorId,
@@ -159,9 +166,11 @@ export class UsersService {
       id: updated.id,
       username: updated.username,
       role: updated.role,
+      department: updated.department,
       status: updated.status,
       createdAt: updated.createdAt,
       updatedAt: updated.updatedAt,
+      passwordInitialized: Boolean(updated.passwordHash),
     };
   }
 
@@ -183,6 +192,7 @@ export class UsersService {
         beforeData: {
           username: user.username,
           role: user.role,
+          department: user.department,
           status: user.status,
         },
         afterData: null,
@@ -213,7 +223,10 @@ export class UsersService {
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id },
-        data: { passwordHash },
+        data: {
+          passwordHash,
+          status: 1,
+        },
       });
       await this.auditService.create({
         db: tx,
@@ -224,13 +237,15 @@ export class UsersService {
         beforeData: {
           username: user.username,
           role: user.role,
+          department: user.department,
           status: user.status,
           passwordReset: false,
         },
         afterData: {
           username: user.username,
           role: user.role,
-          status: user.status,
+          department: user.department,
+          status: 1,
           passwordReset: true,
         },
         operatorId,

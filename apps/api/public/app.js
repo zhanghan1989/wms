@@ -37,15 +37,6 @@ const state = {
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
   shopEditingIds: new Set(),
-  plainPasswords: (() => {
-    try {
-      const raw = localStorage.getItem("wms_plain_password_map");
-      const parsed = raw ? JSON.parse(raw) : {};
-      return parsed && typeof parsed === "object" ? parsed : {};
-    } catch {
-      return {};
-    }
-  })(),
 };
 
 let deleteConfirmResolver = null;
@@ -141,6 +132,32 @@ function getStatusText(status) {
 
 function getRoleText(role) {
   return role === "admin" ? "管理者" : "员工";
+}
+
+function getDepartmentText(department) {
+  if (department === "factory") return "工厂";
+  if (department === "overseas_warehouse") return "海外仓";
+  return "中国仓";
+}
+
+function hasChineseChars(text) {
+  return /[\u3400-\u9FFF]/.test(String(text || ""));
+}
+
+function randomDigits(length) {
+  return Array.from({ length }, () => Math.floor(Math.random() * 10)).join("");
+}
+
+function buildDefaultPasswordByUsername(username) {
+  const normalizedUsername = String(username || "").trim();
+  if (!normalizedUsername) {
+    return randomDigits(6);
+  }
+  if (hasChineseChars(normalizedUsername)) {
+    return randomDigits(6);
+  }
+  const safePrefix = normalizedUsername.slice(0, 60);
+  return `${safePrefix}${randomDigits(4)}`;
 }
 
 function getFbaStatusText(status) {
@@ -459,6 +476,7 @@ function renderUsersTable() {
         (user) => `
       <tr>
         <td>${escapeHtml(user.username)}</td>
+        <td>${escapeHtml(getDepartmentText(user.department))}</td>
         <td>${escapeHtml(getRoleText(user.role))}</td>
         <td>${getStatusText(user.status)}</td>
         <td>${formatDate(user.updatedAt)}</td>
@@ -471,6 +489,7 @@ function renderUsersTable() {
               data-id="${escapeHtml(user.id)}"
               data-username="${escapeHtml(user.username)}"
               data-role="${escapeHtml(user.role)}"
+              data-department="${escapeHtml(user.department || "china_warehouse")}"
             >
               编辑
             </button>
@@ -480,8 +499,9 @@ function renderUsersTable() {
               data-action="resetUserPassword"
               data-id="${escapeHtml(user.id)}"
               data-username="${escapeHtml(user.username)}"
+              data-password-initialized="${user.passwordInitialized ? "1" : "0"}"
             >
-              初始化密码
+              ${user.passwordInitialized ? "重置密码" : "激活用户"}
             </button>
             <button
               type="button"
@@ -507,7 +527,7 @@ function renderUsersTable() {
       </tr>
     `,
       )
-      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
 }
 
 async function loadUsers() {
@@ -526,20 +546,25 @@ function loadMoreUsersIfNeeded() {
   renderUsersTable();
 }
 
-function openEditUserModal(userId, username, role) {
+function openEditUserModal(userId, username, role, department) {
   state.selectedEditUserId = String(userId);
   $("editUserId").value = String(userId);
   $("editUsername").value = String(username || "");
-  $("editUsername").dataset.original = String(username || "");
   $("editUserRole").value = role === "admin" ? "admin" : "employee";
+  $("editUserDepartment").value = department || "china_warehouse";
   openModal("editUserModal");
 }
 
-function openResetUserPasswordModal(userId, username) {
+function openResetUserPasswordModal(userId, username, passwordInitialized) {
+  const mode = passwordInitialized ? "reset" : "activate";
+  const generatedPassword = buildDefaultPasswordByUsername(username);
   state.selectedResetPasswordUserId = String(userId);
   $("resetPasswordUserId").value = String(userId);
+  $("resetPasswordMode").value = mode;
   $("resetPasswordUsername").value = String(username || "");
-  $("resetPasswordNewPassword").value = "";
+  $("resetPasswordNewPassword").value = generatedPassword;
+  $("resetUserPasswordModalTitle").textContent = mode === "activate" ? "激活用户" : "重置密码";
+  $("resetPasswordSubmitBtn").textContent = mode === "activate" ? "确认激活" : "确认重置";
   openModal("resetUserPasswordModal");
 }
 
@@ -2752,19 +2777,16 @@ function bindForms() {
     event.preventDefault();
     try {
       const username = $("newUsername").value.trim();
-      const password = $("newPassword").value;
       await request("/users", {
         method: "POST",
         body: JSON.stringify({
           username,
-          password,
+          department: $("newDepartment").value,
           role: $("newRole").value,
         }),
       });
-      state.plainPasswords[username] = password;
-      localStorage.setItem("wms_plain_password_map", JSON.stringify(state.plainPasswords));
       event.target.reset();
-      showToast("员工已创建");
+      showToast("用户已新增，状态为禁用，请激活用户后登录");
       await loadUsers();
       await loadAudit();
     } catch (error) {
@@ -2777,18 +2799,19 @@ function bindForms() {
     try {
       const userId = String($("editUserId").value || "").trim();
       if (!userId) {
-        throw new Error("未选择员工");
+        throw new Error("未选择用户");
       }
 
       const username = $("editUsername").value.trim();
-      const originalUsername = String($("editUsername").dataset.original || "").trim();
       const role = $("editUserRole").value;
+      const department = $("editUserDepartment").value;
       if (!username) {
         throw new Error("请输入用户名");
       }
 
       const payload = {
         username,
+        department,
         role,
       };
 
@@ -2797,21 +2820,9 @@ function bindForms() {
         body: JSON.stringify(payload),
       });
 
-      if (originalUsername && originalUsername !== username) {
-        const hasOldPassword = Object.prototype.hasOwnProperty.call(
-          state.plainPasswords,
-          originalUsername,
-        );
-        if (hasOldPassword) {
-          state.plainPasswords[username] = state.plainPasswords[originalUsername];
-          delete state.plainPasswords[originalUsername];
-        }
-      }
-      localStorage.setItem("wms_plain_password_map", JSON.stringify(state.plainPasswords));
-
       closeModal("editUserModal");
       state.selectedEditUserId = null;
-      showToast("员工信息已更新");
+      showToast("用户信息已更新");
       await Promise.all([loadUsers(), loadAudit(), loadMe()]);
     } catch (error) {
       showToast(error.message, true);
@@ -2823,9 +2834,9 @@ function bindForms() {
     try {
       const userId = String($("resetPasswordUserId").value || "").trim();
       if (!userId) {
-        throw new Error("未选择员工");
+        throw new Error("未选择用户");
       }
-      const username = String($("resetPasswordUsername").value || "").trim();
+      const mode = String($("resetPasswordMode").value || "reset");
       const password = String($("resetPasswordNewPassword").value || "").trim();
       if (password.length < 6 || password.length > 64) {
         throw new Error("密码长度需为6到64位");
@@ -2836,14 +2847,9 @@ function bindForms() {
         body: JSON.stringify({ password }),
       });
 
-      if (username) {
-        state.plainPasswords[username] = password;
-        localStorage.setItem("wms_plain_password_map", JSON.stringify(state.plainPasswords));
-      }
-
       closeModal("resetUserPasswordModal");
       state.selectedResetPasswordUserId = null;
-      showToast("密码已更新");
+      showToast(mode === "activate" ? "用户已激活并设置新密码" : "密码已重置");
       await Promise.all([loadUsers(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
@@ -3837,12 +3843,14 @@ function bindDelegates() {
     try {
       if (button.dataset.action === "editUser") {
         const role = String(button.dataset.role || "employee");
-        openEditUserModal(userId, username, role);
+        const department = String(button.dataset.department || "china_warehouse");
+        openEditUserModal(userId, username, role, department);
         return;
       }
 
       if (button.dataset.action === "resetUserPassword") {
-        openResetUserPasswordModal(userId, username);
+        const passwordInitialized = String(button.dataset.passwordInitialized || "0") === "1";
+        openResetUserPasswordModal(userId, username, passwordInitialized);
         return;
       }
 
@@ -3853,8 +3861,8 @@ function bindDelegates() {
         }
         const actionLabel = nextStatus === 1 ? "启用" : "禁用";
         const ok = await openActionConfirmModal(
-          `确认${actionLabel}员工 ${username} 吗？`,
-          `${actionLabel}员工`,
+          `确认${actionLabel}用户 ${username} 吗？`,
+          `${actionLabel}用户`,
           actionLabel,
         );
         if (!ok) return;
@@ -3863,7 +3871,7 @@ function bindDelegates() {
           method: "PUT",
           body: JSON.stringify({ status: nextStatus }),
         });
-        showToast(`员工已${actionLabel}`);
+        showToast(`用户已${actionLabel}`);
         await Promise.all([loadUsers(), loadAudit()]);
 
         if (String(state.me?.id || "") === userId && nextStatus !== 1) {
@@ -3878,15 +3886,13 @@ function bindDelegates() {
       }
 
       if (button.dataset.action === "deleteUser") {
-        const ok = await openDeleteConfirmModal(`确认删除员工 ${username} 吗？`);
+        const ok = await openDeleteConfirmModal(`确认删除用户 ${username} 吗？`);
         if (!ok) return;
 
         await request(`/users/${encodeURIComponent(userId)}`, {
           method: "DELETE",
         });
-        delete state.plainPasswords[username];
-        localStorage.setItem("wms_plain_password_map", JSON.stringify(state.plainPasswords));
-        showToast("员工已删除");
+        showToast("用户已删除");
         await Promise.all([loadUsers(), loadAudit()]);
 
         if (String(state.me?.id || "") === userId) {

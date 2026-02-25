@@ -12,6 +12,12 @@ enum Role {
   admin
 }
 
+enum Department {
+  factory
+  overseas_warehouse
+  china_warehouse
+}
+
 enum ItemCodeStatus {
   in_stock
   outbound
@@ -127,8 +133,9 @@ enum AuditEventType {
 model User {
   id                         BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   username                   String                 @unique @db.VarChar(64)
-  passwordHash               String                 @map("password_hash") @db.VarChar(255)
+  passwordHash               String?                @map("password_hash") @db.VarChar(255)
   role                       Role
+  department                 Department             @default(china_warehouse)
   status                     Int                    @default(1) @db.TinyInt
   createdAt                  DateTime               @default(now()) @map("created_at")
   updatedAt                  DateTime               @updatedAt @map("updated_at")
