@@ -57,7 +57,7 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'remark',
 ];
 const ERP_SKU_FIELD: keyof ProductSnapshot = 'erpSku';
-const SKU_UPLOAD_TEMPLATE_FILE = '批量更新产品.xlsx';
+const SKU_UPLOAD_TEMPLATE_FILE = '批量上传产品.xlsx';
 
 @Injectable()
 export class SkusService {

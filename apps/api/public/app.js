@@ -375,7 +375,7 @@ async function downloadSkuUploadTemplate() {
   const disposition = response.headers.get("content-disposition") || "";
   const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
   const plainNameMatch = disposition.match(/filename="?([^";]+)"?/i);
-  let fileName = "批量更新产品.xlsx";
+  let fileName = "批量上传产品.xlsx";
   if (utf8NameMatch?.[1]) {
     try {
       fileName = decodeURIComponent(utf8NameMatch[1]);
