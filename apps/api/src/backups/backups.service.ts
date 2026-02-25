@@ -32,10 +32,7 @@ const DEFAULT_KEEP_ZIP_COUNT = 5;
 export class BackupsService implements OnModuleInit {
   private readonly logger = new Logger(BackupsService.name);
   private readonly backupDir = resolve(process.cwd(), 'storage', 'backups');
-  private readonly keepZipCount = Math.max(
-    1,
-    Number(process.env.BACKUP_ZIP_KEEP_COUNT || DEFAULT_KEEP_ZIP_COUNT),
-  );
+  private readonly keepZipCount = this.resolveKeepZipCount();
   private isCreating = false;
 
   constructor(private readonly prisma: PrismaService) {}
@@ -410,5 +407,15 @@ export class BackupsService implements OnModuleInit {
       return source;
     }
     return 'legacy';
+  }
+
+  private resolveKeepZipCount(): number {
+    const raw = String(process.env.BACKUP_ZIP_KEEP_COUNT ?? '').trim();
+    const parsed = Number(raw);
+    if (!raw) return DEFAULT_KEEP_ZIP_COUNT;
+    if (!Number.isFinite(parsed)) return DEFAULT_KEEP_ZIP_COUNT;
+    const normalized = Math.floor(parsed);
+    if (normalized < 1) return DEFAULT_KEEP_ZIP_COUNT;
+    return normalized;
   }
 }
