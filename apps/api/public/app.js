@@ -44,6 +44,7 @@ const state = {
   fbaPendingBySku: {},
   fbaPendingByBoxSku: {},
   selectedProductEditRequestId: null,
+  selectedProductEditRequestChangedFields: [],
   selectedEditUserId: null,
   selectedResetPasswordUserId: null,
   selectedFbaIds: new Set(),
@@ -131,7 +132,9 @@ const AUDIT_ENTITY_TEXT_MAP = {
   fba_replenishment: "FBA补货申请",
   product_edit_request: "产品编辑申请",
 };
-const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE = "仅启用的佛山工厂管理者可确认编辑申请";
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = "仅启用的佛山工厂管理者可确认编辑申请";
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_OVERSEAS =
+  "仅启用的日本海外仓管理者可确认erpSKU修改申请";
 
 function showToast(message, isError = false) {
   showErrorModal(message, isError);
@@ -370,7 +373,35 @@ function isUserOptionEnabled(options, code) {
   return Number(item.status) === 1;
 }
 
-function canCurrentUserConfirmProductEditRequest() {
+function normalizeProductEditChangedFields(changedFields) {
+  const allowed = new Set([
+    "sku",
+    "erpSku",
+    "asin",
+    "fnsku",
+    "fbmSku",
+    "model",
+    "brand",
+    "type",
+    "color",
+    "shop",
+    "remark",
+  ]);
+  return Array.from(
+    new Set(
+      (Array.isArray(changedFields) ? changedFields : [])
+        .map((field) => String(field || "").trim())
+        .filter((field) => allowed.has(field)),
+    ),
+  );
+}
+
+function isErpSkuOnlyProductEditRequest(changedFields) {
+  const normalized = normalizeProductEditChangedFields(changedFields);
+  return normalized.length === 1 && normalized[0] === "erpSku";
+}
+
+function canCurrentUserConfirmFactoryProductEditRequest() {
   const user = state.me;
   if (!user) return false;
   if (String(user.role || "") !== "admin") return false;
@@ -380,6 +411,31 @@ function canCurrentUserConfirmProductEditRequest() {
   const roleEnabled = isUserOptionEnabled(getRoleOptionsWithFallback(), "admin");
   const departmentEnabled = isUserOptionEnabled(getDepartmentOptionsWithFallback(), "factory");
   return roleEnabled && departmentEnabled;
+}
+
+function canCurrentUserConfirmOverseasProductEditRequest() {
+  const user = state.me;
+  if (!user) return false;
+  if (String(user.role || "") !== "admin") return false;
+  if (String(user.department || "") !== "overseas_warehouse") return false;
+  if (Number(user.status) !== 1) return false;
+
+  const roleEnabled = isUserOptionEnabled(getRoleOptionsWithFallback(), "admin");
+  const departmentEnabled = isUserOptionEnabled(getDepartmentOptionsWithFallback(), "overseas_warehouse");
+  return roleEnabled && departmentEnabled;
+}
+
+function resolveProductEditConfirmPermission(changedFields) {
+  if (isErpSkuOnlyProductEditRequest(changedFields)) {
+    return {
+      allowed: canCurrentUserConfirmOverseasProductEditRequest(),
+      message: PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_OVERSEAS,
+    };
+  }
+  return {
+    allowed: canCurrentUserConfirmFactoryProductEditRequest(),
+    message: PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY,
+  };
 }
 
 function hasChineseChars(text) {
@@ -1872,6 +1928,7 @@ function renderProductEditRequestDetail(item) {
 
   if (!item) {
     state.selectedProductEditRequestId = null;
+    state.selectedProductEditRequestChangedFields = [];
     meta.innerHTML = "";
     compare.innerHTML = '<div class="muted">暂无数据</div>';
     confirmBtn.classList.add("hidden");
@@ -1879,6 +1936,7 @@ function renderProductEditRequestDetail(item) {
   }
 
   state.selectedProductEditRequestId = Number(item.id);
+  state.selectedProductEditRequestChangedFields = normalizeProductEditChangedFields(item?.changedFields);
   meta.innerHTML = `
     <div><strong>SKU：</strong>${escapeHtml(displayText(item?.sku?.sku))}</div>
     <div><strong>申请人：</strong>${escapeHtml(displayText(item?.creator?.username))}</div>
@@ -1925,7 +1983,8 @@ function renderProductEditRequestDetail(item) {
   `;
 
   compare.innerHTML = `${renderCol("变更前", beforeData, "before")}${renderCol("变更后", afterData, "after")}`;
-  const canOperate = item?.status === "pending" && canCurrentUserConfirmProductEditRequest();
+  const permission = resolveProductEditConfirmPermission(state.selectedProductEditRequestChangedFields);
+  const canOperate = item?.status === "pending" && permission.allowed;
   confirmBtn.classList.toggle("hidden", !canOperate);
 }
 
@@ -3387,6 +3446,7 @@ async function reloadAll() {
     state.fbaPendingByBoxSku = {};
     state.selectedFbaIds = new Set();
     state.selectedProductEditRequestId = null;
+    state.selectedProductEditRequestChangedFields = [];
     state.brandEditingIds = new Set();
     state.skuTypeEditingIds = new Set();
     state.shopEditingIds = new Set();
@@ -4848,8 +4908,11 @@ function bindDelegates() {
 
   $("confirmProductEditRequestBtn").addEventListener("click", async () => {
     try {
-      if (!canCurrentUserConfirmProductEditRequest()) {
-        throw new Error(PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE);
+      const permission = resolveProductEditConfirmPermission(
+        state.selectedProductEditRequestChangedFields,
+      );
+      if (!permission.allowed) {
+        throw new Error(permission.message);
       }
       const id = Number(state.selectedProductEditRequestId || 0);
       if (!Number.isInteger(id) || id <= 0) {

@@ -54,6 +54,7 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'shop',
   'remark',
 ];
+const ERP_SKU_FIELD: keyof ProductSnapshot = 'erpSku';
 
 @Injectable()
 export class SkusService {
@@ -109,18 +110,13 @@ export class SkusService {
         const changedFields = SNAPSHOT_FIELDS.filter(
           (field) => beforeData[field] !== afterData[field],
         );
-
-        await tx.productEditRequest.create({
-          data: {
-            skuId: existing.id,
-            status: ProductEditRequestStatus.pending,
-            beforeData: beforeData as unknown as object,
-            afterData: afterData as unknown as object,
-            changedFields,
-            createdBy: operatorId,
-          },
+        editRequestCount += await this.createPendingEditRequests(tx, {
+          skuId: existing.id,
+          beforeData,
+          afterData,
+          changedFields,
+          createdBy: operatorId,
         });
-        editRequestCount += 1;
       }
 
       return {
@@ -321,6 +317,77 @@ export class SkusService {
     };
   }
 
+  private buildAfterSnapshotByFields(
+    beforeData: ProductSnapshot,
+    targetAfterData: ProductSnapshot,
+    changedFields: Array<keyof ProductSnapshot>,
+  ): ProductSnapshot {
+    const snapshot: ProductSnapshot = { ...beforeData };
+    changedFields.forEach((field) => {
+      snapshot[field] = targetAfterData[field];
+    });
+    return snapshot;
+  }
+
+  private async createPendingEditRequests(
+    tx: Prisma.TransactionClient,
+    payload: {
+      skuId: bigint;
+      beforeData: ProductSnapshot;
+      afterData: ProductSnapshot;
+      changedFields: Array<keyof ProductSnapshot>;
+      createdBy: bigint;
+    },
+  ): Promise<number> {
+    const changedFields = Array.from(new Set(payload.changedFields));
+    const hasErpSkuChanged = changedFields.includes(ERP_SKU_FIELD);
+    const nonErpChangedFields = changedFields.filter((field) => field !== ERP_SKU_FIELD);
+
+    if (hasErpSkuChanged && nonErpChangedFields.length > 0) {
+      await tx.productEditRequest.create({
+        data: {
+          skuId: payload.skuId,
+          status: ProductEditRequestStatus.pending,
+          beforeData: payload.beforeData as unknown as object,
+          afterData: this.buildAfterSnapshotByFields(
+            payload.beforeData,
+            payload.afterData,
+            nonErpChangedFields,
+          ) as unknown as object,
+          changedFields: nonErpChangedFields,
+          createdBy: payload.createdBy,
+        },
+      });
+      await tx.productEditRequest.create({
+        data: {
+          skuId: payload.skuId,
+          status: ProductEditRequestStatus.pending,
+          beforeData: payload.beforeData as unknown as object,
+          afterData: this.buildAfterSnapshotByFields(
+            payload.beforeData,
+            payload.afterData,
+            [ERP_SKU_FIELD],
+          ) as unknown as object,
+          changedFields: [ERP_SKU_FIELD],
+          createdBy: payload.createdBy,
+        },
+      });
+      return 2;
+    }
+
+    await tx.productEditRequest.create({
+      data: {
+        skuId: payload.skuId,
+        status: ProductEditRequestStatus.pending,
+        beforeData: payload.beforeData as unknown as object,
+        afterData: payload.afterData as unknown as object,
+        changedFields,
+        createdBy: payload.createdBy,
+      },
+    });
+    return 1;
+  }
+
   private normalizeNullableString(value: unknown): string | null {
     if (value === null || value === undefined) return null;
     const text = String(value).trim();
@@ -363,4 +430,3 @@ export class SkusService {
     });
   }
 }
-

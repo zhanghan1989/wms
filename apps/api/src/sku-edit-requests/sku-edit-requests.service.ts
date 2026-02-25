@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
+import { AuditAction, Department, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
@@ -34,7 +34,10 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'remark',
 ];
 
-const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE = '仅启用的佛山工厂管理者可确认编辑申请';
+const ERP_SKU_FIELD: keyof ProductSnapshot = 'erpSku';
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = '仅启用的佛山工厂管理者可确认编辑申请';
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_OVERSEAS =
+  '仅启用的日本海外仓管理者可确认erpSKU修改申请';
 
 function normalizeNullableString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
@@ -164,35 +167,38 @@ export class SkuEditRequestsService {
       throw new BadRequestException('未检测到变更内容');
     }
 
-    return this.prisma.productEditRequest.create({
-      data: {
-        skuId,
-        status: ProductEditRequestStatus.pending,
-        beforeData: beforeData as unknown as object,
-        afterData: afterData as unknown as object,
-        changedFields,
-        createdBy: operatorId,
-      },
-      include: {
-        sku: {
-          select: {
-            id: true,
-            sku: true,
-          },
-        },
-        creator: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-      },
+    const hasErpSkuChanged = changedFields.includes(ERP_SKU_FIELD);
+    const nonErpChangedFields = changedFields.filter((field) => field !== ERP_SKU_FIELD);
+
+    if (hasErpSkuChanged && nonErpChangedFields.length > 0) {
+      return this.prisma.$transaction(async (tx) => {
+        await this.createPendingEditRequest(tx, {
+          skuId,
+          beforeData,
+          afterData: this.buildAfterSnapshotByFields(beforeData, afterData, nonErpChangedFields),
+          changedFields: nonErpChangedFields,
+          createdBy: operatorId,
+        });
+        return this.createPendingEditRequest(tx, {
+          skuId,
+          beforeData,
+          afterData: this.buildAfterSnapshotByFields(beforeData, afterData, [ERP_SKU_FIELD]),
+          changedFields: [ERP_SKU_FIELD],
+          createdBy: operatorId,
+        });
+      });
+    }
+
+    return this.createPendingEditRequest(this.prisma, {
+      skuId,
+      beforeData,
+      afterData,
+      changedFields,
+      createdBy: operatorId,
     });
   }
 
   async confirm(idParam: string, operatorId: bigint, requestId?: string): Promise<unknown> {
-    await this.ensureCanConfirmByOperator(operatorId);
-
     const id = parseId(idParam, 'productEditRequestId');
     const request = await this.prisma.productEditRequest.findUnique({
       where: { id },
@@ -209,6 +215,7 @@ export class SkuEditRequestsService {
     if (request.status !== ProductEditRequestStatus.pending) {
       throw new BadRequestException('仅待处理申请可确认');
     }
+    await this.ensureCanConfirmByOperator(operatorId, request.changedFields);
 
     const beforeSnapshot = ensureSnapshot(request.beforeData);
     const afterSnapshot = ensureSnapshot(request.afterData);
@@ -287,7 +294,78 @@ export class SkuEditRequestsService {
     });
   }
 
-  private async ensureCanConfirmByOperator(operatorId: bigint): Promise<void> {
+  private buildAfterSnapshotByFields(
+    beforeData: ProductSnapshot,
+    targetAfterData: ProductSnapshot,
+    changedFields: Array<keyof ProductSnapshot>,
+  ): ProductSnapshot {
+    const snapshot: ProductSnapshot = { ...beforeData };
+    changedFields.forEach((field) => {
+      snapshot[field] = targetAfterData[field];
+    });
+    return snapshot;
+  }
+
+  private normalizeChangedFields(changedFieldsRaw: unknown): Array<keyof ProductSnapshot> {
+    if (!Array.isArray(changedFieldsRaw)) {
+      return [];
+    }
+    const allowed = new Set<string>(SNAPSHOT_FIELDS as string[]);
+    const normalized = changedFieldsRaw
+      .map((field) => String(field ?? '').trim())
+      .filter((field) => allowed.has(field));
+    return Array.from(new Set(normalized)) as Array<keyof ProductSnapshot>;
+  }
+
+  private async createPendingEditRequest(
+    db: Prisma.TransactionClient | PrismaService,
+    payload: {
+      skuId: bigint;
+      beforeData: ProductSnapshot;
+      afterData: ProductSnapshot;
+      changedFields: Array<keyof ProductSnapshot>;
+      createdBy: bigint;
+    },
+  ): Promise<unknown> {
+    return db.productEditRequest.create({
+      data: {
+        skuId: payload.skuId,
+        status: ProductEditRequestStatus.pending,
+        beforeData: payload.beforeData as unknown as object,
+        afterData: payload.afterData as unknown as object,
+        changedFields: payload.changedFields,
+        createdBy: payload.createdBy,
+      },
+      include: {
+        sku: {
+          select: {
+            id: true,
+            sku: true,
+          },
+        },
+        creator: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+    });
+  }
+
+  private async ensureCanConfirmByOperator(
+    operatorId: bigint,
+    changedFieldsRaw: unknown,
+  ): Promise<void> {
+    const changedFields = this.normalizeChangedFields(changedFieldsRaw);
+    const isErpSkuOnlyRequest = changedFields.length === 1 && changedFields[0] === ERP_SKU_FIELD;
+    const requiredDepartmentCode: Department = isErpSkuOnlyRequest
+      ? Department.overseas_warehouse
+      : Department.factory;
+    const denyMessage = isErpSkuOnlyRequest
+      ? PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_OVERSEAS
+      : PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY;
+
     const [operator, departmentOption, roleOption] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: operatorId },
@@ -299,7 +377,7 @@ export class SkuEditRequestsService {
         },
       }),
       this.prisma.departmentOption.findUnique({
-        where: { code: 'factory' },
+        where: { code: requiredDepartmentCode },
         select: {
           status: true,
         },
@@ -316,12 +394,12 @@ export class SkuEditRequestsService {
       Boolean(operator) &&
       Number(operator?.status) === 1 &&
       String(operator?.role) === 'admin' &&
-      String(operator?.department) === 'factory' &&
+      String(operator?.department) === String(requiredDepartmentCode) &&
       Number(departmentOption?.status ?? 1) === 1 &&
       Number(roleOption?.status ?? 1) === 1;
 
     if (!isAllowed) {
-      throw new ForbiddenException(PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE);
+      throw new ForbiddenException(denyMessage);
     }
   }
 
