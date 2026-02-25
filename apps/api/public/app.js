@@ -40,6 +40,8 @@ const state = {
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
   shopEditingIds: new Set(),
+  departmentOptionEditingCodes: new Set(),
+  roleOptionEditingCodes: new Set(),
 };
 
 let deleteConfirmResolver = null;
@@ -537,28 +539,80 @@ async function loadMe() {
   }
 }
 
-function buildUserOptionRows(options, kind) {
-  const items = sortUserOptions(options);
+function renderDepartmentOptionsTable() {
+  const body = $("departmentOptionsBody");
+  if (!body) return;
+
+  const items = sortUserOptions(getDepartmentOptionsWithFallback()).filter((item) => Number(item.status) === 1);
   if (!items.length) {
-    return '<tr><td colspan="5" class="muted">-</td></tr>';
+    body.innerHTML = '<tr><td colspan="2" class="muted">-</td></tr>';
+    return;
   }
 
-  return items
+  body.innerHTML = items
     .map((item) => {
       const code = String(item.code || "");
-      const status = Number(item.status) === 1 ? 1 : 0;
+      const editing = state.departmentOptionEditingCodes.has(code);
       return `
-        <tr data-user-option-kind="${escapeHtml(kind)}" data-user-option-code="${escapeHtml(code)}">
-          <td>${escapeHtml(code)}</td>
-          <td><input class="tiny-input wide" data-field="name" maxlength="64" value="${escapeHtml(item.name || "")}" /></td>
-          <td><input class="tiny-input" data-field="sort" type="number" min="0" max="9999" value="${escapeHtml(Number(item.sort ?? 0))}" /></td>
-          <td>${status === 1 ? "启用" : "禁用"}</td>
+        <tr data-user-option-kind="departments" data-user-option-code="${escapeHtml(code)}">
+          <td>
+            <input
+              id="departmentOptionName-${escapeHtml(code)}"
+              class="tiny-input wide"
+              data-field="name"
+              maxlength="64"
+              value="${escapeHtml(item.name || "")}"
+              data-original-name="${escapeHtml(item.name || "")}"
+              ${editing ? "" : "readonly"}
+            />
+          </td>
           <td>
             <div class="action-row">
-              <button type="button" class="tiny-btn" data-action="saveUserOption">保存</button>
-              <button type="button" class="tiny-btn ghost" data-action="toggleUserOption" data-next-status="${status === 1 ? 0 : 1}">
-                ${status === 1 ? "禁用" : "启用"}
+              <button type="button" class="tiny-btn" data-action="editDepartmentOption">
+                ${editing ? "确认变更" : "变更"}
               </button>
+              <button type="button" class="tiny-btn danger" data-action="deleteDepartmentOption">删除</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderRoleOptionsTable() {
+  const body = $("roleOptionsBody");
+  if (!body) return;
+
+  const items = sortUserOptions(getRoleOptionsWithFallback()).filter((item) => Number(item.status) === 1);
+  if (!items.length) {
+    body.innerHTML = '<tr><td colspan="2" class="muted">-</td></tr>';
+    return;
+  }
+
+  body.innerHTML = items
+    .map((item) => {
+      const code = String(item.code || "");
+      const editing = state.roleOptionEditingCodes.has(code);
+      return `
+        <tr data-user-option-kind="roles" data-user-option-code="${escapeHtml(code)}">
+          <td>
+            <input
+              id="roleOptionName-${escapeHtml(code)}"
+              class="tiny-input wide"
+              data-field="name"
+              maxlength="64"
+              value="${escapeHtml(item.name || "")}"
+              data-original-name="${escapeHtml(item.name || "")}"
+              ${editing ? "" : "readonly"}
+            />
+          </td>
+          <td>
+            <div class="action-row">
+              <button type="button" class="tiny-btn" data-action="editRoleOption">
+                ${editing ? "确认变更" : "变更"}
+              </button>
+              <button type="button" class="tiny-btn danger" data-action="deleteRoleOption">删除</button>
             </div>
           </td>
         </tr>
@@ -568,14 +622,8 @@ function buildUserOptionRows(options, kind) {
 }
 
 function renderUserOptionsTable() {
-  const departmentBody = $("departmentOptionsBody");
-  const roleBody = $("roleOptionsBody");
-  if (departmentBody) {
-    departmentBody.innerHTML = buildUserOptionRows(getDepartmentOptionsWithFallback(), "departments");
-  }
-  if (roleBody) {
-    roleBody.innerHTML = buildUserOptionRows(getRoleOptionsWithFallback(), "roles");
-  }
+  renderDepartmentOptionsTable();
+  renderRoleOptionsTable();
 }
 
 function renderUserSelectOptions() {
@@ -660,6 +708,18 @@ async function loadUserOptions() {
       status: Number(item.status) === 1 ? 1 : 0,
       sort: Number(item.sort ?? 0),
     })),
+  );
+  const enabledDepartmentCodes = new Set(
+    state.departmentOptions.filter((item) => Number(item.status) === 1).map((item) => String(item.code)),
+  );
+  const enabledRoleCodes = new Set(
+    state.roleOptions.filter((item) => Number(item.status) === 1).map((item) => String(item.code)),
+  );
+  state.departmentOptionEditingCodes = new Set(
+    [...state.departmentOptionEditingCodes].filter((code) => enabledDepartmentCodes.has(String(code))),
+  );
+  state.roleOptionEditingCodes = new Set(
+    [...state.roleOptionEditingCodes].filter((code) => enabledRoleCodes.has(String(code))),
   );
   renderUserOptionsTable();
   renderUserSelectOptions();
@@ -2960,6 +3020,8 @@ async function reloadAll() {
     state.brandEditingIds = new Set();
     state.skuTypeEditingIds = new Set();
     state.shopEditingIds = new Set();
+    state.departmentOptionEditingCodes = new Set();
+    state.roleOptionEditingCodes = new Set();
     renderUserSelectOptions();
     renderUserOptionsTable();
     renderFbaPendingBadge();
@@ -2988,6 +3050,8 @@ async function reloadAll() {
   } else {
     state.departmentOptions = [];
     state.roleOptions = [];
+    state.departmentOptionEditingCodes = new Set();
+    state.roleOptionEditingCodes = new Set();
     state.users = [];
     state.usersById = new Map();
     state.auditLogs = [];
@@ -3441,6 +3505,7 @@ function bindForms() {
 
   $("openDepartmentManageModal").addEventListener("click", async () => {
     try {
+      state.departmentOptionEditingCodes = new Set();
       await loadUserOptions();
       openModal("departmentManageModal");
     } catch (error) {
@@ -3450,6 +3515,7 @@ function bindForms() {
 
   $("openRoleManageModal").addEventListener("click", async () => {
     try {
+      state.roleOptionEditingCodes = new Set();
       await loadUserOptions();
       openModal("roleManageModal");
     } catch (error) {
@@ -4259,56 +4325,74 @@ function bindDelegates() {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const action = String(button.dataset.action || "");
-    if (!["saveUserOption", "toggleUserOption"].includes(action)) return;
+    const isDepartment = kind === "departments";
+    const editAction = isDepartment ? "editDepartmentOption" : "editRoleOption";
+    const deleteAction = isDepartment ? "deleteDepartmentOption" : "deleteRoleOption";
+    if (![editAction, deleteAction].includes(action)) return;
 
     const row = button.closest("tr[data-user-option-code]");
     if (!row) return;
     const code = String(row.dataset.userOptionCode || "").trim();
     const endpointKind = kind === "roles" ? "roles" : "departments";
     if (!code) return;
+    const editingSet = isDepartment ? state.departmentOptionEditingCodes : state.roleOptionEditingCodes;
 
     try {
-      if (action === "saveUserOption") {
+      if (action === editAction) {
         const nameInput = row.querySelector("input[data-field='name']");
-        const sortInput = row.querySelector("input[data-field='sort']");
-        const name = String(nameInput?.value || "").trim();
-        const sort = Number(sortInput?.value ?? 0);
+        if (!nameInput) return;
+
+        const isEditing = editingSet.has(code);
+        if (!isEditing) {
+          editingSet.add(code);
+          renderUserOptionsTable();
+          const focusInput = isDepartment ? $(`departmentOptionName-${code}`) : $(`roleOptionName-${code}`);
+          if (focusInput) {
+            focusInput.focus();
+            focusInput.select?.();
+          }
+          return;
+        }
+
+        const name = String(nameInput.value || "").trim();
         if (!name) {
           throw new Error("名称不能为空");
         }
-        if (!Number.isInteger(sort) || sort < 0 || sort > 9999) {
-          throw new Error("排序需为0到9999的整数");
+        const originalName = String(nameInput.getAttribute("data-original-name") || "").trim();
+        if (name === originalName) {
+          editingSet.delete(code);
+          renderUserOptionsTable();
+          return;
         }
+
         await request(`/user-options/${endpointKind}/${encodeURIComponent(code)}`, {
           method: "PUT",
-          body: JSON.stringify({ name, sort }),
+          body: JSON.stringify({ name }),
         });
-        showToast("保存成功");
-      } else if (action === "toggleUserOption") {
-        const nextStatus = Number(button.dataset.nextStatus ?? -1);
-        if (![0, 1].includes(nextStatus)) {
-          throw new Error("状态值无效");
-        }
-        const actionLabel = nextStatus === 1 ? "启用" : "禁用";
+        editingSet.delete(code);
+        showToast("变更成功");
+      } else if (action === deleteAction) {
+        const nameInput = row.querySelector("input[data-field='name']");
+        const optionName = String(nameInput?.value || code).trim() || code;
         const ok = await openActionConfirmModal(
-          `确认${actionLabel}${endpointKind === "departments" ? "部门" : "角色"} ${code} 吗？`,
-          `${actionLabel}${endpointKind === "departments" ? "部门" : "角色"}`,
-          actionLabel,
+          `确认删除${isDepartment ? "部门" : "角色"} ${optionName} 吗？`,
+          "确认操作",
+          "确认删除",
         );
         if (!ok) return;
         await request(`/user-options/${endpointKind}/${encodeURIComponent(code)}`, {
           method: "PUT",
-          body: JSON.stringify({ status: nextStatus }),
+          body: JSON.stringify({ status: 0 }),
         });
-        showToast(`${actionLabel}成功`);
+        editingSet.delete(code);
+        showToast("删除成功");
       }
 
-      await loadUserOptions();
+      await Promise.all([loadUserOptions(), loadUsers(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
     }
   };
-
   $("departmentOptionsBody").addEventListener("click", (event) => {
     handleUserOptionClick(event, "departments");
   });
