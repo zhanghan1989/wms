@@ -1513,7 +1513,7 @@ export class InventoryService {
 
   private formatDateForFilename(date: Date): string {
     const parts = getZonedDateParts(date, APP_TIMEZONE);
-    return `${parts.year}-${parts.month}-${parts.day}`;
+    return `${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}`;
   }
 
   private escapeCsvCell(value: string | number): string {

@@ -222,8 +222,25 @@ function formatDate(value) {
 }
 
 function formatDateForFilename(date) {
-  const pad = (value) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(date)
+      .filter((item) => item.type !== "literal")
+      .map((item) => [item.type, item.value]),
+  );
+  return `${parts.year || "0000"}${parts.month || "00"}${parts.day || "00"}-${parts.hour || "00"}${
+    parts.minute || "00"
+  }${parts.second || "00"}`;
 }
 
 async function downloadStockAdjustmentCsv() {
