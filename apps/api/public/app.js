@@ -128,6 +128,7 @@ const AUDIT_ENTITY_TEXT_MAP = {
   fba_replenishment: "FBA补货申请",
   product_edit_request: "产品编辑申请",
 };
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE = "仅启用的佛山工厂管理者可确认编辑申请";
 
 function showToast(message, isError = false) {
   showErrorModal(message, isError);
@@ -248,6 +249,27 @@ function getDepartmentOptionsWithFallback() {
 function getRoleOptionsWithFallback() {
   const items = state.roleOptions.length ? state.roleOptions : DEFAULT_ROLE_OPTIONS;
   return sortUserOptions(items);
+}
+
+function isUserOptionEnabled(options, code) {
+  const target = String(code || "");
+  const item = (Array.isArray(options) ? options : []).find(
+    (option) => String(option?.code || "") === target,
+  );
+  if (!item) return true;
+  return Number(item.status) === 1;
+}
+
+function canCurrentUserConfirmProductEditRequest() {
+  const user = state.me;
+  if (!user) return false;
+  if (String(user.role || "") !== "admin") return false;
+  if (String(user.department || "") !== "factory") return false;
+  if (Number(user.status) !== 1) return false;
+
+  const roleEnabled = isUserOptionEnabled(getRoleOptionsWithFallback(), "admin");
+  const departmentEnabled = isUserOptionEnabled(getDepartmentOptionsWithFallback(), "factory");
+  return roleEnabled && departmentEnabled;
 }
 
 function hasChineseChars(text) {
@@ -1795,7 +1817,7 @@ function renderProductEditRequestDetail(item) {
   `;
 
   compare.innerHTML = `${renderCol("变更前", beforeData, "before")}${renderCol("变更后", afterData, "after")}`;
-  const canOperate = item?.status === "pending";
+  const canOperate = item?.status === "pending" && canCurrentUserConfirmProductEditRequest();
   confirmBtn.classList.toggle("hidden", !canOperate);
 }
 
@@ -4657,6 +4679,9 @@ function bindDelegates() {
 
   $("confirmProductEditRequestBtn").addEventListener("click", async () => {
     try {
+      if (!canCurrentUserConfirmProductEditRequest()) {
+        throw new Error(PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE);
+      }
       const id = Number(state.selectedProductEditRequestId || 0);
       if (!Number.isInteger(id) || id <= 0) {
         throw new Error("请先选择编辑申请");

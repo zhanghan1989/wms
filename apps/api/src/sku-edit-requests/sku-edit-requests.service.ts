@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
@@ -33,6 +33,8 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'shop',
   'remark',
 ];
+
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE = '仅启用的佛山工厂管理者可确认编辑申请';
 
 function normalizeNullableString(value: unknown): string | null {
   if (value === null || value === undefined) return null;
@@ -189,6 +191,8 @@ export class SkuEditRequestsService {
   }
 
   async confirm(idParam: string, operatorId: bigint, requestId?: string): Promise<unknown> {
+    await this.ensureCanConfirmByOperator(operatorId);
+
     const id = parseId(idParam, 'productEditRequestId');
     const request = await this.prisma.productEditRequest.findUnique({
       where: { id },
@@ -281,6 +285,44 @@ export class SkuEditRequestsService {
 
       return updatedRequest;
     });
+  }
+
+  private async ensureCanConfirmByOperator(operatorId: bigint): Promise<void> {
+    const [operator, departmentOption, roleOption] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: operatorId },
+        select: {
+          id: true,
+          role: true,
+          department: true,
+          status: true,
+        },
+      }),
+      this.prisma.departmentOption.findUnique({
+        where: { code: 'factory' },
+        select: {
+          status: true,
+        },
+      }),
+      this.prisma.roleOption.findUnique({
+        where: { code: 'admin' },
+        select: {
+          status: true,
+        },
+      }),
+    ]);
+
+    const isAllowed =
+      Boolean(operator) &&
+      Number(operator?.status) === 1 &&
+      String(operator?.role) === 'admin' &&
+      String(operator?.department) === 'factory' &&
+      Number(departmentOption?.status ?? 1) === 1 &&
+      Number(roleOption?.status ?? 1) === 1;
+
+    if (!isAllowed) {
+      throw new ForbiddenException(PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE);
+    }
   }
 
   async markDeleted(idParam: string, _operatorId: bigint, _requestId?: string): Promise<unknown> {
