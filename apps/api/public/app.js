@@ -4035,6 +4035,15 @@ function bindForms() {
     }
   });
 
+  $("openSystemDashboardPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("overview");
+      await loadOverviewDashboard();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openFbaReplenishmentPanel").addEventListener("click", async () => {
     try {
       switchPanel("fbaReplenishment");

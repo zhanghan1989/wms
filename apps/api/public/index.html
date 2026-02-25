@@ -52,6 +52,7 @@
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
         </button>
         <button type="button" id="openBatchInboundModal">批量入库</button>
+        <button type="button" id="openSystemDashboardPanel">系统看板</button>
         <button type="button" id="openMyAuditLog" class="ghost">我的日志</button>
         <button type="button" id="openProfileModal" class="ghost">个人设置</button>
       </div>
@@ -60,7 +61,6 @@
 
   <main id="appLayout" class="layout hidden">
     <aside class="sidebar">
-      <button class="nav-btn" data-target="overview">系统总览</button>
       <button class="nav-btn" data-target="users">用户管理</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
     </aside>
@@ -332,7 +332,7 @@
 
       <section class="panel" id="overview">
         <div class="panel-head">
-          <h2>系统状态</h2>
+          <h2>系统看板</h2>
           <div class="panel-tools">
             <button type="button" id="refreshOverviewDashboard" class="ghost">刷新看板</button>
             <button type="button" id="logoutBtn" class="ghost hidden">退出登录</button>
