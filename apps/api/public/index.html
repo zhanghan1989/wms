@@ -111,8 +111,8 @@
         <article class="card">
           <h3>基础操作</h3>
           <div class="action-row">
-            <button type="button" id="openCreateBoxQuick">新增箱号</button>
-            <button type="button" id="openCreateShelfQuick">新增货架</button>
+            <button type="button" id="openBoxManageModal">箱号管理</button>
+            <button type="button" id="openShelfManageModal">货架管理</button>
             <button id="downloadStockAdjustmentCsvBtn" type="button">erpSKU+库存下载</button>
             <button type="button" id="openBulkInventoryUpdateModal">批量更新库存</button>
           </div>
@@ -960,6 +960,44 @@
       <table>
         <thead><tr><th>店铺</th><th>操作</th></tr></thead>
         <tbody id="shopsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="shelfManageModal" class="modal hidden">
+    <div class="modal-card modal-wide modal-manage">
+      <div class="modal-head">
+        <h3>货架管理</h3>
+        <button type="button" class="ghost" data-action="closeShelfManageModal">关闭</button>
+      </div>
+      <form id="shelfManageForm" class="manage-inline-form manage-inline-form-triple">
+        <input id="shelfManageCodeInput" inputmode="numeric" maxlength="2" placeholder="货架号2位数字" required />
+        <input id="shelfManageNameInput" maxlength="128" placeholder="请输入货架名称（可选）" />
+        <button type="submit" class="small-btn manage-create-btn">新增货架</button>
+      </form>
+      <table>
+        <thead><tr><th>货架号</th><th>名称</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="shelfManageBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="boxManageModal" class="modal hidden">
+    <div class="modal-card modal-wide modal-manage">
+      <div class="modal-head">
+        <h3>箱号管理</h3>
+        <button type="button" class="ghost" data-action="closeBoxManageModal">关闭</button>
+      </div>
+      <form id="boxManageForm" class="manage-inline-form manage-inline-form-triple">
+        <input id="boxManageCodeInput" inputmode="numeric" maxlength="3" placeholder="箱号3位数字" required />
+        <select id="boxManageShelfId" required>
+          <option value="">请选择货架号</option>
+        </select>
+        <button type="submit" class="small-btn manage-create-btn">新增箱号</button>
+      </form>
+      <table>
+        <thead><tr><th>箱号</th><th>所属货架</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="boxManageBody"></tbody>
       </table>
     </div>
   </div>

@@ -594,6 +594,10 @@ td {
   margin: 0 0 12px;
 }
 
+.manage-inline-form.manage-inline-form-triple {
+  grid-template-columns: minmax(180px, 240px) minmax(180px, 280px) auto;
+}
+
 .manage-create-btn {
   width: auto;
   justify-self: start;

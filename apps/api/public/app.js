@@ -52,6 +52,8 @@ const state = {
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
   shopEditingIds: new Set(),
+  shelfEditingIds: new Set(),
+  boxEditingIds: new Set(),
   departmentOptionEditingCodes: new Set(),
   roleOptionEditingCodes: new Set(),
   auditFbaRequestNoById: {},
@@ -2326,6 +2328,115 @@ function renderShopsTable() {
       .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
 }
 
+function getShelvesSortedForManage() {
+  return [...(Array.isArray(state.shelves) ? state.shelves : [])].sort((a, b) =>
+    String(a?.shelfCode || "").localeCompare(String(b?.shelfCode || ""), "en", { numeric: true }),
+  );
+}
+
+function getBoxesSortedForManage() {
+  return [...(Array.isArray(state.boxes) ? state.boxes : [])].sort((a, b) =>
+    String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true }),
+  );
+}
+
+function buildShelfManageSelectOptions(selectedShelfId) {
+  const selected = String(selectedShelfId || "");
+  const rows = getShelvesSortedForManage();
+  return rows
+    .map((shelf) => {
+      const shelfId = String(shelf.id || "");
+      const selectedAttr = shelfId === selected ? " selected" : "";
+      const statusSuffix = Number(shelf?.status) === 1 ? "" : "（禁用）";
+      const nameSuffix = shelf?.name ? ` / ${shelf.name}` : "";
+      return `<option value="${escapeHtml(shelfId)}"${selectedAttr}>${escapeHtml(
+        `${shelf?.shelfCode || "-"}${nameSuffix}${statusSuffix}`,
+      )}</option>`;
+    })
+    .join("");
+}
+
+function renderShelvesManageTable() {
+  const body = $("shelfManageBody");
+  if (!body) return;
+  const rows = getShelvesSortedForManage();
+  body.innerHTML =
+    rows
+      .map((item) => {
+        const itemId = String(item.id);
+        const editing = state.shelfEditingIds.has(itemId);
+        return `
+      <tr>
+        <td>
+          <input
+            id="shelfCodeManage-${escapeHtml(item.id)}"
+            value="${escapeHtml(item.shelfCode || "")}"
+            maxlength="64"
+            ${editing ? "" : "readonly"}
+            data-original-code="${escapeHtml(item.shelfCode || "")}"
+          />
+        </td>
+        <td>
+          <input
+            id="shelfNameManage-${escapeHtml(item.id)}"
+            value="${escapeHtml(item.name || "")}"
+            maxlength="128"
+            ${editing ? "" : "readonly"}
+            data-original-name="${escapeHtml(item.name || "")}"
+          />
+        </td>
+        <td>${escapeHtml(getStatusText(item.status))}</td>
+        <td>
+          <button class="tiny-btn" data-action="editShelfManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
+          <button class="tiny-btn danger" data-action="deleteShelfManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.shelfCode || "")}">删除</button>
+        </td>
+      </tr>
+    `;
+      })
+      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+}
+
+function renderBoxesManageTable() {
+  const body = $("boxManageBody");
+  if (!body) return;
+  const rows = getBoxesSortedForManage();
+  body.innerHTML =
+    rows
+      .map((item) => {
+        const itemId = String(item.id);
+        const editing = state.boxEditingIds.has(itemId);
+        const shelfOptions = buildShelfManageSelectOptions(item?.shelf?.id);
+        return `
+      <tr>
+        <td>
+          <input
+            id="boxCodeManage-${escapeHtml(item.id)}"
+            value="${escapeHtml(item.boxCode || "")}"
+            maxlength="128"
+            ${editing ? "" : "readonly"}
+            data-original-code="${escapeHtml(item.boxCode || "")}"
+          />
+        </td>
+        <td>
+          <select
+            id="boxShelfManage-${escapeHtml(item.id)}"
+            ${editing ? "" : "disabled"}
+            data-original-shelf-id="${escapeHtml(item?.shelf?.id || "")}"
+          >
+            ${shelfOptions}
+          </select>
+        </td>
+        <td>${escapeHtml(getStatusText(item.status))}</td>
+        <td>
+          <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
+          <button class="tiny-btn danger" data-action="deleteBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">删除</button>
+        </td>
+      </tr>
+    `;
+      })
+      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+}
+
 function canSelectProductEditRequestForBatchConfirm(item) {
   if (!item || String(item?.status || "") !== "pending") {
     return false;
@@ -2798,11 +2909,18 @@ async function loadShops() {
 async function loadShelves() {
   const shelves = await request("/shelves");
   state.shelves = shelves;
+  const latestIds = new Set((Array.isArray(shelves) ? shelves : []).map((item) => String(item.id)));
+  state.shelfEditingIds = new Set(
+    [...state.shelfEditingIds].filter((id) => latestIds.has(String(id))),
+  );
   $("statShelves").textContent = shelves.length;
 
   renderShelfOptionsForSelect("newBoxShelfId", "请选择货架号");
   renderShelfOptionsForSelect("modalNewBoxShelfId", "请选择货架号");
+  renderShelfOptionsForSelect("boxManageShelfId", "请选择货架号");
   renderMoveShelfTargetOptions($("moveShelfTargetCode")?.value || "");
+  renderShelvesManageTable();
+  renderBoxesManageTable();
 
   $("shelvesBody").innerHTML = shelves
     .map(
@@ -2820,6 +2938,10 @@ async function loadShelves() {
 async function loadBoxes() {
   const boxes = await request("/boxes");
   state.boxes = boxes;
+  const latestIds = new Set((Array.isArray(boxes) ? boxes : []).map((item) => String(item.id)));
+  state.boxEditingIds = new Set(
+    [...state.boxEditingIds].filter((id) => latestIds.has(String(id))),
+  );
   $("statBoxes").textContent = boxes.length;
   renderBoxOptionsForInput("modalNewSkuBoxCode", "modalNewSkuBoxCodeList", "请选择已有箱号或者新增箱号");
   renderAdjustBoxSuggestions($("adjustBoxCode")?.value || "");
@@ -2829,6 +2951,7 @@ async function loadBoxes() {
   renderMoveProductNewBoxOptions($("moveProductNewBoxCode")?.value || "");
   syncMoveProductOldShelfDisplay();
   syncMoveProductNewShelfDisplay();
+  renderBoxesManageTable();
   $("boxesBody").innerHTML = boxes
     .map(
       (box) => `
@@ -3926,6 +4049,8 @@ async function reloadAll() {
     $("brandsBody").innerHTML = "";
     $("skuTypesBody").innerHTML = "";
     $("shopsBody").innerHTML = "";
+    $("shelfManageBody").innerHTML = "";
+    $("boxManageBody").innerHTML = "";
     $("dataBackupBody").innerHTML = "";
     $("productEditRequestBody").innerHTML = "";
     $("departmentOptionsBody").innerHTML = "";
@@ -3934,6 +4059,8 @@ async function reloadAll() {
     state.brands = [];
     state.skuTypes = [];
     state.shops = [];
+    state.shelfEditingIds = new Set();
+    state.boxEditingIds = new Set();
     state.departmentOptions = [];
     state.roleOptions = [];
     state.users = [];
@@ -4527,6 +4654,26 @@ function bindForms() {
     }
   });
 
+  $("openShelfManageModal").addEventListener("click", async () => {
+    try {
+      state.shelfEditingIds = new Set();
+      await Promise.all([loadShelves(), loadBoxes()]);
+      openModal("shelfManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openBoxManageModal").addEventListener("click", async () => {
+    try {
+      state.boxEditingIds = new Set();
+      await Promise.all([loadShelves(), loadBoxes()]);
+      openModal("boxManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openDepartmentManageModal").addEventListener("click", async () => {
     try {
       state.departmentOptionEditingCodes = new Set();
@@ -4578,7 +4725,6 @@ function bindForms() {
   };
 
   $("openCreateBoxFromSkuModal").addEventListener("click", openCreateBoxModal);
-  $("openCreateBoxQuick").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxFromAdjust").addEventListener("click", openCreateBoxModal);
   $("modalNewSkuBoxCode").addEventListener("input", (event) => {
     renderBoxOptionsForInput(
@@ -4683,11 +4829,6 @@ function bindForms() {
     if (!String(input.value || "").trim()) {
       input.value = "1";
     }
-  });
-
-  $("openCreateShelfQuick").addEventListener("click", () => {
-    $("createShelfFromInventoryForm").reset();
-    openModal("createShelfFromInventoryModal");
   });
 
   $("createSkuModalForm").addEventListener("submit", async (event) => {
@@ -5153,6 +5294,200 @@ function bindDelegates() {
       $("shopNameInput").value = "";
       showToast("店铺已新增");
       await Promise.all([loadShops(), loadInventory(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("shelfManageForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const shelfCode = buildShelfCode($("shelfManageCodeInput").value);
+      const name = String($("shelfManageNameInput").value || "").trim() || undefined;
+      await request("/shelves", {
+        method: "POST",
+        body: JSON.stringify({ shelfCode, name }),
+      });
+      $("shelfManageCodeInput").value = "";
+      $("shelfManageNameInput").value = "";
+      showToast("货架已新增");
+      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("boxManageForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const boxCode = buildBoxCode($("boxManageCodeInput").value);
+      const shelfId = Number($("boxManageShelfId").value);
+      if (!Number.isInteger(shelfId) || shelfId <= 0) {
+        throw new Error("请选择货架号");
+      }
+      await request("/boxes", {
+        method: "POST",
+        body: JSON.stringify({ boxCode, shelfId }),
+      });
+      $("boxManageCodeInput").value = "";
+      showToast("箱号已新增");
+      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("shelfManageBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const action = button.dataset.action;
+    const id = button.dataset.id;
+    if (!id) return;
+    try {
+      if (action === "editShelfManage") {
+        const codeInput = $(`shelfCodeManage-${id}`);
+        const nameInput = $(`shelfNameManage-${id}`);
+        if (!codeInput || !nameInput) return;
+        const isEditing = state.shelfEditingIds.has(String(id));
+        if (!isEditing) {
+          state.shelfEditingIds.add(String(id));
+          renderShelvesManageTable();
+          const focusInput = $(`shelfCodeManage-${id}`);
+          if (focusInput) {
+            focusInput.focus();
+            focusInput.select?.();
+          }
+          return;
+        }
+
+        const originalCode = String(codeInput.getAttribute("data-original-code") || "").trim();
+        const originalName = String(nameInput.getAttribute("data-original-name") || "").trim();
+        const rawCode = String(codeInput.value || "").trim();
+        if (!rawCode) {
+          throw new Error("请输入货架号");
+        }
+        const normalizedCode = normalizeShelfCodeInput(rawCode);
+        if (!normalizedCode) {
+          throw new Error("货架号格式无效");
+        }
+        const codeChanged = normalizedCode !== originalCode;
+        if (codeChanged && !/^S-\d{2}$/.test(normalizedCode)) {
+          throw new Error("货架号必须是2位数字");
+        }
+
+        const name = String(nameInput.value || "").trim();
+        const nameChanged = name !== originalName;
+        if (nameChanged && !name && originalName) {
+          throw new Error("货架名称不能为空");
+        }
+        if (!codeChanged && !nameChanged) {
+          state.shelfEditingIds.delete(String(id));
+          renderShelvesManageTable();
+          return;
+        }
+
+        const payload = {};
+        if (codeChanged) payload.shelfCode = normalizedCode;
+        if (nameChanged && name) payload.name = name;
+
+        await request(`/shelves/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        state.shelfEditingIds.delete(String(id));
+        showToast("货架已变更");
+        await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+      } else if (action === "deleteShelfManage") {
+        const shelfCode = button.dataset.code || id;
+        const ok = await openActionConfirmModal(
+          `确认删除货架 ${shelfCode} ？`,
+          "确认操作",
+          "确认删除",
+        );
+        if (!ok) return;
+        await request(`/shelves/${id}`, { method: "DELETE" });
+        state.shelfEditingIds.delete(String(id));
+        showToast("货架已删除");
+        await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("boxManageBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const action = button.dataset.action;
+    const id = button.dataset.id;
+    if (!id) return;
+    try {
+      if (action === "editBoxManage") {
+        const codeInput = $(`boxCodeManage-${id}`);
+        const shelfSelect = $(`boxShelfManage-${id}`);
+        if (!codeInput || !shelfSelect) return;
+        const isEditing = state.boxEditingIds.has(String(id));
+        if (!isEditing) {
+          state.boxEditingIds.add(String(id));
+          renderBoxesManageTable();
+          const focusInput = $(`boxCodeManage-${id}`);
+          if (focusInput) {
+            focusInput.focus();
+            focusInput.select?.();
+          }
+          return;
+        }
+
+        const originalCode = String(codeInput.getAttribute("data-original-code") || "").trim();
+        const rawCode = String(codeInput.value || "").trim();
+        if (!rawCode) {
+          throw new Error("请输入箱号");
+        }
+        const normalizedCode = normalizeBoxCodeInput(rawCode);
+        if (!normalizedCode) {
+          throw new Error("箱号格式无效");
+        }
+        const codeChanged = normalizedCode !== originalCode;
+        if (codeChanged && !/^B-\d{3}$/.test(normalizedCode)) {
+          throw new Error("箱号必须是3位数字");
+        }
+
+        const shelfId = Number(shelfSelect.value);
+        if (!Number.isInteger(shelfId) || shelfId <= 0) {
+          throw new Error("请选择货架号");
+        }
+        const originalShelfId = Number(String(shelfSelect.getAttribute("data-original-shelf-id") || "0"));
+        const shelfChanged = shelfId !== originalShelfId;
+        if (!codeChanged && !shelfChanged) {
+          state.boxEditingIds.delete(String(id));
+          renderBoxesManageTable();
+          return;
+        }
+
+        const payload = {};
+        if (codeChanged) payload.boxCode = normalizedCode;
+        if (shelfChanged) payload.shelfId = shelfId;
+
+        await request(`/boxes/${id}`, {
+          method: "PUT",
+          body: JSON.stringify(payload),
+        });
+        state.boxEditingIds.delete(String(id));
+        showToast("箱号已变更");
+        await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+      } else if (action === "deleteBoxManage") {
+        const boxCode = button.dataset.code || id;
+        const ok = await openActionConfirmModal(
+          `确认删除箱号 ${boxCode} ？`,
+          "确认操作",
+          "确认删除",
+        );
+        if (!ok) return;
+        await request(`/boxes/${id}`, { method: "DELETE" });
+        state.boxEditingIds.delete(String(id));
+        showToast("箱号已删除");
+        await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+      }
     } catch (error) {
       showToast(error.message, true);
     }
@@ -5703,6 +6038,16 @@ function bindDelegates() {
       closeModal("shopManageModal");
       return;
     }
+    const shelfManageClose = event.target.closest("button[data-action='closeShelfManageModal']");
+    if (shelfManageClose) {
+      closeModal("shelfManageModal");
+      return;
+    }
+    const boxManageClose = event.target.closest("button[data-action='closeBoxManageModal']");
+    if (boxManageClose) {
+      closeModal("boxManageModal");
+      return;
+    }
 
     const departmentManageClose = event.target.closest("button[data-action='closeDepartmentManageModal']");
     if (departmentManageClose) {
@@ -5841,6 +6186,18 @@ function bindDelegates() {
   $("shopManageModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("shopManageModal");
+    }
+  });
+
+  $("shelfManageModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("shelfManageModal");
+    }
+  });
+
+  $("boxManageModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("boxManageModal");
     }
   });
 
