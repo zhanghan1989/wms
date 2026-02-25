@@ -294,6 +294,14 @@ function normalizeFnskuForLabel(rawValue) {
   return normalized;
 }
 
+function normalizeLabelPrintQty(rawQty) {
+  const qty = Number(rawQty);
+  if (!Number.isInteger(qty) || qty <= 0) {
+    return 1;
+  }
+  return qty;
+}
+
 function buildCode39BarcodeSvg(value) {
   const encoded = `*${normalizeFnskuForLabel(value)}*`;
   const narrow = 2;
@@ -324,6 +332,7 @@ function buildCode39BarcodeSvg(value) {
 
 function openPrintLabelWindow(labelData) {
   const fnsku = normalizeFnskuForLabel(labelData?.fnsku);
+  const printQty = normalizeLabelPrintQty(labelData?.qty);
   const barcodeSvg = buildCode39BarcodeSvg(fnsku);
   const pageWidth = LABEL_5030_SIZE_MM.width;
   const pageHeight = LABEL_5030_SIZE_MM.height;
@@ -352,44 +361,61 @@ function openPrintLabelWindow(labelData) {
       body {
         font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
       }
+      .print-page {
+        width: ${pageWidth}mm;
+        height: ${pageHeight}mm;
+        page-break-after: always;
+      }
+      .print-page:last-child {
+        page-break-after: auto;
+      }
       .label {
         box-sizing: border-box;
         width: 100%;
         height: 100%;
-        padding: 1mm 1mm 1mm;
+        padding: 1mm;
         display: flex;
         flex-direction: column;
       }
-      .label-top {
-        height: 42%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        font-size: 4.4mm;
-        font-weight: 700;
-        color: #111;
-        line-height: 1.1;
-        overflow: hidden;
-        word-break: break-all;
-      }
       .label-barcode {
-        flex: 1;
+        height: 66%;
         display: flex;
         align-items: center;
         justify-content: center;
       }
       .label-barcode svg {
         width: 100%;
-        height: 95%;
+        height: 100%;
+      }
+      .label-bottom {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        font-size: 4.5mm;
+        font-weight: 700;
+        color: #111;
+        line-height: 1.1;
+        overflow: hidden;
+        word-break: break-all;
+      }
+      .label-bottom-text {
+        width: 100%;
       }
     </style>
   </head>
   <body>
-    <div class="label">
-      <div class="label-top">${escapeHtml(fnsku)}</div>
-      <div class="label-barcode">${barcodeSvg}</div>
-    </div>
+    ${Array.from({ length: printQty })
+      .map(
+        () => `<div class="print-page">
+      <div class="label">
+        <div class="label-barcode">${barcodeSvg}</div>
+        <div class="label-bottom"><span class="label-bottom-text">${escapeHtml(fnsku)}</span></div>
+      </div>
+    </div>`,
+      )
+      .join("")}
     <script>
       window.addEventListener("load", function () {
         setTimeout(function () {
@@ -5865,6 +5891,7 @@ function bindDelegates() {
         showToast("已转为待出库", false, {
           labelData: {
             fnsku: row?.sku?.fnsku || "",
+            qty: actualQty,
           },
         });
       } else if (action === "fbaReopenRow") {
