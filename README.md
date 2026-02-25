@@ -41,7 +41,6 @@ WMS 项目第一个正式版（`v1.0.0`）代码仓库。
 - 发布说明：`docs/RELEASE_v1.0.0.md`
 - GitHub Release 文案：`docs/GITHUB_RELEASE_v1.0.0.md`
 - 部署文档：`docs/DEPLOY_ALIYUN.md`
-- 交接记录：`docs/DEV_HANDOVER_2026-02-18.md`, `docs/DEV_HANDOVER_2026-02-19.md`
 - 变更记录：`CHANGELOG.md`
 
 ## 校验命令

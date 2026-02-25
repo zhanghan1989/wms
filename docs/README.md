@@ -8,10 +8,6 @@
 ## 部署
 - 阿里云部署：`DEPLOY_ALIYUN.md`
 
-## 交接
-- `DEV_HANDOVER_2026-02-18.md`
-- `DEV_HANDOVER_2026-02-19.md`
-
 ## 开发规范
 - `AI_DEV_SPEC.md`
 
