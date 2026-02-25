@@ -113,6 +113,22 @@ const AUDIT_EVENT_TEXT_MAP = {
   inventory_adjust_voided: "作废库存调整单",
 };
 
+const AUDIT_ENTITY_TEXT_MAP = {
+  box: "箱号",
+  sku: "产品",
+  shelf: "货架",
+  user: "用户",
+  brand: "品牌",
+  sku_type: "类型",
+  shop: "店铺",
+  inbound_order: "入库单",
+  outbound_order: "出库单",
+  stocktake_task: "盘点任务",
+  inventory_adjust_order: "库存调整单",
+  fba_replenishment: "FBA补货申请",
+  product_edit_request: "产品编辑申请",
+};
+
 function showToast(message, isError = false) {
   showErrorModal(message, isError);
 }
@@ -2507,8 +2523,50 @@ async function deleteBatchInboundOrder(orderId) {
   });
 }
 
+function toAuditRecord(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value;
+}
+
+function pickAuditEntityName(item, entityType) {
+  const after = toAuditRecord(item?.afterData);
+  const before = toAuditRecord(item?.beforeData);
+  const pick = (...keys) => {
+    for (const key of keys) {
+      const afterValue = String(after?.[key] ?? "").trim();
+      if (afterValue) return afterValue;
+      const beforeValue = String(before?.[key] ?? "").trim();
+      if (beforeValue) return beforeValue;
+    }
+    return "";
+  };
+
+  if (entityType === "sku") return pick("sku", "model");
+  if (entityType === "box") return pick("boxCode", "box_code");
+  if (entityType === "shelf") return pick("shelfCode", "shelf_code", "name");
+  if (entityType === "user") return pick("username");
+  if (entityType === "brand") return pick("name", "brand");
+  if (entityType === "sku_type") return pick("name", "type");
+  if (entityType === "shop") return pick("name", "shop");
+  if (entityType === "inbound_order" || entityType === "outbound_order") return pick("orderNo", "order_no");
+  if (entityType === "stocktake_task") return pick("taskNo", "task_no");
+  if (entityType === "inventory_adjust_order") return pick("adjustNo", "adjust_no");
+  if (entityType === "fba_replenishment") return pick("requestNo", "request_no");
+  if (entityType === "product_edit_request") return pick("sku", "skuCode", "requestNo");
+
+  return pick("name", "code", "no", "sku");
+}
+
 function formatAuditEntity(item) {
-  return `${escapeHtml(item.entityType || "-")}#${escapeHtml(item.entityId || "-")}`;
+  const entityType = String(item?.entityType || "").trim();
+  const entityText = AUDIT_ENTITY_TEXT_MAP[entityType] || entityType || "实体";
+  const entityName = pickAuditEntityName(item, entityType);
+  if (!entityName) {
+    return entityText;
+  }
+  return `${entityText}：${entityName}`;
 }
 
 function getAuditEventText(eventType) {
@@ -2527,7 +2585,7 @@ function renderAuditTable() {
         (item) => `
       <tr>
         <td>${formatDate(item.createdAt)}</td>
-        <td>${formatAuditEntity(item)}</td>
+        <td>${escapeHtml(formatAuditEntity(item))}</td>
         <td>${escapeHtml(item.action)}</td>
         <td>${escapeHtml(getAuditEventText(item.eventType))}</td>
         <td>${escapeHtml(item.operator?.username)}</td>
@@ -2562,7 +2620,7 @@ function renderMyAuditTable() {
         (item) => `
       <tr>
         <td>${formatDate(item.createdAt)}</td>
-        <td>${formatAuditEntity(item)}</td>
+        <td>${escapeHtml(formatAuditEntity(item))}</td>
         <td>${escapeHtml(item.action)}</td>
         <td>${escapeHtml(getAuditEventText(item.eventType))}</td>
       </tr>
