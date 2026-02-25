@@ -31,6 +31,7 @@ interface AdjustOrderResult {
 }
 
 interface BulkInventoryUpdateRow {
+  boxCode: string;
   sku: string;
   qty: number;
 }
@@ -1457,17 +1458,35 @@ export class InventoryService {
   }> {
     const rows = this.parseBulkInventoryUpdateRows(fileBuffer);
     const skuCodes = Array.from(new Set(rows.map((row) => row.sku)));
+    const boxCodes = Array.from(new Set(rows.map((row) => row.boxCode)));
 
     return this.prisma.$transaction(async (tx) => {
-      const skus = await tx.sku.findMany({
-        where: {
-          sku: { in: skuCodes },
-        },
-        select: {
-          id: true,
-          sku: true,
-        },
-      });
+      const [skus, boxes] = await Promise.all([
+        tx.sku.findMany({
+          where: {
+            sku: { in: skuCodes },
+          },
+          select: {
+            id: true,
+            sku: true,
+          },
+        }),
+        tx.box.findMany({
+          where: {
+            boxCode: { in: boxCodes },
+          },
+          select: {
+            id: true,
+            boxCode: true,
+            status: true,
+            shelf: {
+              select: {
+                status: true,
+              },
+            },
+          },
+        }),
+      ]);
 
       const skuByCode = new Map(skus.map((item) => [item.sku, item]));
       const missingSkuCodes = skuCodes.filter((skuCode) => !skuByCode.has(skuCode));
@@ -1477,18 +1496,45 @@ export class InventoryService {
         throw new UnprocessableEntityException(`以下SKU不存在：${preview}${suffix}`);
       }
 
-      const targetQtyBySkuId = new Map<string, number>();
-      rows.forEach((row) => {
+      const boxByCode = new Map(boxes.map((item) => [item.boxCode, item]));
+      const missingBoxCodes = boxCodes.filter((boxCode) => !boxByCode.has(boxCode));
+      if (missingBoxCodes.length > 0) {
+        const preview = missingBoxCodes.slice(0, 20).join('、');
+        const suffix = missingBoxCodes.length > 20 ? ' 等' : '';
+        throw new UnprocessableEntityException(`以下箱号不存在：${preview}${suffix}`);
+      }
+
+      const disabledBoxCodes = boxes
+        .filter((item) => Number(item.status) !== 1 || Number(item.shelf?.status ?? 0) !== 1)
+        .map((item) => item.boxCode);
+      if (disabledBoxCodes.length > 0) {
+        const preview = disabledBoxCodes.slice(0, 20).join('、');
+        const suffix = disabledBoxCodes.length > 20 ? ' 等' : '';
+        throw new UnprocessableEntityException(`以下箱号未启用，不能更新库存：${preview}${suffix}`);
+      }
+
+      const targets = rows.map((row) => {
         const sku = skuByCode.get(row.sku);
-        if (!sku) return;
-        targetQtyBySkuId.set(sku.id.toString(), row.qty);
+        const box = boxByCode.get(row.boxCode);
+        if (!sku || !box) {
+          throw new UnprocessableEntityException('批量更新库存数据无效');
+        }
+        return {
+          skuId: sku.id,
+          skuCode: sku.sku,
+          boxId: box.id,
+          boxCode: box.boxCode,
+          qty: row.qty,
+        };
       });
 
-      const skuIds = Array.from(targetQtyBySkuId.keys()).map((id) => BigInt(id));
-      const inventoryRows = skuIds.length
+      const inventoryRows = targets.length
         ? await tx.inventoryBoxSku.findMany({
             where: {
-              skuId: { in: skuIds },
+              OR: targets.map((target) => ({
+                boxId: target.boxId,
+                skuId: target.skuId,
+              })),
             },
             select: {
               boxId: true,
@@ -1498,31 +1544,10 @@ export class InventoryService {
           })
         : [];
 
-      const inventoryRowsBySkuId = new Map<string, Array<{ boxId: bigint; qty: number }>>();
+      const inventoryQtyByBoxSku = new Map<string, number>();
       inventoryRows.forEach((row) => {
-        const key = row.skuId.toString();
-        if (!inventoryRowsBySkuId.has(key)) {
-          inventoryRowsBySkuId.set(key, []);
-        }
-        inventoryRowsBySkuId.get(key)?.push({
-          boxId: row.boxId,
-          qty: Number(row.qty ?? 0),
-        });
-      });
-
-      const fallbackBox = await tx.box.findFirst({
-        where: {
-          status: 1,
-          shelf: {
-            status: 1,
-          },
-        },
-        orderBy: {
-          id: 'asc',
-        },
-        select: {
-          id: true,
-        },
+        const key = this.inventoryKey(row.boxId, row.skuId);
+        inventoryQtyByBoxSku.set(key, Number(row.qty ?? 0));
       });
 
       const adjustItems: Array<{
@@ -1531,66 +1556,20 @@ export class InventoryService {
         qtyDelta: number;
         reason: string;
       }> = [];
-      let changedSkuCount = 0;
-
-      rows.forEach((row) => {
-        const sku = skuByCode.get(row.sku);
-        if (!sku) return;
-
-        const skuIdText = sku.id.toString();
-        const inventoryBySku = [...(inventoryRowsBySkuId.get(skuIdText) ?? [])];
-        const currentTotalQty = inventoryBySku.reduce((sum, item) => sum + item.qty, 0);
-        const targetQty = targetQtyBySkuId.get(skuIdText) ?? currentTotalQty;
-        const delta = targetQty - currentTotalQty;
-        if (delta === 0) {
-          return;
-        }
-
-        changedSkuCount += 1;
-        if (delta > 0) {
-          const addToBox = inventoryBySku.sort((a, b) => {
-            if (b.qty !== a.qty) return b.qty - a.qty;
-            if (a.boxId === b.boxId) return 0;
-            return a.boxId < b.boxId ? -1 : 1;
-          })[0];
-          const addToBoxId = addToBox?.boxId ?? fallbackBox?.id;
-          if (!addToBoxId) {
-            throw new UnprocessableEntityException(`SKU ${sku.sku} 无可用箱号，无法增加库存`);
-          }
-          adjustItems.push({
-            boxId: addToBoxId,
-            skuId: sku.id,
-            qtyDelta: delta,
-            reason: '批量更新库存',
-          });
-          return;
-        }
-
-        let remaining = -delta;
-        const reduceRows = inventoryBySku
-          .filter((item) => item.qty > 0)
-          .sort((a, b) => {
-            if (b.qty !== a.qty) return b.qty - a.qty;
-            if (a.boxId === b.boxId) return 0;
-            return a.boxId < b.boxId ? -1 : 1;
-          });
-        reduceRows.forEach((item) => {
-          if (remaining <= 0) return;
-          const takeQty = Math.min(remaining, item.qty);
-          if (takeQty <= 0) return;
-          adjustItems.push({
-            boxId: item.boxId,
-            skuId: sku.id,
-            qtyDelta: -takeQty,
-            reason: '批量更新库存',
-          });
-          remaining -= takeQty;
+      targets.forEach((target) => {
+        const key = this.inventoryKey(target.boxId, target.skuId);
+        const currentQty = inventoryQtyByBoxSku.get(key) ?? 0;
+        const delta = target.qty - currentQty;
+        if (delta === 0) return;
+        adjustItems.push({
+          boxId: target.boxId,
+          skuId: target.skuId,
+          qtyDelta: delta,
+          reason: '批量更新库存',
         });
-
-        if (remaining > 0) {
-          throw new ConflictException(`SKU ${sku.sku} 库存不足，无法调整到目标数量`);
-        }
       });
+
+      const changedSkuCount = new Set(adjustItems.map((item) => item.skuId.toString())).size;
 
       if (adjustItems.length === 0) {
         return {
@@ -1743,7 +1722,7 @@ export class InventoryService {
 
     const errors: string[] = [];
     const result: BulkInventoryUpdateRow[] = [];
-    const seenSkuCodes = new Set<string>();
+    const seenKeys = new Set<string>();
 
     rows.forEach((rawRow, idx) => {
       const rowNo = idx + 2;
@@ -1751,6 +1730,12 @@ export class InventoryService {
       Object.entries(rawRow).forEach(([key, value]) => {
         normalized[this.normalizeImportHeader(key)] = String(value ?? '').trim();
       });
+
+      const boxCode = this.pickImportField(normalized, ['箱号', 'box', 'boxcode', '箱子', 'box id']);
+      if (!boxCode) {
+        errors.push(`第${rowNo}行：箱号为必填字段`);
+        return;
+      }
 
       const sku = this.pickImportField(normalized, [
         'sku',
@@ -1765,8 +1750,9 @@ export class InventoryService {
         return;
       }
 
-      if (seenSkuCodes.has(sku)) {
-        errors.push(`第${rowNo}行：SKU ${sku} 重复，请保留一行`);
+      const uniqueKey = `${boxCode}__${sku}`;
+      if (seenKeys.has(uniqueKey)) {
+        errors.push(`第${rowNo}行：箱号 ${boxCode} + SKU ${sku} 重复，请保留一行`);
         return;
       }
 
@@ -1782,8 +1768,8 @@ export class InventoryService {
         return;
       }
 
-      seenSkuCodes.add(sku);
-      result.push({ sku, qty });
+      seenKeys.add(uniqueKey);
+      result.push({ boxCode, sku, qty });
     });
 
     if (errors.length > 0) {
