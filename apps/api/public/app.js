@@ -2397,7 +2397,6 @@ function renderShelvesManageTable() {
             data-original-name="${escapeHtml(item.name || "")}"
           />
         </td>
-        <td>${escapeHtml(getStatusText(item.status))}</td>
         <td>
           <button class="tiny-btn" data-action="editShelfManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteShelfManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.shelfCode || "")}">删除</button>
@@ -2405,7 +2404,7 @@ function renderShelvesManageTable() {
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
 }
 
 function renderBoxesManageTable() {
@@ -2438,7 +2437,6 @@ function renderBoxesManageTable() {
             ${shelfOptions}
           </select>
         </td>
-        <td>${escapeHtml(getStatusText(item.status))}</td>
         <td>
           <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">删除</button>
@@ -2446,7 +2444,7 @@ function renderBoxesManageTable() {
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
 }
 
 function canSelectProductEditRequestForBatchConfirm(item) {
