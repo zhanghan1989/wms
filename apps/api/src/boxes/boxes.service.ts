@@ -143,10 +143,77 @@ export class BoxesService {
     });
   }
 
+  async getDeleteCheck(idParam: string): Promise<{ canDelete: boolean; reasons: string[] }> {
+    const id = parseId(idParam, 'boxId');
+    const box = await this.prisma.box.findUnique({
+      where: { id },
+      select: { id: true, boxCode: true },
+    });
+    if (!box) throw new NotFoundException('箱号不存在');
+
+    const [
+      inventoryRows,
+      itemCodeRows,
+      inboundRows,
+      outboundRows,
+      stocktakeRows,
+      movementRows,
+      adjustRows,
+      fbaRows,
+      pendingBatchInboundRows,
+    ] = await Promise.all([
+      this.prisma.inventoryBoxSku.count({ where: { boxId: id } }),
+      this.prisma.itemCode.count({ where: { boxId: id } }),
+      this.prisma.inboundOrderItem.count({ where: { boxId: id } }),
+      this.prisma.outboundOrderItem.count({ where: { boxId: id } }),
+      this.prisma.stocktakeRecord.count({ where: { boxId: id } }),
+      this.prisma.stockMovement.count({ where: { boxId: id } }),
+      this.prisma.inventoryAdjustOrderItem.count({ where: { boxId: id } }),
+      this.prisma.fbaReplenishment.count({ where: { boxId: id } }),
+      this.prisma.batchInboundItem.count({
+        where: {
+          boxCode: box.boxCode,
+          order: {
+            status: {
+              in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
+            },
+          },
+        },
+      }),
+    ]);
+
+    const lockingOrderNo = await this.findLockingBatchInboundOrderNo(box.boxCode);
+    const reasons: string[] = [];
+    if (lockingOrderNo) {
+      reasons.push(`箱号已被批量入库单 ${lockingOrderNo} 锁定，请先确认或删除该单据`);
+    }
+    if (pendingBatchInboundRows > 0) {
+      reasons.push(`存在 ${pendingBatchInboundRows} 条待处理批量入库明细`);
+    }
+    if (inventoryRows > 0) {
+      reasons.push(`存在 ${inventoryRows} 条库存记录`);
+    }
+    if (itemCodeRows > 0) {
+      reasons.push(`存在 ${itemCodeRows} 条条码记录`);
+    }
+    if (inboundRows > 0 || outboundRows > 0 || stocktakeRows > 0 || movementRows > 0 || adjustRows > 0 || fbaRows > 0) {
+      reasons.push('存在历史单据记录');
+    }
+
+    return {
+      canDelete: reasons.length === 0,
+      reasons,
+    };
+  }
+
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'boxId');
     const box = await this.prisma.box.findUnique({ where: { id } });
     if (!box) throw new NotFoundException('箱号不存在');
+    const check = await this.getDeleteCheck(idParam);
+    if (!check.canDelete) {
+      throw new BadRequestException(`箱号无法删除：${check.reasons.join('；')}`);
+    }
     try {
       await this.prisma.$transaction(async (tx) => {
         await tx.box.delete({ where: { id } });

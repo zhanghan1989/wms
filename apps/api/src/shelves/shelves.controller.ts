@@ -36,6 +36,13 @@ export class ShelvesController {
     return this.shelvesService.update(id, payload, user.id, req.requestId);
   }
 
+  @Get(':id/delete-check')
+  async getDeleteCheck(
+    @Param('id') id: string,
+  ): Promise<{ canDelete: boolean; reasons: string[] }> {
+    return this.shelvesService.getDeleteCheck(id);
+  }
+
   @Delete(':id')
   async remove(
     @Param('id') id: string,

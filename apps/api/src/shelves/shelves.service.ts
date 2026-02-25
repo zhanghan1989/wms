@@ -99,10 +99,45 @@ export class ShelvesService {
     });
   }
 
+  async getDeleteCheck(idParam: string): Promise<{ canDelete: boolean; reasons: string[] }> {
+    const id = parseId(idParam, 'shelfId');
+    const shelf = await this.prisma.shelf.findUnique({
+      where: { id },
+      select: { id: true, shelfCode: true },
+    });
+    if (!shelf) throw new NotFoundException('货架不存在');
+
+    const [boxCount, sampleBoxes] = await Promise.all([
+      this.prisma.box.count({ where: { shelfId: id } }),
+      this.prisma.box.findMany({
+        where: { shelfId: id },
+        select: { boxCode: true },
+        orderBy: { boxCode: 'asc' },
+        take: 3,
+      }),
+    ]);
+
+    const reasons: string[] = [];
+    if (boxCount > 0) {
+      const sample = sampleBoxes.map((item) => item.boxCode).join('、');
+      const sampleText = sample ? `（如：${sample}${boxCount > sampleBoxes.length ? ' 等' : ''}）` : '';
+      reasons.push(`货架下仍有 ${boxCount} 个箱号${sampleText}`);
+    }
+
+    return {
+      canDelete: reasons.length === 0,
+      reasons,
+    };
+  }
+
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'shelfId');
     const shelf = await this.prisma.shelf.findUnique({ where: { id } });
     if (!shelf) throw new NotFoundException('货架不存在');
+    const check = await this.getDeleteCheck(idParam);
+    if (!check.canDelete) {
+      throw new BadRequestException(`货架无法删除：${check.reasons.join('；')}`);
+    }
     try {
       await this.prisma.$transaction(async (tx) => {
         await tx.shelf.delete({ where: { id } });

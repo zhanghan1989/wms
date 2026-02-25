@@ -1161,6 +1161,18 @@ async function request(path, options = {}) {
   return payload.data;
 }
 
+function buildDeleteBlockedMessage(entityLabel, reasons) {
+  const list = Array.isArray(reasons)
+    ? reasons
+        .map((item) => String(item || "").trim())
+        .filter((item) => Boolean(item))
+    : [];
+  if (!list.length) {
+    return `${entityLabel}存在关联数据，暂时无法删除`;
+  }
+  return `${entityLabel}暂时无法删除：${list.join("；")}`;
+}
+
 function bindTabs() {
   document.querySelectorAll(".nav-btn").forEach((button) => {
     button.addEventListener("click", () => switchPanel(button.dataset.target));
@@ -5399,6 +5411,11 @@ function bindDelegates() {
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       } else if (action === "deleteShelfManage") {
         const shelfCode = button.dataset.code || id;
+        const deleteCheck = await request(`/shelves/${id}/delete-check`);
+        if (!deleteCheck?.canDelete) {
+          showToast(buildDeleteBlockedMessage("货架", deleteCheck?.reasons), true);
+          return;
+        }
         const ok = await openActionConfirmModal(
           `确认删除货架 ${shelfCode} ？`,
           "确认操作",
@@ -5477,6 +5494,11 @@ function bindDelegates() {
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       } else if (action === "deleteBoxManage") {
         const boxCode = button.dataset.code || id;
+        const deleteCheck = await request(`/boxes/${id}/delete-check`);
+        if (!deleteCheck?.canDelete) {
+          showToast(buildDeleteBlockedMessage("箱号", deleteCheck?.reasons), true);
+          return;
+        }
         const ok = await openActionConfirmModal(
           `确认删除箱号 ${boxCode} ？`,
           "确认操作",

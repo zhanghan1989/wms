@@ -36,6 +36,13 @@ export class BoxesController {
     return this.boxesService.update(id, payload, user.id, req.requestId);
   }
 
+  @Get(':id/delete-check')
+  async getDeleteCheck(
+    @Param('id') id: string,
+  ): Promise<{ canDelete: boolean; reasons: string[] }> {
+    return this.boxesService.getDeleteCheck(id);
+  }
+
   @Delete(':id')
   async remove(
     @Param('id') id: string,
