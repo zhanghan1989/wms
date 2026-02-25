@@ -1347,7 +1347,12 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
         ["库存总数量", totalQty],
       ];
       const boxTable = totalQty > 0 ? renderBoxSkuFlatTable(sku, rows, boxSkuMap) : "";
-      const topActionRow = `<div class="action-row">${renderInboundButton(sku.id, "", "新增入库")}</div>`;
+      const topActionRow = `
+        <div class="action-row">
+          ${renderEditButton(sku.id)}
+          ${renderInboundButton(sku.id, "", "新增入库")}
+        </div>
+      `;
       return `
       <div class="inventory-search-item">
         <div class="inventory-search-fields">
@@ -4624,6 +4629,18 @@ function bindDelegates() {
   };
 
   $("inventoryBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='inventoryEdit']");
+    if (!button) return;
+    const skuId = Number(button.dataset.skuId);
+    if (!Number.isInteger(skuId) || skuId <= 0) return;
+    try {
+      await openEditSkuModal(skuId);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("inventorySearchResults").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action='inventoryEdit']");
     if (!button) return;
     const skuId = Number(button.dataset.skuId);
