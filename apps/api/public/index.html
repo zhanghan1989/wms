@@ -69,16 +69,14 @@
       <section class="panel active" id="inventory">
         <div class="panel-head">
           <h2>产品检索</h2>
-          <div class="inventory-head-actions">
-            <button id="refreshInventory" class="ghost">刷新</button>
-            <button id="downloadStockAdjustmentCsvBtn" class="ghost" type="button">下载全部产品CSV</button>
-          </div>
+          <button id="refreshInventory" class="ghost">刷新</button>
         </div>
 
         <div class="inventory-toolbar">
           <form id="inventorySearchForm" class="form-grid inventory-search-form">
             <label><input id="inventoryKeyword" placeholder="输入任意 型号 / SKU / ASIN / FNSKU / FBMSKU / ERPSKU" /></label>
             <button type="submit">检索</button>
+            <button id="downloadStockAdjustmentCsvBtn" type="button">下载全部产品</button>
           </form>
 
           <div id="inventorySearchSection" class="card inventory-search-card hidden">
