@@ -712,6 +712,18 @@ td {
   align-items: end;
 }
 
+.batch-upload-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.batch-upload-head h3 {
+  margin-bottom: 0;
+}
+
 .batch-no-editor {
   display: flex;
   gap: 6px;
@@ -993,6 +1005,11 @@ button.danger-solid {
   .batch-upload-form,
   .batch-detail-meta {
     grid-template-columns: 1fr;
+  }
+
+  .batch-upload-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .batch-detail-head {

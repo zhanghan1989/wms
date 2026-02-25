@@ -4,12 +4,14 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { readFile } from 'fs/promises';
 import {
   AuditAction,
   BatchInboundItemStatus,
   BatchInboundOrderStatus,
   Prisma,
 } from '@prisma/client';
+import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
@@ -68,6 +70,7 @@ interface BatchInboundConfirmResult {
 }
 
 type Tx = Prisma.TransactionClient;
+const BATCH_INBOUND_TEMPLATE_FILE = 'sku-2026-02-25.xlsx';
 
 @Injectable()
 export class BatchInboundService {
@@ -75,6 +78,19 @@ export class BatchInboundService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {}
+
+  async getUploadTemplate(): Promise<{ fileName: string; content: Buffer }> {
+    const templatePath = join(process.cwd(), 'docs', BATCH_INBOUND_TEMPLATE_FILE);
+    try {
+      const content = await readFile(templatePath);
+      return {
+        fileName: BATCH_INBOUND_TEMPLATE_FILE,
+        content,
+      };
+    } catch {
+      throw new NotFoundException(`模板文件不存在：${BATCH_INBOUND_TEMPLATE_FILE}`);
+    }
+  }
 
   async list(): Promise<BatchInboundOrderSummary[]> {
     const orders = await this.prisma.batchInboundOrder.findMany({

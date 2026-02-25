@@ -7,11 +7,13 @@ import {
   Param,
   Post,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -27,6 +29,21 @@ import {
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class BatchInboundController {
   constructor(private readonly batchInboundService: BatchInboundService) {}
+
+  @Get('upload-template')
+  async downloadTemplate(@Res() res: Response): Promise<void> {
+    const file = await this.batchInboundService.getUploadTemplate();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
 
   @Get('orders')
   async list(): Promise<unknown[]> {

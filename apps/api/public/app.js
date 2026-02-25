@@ -271,6 +271,57 @@ async function downloadStockAdjustmentCsv() {
   showToast(`已下载 ${fileName}`);
 }
 
+async function downloadBatchInboundTemplate() {
+  if (!state.token) {
+    throw new Error("请先登录");
+  }
+  let response;
+  try {
+    response = await fetch("/api/batch-inbound/upload-template", {
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+      },
+    });
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || `HTTP ${response.status}`;
+    try {
+      const payload = text ? JSON.parse(text) : null;
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {}
+    throw new Error(normalizeErrorMessage(message));
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainNameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  let fileName = "sku-2026-02-25.xlsx";
+  if (utf8NameMatch?.[1]) {
+    try {
+      fileName = decodeURIComponent(utf8NameMatch[1]);
+    } catch {}
+  } else if (plainNameMatch?.[1]) {
+    fileName = plainNameMatch[1];
+  }
+
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  const href = URL.createObjectURL(blob);
+  link.href = href;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  showToast(`已下载模板 ${fileName}`);
+}
+
 function getStatusText(status) {
   return Number(status) === 1 ? "启用" : "禁用";
 }
@@ -3664,6 +3715,17 @@ function bindForms() {
         await loadInventory();
         await loadBoxes();
         await loadAudit();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("downloadBatchInboundTemplateBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadBatchInboundTemplate();
       });
     } catch (error) {
       showToast(error.message, true);
