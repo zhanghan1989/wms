@@ -324,7 +324,7 @@ async function downloadBatchInboundTemplate() {
   const disposition = response.headers.get("content-disposition") || "";
   const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
   const plainNameMatch = disposition.match(/filename="?([^";]+)"?/i);
-  let fileName = "sku-2026-02-25.xlsx";
+  let fileName = "批量入库.xlsx";
   if (utf8NameMatch?.[1]) {
     try {
       fileName = decodeURIComponent(utf8NameMatch[1]);

@@ -70,7 +70,7 @@ interface BatchInboundConfirmResult {
 }
 
 type Tx = Prisma.TransactionClient;
-const BATCH_INBOUND_TEMPLATE_FILE = 'sku-2026-02-25.xlsx';
+const BATCH_INBOUND_TEMPLATE_FILE = '批量入库.xlsx';
 
 @Injectable()
 export class BatchInboundService {
