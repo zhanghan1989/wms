@@ -45,6 +45,7 @@ const state = {
   fbaPendingByBoxSku: {},
   selectedProductEditRequestId: null,
   selectedProductEditRequestChangedFields: [],
+  selectedProductEditRequestIds: new Set(),
   selectedEditUserId: null,
   selectedResetPasswordUserId: null,
   selectedFbaIds: new Set(),
@@ -2088,6 +2089,45 @@ function renderShopsTable() {
       .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
 }
 
+function canSelectProductEditRequestForBatchConfirm(item) {
+  if (!item || String(item?.status || "") !== "pending") {
+    return false;
+  }
+  const permission = resolveProductEditConfirmPermission(item?.changedFields);
+  return permission.allowed;
+}
+
+function syncSelectedProductEditRequestIds() {
+  const selectableIds = new Set(
+    state.skuEditRequests
+      .filter((item) => canSelectProductEditRequestForBatchConfirm(item))
+      .map((item) => String(item.id)),
+  );
+  state.selectedProductEditRequestIds = new Set(
+    [...state.selectedProductEditRequestIds].filter((id) => selectableIds.has(String(id))),
+  );
+}
+
+function updateProductEditRequestSelectAll() {
+  const selectAll = $("productEditSelectAll");
+  if (!selectAll) return;
+  const visibleRows = state.skuEditRequests.slice(0, state.skuEditRequestsVisibleCount);
+  const selectableRows = visibleRows.filter((item) => canSelectProductEditRequestForBatchConfirm(item));
+
+  if (!selectableRows.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+
+  const selectedCount = selectableRows.filter((item) =>
+    state.selectedProductEditRequestIds.has(String(item.id)),
+  ).length;
+
+  selectAll.checked = selectedCount > 0 && selectedCount === selectableRows.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < selectableRows.length;
+}
+
 function renderProductEditRequestTable() {
   const body = $("productEditRequestBody");
   if (!body) return;
@@ -2096,6 +2136,7 @@ function renderProductEditRequestTable() {
   body.innerHTML =
     rows
       .map((item) => {
+        const requestId = String(item?.id || "");
         const skuText = item?.sku?.sku || "-";
         const isErpSkuOnly = isErpSkuOnlyProductEditRequest(item?.changedFields);
         const skuCellHtml = `${escapeHtml(displayText(skuText))}${
@@ -2104,8 +2145,13 @@ function renderProductEditRequestTable() {
         const statusText = getProductEditRequestStatusText(item?.status);
         const creatorText = item?.creator?.username || "-";
         const canDelete = item?.status === "pending";
+        const canBatchConfirm = canSelectProductEditRequestForBatchConfirm(item);
+        const checkedAttr = canBatchConfirm && state.selectedProductEditRequestIds.has(requestId) ? " checked" : "";
         return `
       <tr>
+        <td><input type="checkbox" data-action="toggleProductEditRequestSelect" data-id="${escapeHtml(requestId)}"${
+          canBatchConfirm ? "" : " disabled"
+        }${checkedAttr} /></td>
         <td>${escapeHtml(formatDate(item?.createdAt))}</td>
         <td>${skuCellHtml}</td>
         <td><span class="edit-request-status">${escapeHtml(statusText)}</span></td>
@@ -2121,7 +2167,8 @@ function renderProductEditRequestTable() {
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
+  updateProductEditRequestSelectAll();
 }
 
 function loadMoreProductEditRequestsIfNeeded() {
@@ -2421,6 +2468,7 @@ async function loadProductEditRequests() {
   const rows = await request("/sku-edit-requests");
   state.skuEditRequests = Array.isArray(rows) ? rows : [];
   state.skuEditRequestsVisibleCount = state.inventoryPageSize;
+  syncSelectedProductEditRequestIds();
   renderProductEditRequestTable();
 }
 
@@ -3660,6 +3708,12 @@ async function reloadAll() {
     state.selectedFbaIds = new Set();
     state.selectedProductEditRequestId = null;
     state.selectedProductEditRequestChangedFields = [];
+    state.selectedProductEditRequestIds = new Set();
+    const productEditSelectAll = $("productEditSelectAll");
+    if (productEditSelectAll) {
+      productEditSelectAll.checked = false;
+      productEditSelectAll.indeterminate = false;
+    }
     state.brandEditingIds = new Set();
     state.skuTypeEditingIds = new Set();
     state.shopEditingIds = new Set();
@@ -5104,6 +5158,19 @@ function bindDelegates() {
     handleUserOptionClick(event, "roles");
   });
 
+  $("productEditRequestBody").addEventListener("change", (event) => {
+    const checkbox = event.target.closest("input[data-action='toggleProductEditRequestSelect']");
+    if (!checkbox) return;
+    const requestId = String(checkbox.dataset.id || "").trim();
+    if (!requestId) return;
+    if (checkbox.checked) {
+      state.selectedProductEditRequestIds.add(requestId);
+    } else {
+      state.selectedProductEditRequestIds.delete(requestId);
+    }
+    updateProductEditRequestSelectAll();
+  });
+
   $("productEditRequestBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -5124,6 +5191,79 @@ function bindDelegates() {
         await deleteProductEditRequest(requestId);
         showToast("编辑申请已删除");
         await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("productEditSelectAll").addEventListener("change", (event) => {
+    const checked = Boolean(event.target.checked);
+    const visibleRows = state.skuEditRequests
+      .slice(0, state.skuEditRequestsVisibleCount)
+      .filter((item) => canSelectProductEditRequestForBatchConfirm(item))
+      .map((item) => String(item.id));
+    if (checked) {
+      visibleRows.forEach((id) => state.selectedProductEditRequestIds.add(id));
+    } else {
+      visibleRows.forEach((id) => state.selectedProductEditRequestIds.delete(id));
+    }
+    renderProductEditRequestTable();
+  });
+
+  $("batchConfirmProductEditRequestBtn").addEventListener("click", async () => {
+    try {
+      const ids = [...state.selectedProductEditRequestIds]
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0);
+      if (!ids.length) {
+        throw new Error("请选择需要批量确认的申请");
+      }
+
+      const ok = await openActionConfirmModal(
+        `确认批量确认 ${ids.length} 条编辑产品申请？`,
+        "批量确认编辑产品申请",
+        "批量确认",
+      );
+      if (!ok) return;
+
+      let successCount = 0;
+      const failedMessages = [];
+      for (const id of ids) {
+        try {
+          await confirmProductEditRequest(id);
+          successCount += 1;
+        } catch (error) {
+          const message = String(error?.message || "确认失败");
+          failedMessages.push(`#${id}: ${message}`);
+        }
+      }
+
+      state.selectedProductEditRequestIds = new Set();
+      await Promise.all([
+        loadProductEditRequests(),
+        loadProductEditPendingSummary(),
+        loadInventory(),
+        loadAudit(),
+      ]);
+
+      if (state.selectedProductEditRequestId) {
+        try {
+          const detail = await loadProductEditRequestDetail(state.selectedProductEditRequestId);
+          renderProductEditRequestDetail(detail);
+        } catch {
+          renderProductEditRequestDetail(null);
+        }
+      }
+
+      if (!failedMessages.length) {
+        showToast(`批量确认完成，共 ${successCount} 条`);
+      } else {
+        const firstError = failedMessages[0];
+        showToast(
+          `批量确认完成：成功 ${successCount} 条，失败 ${failedMessages.length} 条。${firstError}`,
+          true,
+        );
       }
     } catch (error) {
       showToast(error.message, true);
