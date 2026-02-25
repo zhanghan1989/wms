@@ -2097,13 +2097,17 @@ function renderProductEditRequestTable() {
     rows
       .map((item) => {
         const skuText = item?.sku?.sku || "-";
+        const isErpSkuOnly = isErpSkuOnlyProductEditRequest(item?.changedFields);
+        const skuCellHtml = `${escapeHtml(displayText(skuText))}${
+          isErpSkuOnly ? '<span class="erp-sku-change-tag">（erpSKU变更）</span>' : ""
+        }`;
         const statusText = getProductEditRequestStatusText(item?.status);
         const creatorText = item?.creator?.username || "-";
         const canDelete = item?.status === "pending";
         return `
       <tr>
         <td>${escapeHtml(formatDate(item?.createdAt))}</td>
-        <td>${escapeHtml(displayText(skuText))}</td>
+        <td>${skuCellHtml}</td>
         <td><span class="edit-request-status">${escapeHtml(statusText)}</span></td>
         <td>${escapeHtml(displayText(creatorText))}</td>
         <td>

@@ -599,6 +599,12 @@ td {
   background: #f8fcfa;
 }
 
+.erp-sku-change-tag {
+  margin-left: 6px;
+  color: var(--danger);
+  font-weight: 600;
+}
+
 .edit-request-compare-grid {
   margin-top: 10px;
   display: grid;
