@@ -11,6 +11,7 @@ const state = {
   inventoryLocations: new Map(),
   inventorySortedSkus: [],
   inventoryVisibleCount: 0,
+  inventoryListPageSize: 20,
   inventoryPageSize: 30,
   inventorySearchMode: false,
   inventorySearchKeyword: "",
@@ -396,7 +397,7 @@ async function openInventoryHomeDefault() {
   setInventoryDisplayMode(false);
 
   if (state.inventorySortedSkus.length) {
-    state.inventoryVisibleCount = state.inventoryPageSize;
+    state.inventoryVisibleCount = state.inventoryListPageSize;
     renderInventoryTable();
     focusInventorySearch();
     return;
@@ -1221,7 +1222,7 @@ function loadMoreInventoryIfNeeded() {
   const inventoryPanel = $("inventory");
   if (!inventoryPanel || !inventoryPanel.classList.contains("active")) return;
   if (state.inventoryVisibleCount >= state.inventorySortedSkus.length) return;
-  state.inventoryVisibleCount += state.inventoryPageSize;
+  state.inventoryVisibleCount += state.inventoryListPageSize;
   renderInventoryTable();
 }
 
@@ -1261,7 +1262,7 @@ async function loadInventory() {
     );
     return qtyB - qtyA;
   });
-  state.inventoryVisibleCount = state.inventoryPageSize;
+  state.inventoryVisibleCount = state.inventoryListPageSize;
   resetInventorySearchState();
   setInventoryDisplayMode(false);
   renderInventoryTable();
