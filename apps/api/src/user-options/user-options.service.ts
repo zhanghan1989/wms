@@ -1,0 +1,159 @@
+﻿import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Department, Role } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { UpdateUserOptionDto } from './dto/update-user-option.dto';
+
+const DEPARTMENT_DEFAULTS: Array<{ code: Department; name: string; sort: number }> = [
+  { code: Department.factory, name: '工厂', sort: 10 },
+  { code: Department.overseas_warehouse, name: '海外仓', sort: 20 },
+  { code: Department.china_warehouse, name: '中国仓', sort: 30 },
+];
+
+const ROLE_DEFAULTS: Array<{ code: Role; name: string; sort: number }> = [
+  { code: Role.employee, name: '员工', sort: 10 },
+  { code: Role.admin, name: '管理者', sort: 20 },
+];
+
+@Injectable()
+export class UserOptionsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async ensureSeeded(): Promise<void> {
+    await this.ensureDefaults();
+  }
+
+  async assertDepartmentEnabled(code: Department): Promise<void> {
+    await this.ensureDefaults();
+    const option = await this.prisma.departmentOption.findUnique({ where: { code } });
+    if (!option || option.status !== 1) {
+      throw new BadRequestException('部门已禁用或不存在');
+    }
+  }
+
+  async assertRoleEnabled(code: Role): Promise<void> {
+    await this.ensureDefaults();
+    const option = await this.prisma.roleOption.findUnique({ where: { code } });
+    if (!option || option.status !== 1) {
+      throw new BadRequestException('角色已禁用或不存在');
+    }
+  }
+
+  async list(): Promise<{
+    departments: Array<{ id: bigint; code: Department; name: string; status: number; sort: number }>;
+    roles: Array<{ id: bigint; code: Role; name: string; status: number; sort: number }>;
+  }> {
+    await this.ensureSeeded();
+    const [departments, roles] = await Promise.all([
+      this.prisma.departmentOption.findMany({
+        orderBy: [{ sort: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.roleOption.findMany({
+        orderBy: [{ sort: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+
+    return { departments, roles };
+  }
+
+  async updateDepartment(codeParam: string, payload: UpdateUserOptionDto): Promise<unknown> {
+    await this.ensureSeeded();
+    const code = this.parseDepartmentCode(codeParam);
+    const option = await this.prisma.departmentOption.findUnique({ where: { code } });
+    if (!option) {
+      throw new NotFoundException('部门不存在');
+    }
+
+    const data = this.buildUpdateData(payload);
+    return this.prisma.departmentOption.update({
+      where: { code },
+      data,
+    });
+  }
+
+  async updateRole(codeParam: string, payload: UpdateUserOptionDto): Promise<unknown> {
+    await this.ensureSeeded();
+    const code = this.parseRoleCode(codeParam);
+    const option = await this.prisma.roleOption.findUnique({ where: { code } });
+    if (!option) {
+      throw new NotFoundException('角色不存在');
+    }
+
+    const data = this.buildUpdateData(payload);
+    return this.prisma.roleOption.update({
+      where: { code },
+      data,
+    });
+  }
+
+  private buildUpdateData(payload: UpdateUserOptionDto): { name?: string; status?: number; sort?: number } {
+    const data: { name?: string; status?: number; sort?: number } = {};
+
+    if (payload.name !== undefined) {
+      const name = String(payload.name || '').trim();
+      if (!name) {
+        throw new BadRequestException('名称不能为空');
+      }
+      data.name = name;
+    }
+
+    if (payload.status !== undefined) {
+      data.status = payload.status;
+    }
+
+    if (payload.sort !== undefined) {
+      data.sort = payload.sort;
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('没有可更新的字段');
+    }
+
+    return data;
+  }
+
+  private parseDepartmentCode(codeParam: string): Department {
+    const value = String(codeParam || '').trim() as Department;
+    if (!Object.values(Department).includes(value)) {
+      throw new BadRequestException('部门编码不合法');
+    }
+    return value;
+  }
+
+  private parseRoleCode(codeParam: string): Role {
+    const value = String(codeParam || '').trim() as Role;
+    if (!Object.values(Role).includes(value)) {
+      throw new BadRequestException('角色编码不合法');
+    }
+    return value;
+  }
+
+  private async ensureDefaults(): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      for (const option of DEPARTMENT_DEFAULTS) {
+        await tx.departmentOption.upsert({
+          where: { code: option.code },
+          update: {},
+          create: {
+            code: option.code,
+            name: option.name,
+            sort: option.sort,
+            status: 1,
+          },
+        });
+      }
+
+      for (const option of ROLE_DEFAULTS) {
+        await tx.roleOption.upsert({
+          where: { code: option.code },
+          update: {},
+          create: {
+            code: option.code,
+            name: option.name,
+            sort: option.sort,
+            status: 1,
+          },
+        });
+      }
+    });
+  }
+}

@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../constants/audit-event-type';
 import { parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
+import { UserOptionsService } from '../user-options/user-options.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
@@ -17,6 +18,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly userOptionsService: UserOptionsService,
   ) {}
 
   async findAll(): Promise<unknown[]> {
@@ -53,6 +55,13 @@ export class UsersService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<unknown> {
+    const nextRole = payload.role ?? Role.employee;
+    const nextDepartment = payload.department ?? Department.china_warehouse;
+    await Promise.all([
+      this.userOptionsService.assertRoleEnabled(nextRole),
+      this.userOptionsService.assertDepartmentEnabled(nextDepartment),
+    ]);
+
     const exists = await this.prisma.user.findUnique({
       where: { username: payload.username },
     });
@@ -64,8 +73,8 @@ export class UsersService {
         data: {
           username: payload.username,
           passwordHash: null,
-          role: payload.role ?? Role.employee,
-          department: payload.department ?? Department.china_warehouse,
+          role: nextRole,
+          department: nextDepartment,
           status: 0,
         },
       });
@@ -131,6 +140,13 @@ export class UsersService {
     if (payload.role) data.role = payload.role;
     if (payload.department) data.department = payload.department;
     if (typeof payload.status === 'number') data.status = payload.status;
+
+    if (data.role) {
+      await this.userOptionsService.assertRoleEnabled(data.role);
+    }
+    if (data.department) {
+      await this.userOptionsService.assertDepartmentEnabled(data.department);
+    }
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const next = await tx.user.update({

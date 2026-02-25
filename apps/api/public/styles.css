@@ -482,6 +482,11 @@ td {
   font-size: 12px;
 }
 
+.tiny-input.wide {
+  width: 100%;
+  min-width: 180px;
+}
+
 .tiny-btn.danger {
   background: #fff0f0;
   border-color: #e2a7a7;

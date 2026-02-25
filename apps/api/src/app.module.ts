@@ -13,6 +13,7 @@ import { ShopsModule } from './shops/shops.module';
 import { SkuTypesModule } from './sku-types/sku-types.module';
 import { SkuEditRequestsModule } from './sku-edit-requests/sku-edit-requests.module';
 import { SkusModule } from './skus/skus.module';
+import { UserOptionsModule } from './user-options/user-options.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -22,6 +23,7 @@ import { UsersModule } from './users/users.module';
     }),
     PrismaModule,
     AuthModule,
+    UserOptionsModule,
     UsersModule,
     SkusModule,
     SkuEditRequestsModule,

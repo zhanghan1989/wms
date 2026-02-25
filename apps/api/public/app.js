@@ -15,6 +15,8 @@ const state = {
   inventorySearchMode: false,
   users: [],
   usersVisibleCount: 0,
+  departmentOptions: [],
+  roleOptions: [],
   auditLogs: [],
   auditVisibleCount: 0,
   myAuditLogs: [],
@@ -43,6 +45,17 @@ let deleteConfirmResolver = null;
 let actionConfirmResolver = null;
 
 const $ = (id) => document.getElementById(id);
+
+const DEFAULT_DEPARTMENT_OPTIONS = [
+  { code: "factory", name: "工厂", status: 1, sort: 10 },
+  { code: "overseas_warehouse", name: "海外仓", status: 1, sort: 20 },
+  { code: "china_warehouse", name: "中国仓", status: 1, sort: 30 },
+];
+
+const DEFAULT_ROLE_OPTIONS = [
+  { code: "employee", name: "员工", status: 1, sort: 10 },
+  { code: "admin", name: "管理者", status: 1, sort: 20 },
+];
 
 function showToast(message, isError = false) {
   showErrorModal(message, isError);
@@ -131,13 +144,38 @@ function getStatusText(status) {
 }
 
 function getRoleText(role) {
-  return role === "admin" ? "管理者" : "员工";
+  const code = String(role || "");
+  const item = state.roleOptions.find((option) => option.code === code);
+  if (item?.name) return item.name;
+  return code === "admin" ? "管理者" : "员工";
 }
 
 function getDepartmentText(department) {
-  if (department === "factory") return "工厂";
-  if (department === "overseas_warehouse") return "海外仓";
+  const code = String(department || "");
+  const item = state.departmentOptions.find((option) => option.code === code);
+  if (item?.name) return item.name;
+  if (code === "factory") return "工厂";
+  if (code === "overseas_warehouse") return "海外仓";
   return "中国仓";
+}
+
+function sortUserOptions(options) {
+  return [...(Array.isArray(options) ? options : [])].sort((a, b) => {
+    const sortA = Number(a?.sort ?? 0);
+    const sortB = Number(b?.sort ?? 0);
+    if (sortA !== sortB) return sortA - sortB;
+    return String(a?.code || "").localeCompare(String(b?.code || ""));
+  });
+}
+
+function getDepartmentOptionsWithFallback() {
+  const items = state.departmentOptions.length ? state.departmentOptions : DEFAULT_DEPARTMENT_OPTIONS;
+  return sortUserOptions(items);
+}
+
+function getRoleOptionsWithFallback() {
+  const items = state.roleOptions.length ? state.roleOptions : DEFAULT_ROLE_OPTIONS;
+  return sortUserOptions(items);
 }
 
 function hasChineseChars(text) {
@@ -466,6 +504,135 @@ async function loadMe() {
   }
 }
 
+function buildUserOptionRows(options, kind) {
+  const items = sortUserOptions(options);
+  if (!items.length) {
+    return '<tr><td colspan="5" class="muted">-</td></tr>';
+  }
+
+  return items
+    .map((item) => {
+      const code = String(item.code || "");
+      const status = Number(item.status) === 1 ? 1 : 0;
+      return `
+        <tr data-user-option-kind="${escapeHtml(kind)}" data-user-option-code="${escapeHtml(code)}">
+          <td>${escapeHtml(code)}</td>
+          <td><input class="tiny-input wide" data-field="name" maxlength="64" value="${escapeHtml(item.name || "")}" /></td>
+          <td><input class="tiny-input" data-field="sort" type="number" min="0" max="9999" value="${escapeHtml(Number(item.sort ?? 0))}" /></td>
+          <td>${status === 1 ? "启用" : "禁用"}</td>
+          <td>
+            <div class="action-row">
+              <button type="button" class="tiny-btn" data-action="saveUserOption">保存</button>
+              <button type="button" class="tiny-btn ghost" data-action="toggleUserOption" data-next-status="${status === 1 ? 0 : 1}">
+                ${status === 1 ? "禁用" : "启用"}
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderUserOptionsTable() {
+  const departmentBody = $("departmentOptionsBody");
+  const roleBody = $("roleOptionsBody");
+  if (departmentBody) {
+    departmentBody.innerHTML = buildUserOptionRows(getDepartmentOptionsWithFallback(), "departments");
+  }
+  if (roleBody) {
+    roleBody.innerHTML = buildUserOptionRows(getRoleOptionsWithFallback(), "roles");
+  }
+}
+
+function renderUserSelectOptions() {
+  const newDepartmentEl = $("newDepartment");
+  const newRoleEl = $("newRole");
+  const editDepartmentEl = $("editUserDepartment");
+  const editRoleEl = $("editUserRole");
+
+  if (newDepartmentEl) {
+    const selected = newDepartmentEl.value || "china_warehouse";
+    const options = getDepartmentOptionsWithFallback().filter((item) => Number(item.status) === 1);
+    newDepartmentEl.innerHTML = options
+      .map((item) => `<option value="${escapeHtml(item.code)}">${escapeHtml(item.name || item.code)}</option>`)
+      .join("");
+    if (!newDepartmentEl.value && options.length) {
+      newDepartmentEl.value = options[0].code;
+    }
+    if (options.some((item) => item.code === selected)) {
+      newDepartmentEl.value = selected;
+    }
+  }
+
+  if (newRoleEl) {
+    const selected = newRoleEl.value || "employee";
+    const options = getRoleOptionsWithFallback().filter((item) => Number(item.status) === 1);
+    newRoleEl.innerHTML = options
+      .map((item) => `<option value="${escapeHtml(item.code)}">${escapeHtml(item.name || item.code)}</option>`)
+      .join("");
+    if (!newRoleEl.value && options.length) {
+      newRoleEl.value = options[0].code;
+    }
+    if (options.some((item) => item.code === selected)) {
+      newRoleEl.value = selected;
+    }
+  }
+
+  if (editDepartmentEl) {
+    const selected = editDepartmentEl.value || "china_warehouse";
+    const options = getDepartmentOptionsWithFallback().filter((item) => Number(item.status) === 1 || item.code === selected);
+    editDepartmentEl.innerHTML = options
+      .map((item) => {
+        const suffix = Number(item.status) === 1 ? "" : "（禁用）";
+        return `<option value="${escapeHtml(item.code)}">${escapeHtml((item.name || item.code) + suffix)}</option>`;
+      })
+      .join("");
+    if (selected && options.some((item) => item.code === selected)) {
+      editDepartmentEl.value = selected;
+    }
+  }
+
+  if (editRoleEl) {
+    const selected = editRoleEl.value || "employee";
+    const options = getRoleOptionsWithFallback().filter((item) => Number(item.status) === 1 || item.code === selected);
+    editRoleEl.innerHTML = options
+      .map((item) => {
+        const suffix = Number(item.status) === 1 ? "" : "（禁用）";
+        return `<option value="${escapeHtml(item.code)}">${escapeHtml((item.name || item.code) + suffix)}</option>`;
+      })
+      .join("");
+    if (selected && options.some((item) => item.code === selected)) {
+      editRoleEl.value = selected;
+    }
+  }
+}
+
+async function loadUserOptions() {
+  const data = await request("/user-options");
+  const departments = Array.isArray(data?.departments) ? data.departments : [];
+  const roles = Array.isArray(data?.roles) ? data.roles : [];
+  state.departmentOptions = sortUserOptions(
+    departments.map((item) => ({
+      code: String(item.code || ""),
+      name: String(item.name || ""),
+      status: Number(item.status) === 1 ? 1 : 0,
+      sort: Number(item.sort ?? 0),
+    })),
+  );
+  state.roleOptions = sortUserOptions(
+    roles.map((item) => ({
+      code: String(item.code || ""),
+      name: String(item.name || ""),
+      status: Number(item.status) === 1 ? 1 : 0,
+      sort: Number(item.sort ?? 0),
+    })),
+  );
+  renderUserOptionsTable();
+  renderUserSelectOptions();
+  renderUsersTable();
+}
+
 function renderUsersTable() {
   const body = $("usersBody");
   if (!body) return;
@@ -550,6 +717,9 @@ function openEditUserModal(userId, username, role, department) {
   state.selectedEditUserId = String(userId);
   $("editUserId").value = String(userId);
   $("editUsername").value = String(username || "");
+  $("editUserRole").value = role === "admin" ? "admin" : "employee";
+  $("editUserDepartment").value = department || "china_warehouse";
+  renderUserSelectOptions();
   $("editUserRole").value = role === "admin" ? "admin" : "employee";
   $("editUserDepartment").value = department || "china_warehouse";
   openModal("editUserModal");
@@ -2674,10 +2844,14 @@ async function reloadAll() {
     $("skuTypesBody").innerHTML = "";
     $("shopsBody").innerHTML = "";
     $("productEditRequestBody").innerHTML = "";
+    $("departmentOptionsBody").innerHTML = "";
+    $("roleOptionsBody").innerHTML = "";
     renderProductEditRequestDetail(null);
     state.brands = [];
     state.skuTypes = [];
     state.shops = [];
+    state.departmentOptions = [];
+    state.roleOptions = [];
     state.users = [];
     state.auditLogs = [];
     state.myAuditLogs = [];
@@ -2697,6 +2871,8 @@ async function reloadAll() {
     state.brandEditingIds = new Set();
     state.skuTypeEditingIds = new Set();
     state.shopEditingIds = new Set();
+    renderUserSelectOptions();
+    renderUserOptionsTable();
     renderFbaPendingBadge();
     renderProductEditPendingBadge();
     updateFbaSelectAll();
@@ -2719,15 +2895,21 @@ async function reloadAll() {
     loadFbaReplenishments(),
   ];
   if (isAdmin) {
-    tasks.push(loadUsers(), loadAudit());
+    tasks.push(loadUserOptions(), loadUsers(), loadAudit());
   } else {
+    state.departmentOptions = [];
+    state.roleOptions = [];
     state.users = [];
     state.auditLogs = [];
     state.usersVisibleCount = 0;
     state.auditVisibleCount = 0;
     $("usersBody").innerHTML = "";
+    $("departmentOptionsBody").innerHTML = "";
+    $("roleOptionsBody").innerHTML = "";
     $("auditBody").innerHTML = "";
     $("statUsers").textContent = "-";
+    renderUserSelectOptions();
+    renderUserOptionsTable();
   }
 
   const results = await Promise.allSettled(tasks);
@@ -3909,6 +4091,68 @@ function bindDelegates() {
     }
   });
 
+  const handleUserOptionClick = async (event, kind) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const action = String(button.dataset.action || "");
+    if (!["saveUserOption", "toggleUserOption"].includes(action)) return;
+
+    const row = button.closest("tr[data-user-option-code]");
+    if (!row) return;
+    const code = String(row.dataset.userOptionCode || "").trim();
+    const endpointKind = kind === "roles" ? "roles" : "departments";
+    if (!code) return;
+
+    try {
+      if (action === "saveUserOption") {
+        const nameInput = row.querySelector("input[data-field='name']");
+        const sortInput = row.querySelector("input[data-field='sort']");
+        const name = String(nameInput?.value || "").trim();
+        const sort = Number(sortInput?.value ?? 0);
+        if (!name) {
+          throw new Error("名称不能为空");
+        }
+        if (!Number.isInteger(sort) || sort < 0 || sort > 9999) {
+          throw new Error("排序需为0到9999的整数");
+        }
+        await request(`/user-options/${endpointKind}/${encodeURIComponent(code)}`, {
+          method: "PUT",
+          body: JSON.stringify({ name, sort }),
+        });
+        showToast("保存成功");
+      } else if (action === "toggleUserOption") {
+        const nextStatus = Number(button.dataset.nextStatus ?? -1);
+        if (![0, 1].includes(nextStatus)) {
+          throw new Error("状态值无效");
+        }
+        const actionLabel = nextStatus === 1 ? "启用" : "禁用";
+        const ok = await openActionConfirmModal(
+          `确认${actionLabel}${endpointKind === "departments" ? "部门" : "角色"} ${code} 吗？`,
+          `${actionLabel}${endpointKind === "departments" ? "部门" : "角色"}`,
+          actionLabel,
+        );
+        if (!ok) return;
+        await request(`/user-options/${endpointKind}/${encodeURIComponent(code)}`, {
+          method: "PUT",
+          body: JSON.stringify({ status: nextStatus }),
+        });
+        showToast(`${actionLabel}成功`);
+      }
+
+      await Promise.all([loadUserOptions(), loadUsers()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+
+  $("departmentOptionsBody").addEventListener("click", (event) => {
+    handleUserOptionClick(event, "departments");
+  });
+
+  $("roleOptionsBody").addEventListener("click", (event) => {
+    handleUserOptionClick(event, "roles");
+  });
+
   $("productEditRequestBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -4248,6 +4492,9 @@ function bindRefresh() {
     ),
   );
   $("refreshUsers").addEventListener("click", () => loadUsers().catch((error) => showToast(error.message, true)));
+  $("refreshUserOptions").addEventListener("click", () =>
+    loadUserOptions().catch((error) => showToast(error.message, true)),
+  );
   $("refreshShelves").addEventListener("click", () => loadShelves().catch((error) => showToast(error.message, true)));
   $("refreshBoxes").addEventListener("click", () => loadBoxes().catch((error) => showToast(error.message, true)));
   $("refreshBatchInbound").addEventListener("click", () =>
