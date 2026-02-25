@@ -131,6 +131,7 @@ const AUDIT_ENTITY_TEXT_MAP = {
   product_edit_request: "产品编辑申请",
 };
 const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE = "仅启用的佛山工厂管理者可确认编辑申请";
+const STOCK_ADJUSTMENT_WAREHOUSE_ID = "64774";
 
 function showToast(message, isError = false) {
   showErrorModal(message, isError);
@@ -212,6 +213,63 @@ function formatDate(value) {
   if (!value) return "-";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+}
+
+function formatDateForFilename(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function escapeCsvCell(value) {
+  const text = String(value ?? "");
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+  return text;
+}
+
+function getSkuInventoryTotalQty(skuId) {
+  const rows = state.inventoryLocations.get(String(skuId)) || [];
+  return rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
+}
+
+function buildStockAdjustmentCsvContent() {
+  const header = ["SKUコード", "倉庫ID", "実在庫数", "差分指定"];
+  const lines = [header.map(escapeCsvCell).join(",")];
+  const skus = [...state.inventorySkus].sort((a, b) =>
+    String(a?.sku || "").localeCompare(String(b?.sku || ""), "en", { numeric: true }),
+  );
+
+  skus.forEach((sku) => {
+    const totalQty = getSkuInventoryTotalQty(sku.id);
+    const pendingQty = getFbaPendingQtyBySku(sku.id);
+    const actualQty = totalQty - pendingQty;
+    const row = [sku.sku || "", STOCK_ADJUSTMENT_WAREHOUSE_ID, actualQty, ""];
+    lines.push(row.map(escapeCsvCell).join(","));
+  });
+
+  return lines.join("\r\n");
+}
+
+async function downloadStockAdjustmentCsv() {
+  if (!state.token) {
+    throw new Error("请先登录");
+  }
+  await loadInventory();
+
+  const fileDate = formatDateForFilename(new Date());
+  const fileName = `stock_ajustment_${fileDate}.csv`;
+  const csvContent = buildStockAdjustmentCsvContent();
+  const blob = new Blob([`\uFEFF${csvContent}`], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  const href = URL.createObjectURL(blob);
+  link.href = href;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  showToast(`已下载 ${fileName}`);
 }
 
 function getStatusText(status) {
@@ -3616,6 +3674,17 @@ function bindForms() {
     try {
       await withBusyButton(submitButton, "检索中...", async () => {
         await searchInventoryProducts($("inventoryKeyword").value.trim());
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("downloadStockAdjustmentCsvBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "生成中...", async () => {
+        await downloadStockAdjustmentCsv();
       });
     } catch (error) {
       showToast(error.message, true);
