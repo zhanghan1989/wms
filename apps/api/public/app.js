@@ -3013,6 +3013,17 @@ function bindForms() {
   $("logoutBtn")?.addEventListener("click", handleLogout);
   $("topLogoutBtn")?.addEventListener("click", handleLogout);
 
+  $("openCreateUserModal")?.addEventListener("click", async () => {
+    try {
+      await loadUserOptions();
+      $("createUserForm").reset();
+      renderUserSelectOptions();
+      openModal("createUserModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -3026,6 +3037,7 @@ function bindForms() {
         }),
       });
       event.target.reset();
+      closeModal("createUserModal");
       showToast("用户已新增，状态为禁用，请激活用户后登录");
       await Promise.all([loadUsers(), loadAudit()]);
     } catch (error) {
@@ -4295,6 +4307,11 @@ function bindDelegates() {
       closeModal("profileModal");
       return;
     }
+    const createUserClose = event.target.closest("button[data-action='closeCreateUserModal']");
+    if (createUserClose) {
+      closeModal("createUserModal");
+      return;
+    }
     const editUserClose = event.target.closest("button[data-action='closeEditUserModal']");
     if (editUserClose) {
       closeModal("editUserModal");
@@ -4403,6 +4420,12 @@ function bindDelegates() {
   $("profileModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("profileModal");
+    }
+  });
+
+  $("createUserModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("createUserModal");
     }
   });
 
@@ -4542,9 +4565,8 @@ function bindRefresh() {
       showToast(error.message, true),
     ),
   );
-  $("refreshUsers").addEventListener("click", () => loadUsers().catch((error) => showToast(error.message, true)));
-  $("refreshUserOptions").addEventListener("click", () =>
-    loadUserOptions().catch((error) => showToast(error.message, true)),
+  $("refreshUsers").addEventListener("click", () =>
+    Promise.all([loadUsers(), loadUserOptions()]).catch((error) => showToast(error.message, true)),
   );
   $("refreshShelves").addEventListener("click", () => loadShelves().catch((error) => showToast(error.message, true)));
   $("refreshBoxes").addEventListener("click", () => loadBoxes().catch((error) => showToast(error.message, true)));

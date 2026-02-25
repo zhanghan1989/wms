@@ -62,7 +62,6 @@
     <aside class="sidebar">
       <button class="nav-btn" data-target="overview">系统总览</button>
       <button class="nav-btn" data-target="users">用户管理</button>
-      <button class="nav-btn" data-target="userOptions">部门管理</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
     </aside>
 
@@ -354,34 +353,12 @@
           <h2>用户管理</h2>
           <button id="refreshUsers" class="ghost">刷新</button>
         </div>
-        <form id="createUserForm" class="form-grid compact">
-          <label>用户名<input id="newUsername" required /></label>
-          <label>部门
-            <select id="newDepartment">
-              <option value="factory">工厂</option>
-              <option value="overseas_warehouse">海外仓</option>
-              <option value="china_warehouse" selected>中国仓</option>
-            </select>
-          </label>
-          <label>角色
-            <select id="newRole">
-              <option value="employee">员工</option>
-              <option value="admin">管理者</option>
-            </select>
-          </label>
-          <button type="submit" class="create-user-btn">新增</button>
-        </form>
-        <table>
-          <thead><tr><th>用户名</th><th>部门</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
-          <tbody id="usersBody"></tbody>
-        </table>
-      </section>
-
-      <section class="panel" id="userOptions">
-        <div class="panel-head">
-          <h2>部门管理</h2>
-          <button id="refreshUserOptions" class="ghost">刷新</button>
-        </div>
+        <article class="card">
+          <h3>基础操作</h3>
+          <div class="action-row">
+            <button type="button" id="openCreateUserModal">新增用户</button>
+          </div>
+        </article>
         <div class="cards">
           <article class="card">
             <h3>部门配置</h3>
@@ -414,6 +391,10 @@
             </table>
           </article>
         </div>
+        <table>
+          <thead><tr><th>用户名</th><th>部门</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+          <tbody id="usersBody"></tbody>
+        </table>
       </section>
 
       <section class="panel" id="shelves">
@@ -616,6 +597,27 @@
     </div>
   </div>
 
+  <div id="createUserModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>新增用户</h3>
+        <button type="button" class="ghost" data-action="closeCreateUserModal">关闭</button>
+      </div>
+      <form id="createUserForm" class="form-grid modal-grid">
+        <label>用户名<input id="newUsername" required /></label>
+        <label>部门
+          <select id="newDepartment"></select>
+        </label>
+        <label>角色
+          <select id="newRole"></select>
+        </label>
+        <div class="modal-actions">
+          <button type="submit" class="create-user-btn">新增</button>
+          <button type="button" class="ghost" data-action="closeCreateUserModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
   <div id="editUserModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
