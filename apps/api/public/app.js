@@ -67,6 +67,7 @@ const DEFAULT_ROLE_OPTIONS = [
   { code: "employee", name: "员工", status: 1, sort: 10 },
   { code: "admin", name: "管理者", status: 1, sort: 20 },
 ];
+const SKU_EDIT_PENDING_BLOCK_MESSAGE = "正在编辑产品申请中，请管理员确认后再执行相关操作。";
 
 const AUDIT_EVENT_TEXT_MAP = {
   box_created: "新增箱号",
@@ -2006,6 +2007,18 @@ async function loadProductEditRequests() {
   renderProductEditRequestTable();
 }
 
+function hasPendingProductEditRequestBySkuId(skuId) {
+  const targetSkuId = Number(skuId);
+  if (!Number.isInteger(targetSkuId) || targetSkuId <= 0) {
+    return false;
+  }
+  return state.skuEditRequests.some((item) => {
+    const status = String(item?.status || "");
+    const itemSkuId = Number(item?.skuId ?? item?.sku?.id ?? 0);
+    return status === "pending" && Number.isInteger(itemSkuId) && itemSkuId === targetSkuId;
+  });
+}
+
 async function loadProductEditRequestDetail(id) {
   return request(`/sku-edit-requests/${id}`);
 }
@@ -3561,6 +3574,15 @@ function bindForms() {
         if (!ids.length) {
           throw new Error("请先选择待出库申请单");
         }
+        const selectedRows = state.fbaReplenishments.filter((item) =>
+          ids.includes(Number(item?.id)),
+        );
+        const blockedRow = selectedRows.find((item) =>
+          hasPendingProductEditRequestBySkuId(Number(item?.sku?.id)),
+        );
+        if (blockedRow) {
+          throw new Error(SKU_EDIT_PENDING_BLOCK_MESSAGE);
+        }
 
         await outboundFbaReplenishmentRequests(ids, expressNo);
         closeModal("fbaOutboundModal");
@@ -4336,6 +4358,10 @@ function bindDelegates() {
       }
 
       if (action === "fbaConfirmRow") {
+        const row = state.fbaReplenishments.find((item) => Number(item?.id) === id);
+        if (row && hasPendingProductEditRequestBySkuId(Number(row?.sku?.id))) {
+          throw new Error(SKU_EDIT_PENDING_BLOCK_MESSAGE);
+        }
         const inputId = button.dataset.inputId || "";
         const input = $(inputId);
         const actualQty = Number(String(input?.value || "").trim());

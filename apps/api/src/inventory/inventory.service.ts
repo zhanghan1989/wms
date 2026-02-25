@@ -5,7 +5,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { AuditAction, OrderStatus, Prisma } from '@prisma/client';
+import { AuditAction, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { generateOrderNo, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
@@ -27,6 +27,7 @@ interface AdjustOrderResult {
 }
 
 const FBA_REPLENISH_MARK = 'FBA补货';
+const SKU_EDIT_PENDING_BLOCK_MESSAGE = '正在编辑产品申请中，请管理员确认后再执行相关操作。';
 
 @Injectable()
 export class InventoryService {
@@ -442,6 +443,7 @@ export class InventoryService {
       if (String(row.status) === 'deleted') {
         throw new UnprocessableEntityException('已删除申请不可再次确认');
       }
+      await this.ensureSkusNotUnderPendingEdit(tx, [row.sku.id]);
 
       const inventory = await tx.inventoryBoxSku.findUnique({
         where: {
@@ -551,6 +553,10 @@ export class InventoryService {
       if (invalid) {
         throw new ConflictException(`申请单 ${invalid.requestNo} 当前状态不可出库`);
       }
+      await this.ensureSkusNotUnderPendingEdit(
+        tx,
+        Array.from(new Set(rows.map((row) => row.skuId.toString()))).map((id) => BigInt(id)),
+      );
 
       const requiredMap = new Map<string, { boxId: bigint; skuId: bigint; qty: number }>();
       rows.forEach((row) => {
@@ -995,6 +1001,26 @@ export class InventoryService {
     if (status === 'outbound') return '已出库';
     if (status === 'deleted') return '已删除';
     return status;
+  }
+
+  private async ensureSkusNotUnderPendingEdit(
+    tx: Prisma.TransactionClient,
+    skuIds: bigint[],
+  ): Promise<void> {
+    if (!Array.isArray(skuIds) || skuIds.length === 0) {
+      return;
+    }
+    const uniqueSkuIds = Array.from(new Set(skuIds.map((id) => id.toString()))).map((id) => BigInt(id));
+    const pending = await tx.productEditRequest.findFirst({
+      where: {
+        skuId: { in: uniqueSkuIds },
+        status: ProductEditRequestStatus.pending,
+      },
+      select: { id: true },
+    });
+    if (pending) {
+      throw new ConflictException(SKU_EDIT_PENDING_BLOCK_MESSAGE);
+    }
   }
 
   private normalizeAdjustItem(item: CreateAdjustOrderItemDto): {
