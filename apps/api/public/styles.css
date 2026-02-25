@@ -725,6 +725,11 @@ td {
   margin-bottom: 0;
 }
 
+#downloadBatchInboundTemplateBtn {
+  padding: 6px 12px;
+  line-height: 1.2;
+}
+
 .batch-no-editor {
   display: flex;
   gap: 6px;
