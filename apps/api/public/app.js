@@ -50,6 +50,7 @@ const state = {
   shopEditingIds: new Set(),
   departmentOptionEditingCodes: new Set(),
   roleOptionEditingCodes: new Set(),
+  auditFbaRequestNoById: {},
 };
 
 let deleteConfirmResolver = null;
@@ -2552,6 +2553,23 @@ function toAuditRecord(value) {
   return value;
 }
 
+async function refreshAuditFbaRequestNoMap() {
+  const map = {};
+  const sourceRows = Array.isArray(state.fbaReplenishments) && state.fbaReplenishments.length
+    ? state.fbaReplenishments
+    : await request("/inventory/fba-replenishments");
+
+  (Array.isArray(sourceRows) ? sourceRows : []).forEach((item) => {
+    const id = String(item?.id || "").trim();
+    const requestNo = String(item?.requestNo || "").trim();
+    if (id && requestNo) {
+      map[id] = requestNo;
+    }
+  });
+
+  state.auditFbaRequestNoById = map;
+}
+
 function pickAuditEntityName(item, entityType) {
   const after = toAuditRecord(item?.afterData);
   const before = toAuditRecord(item?.beforeData);
@@ -2575,7 +2593,12 @@ function pickAuditEntityName(item, entityType) {
   if (entityType === "inbound_order" || entityType === "outbound_order") return pick("orderNo", "order_no");
   if (entityType === "stocktake_task") return pick("taskNo", "task_no");
   if (entityType === "inventory_adjust_order") return pick("adjustNo", "adjust_no");
-  if (entityType === "fba_replenishment") return pick("requestNo", "request_no");
+  if (entityType === "fba_replenishment") {
+    const requestNo = pick("requestNo", "request_no");
+    if (requestNo) return requestNo;
+    const id = String(item?.entityId ?? "").trim();
+    return String(state.auditFbaRequestNoById?.[id] || "").trim();
+  }
   if (entityType === "product_edit_request") return pick("sku", "skuCode", "requestNo");
 
   return pick("name", "code", "no", "sku");
@@ -2608,13 +2631,12 @@ function renderAuditTable() {
       <tr>
         <td>${formatDate(item.createdAt)}</td>
         <td>${escapeHtml(formatAuditEntity(item))}</td>
-        <td>${escapeHtml(item.action)}</td>
         <td>${escapeHtml(getAuditEventText(item.eventType))}</td>
         <td>${escapeHtml(item.operator?.username)}</td>
       </tr>
     `,
       )
-      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
 }
 
 function loadMoreAuditIfNeeded() {
@@ -2626,6 +2648,7 @@ function loadMoreAuditIfNeeded() {
 }
 
 async function loadAudit() {
+  await refreshAuditFbaRequestNoMap();
   const result = await request("/audit-logs?page=1&pageSize=2000");
   state.auditLogs = Array.isArray(result.items) ? result.items : [];
   state.auditVisibleCount = state.inventoryPageSize;
@@ -2643,12 +2666,11 @@ function renderMyAuditTable() {
       <tr>
         <td>${formatDate(item.createdAt)}</td>
         <td>${escapeHtml(formatAuditEntity(item))}</td>
-        <td>${escapeHtml(item.action)}</td>
         <td>${escapeHtml(getAuditEventText(item.eventType))}</td>
       </tr>
     `,
       )
-      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
 }
 
 function loadMoreMyAuditIfNeeded() {
@@ -2671,6 +2693,7 @@ async function loadMyAudit() {
     renderMyAuditTable();
     return;
   }
+  await refreshAuditFbaRequestNoMap();
   const result = await request(`/audit-logs?page=1&pageSize=2000&operatorId=${state.me.id}`);
   state.myAuditLogs = Array.isArray(result.items) ? result.items : [];
   state.myAuditVisibleCount = state.inventoryPageSize;
