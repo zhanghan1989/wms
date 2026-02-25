@@ -553,16 +553,23 @@ function clearOverviewDashboard() {
     "overviewRecommendationHighCount",
     "overviewRecommendationMediumCount",
     "overviewTargetDays",
+    "overviewNoSales90Count",
+    "overviewNoSales270Count",
+    "overviewEmptyBoxCount",
   ].forEach((id) => setTextById(id, "-"));
   renderOverviewTable("overviewTopDemandBody", "", 5);
   renderOverviewTable("overviewAnomalyBody", "", 6);
   renderOverviewTable("overviewProductionBody", "", 9);
+  renderOverviewTable("overviewNoSales90Body", "", 6);
+  renderOverviewTable("overviewNoSales270Body", "", 6);
+  renderOverviewTable("overviewEmptyBoxBody", "", 2);
 }
 
 function renderOverviewDashboard(data) {
   const health = data?.health || {};
   const demand = data?.demand || {};
   const production = data?.production || {};
+  const obsolete = data?.obsolete || {};
 
   setTextById("overviewTotalStock", formatOverviewNumber(health.totalStock));
   setTextById("overviewAvailableStock", formatOverviewNumber(health.availableStock));
@@ -583,6 +590,9 @@ function renderOverviewDashboard(data) {
   setTextById("overviewRecommendationHighCount", formatOverviewNumber(production.highCount));
   setTextById("overviewRecommendationMediumCount", formatOverviewNumber(production.mediumCount));
   setTextById("overviewTargetDays", formatOverviewNumber(production.targetDays));
+  setTextById("overviewNoSales90Count", formatOverviewNumber(obsolete.noSales90dCount));
+  setTextById("overviewNoSales270Count", formatOverviewNumber(obsolete.noSales270dCount));
+  setTextById("overviewEmptyBoxCount", formatOverviewNumber(obsolete.emptyBoxCount));
 
   const topRows = (Array.isArray(demand.topSkus) ? demand.topSkus : [])
     .map(
@@ -638,6 +648,50 @@ function renderOverviewDashboard(data) {
     })
     .join("");
   renderOverviewTable("overviewProductionBody", productionRows, 9);
+
+  const noSales90Rows = (Array.isArray(obsolete.noSales90dSkus) ? obsolete.noSales90dSkus : [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.model))}</td>
+        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
+        <td>${formatOverviewNumber(item.availableStock)}</td>
+        <td>${formatOverviewNumber(item.inTransitStock)}</td>
+      </tr>
+    `,
+    )
+    .join("");
+  renderOverviewTable("overviewNoSales90Body", noSales90Rows, 6);
+
+  const noSales270Rows = (Array.isArray(obsolete.noSales270dSkus) ? obsolete.noSales270dSkus : [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.model))}</td>
+        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
+        <td>${formatOverviewNumber(item.availableStock)}</td>
+        <td>${formatOverviewNumber(item.inTransitStock)}</td>
+      </tr>
+    `,
+    )
+    .join("");
+  renderOverviewTable("overviewNoSales270Body", noSales270Rows, 6);
+
+  const emptyBoxRows = (Array.isArray(obsolete.emptyBoxes) ? obsolete.emptyBoxes : [])
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(displayText(item.boxCode))}</td>
+        <td>${escapeHtml(displayText(item.shelfCode))}</td>
+      </tr>
+    `,
+    )
+    .join("");
+  renderOverviewTable("overviewEmptyBoxBody", emptyBoxRows, 2);
 }
 
 async function loadOverviewDashboard() {

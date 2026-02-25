@@ -444,7 +444,8 @@ button.ghost {
 }
 
 #overview .cards .card:nth-child(3),
-#overview .cards .card:nth-child(4) {
+#overview .cards .card:nth-child(4),
+#overview .cards .card:nth-child(5) {
   grid-column: 1 / -1;
 }
 

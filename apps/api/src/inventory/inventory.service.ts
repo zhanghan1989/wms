@@ -996,6 +996,8 @@ export class InventoryService {
     const from7d = new Date(now.getTime() - 7 * dayMs);
     const from14d = new Date(now.getTime() - 14 * dayMs);
     const from30d = new Date(now.getTime() - 30 * dayMs);
+    const from90d = new Date(now.getTime() - 90 * dayMs);
+    const from270d = new Date(now.getTime() - 270 * dayMs);
 
     const outboundWhereBase: Prisma.StockMovementWhereInput = {
       qtyDelta: { lt: 0 },
@@ -1010,6 +1012,10 @@ export class InventoryService {
       outbound30Rows,
       outbound14Rows,
       outbound7Rows,
+      outbound90Rows,
+      outbound270Rows,
+      activeBoxes,
+      inventoryByBoxRows,
     ] = await Promise.all([
       this.prisma.sku.findMany({
         where: { status: 1 },
@@ -1069,6 +1075,43 @@ export class InventoryService {
         },
         _sum: { qtyDelta: true },
       }),
+      this.prisma.stockMovement.groupBy({
+        by: ['skuId'],
+        where: {
+          ...outboundWhereBase,
+          createdAt: { gte: from90d },
+        },
+        _sum: { qtyDelta: true },
+      }),
+      this.prisma.stockMovement.groupBy({
+        by: ['skuId'],
+        where: {
+          ...outboundWhereBase,
+          createdAt: { gte: from270d },
+        },
+        _sum: { qtyDelta: true },
+      }),
+      this.prisma.box.findMany({
+        where: {
+          status: 1,
+          shelf: {
+            status: 1,
+          },
+        },
+        select: {
+          id: true,
+          boxCode: true,
+          shelf: {
+            select: {
+              shelfCode: true,
+            },
+          },
+        },
+      }),
+      this.prisma.inventoryBoxSku.groupBy({
+        by: ['boxId'],
+        _sum: { qty: true },
+      }),
     ]);
 
     const skuById = new Map(
@@ -1118,6 +1161,13 @@ export class InventoryService {
     const outbound30BySku = toOutboundMap(outbound30Rows);
     const outbound14BySku = toOutboundMap(outbound14Rows);
     const outbound7BySku = toOutboundMap(outbound7Rows);
+    const outbound90BySku = toOutboundMap(outbound90Rows);
+    const outbound270BySku = toOutboundMap(outbound270Rows);
+
+    const inventoryByBox = new Map<string, number>();
+    inventoryByBoxRows.forEach((row) => {
+      inventoryByBox.set(row.boxId.toString(), Number(row._sum.qty ?? 0));
+    });
 
     let totalStock = 0;
     let availableStock = 0;
@@ -1140,6 +1190,24 @@ export class InventoryService {
       suggestedProductionQty: number;
       priority: string;
     }> = [];
+    const noSales90dSkus: Array<{
+      skuId: string;
+      sku: string;
+      model: string | null;
+      erpSku: string | null;
+      totalStock: number;
+      availableStock: number;
+      inTransitStock: number;
+    }> = [];
+    const noSales270dSkus: Array<{
+      skuId: string;
+      sku: string;
+      model: string | null;
+      erpSku: string | null;
+      totalStock: number;
+      availableStock: number;
+      inTransitStock: number;
+    }> = [];
 
     activeSkus.forEach((sku) => {
       const skuId = sku.id.toString();
@@ -1161,6 +1229,31 @@ export class InventoryService {
       }
       if (avgDailyOutbound > 0 && coverageDays < LOW_COVERAGE_DAYS) {
         lowCoverageSkuCount += 1;
+      }
+
+      if (stock > 0) {
+        if (!(outbound90BySku.get(skuId) ?? 0)) {
+          noSales90dSkus.push({
+            skuId,
+            sku: sku.sku,
+            model: sku.model,
+            erpSku: sku.erpSku,
+            totalStock: stock,
+            availableStock: available,
+            inTransitStock: inTransit,
+          });
+        }
+        if (!(outbound270BySku.get(skuId) ?? 0)) {
+          noSales270dSkus.push({
+            skuId,
+            sku: sku.sku,
+            model: sku.model,
+            erpSku: sku.erpSku,
+            totalStock: stock,
+            availableStock: available,
+            inTransitStock: inTransit,
+          });
+        }
       }
 
       if (avgDailyOutbound <= 0) {
@@ -1205,6 +1298,28 @@ export class InventoryService {
       if (s !== 0) return s;
       return b.avgDailyOutbound - a.avgDailyOutbound;
     });
+
+    const sortByStockDesc = <T extends { totalStock: number; availableStock: number; sku: string }>(rows: T[]) => {
+      rows.sort((a, b) => {
+        if (b.totalStock !== a.totalStock) return b.totalStock - a.totalStock;
+        if (b.availableStock !== a.availableStock) return b.availableStock - a.availableStock;
+        return String(a.sku || '').localeCompare(String(b.sku || ''), 'en', { numeric: true });
+      });
+    };
+    sortByStockDesc(noSales90dSkus);
+    sortByStockDesc(noSales270dSkus);
+
+    const emptyBoxes = activeBoxes
+      .map((box) => ({
+        boxId: box.id.toString(),
+        boxCode: box.boxCode,
+        shelfCode: box.shelf?.shelfCode ?? null,
+        totalStock: inventoryByBox.get(box.id.toString()) ?? 0,
+      }))
+      .filter((box) => box.totalStock <= 0)
+      .sort((a, b) =>
+        String(a.boxCode || '').localeCompare(String(b.boxCode || ''), 'en', { numeric: true }),
+      );
 
     const topSkus = Array.from(outbound30BySku.entries())
       .map(([skuId, qty30d]) => {
@@ -1284,6 +1399,14 @@ export class InventoryService {
         highCount,
         mediumCount,
         recommendations: recommendations.slice(0, 50),
+      },
+      obsolete: {
+        noSales90dCount: noSales90dSkus.length,
+        noSales270dCount: noSales270dSkus.length,
+        noSales90dSkus: noSales90dSkus.slice(0, 100),
+        noSales270dSkus: noSales270dSkus.slice(0, 100),
+        emptyBoxCount: emptyBoxes.length,
+        emptyBoxes: emptyBoxes.slice(0, 200),
       },
     };
   }

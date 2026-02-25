@@ -434,6 +434,59 @@
               </table>
             </div>
           </article>
+
+          <article class="card">
+            <h3>废弃建议</h3>
+            <ul class="stats">
+              <li><span>90天无销量 SKU</span><strong id="overviewNoSales90Count">-</strong></li>
+              <li><span>270天无销量 SKU</span><strong id="overviewNoSales270Count">-</strong></li>
+              <li><span>在库为0空箱子</span><strong id="overviewEmptyBoxCount">-</strong></li>
+            </ul>
+            <div class="overview-table-wrap">
+              <h4>90天无销量 SKU（仅显示有库存）</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>型号</th>
+                    <th>erpSKU</th>
+                    <th>总库存</th>
+                    <th>可用库存</th>
+                    <th>在途库存</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewNoSales90Body"></tbody>
+              </table>
+            </div>
+            <div class="overview-table-wrap">
+              <h4>270天无销量 SKU（仅显示有库存）</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>型号</th>
+                    <th>erpSKU</th>
+                    <th>总库存</th>
+                    <th>可用库存</th>
+                    <th>在途库存</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewNoSales270Body"></tbody>
+              </table>
+            </div>
+            <div class="overview-table-wrap">
+              <h4>在库为0空箱子</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>箱号</th>
+                    <th>货架号</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewEmptyBoxBody"></tbody>
+              </table>
+            </div>
+          </article>
         </div>
       </section>
 
