@@ -14,6 +14,7 @@ const state = {
   inventoryPageSize: 30,
   inventorySearchMode: false,
   users: [],
+  usersById: new Map(),
   usersVisibleCount: 0,
   departmentOptions: [],
   roleOptions: [],
@@ -630,7 +631,9 @@ async function loadUserOptions() {
   );
   renderUserOptionsTable();
   renderUserSelectOptions();
-  renderUsersTable();
+  if (state.users.length) {
+    renderUsersTable();
+  }
 }
 
 function renderUsersTable() {
@@ -657,6 +660,7 @@ function renderUsersTable() {
               data-username="${escapeHtml(user.username)}"
               data-role="${escapeHtml(user.role)}"
               data-department="${escapeHtml(user.department || "china_warehouse")}"
+              data-status="${escapeHtml(Number(user.status) === 1 ? 1 : 0)}"
             >
               编辑
             </button>
@@ -670,25 +674,6 @@ function renderUsersTable() {
             >
               ${user.passwordInitialized ? "重置密码" : "激活用户"}
             </button>
-            <button
-              type="button"
-              class="tiny-btn"
-              data-action="toggleUserStatus"
-              data-id="${escapeHtml(user.id)}"
-              data-username="${escapeHtml(user.username)}"
-              data-next-status="${Number(user.status) === 1 ? 0 : 1}"
-            >
-              ${Number(user.status) === 1 ? "禁用" : "启用"}
-            </button>
-            <button
-              type="button"
-              class="tiny-btn danger"
-              data-action="deleteUser"
-              data-id="${escapeHtml(user.id)}"
-              data-username="${escapeHtml(user.username)}"
-            >
-              删除
-            </button>
           </div>
         </td>
       </tr>
@@ -700,6 +685,7 @@ function renderUsersTable() {
 async function loadUsers() {
   const users = await request("/users");
   state.users = Array.isArray(users) ? users : [];
+  state.usersById = new Map(state.users.map((user) => [String(user.id), user]));
   state.usersVisibleCount = state.inventoryPageSize;
   $("statUsers").textContent = state.users.length;
   renderUsersTable();
@@ -713,15 +699,85 @@ function loadMoreUsersIfNeeded() {
   renderUsersTable();
 }
 
-function openEditUserModal(userId, username, role, department) {
+function findUserById(userId) {
+  const id = String(userId || "").trim();
+  if (!id) return null;
+  return state.usersById.get(id) || null;
+}
+
+function syncEditUserActionButtons(userId, status, username) {
+  const toggleBtn = $("editUserToggleBtn");
+  const deleteBtn = $("editUserDeleteBtn");
+  const normalizedUserId = String(userId || "").trim();
+  const normalizedUsername = String(username || "").trim();
+  const normalizedStatus = Number(status) === 1 ? 1 : 0;
+  if (toggleBtn) {
+    toggleBtn.dataset.id = normalizedUserId;
+    toggleBtn.dataset.username = normalizedUsername;
+    toggleBtn.dataset.nextStatus = normalizedStatus === 1 ? "0" : "1";
+    toggleBtn.textContent = normalizedStatus === 1 ? "禁用" : "启用";
+  }
+  if (deleteBtn) {
+    deleteBtn.dataset.id = normalizedUserId;
+    deleteBtn.dataset.username = normalizedUsername;
+  }
+}
+
+async function toggleUserStatus(userId, username, nextStatus) {
+  if (![0, 1].includes(nextStatus)) {
+    throw new Error("状态值无效");
+  }
+  const actionLabel = nextStatus === 1 ? "启用" : "禁用";
+  const ok = await openActionConfirmModal(`确认${actionLabel}用户 ${username} 吗？`, `${actionLabel}用户`, actionLabel);
+  if (!ok) return false;
+
+  await request(`/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    body: JSON.stringify({ status: nextStatus }),
+  });
+  showToast(`用户已${actionLabel}`);
+  await Promise.all([loadUsers(), loadAudit()]);
+
+  if (String(state.me?.id || "") === String(userId) && nextStatus !== 1) {
+    state.token = "";
+    state.me = null;
+    localStorage.removeItem("wms_token");
+    showToast("当前用户已被禁用，请重新登录");
+    await reloadAll();
+    switchPanel("overview");
+  }
+  return true;
+}
+
+async function removeUser(userId, username) {
+  const ok = await openDeleteConfirmModal(`确认删除用户 ${username} 吗？`);
+  if (!ok) return false;
+
+  await request(`/users/${encodeURIComponent(userId)}`, {
+    method: "DELETE",
+  });
+  showToast("用户已删除");
+  await Promise.all([loadUsers(), loadAudit()]);
+
+  if (String(state.me?.id || "") === String(userId)) {
+    state.token = "";
+    state.me = null;
+    localStorage.removeItem("wms_token");
+    showToast("当前用户已被删除，请重新登录");
+    await reloadAll();
+    switchPanel("overview");
+  }
+  return true;
+}
+
+function openEditUserModal(userId, username, role, department, status = 1) {
   state.selectedEditUserId = String(userId);
   $("editUserId").value = String(userId);
   $("editUsername").value = String(username || "");
-  $("editUserRole").value = role === "admin" ? "admin" : "employee";
-  $("editUserDepartment").value = department || "china_warehouse";
   renderUserSelectOptions();
   $("editUserRole").value = role === "admin" ? "admin" : "employee";
   $("editUserDepartment").value = department || "china_warehouse";
+  syncEditUserActionButtons(userId, status, username);
   openModal("editUserModal");
 }
 
@@ -2853,6 +2909,7 @@ async function reloadAll() {
     state.departmentOptions = [];
     state.roleOptions = [];
     state.users = [];
+    state.usersById = new Map();
     state.auditLogs = [];
     state.myAuditLogs = [];
     state.skuEditRequests = [];
@@ -2900,6 +2957,7 @@ async function reloadAll() {
     state.departmentOptions = [];
     state.roleOptions = [];
     state.users = [];
+    state.usersById = new Map();
     state.auditLogs = [];
     state.usersVisibleCount = 0;
     state.auditVisibleCount = 0;
@@ -2969,8 +3027,7 @@ function bindForms() {
       });
       event.target.reset();
       showToast("用户已新增，状态为禁用，请激活用户后登录");
-      await loadUsers();
-      await loadAudit();
+      await Promise.all([loadUsers(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -3006,6 +3063,50 @@ function bindForms() {
       state.selectedEditUserId = null;
       showToast("用户信息已更新");
       await Promise.all([loadUsers(), loadAudit(), loadMe()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("editUserToggleBtn").addEventListener("click", async () => {
+    try {
+      const userId = String($("editUserId").value || "").trim();
+      if (!userId) {
+        throw new Error("未选择用户");
+      }
+      const user = findUserById(userId);
+      if (!user) {
+        throw new Error("用户不存在");
+      }
+      const nextStatus = Number(user.status) === 1 ? 0 : 1;
+      const changed = await toggleUserStatus(userId, String(user.username || ""), nextStatus);
+      if (!changed) return;
+      const latest = findUserById(userId);
+      if (!latest) {
+        closeModal("editUserModal");
+        state.selectedEditUserId = null;
+        return;
+      }
+      syncEditUserActionButtons(userId, latest.status, latest.username);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("editUserDeleteBtn").addEventListener("click", async () => {
+    try {
+      const userId = String($("editUserId").value || "").trim();
+      if (!userId) {
+        throw new Error("未选择用户");
+      }
+      const user = findUserById(userId);
+      if (!user) {
+        throw new Error("用户不存在");
+      }
+      const deleted = await removeUser(userId, String(user.username || ""));
+      if (!deleted) return;
+      closeModal("editUserModal");
+      state.selectedEditUserId = null;
     } catch (error) {
       showToast(error.message, true);
     }
@@ -4026,7 +4127,8 @@ function bindDelegates() {
       if (button.dataset.action === "editUser") {
         const role = String(button.dataset.role || "employee");
         const department = String(button.dataset.department || "china_warehouse");
-        openEditUserModal(userId, username, role, department);
+        const status = Number(button.dataset.status ?? 1);
+        openEditUserModal(userId, username, role, department, status);
         return;
       }
 
@@ -4034,57 +4136,6 @@ function bindDelegates() {
         const passwordInitialized = String(button.dataset.passwordInitialized || "0") === "1";
         openResetUserPasswordModal(userId, username, passwordInitialized);
         return;
-      }
-
-      if (button.dataset.action === "toggleUserStatus") {
-        const nextStatus = Number(button.dataset.nextStatus);
-        if (![0, 1].includes(nextStatus)) {
-          throw new Error("状态值无效");
-        }
-        const actionLabel = nextStatus === 1 ? "启用" : "禁用";
-        const ok = await openActionConfirmModal(
-          `确认${actionLabel}用户 ${username} 吗？`,
-          `${actionLabel}用户`,
-          actionLabel,
-        );
-        if (!ok) return;
-
-        await request(`/users/${encodeURIComponent(userId)}`, {
-          method: "PUT",
-          body: JSON.stringify({ status: nextStatus }),
-        });
-        showToast(`用户已${actionLabel}`);
-        await Promise.all([loadUsers(), loadAudit()]);
-
-        if (String(state.me?.id || "") === userId && nextStatus !== 1) {
-          state.token = "";
-          state.me = null;
-          localStorage.removeItem("wms_token");
-          showToast("当前用户已被禁用，请重新登录");
-          await reloadAll();
-          switchPanel("overview");
-        }
-        return;
-      }
-
-      if (button.dataset.action === "deleteUser") {
-        const ok = await openDeleteConfirmModal(`确认删除用户 ${username} 吗？`);
-        if (!ok) return;
-
-        await request(`/users/${encodeURIComponent(userId)}`, {
-          method: "DELETE",
-        });
-        showToast("用户已删除");
-        await Promise.all([loadUsers(), loadAudit()]);
-
-        if (String(state.me?.id || "") === userId) {
-          state.token = "";
-          state.me = null;
-          localStorage.removeItem("wms_token");
-          showToast("当前用户已被删除，请重新登录");
-          await reloadAll();
-          switchPanel("overview");
-        }
       }
     } catch (error) {
       showToast(error.message, true);
@@ -4139,7 +4190,7 @@ function bindDelegates() {
         showToast(`${actionLabel}成功`);
       }
 
-      await Promise.all([loadUserOptions(), loadUsers()]);
+      await loadUserOptions();
     } catch (error) {
       showToast(error.message, true);
     }
