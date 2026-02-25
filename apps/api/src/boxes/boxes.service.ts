@@ -147,20 +147,27 @@ export class BoxesService {
     const id = parseId(idParam, 'boxId');
     const box = await this.prisma.box.findUnique({ where: { id } });
     if (!box) throw new NotFoundException('箱号不存在');
-    await this.prisma.$transaction(async (tx) => {
-      await tx.box.delete({ where: { id } });
-      await this.auditService.create({
-        db: tx,
-        entityType: 'box',
-        entityId: id,
-        action: AuditAction.delete,
-        eventType: AuditEventType.BOX_DELETED,
-        beforeData: box as unknown as Record<string, unknown>,
-        afterData: null,
-        operatorId,
-        requestId,
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.box.delete({ where: { id } });
+        await this.auditService.create({
+          db: tx,
+          entityType: 'box',
+          entityId: id,
+          action: AuditAction.delete,
+          eventType: AuditEventType.BOX_DELETED,
+          beforeData: box as unknown as Record<string, unknown>,
+          afterData: null,
+          operatorId,
+          requestId,
+        });
       });
-    });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+        throw new BadRequestException('箱号已被库存或历史单据引用，无法删除。请先处理关联数据，或改为禁用。');
+      }
+      throw error;
+    }
     return { success: true };
   }
 

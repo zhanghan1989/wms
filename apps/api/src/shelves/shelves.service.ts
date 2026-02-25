@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
@@ -103,20 +103,27 @@ export class ShelvesService {
     const id = parseId(idParam, 'shelfId');
     const shelf = await this.prisma.shelf.findUnique({ where: { id } });
     if (!shelf) throw new NotFoundException('货架不存在');
-    await this.prisma.$transaction(async (tx) => {
-      await tx.shelf.delete({ where: { id } });
-      await this.auditService.create({
-        db: tx,
-        entityType: 'shelf',
-        entityId: id,
-        action: AuditAction.delete,
-        eventType: AuditEventType.SHELF_DELETED,
-        beforeData: shelf as unknown as Record<string, unknown>,
-        afterData: null,
-        operatorId,
-        requestId,
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.shelf.delete({ where: { id } });
+        await this.auditService.create({
+          db: tx,
+          entityType: 'shelf',
+          entityId: id,
+          action: AuditAction.delete,
+          eventType: AuditEventType.SHELF_DELETED,
+          beforeData: shelf as unknown as Record<string, unknown>,
+          afterData: null,
+          operatorId,
+          requestId,
+        });
       });
-    });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+        throw new BadRequestException('货架下仍有关联箱号或历史单据，无法删除。请先迁移箱号，或改为禁用。');
+      }
+      throw error;
+    }
     return { success: true };
   }
 }
