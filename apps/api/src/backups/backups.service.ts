@@ -4,6 +4,7 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import JSZip = require('jszip');
@@ -11,27 +12,41 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { join, resolve } from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 
-type BackupSummary = {
+type BackupSource = 'manual' | 'schedule' | 'legacy';
+
+export type BackupSummary = {
   fileName: string;
   sizeBytes: number;
   createdAt: string;
+  hasFile: boolean;
+  fileDeletedAt: string | null;
+  source: BackupSource;
 };
 
 const WEEKLY_BACKUP_CRON = '0 59 23 * * 0';
 const BACKUP_TIMEZONE = process.env.BACKUP_TIMEZONE || 'Asia/Shanghai';
-const DEFAULT_KEEP_COUNT = 26;
+const DEFAULT_KEEP_ZIP_COUNT = 5;
 
 @Injectable()
-export class BackupsService {
+export class BackupsService implements OnModuleInit {
   private readonly logger = new Logger(BackupsService.name);
   private readonly backupDir = resolve(process.cwd(), 'storage', 'backups');
-  private readonly keepCount = Math.max(
-    4,
-    Number(process.env.BACKUP_KEEP_COUNT || DEFAULT_KEEP_COUNT),
+  private readonly keepZipCount = Math.max(
+    1,
+    Number(process.env.BACKUP_ZIP_KEEP_COUNT || DEFAULT_KEEP_ZIP_COUNT),
   );
   private isCreating = false;
 
   constructor(private readonly prisma: PrismaService) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.reconcileBackupRecordsAndFiles();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`初始化备份记录失败: ${message}`);
+    }
+  }
 
   @Cron(WEEKLY_BACKUP_CRON, {
     name: 'weekly-database-backup',
@@ -47,24 +62,18 @@ export class BackupsService {
   }
 
   async listBackups(): Promise<BackupSummary[]> {
-    await this.ensureBackupDir();
-    const names = await readdir(this.backupDir);
-    const zipNames = names.filter((name) => name.toLowerCase().endsWith('.zip'));
-
-    const rows = await Promise.all(
-      zipNames.map(async (name) => {
-        const filePath = join(this.backupDir, name);
-        const fileStat = await stat(filePath);
-        return {
-          fileName: name,
-          sizeBytes: Number(fileStat.size || 0),
-          createdAt: fileStat.mtime.toISOString(),
-        };
-      }),
-    );
-
-    rows.sort((a, b) => Number(new Date(b.createdAt)) - Number(new Date(a.createdAt)));
-    return rows;
+    await this.reconcileBackupRecordsAndFiles();
+    const rows = await this.prisma.backupRecord.findMany({
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    return rows.map((row) => ({
+      fileName: row.fileName,
+      sizeBytes: this.toSafeNumber(row.sizeBytes),
+      createdAt: row.createdAt.toISOString(),
+      hasFile: row.hasFile,
+      fileDeletedAt: row.fileDeletedAt ? row.fileDeletedAt.toISOString() : null,
+      source: this.normalizeSource(row.source),
+    }));
   }
 
   async getBackupFileForDownload(fileNameRaw: string): Promise<{
@@ -73,6 +82,16 @@ export class BackupsService {
     content: Buffer;
   }> {
     const fileName = this.normalizeBackupFileName(fileNameRaw);
+    const record = await this.prisma.backupRecord.findUnique({
+      where: { fileName },
+    });
+    if (!record) {
+      throw new NotFoundException(`备份文件不存在: ${fileName}`);
+    }
+    if (!record.hasFile) {
+      throw new BadRequestException('该备份仅保留记录，不提供下载');
+    }
+
     await this.ensureBackupDir();
     const filePath = join(this.backupDir, fileName);
     try {
@@ -83,15 +102,17 @@ export class BackupsService {
         content,
       };
     } catch {
-      throw new NotFoundException(`备份文件不存在: ${fileName}`);
+      await this.markBackupFileRemoved(record.id);
+      throw new BadRequestException('该备份仅保留记录，不提供下载');
     }
   }
 
-  async createBackupNow(source: 'manual' | 'schedule' = 'manual'): Promise<{
+  async createBackupNow(source: BackupSource = 'manual'): Promise<{
     fileName: string;
     sizeBytes: number;
     createdAt: string;
-    source: 'manual' | 'schedule';
+    source: BackupSource;
+    hasFile: boolean;
   }> {
     if (this.isCreating) {
       throw new BadRequestException('备份任务正在执行中，请稍后重试');
@@ -117,7 +138,26 @@ export class BackupsService {
       });
 
       await writeFile(zipPath, zipBuffer);
-      await this.pruneOldBackups();
+      await this.prisma.backupRecord.upsert({
+        where: { fileName: zipFileName },
+        create: {
+          fileName: zipFileName,
+          source,
+          sizeBytes: BigInt(zipBuffer.byteLength),
+          createdAt: now,
+          hasFile: true,
+          fileDeletedAt: null,
+        },
+        update: {
+          source,
+          sizeBytes: BigInt(zipBuffer.byteLength),
+          createdAt: now,
+          hasFile: true,
+          fileDeletedAt: null,
+        },
+      });
+
+      await this.reconcileBackupRecordsAndFiles();
       this.logger.log(`数据库备份完成: ${zipFileName} (${zipBuffer.byteLength} bytes)`);
 
       return {
@@ -125,6 +165,7 @@ export class BackupsService {
         sizeBytes: zipBuffer.byteLength,
         createdAt: now.toISOString(),
         source,
+        hasFile: true,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -132,6 +173,92 @@ export class BackupsService {
     } finally {
       this.isCreating = false;
     }
+  }
+
+  private async reconcileBackupRecordsAndFiles(): Promise<void> {
+    await this.ensureBackupDir();
+    await this.syncRecordsFromFilesystem();
+    await this.markMissingFilesAsRemoved();
+    await this.enforceZipRetention();
+  }
+
+  private async syncRecordsFromFilesystem(): Promise<void> {
+    const names = await readdir(this.backupDir);
+    const zipNames = names.filter((name) => name.toLowerCase().endsWith('.zip'));
+    if (!zipNames.length) return;
+
+    await Promise.all(
+      zipNames.map(async (fileName) => {
+        const filePath = join(this.backupDir, fileName);
+        const fileStat = await stat(filePath);
+        await this.prisma.backupRecord.upsert({
+          where: { fileName },
+          create: {
+            fileName,
+            source: 'legacy',
+            sizeBytes: BigInt(fileStat.size || 0),
+            createdAt: fileStat.mtime,
+            hasFile: true,
+            fileDeletedAt: null,
+          },
+          update: {
+            sizeBytes: BigInt(fileStat.size || 0),
+            hasFile: true,
+            fileDeletedAt: null,
+          },
+        });
+      }),
+    );
+  }
+
+  private async markMissingFilesAsRemoved(): Promise<void> {
+    const rows = await this.prisma.backupRecord.findMany({
+      where: { hasFile: true },
+      select: { id: true, fileName: true },
+    });
+    if (!rows.length) return;
+
+    const missingIds: bigint[] = [];
+    await Promise.all(
+      rows.map(async (row) => {
+        const exists = await this.backupFileExists(row.fileName);
+        if (!exists) {
+          missingIds.push(row.id);
+        }
+      }),
+    );
+    if (!missingIds.length) return;
+
+    const now = new Date();
+    await Promise.all(missingIds.map((id) => this.markBackupFileRemoved(id, now)));
+  }
+
+  private async enforceZipRetention(): Promise<void> {
+    const rows = await this.prisma.backupRecord.findMany({
+      where: { hasFile: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: { id: true, fileName: true },
+    });
+    if (rows.length <= this.keepZipCount) return;
+
+    const removeRows = rows.slice(this.keepZipCount);
+    const now = new Date();
+    await Promise.all(
+      removeRows.map(async (row) => {
+        await rm(join(this.backupDir, row.fileName), { force: true });
+        await this.markBackupFileRemoved(row.id, now);
+      }),
+    );
+  }
+
+  private async markBackupFileRemoved(id: bigint, removedAt = new Date()): Promise<void> {
+    await this.prisma.backupRecord.update({
+      where: { id },
+      data: {
+        hasFile: false,
+        fileDeletedAt: removedAt,
+      },
+    });
   }
 
   private async buildSqlDump(): Promise<string> {
@@ -166,9 +293,8 @@ export class BackupsService {
     );
     const createRow = createRows[0] || {};
     const createSqlRaw =
-      Object.entries(createRow).find(([key]) =>
-        key.toLowerCase().includes('create table'),
-      )?.[1] ?? Object.values(createRow)[1];
+      Object.entries(createRow).find(([key]) => key.toLowerCase().includes('create table'))?.[1] ??
+      Object.values(createRow)[1];
     const createSql = String(createSqlRaw || '');
 
     const columnRows = await this.prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
@@ -217,9 +343,7 @@ export class BackupsService {
     if (typeof value === 'object') {
       try {
         return this.toSqlString(
-          JSON.stringify(value, (_key, item) =>
-            typeof item === 'bigint' ? item.toString() : item,
-          ),
+          JSON.stringify(value, (_key, item) => (typeof item === 'bigint' ? item.toString() : item)),
         );
       } catch {
         return this.toSqlString(String(value));
@@ -267,12 +391,25 @@ export class BackupsService {
     await mkdir(this.backupDir, { recursive: true });
   }
 
-  private async pruneOldBackups(): Promise<void> {
-    const backups = await this.listBackups();
-    if (backups.length <= this.keepCount) return;
-    const removeItems = backups.slice(this.keepCount);
-    await Promise.all(
-      removeItems.map((item) => rm(join(this.backupDir, item.fileName), { force: true })),
-    );
+  private async backupFileExists(fileName: string): Promise<boolean> {
+    try {
+      await stat(join(this.backupDir, fileName));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private toSafeNumber(value: bigint): number {
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    if (value > max) return Number.MAX_SAFE_INTEGER;
+    return Number(value);
+  }
+
+  private normalizeSource(source: string): BackupSource {
+    if (source === 'manual' || source === 'schedule' || source === 'legacy') {
+      return source;
+    }
+    return 'legacy';
   }
 }

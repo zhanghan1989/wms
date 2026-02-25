@@ -10,7 +10,7 @@ import {
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { BackupsService } from './backups.service';
+import { BackupSummary, BackupsService } from './backups.service';
 
 @Controller('backups')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -18,7 +18,7 @@ export class BackupsController {
   constructor(private readonly backupsService: BackupsService) {}
 
   @Get()
-  async listBackups(): Promise<unknown[]> {
+  async listBackups(): Promise<BackupSummary[]> {
     return this.backupsService.listBackups();
   }
 
@@ -46,4 +46,3 @@ export class BackupsController {
     res.status(200).send(file.content);
   }
 }
-

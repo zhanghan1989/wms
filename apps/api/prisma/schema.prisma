@@ -525,6 +525,21 @@ model ProductEditRequest {
   @@map("product_edit_requests")
 }
 
+model BackupRecord {
+  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  fileName     String   @unique @map("file_name") @db.VarChar(255)
+  source       String   @default("schedule") @db.VarChar(32)
+  sizeBytes    BigInt   @default(0) @map("size_bytes") @db.UnsignedBigInt
+  hasFile      Boolean  @default(true) @map("has_file")
+  fileDeletedAt DateTime? @map("file_deleted_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([createdAt])
+  @@index([hasFile, createdAt])
+  @@map("backup_records")
+}
+
 model OperationAuditLog {
   id            BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
   entityType    String         @map("entity_type") @db.VarChar(64)

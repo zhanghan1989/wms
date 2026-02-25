@@ -731,19 +731,22 @@ function renderDataBackupTable() {
   const rows = Array.isArray(state.dataBackups) ? state.dataBackups : [];
   body.innerHTML =
     rows
-      .map(
-        (item) => `
+      .map((item) => {
+        const fileName = String(item?.fileName || "");
+        const hasFile = Boolean(item?.hasFile);
+        const action = hasFile
+          ? `<button class="tiny-btn" data-action="downloadDataBackup" data-file-name="${escapeHtml(fileName)}">下载</button>`
+          : '<span class="muted">仅记录</span>';
+        return `
       <tr>
         <td>${escapeHtml(formatDate(item?.createdAt))}</td>
-        <td>${escapeHtml(displayText(item?.fileName))}</td>
+        <td>${escapeHtml(displayText(fileName))}</td>
         <td>${escapeHtml(formatFileSize(item?.sizeBytes))}</td>
-        <td><button class="tiny-btn" data-action="downloadDataBackup" data-file-name="${escapeHtml(
-          String(item?.fileName || ""),
-        )}">下载</button></td>
+        <td>${action}</td>
       </tr>
-    `,
-      )
-      .join("") || '<tr><td colspan="4" class="muted">暂无备份文件</td></tr>';
+    `;
+      })
+      .join("") || '<tr><td colspan="4" class="muted">暂无备份记录</td></tr>';
 }
 
 async function loadDataBackups() {
