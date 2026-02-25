@@ -38,15 +38,33 @@ jobs:
           script_stop: true
           script: |
             set -eu
+            retry() {
+              max_attempts="$1"
+              shift
+              attempt=1
+              while true; do
+                if "$@"; then
+                  return 0
+                fi
+                if [ "${attempt}" -ge "${max_attempts}" ]; then
+                  echo "Command failed after ${attempt} attempts: $*"
+                  return 1
+                fi
+                sleep_secs=$((attempt * 5))
+                echo "Command failed (attempt ${attempt}/${max_attempts}). Retrying in ${sleep_secs}s: $*"
+                sleep "${sleep_secs}"
+                attempt=$((attempt + 1))
+              done
+            }
             cd ~/wms
             git fetch --all --prune
             git checkout main
             git reset --hard origin/main
             git rev-parse --short HEAD
-            docker compose up -d db redis
+            retry 3 docker compose up -d db redis
             echo "Running prisma migrate deploy..."
-            docker compose run --rm --build api npm run -w api prisma:migrate:deploy
-            docker compose up -d --build api
+            retry 3 docker compose run --rm --build api npm run -w api prisma:migrate:deploy
+            retry 3 docker compose up -d --build api
             docker compose ps
             docker compose logs --tail=120 api || true
             echo "Smoke check static assets..."
