@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.1 - 2026-02-26
+
+### Added
+- FBA outbound list export to Excel (`/api/inventory/fba-replenishments/outbound-excel`) with product extended fields.
+- FBA panel download button placed next to outbound button.
+
+### Changed
+- Product search and homepage load path optimizations.
+- Shelf/box code management switched to numeric style without `S-`/`B-` prefixes.
+- Batch update inventory flow improved for missing box handling.
+
+### Fixed
+- FBA list display consistency (brand column and outbound express number rendering).
+- Multiple UI and label-print layout adjustments for production use.
+
 ## v1.0.0 - 2026-02-25
 
 ### Added
