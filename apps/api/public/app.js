@@ -3913,7 +3913,7 @@ function renderFbaReplenishmentList() {
   const list = state.fbaReplenishments.slice(0, state.fbaReplenishmentsVisibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">-</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">-</td></tr>';
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
     return;
@@ -3936,7 +3936,6 @@ function renderFbaReplenishmentList() {
         <td>${escapeHtml(getFbaStatusText(item.status))}</td>
         <td>${escapeHtml(displayText(item.sku?.sku))}</td>
         <td>${escapeHtml(displayText(item.sku?.model))}</td>
-        <td>${escapeHtml(displayText(item.sku?.brand))}</td>
         <td>${escapeHtml(displayText(item.box?.boxCode))}</td>
         <td>${escapeHtml(displayText(item.box?.shelfCode))}</td>
         <td>${escapeHtml(displayText(item.requestedQty))}</td>
@@ -3962,6 +3961,11 @@ function renderFbaReplenishmentList() {
             ${
               item.status === "pending_confirm"
                 ? `<button class="tiny-btn danger" data-action="fbaDeleteRow" data-id="${escapeHtml(item.id)}" data-request-no="${escapeHtml(item.requestNo)}">删除</button>`
+                : ""
+            }
+            ${
+              item.status === "outbound"
+                ? `<span class="muted">${escapeHtml(item.expressNo ? `快递号：${item.expressNo}` : "-")}</span>`
                 : ""
             }
             ${item.status === "deleted" ? '<span class="muted">-</span>' : ""}
