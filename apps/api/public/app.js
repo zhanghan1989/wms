@@ -1932,6 +1932,11 @@ function renderEditButton(skuId) {
   return `<button class="tiny-btn" data-action="inventoryEdit" data-sku-id="${skuId}">编辑</button>`;
 }
 
+function renderInventoryFbaJumpButton(skuCode) {
+  const keyword = String(skuCode || "").trim();
+  return `<button class="tiny-btn" data-action="inventoryFbaJump" data-sku-code="${escapeHtml(keyword)}">FBA\u8865\u8d27</button>`;
+}
+
 function renderOutboundButton(
   skuId,
   totalQty,
@@ -2096,6 +2101,7 @@ function renderInventoryTable() {
         <td>
           <div class="action-row">
             ${renderEditButton(sku.id)}
+            ${renderInventoryFbaJumpButton(sku.sku)}
           </div>
         </td>
       </tr>
@@ -6077,12 +6083,26 @@ function bindDelegates() {
   };
 
   $("inventoryBody").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action='inventoryEdit']");
+    const button = event.target.closest("button[data-action]");
     if (!button) return;
-    const skuId = Number(button.dataset.skuId);
-    if (!Number.isInteger(skuId) || skuId <= 0) return;
     try {
-      await openEditSkuModal(skuId);
+      const action = String(button.dataset.action || "");
+      if (action === "inventoryEdit") {
+        const skuId = Number(button.dataset.skuId);
+        if (!Number.isInteger(skuId) || skuId <= 0) return;
+        await openEditSkuModal(skuId);
+        return;
+      }
+
+      if (action === "inventoryFbaJump") {
+        const skuCode = String(button.dataset.skuCode || "").trim();
+        if (!skuCode) return;
+        const keywordInput = $("inventoryKeyword");
+        if (keywordInput) {
+          keywordInput.value = skuCode;
+        }
+        await searchInventoryProducts(skuCode);
+      }
     } catch (error) {
       showToast(error.message, true);
     }
