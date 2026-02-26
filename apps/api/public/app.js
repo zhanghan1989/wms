@@ -139,8 +139,6 @@ const AUDIT_ENTITY_TEXT_MAP = {
   product_edit_request: "产品编辑申请",
 };
 const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = "仅佛山工厂管理者可确认编辑申请";
-const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_OVERSEAS =
-  "仅日本海外仓管理者可确认erpSKU修改申请";
 
 function showToast(message, isError = false, options = {}) {
   showErrorModal(message, isError, options);
@@ -768,11 +766,6 @@ function normalizeProductEditChangedFields(changedFields) {
   );
 }
 
-function isErpSkuOnlyProductEditRequest(changedFields) {
-  const normalized = normalizeProductEditChangedFields(changedFields);
-  return normalized.length === 1 && normalized[0] === "erpSku";
-}
-
 function canCurrentUserConfirmFactoryProductEditRequest() {
   const user = state.me;
   if (!user) return false;
@@ -785,37 +778,16 @@ function canCurrentUserConfirmFactoryProductEditRequest() {
   return roleEnabled && departmentEnabled;
 }
 
-function canCurrentUserConfirmOverseasProductEditRequest() {
-  const user = state.me;
-  if (!user) return false;
-  if (String(user.role || "") !== "admin") return false;
-  if (String(user.department || "") !== "overseas_warehouse") return false;
-  if (Number(user.status) !== 1) return false;
-
-  const roleEnabled = isUserOptionEnabled(getRoleOptionsWithFallback(), "admin");
-  const departmentEnabled = isUserOptionEnabled(getDepartmentOptionsWithFallback(), "overseas_warehouse");
-  return roleEnabled && departmentEnabled;
-}
-
-function getProductEditConfirmContactMessage(changedFields) {
-  if (isErpSkuOnlyProductEditRequest(changedFields)) {
-    return "请联系日本海外仓管理员确认";
-  }
+function getProductEditConfirmContactMessage() {
   return "请联系佛山工厂管理员确认";
 }
 
 function resolveProductEditConfirmPermission(changedFields) {
-  if (isErpSkuOnlyProductEditRequest(changedFields)) {
-    return {
-      allowed: canCurrentUserConfirmOverseasProductEditRequest(),
-      message: PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_OVERSEAS,
-      contactMessage: getProductEditConfirmContactMessage(changedFields),
-    };
-  }
+  void changedFields;
   return {
     allowed: canCurrentUserConfirmFactoryProductEditRequest(),
     message: PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY,
-    contactMessage: getProductEditConfirmContactMessage(changedFields),
+    contactMessage: getProductEditConfirmContactMessage(),
   };
 }
 
@@ -2779,10 +2751,6 @@ function renderProductEditRequestTable() {
       .map((item) => {
         const requestId = String(item?.id || "");
         const skuText = item?.sku?.sku || "-";
-        const isErpSkuOnly = isErpSkuOnlyProductEditRequest(item?.changedFields);
-        const skuCellHtml = `${escapeHtml(displayText(skuText))}${
-          isErpSkuOnly ? '<span class="erp-sku-change-tag">（erpSKU变更）</span>' : ""
-        }`;
         const statusText = getProductEditRequestStatusText(item?.status);
         const creatorText = item?.creator?.username || "-";
         const canDelete = item?.status === "pending";
@@ -2794,7 +2762,7 @@ function renderProductEditRequestTable() {
           canBatchConfirm ? "" : " disabled"
         }${checkedAttr} /></td>
         <td>${escapeHtml(formatDate(item?.createdAt))}</td>
-        <td>${skuCellHtml}</td>
+        <td>${escapeHtml(displayText(skuText))}</td>
         <td><span class="edit-request-status">${escapeHtml(statusText)}</span></td>
         <td>${escapeHtml(displayText(creatorText))}</td>
         <td>
