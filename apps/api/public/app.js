@@ -746,7 +746,7 @@ function isUserOptionEnabled(options, code) {
 function normalizeProductEditChangedFields(changedFields) {
   const allowed = new Set([
     "sku",
-    "erpSku",
+    "rbSku",
     "asin",
     "fnsku",
     "fbmSku",
@@ -952,7 +952,7 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.sku))}</td>
         <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${escapeHtml(displayText(item.rbSku))}</td>
         <td>${formatOverviewNumber(item.qty30d)}</td>
         <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
       </tr>
@@ -969,7 +969,7 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.sku))}</td>
         <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${escapeHtml(displayText(item.rbSku))}</td>
         <td>${formatOverviewNumber(item.qty7d)}</td>
         <td>${formatOverviewNumber(item.prev7d)}</td>
         <td>${ratioText}</td>
@@ -988,7 +988,7 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.sku))}</td>
         <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${escapeHtml(displayText(item.rbSku))}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
         <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
@@ -1007,7 +1007,7 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.sku))}</td>
         <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${escapeHtml(displayText(item.rbSku))}</td>
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
@@ -1023,7 +1023,7 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.sku))}</td>
         <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.erpSku))}</td>
+        <td>${escapeHtml(displayText(item.rbSku))}</td>
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
@@ -2123,7 +2123,7 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
       ];
       const rightRows = [
         ["SKU", displayText(sku.sku)],
-        ["rbSKU", displayText(sku.erpSku)],
+        ["rbSKU", displayText(sku.rbSku)],
         ["ASIN", displayText(sku.asin)],
         ["FNSKU", displayText(sku.fnsku)],
         ["库存总数量", totalQty],
@@ -2285,7 +2285,7 @@ async function openEditSkuModal(skuId) {
   renderShopOptionsForSelect("editShop", "请选择店铺", sku.shop || "");
   $("editRemark").value = sku.remark || "";
   $("editSku").value = sku.sku || "";
-  $("editErpSku").value = sku.erpSku || "";
+  $("editErpSku").value = sku.rbSku || "";
   $("editAsin").value = sku.asin || "";
   $("editFnsku").value = sku.fnsku || "";
   $("editFbmSku").value = sku.fbmSku || "";
@@ -2312,7 +2312,7 @@ async function submitEditSkuForm() {
     color: toNullableValue("editColor"),
     shop: toNullableValue("editShop"),
     remark: toNullableValue("editRemark"),
-    erpSku: toNullableValue("editErpSku"),
+    rbSku: toNullableValue("editErpSku"),
     asin: toNullableValue("editAsin"),
     fnsku: toNullableValue("editFnsku"),
     fbmSku: toNullableValue("editFbmSku"),
@@ -2823,7 +2823,7 @@ function renderProductEditRequestDetail(item) {
     ["asin", "ASIN"],
     ["fnsku", "FNSKU"],
     ["fbmSku", "FBMSKU"],
-    ["erpSku", "rbSKU"],
+    ["rbSku", "rbSKU"],
   ];
   const changedSet = new Set(Array.isArray(item?.changedFields) ? item.changedFields : []);
   const beforeData = item?.beforeData || {};
@@ -4095,7 +4095,7 @@ async function createSkuFromModal() {
   const shop = $("modalNewShop").value.trim() || undefined;
   const remark = $("modalNewRemark").value.trim() || undefined;
   const sku = $("modalNewSku").value.trim();
-  const erpSku = $("modalNewErpSku").value.trim() || undefined;
+  const rbSku = $("modalNewErpSku").value.trim() || undefined;
   const asin = $("modalNewAsin").value.trim() || undefined;
   const fnsku = $("modalNewFnsku").value.trim() || undefined;
   const fbmSku = $("modalNewFbmSku").value.trim() || undefined;
@@ -4116,7 +4116,7 @@ async function createSkuFromModal() {
 
   const createdSku = await request("/skus", {
     method: "POST",
-    body: JSON.stringify({ model, brand, type, color, shop, remark, sku, erpSku, asin, fnsku, fbmSku }),
+    body: JSON.stringify({ model, brand, type, color, shop, remark, sku, rbSku, asin, fnsku, fbmSku }),
   });
 
   await request("/inventory/manual-adjust", {
@@ -6662,3 +6662,4 @@ updateFbaOutboundButtonState();
 updateFbaSelectAll();
 switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));
+

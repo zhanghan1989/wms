@@ -17,7 +17,7 @@ import { UpdateSkuDto } from './dto/update-sku.dto';
 
 type ImportSkuRow = {
   sku: string;
-  erpSku: string | null;
+  rbSku: string | null;
   asin: string | null;
   fnsku: string | null;
   fbmSku: string | null;
@@ -31,7 +31,7 @@ type ImportSkuRow = {
 
 type ProductSnapshot = {
   sku: string | null;
-  erpSku: string | null;
+  rbSku: string | null;
   asin: string | null;
   fnsku: string | null;
   fbmSku: string | null;
@@ -45,7 +45,7 @@ type ProductSnapshot = {
 
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'sku',
-  'erpSku',
+  'rbSku',
   'asin',
   'fnsku',
   'fbmSku',
@@ -70,7 +70,7 @@ export class SkusService {
     if (q) {
       where.OR = [
         { sku: { contains: q } },
-        { erpSku: { contains: q } },
+        { rbSku: { contains: q } },
         { asin: { contains: q } },
         { fnsku: { contains: q } },
         { fbmSku: { contains: q } },
@@ -260,10 +260,8 @@ export class SkusService {
 
       result.push({
         sku,
-        erpSku: this.pickField(normalized, [
-          'erpsku',
-          'erp sku',
-          'erp_sku',
+        rbSku: this.pickField(normalized, [
+          'rbSku',
           'rbsku',
           'rb sku',
           'rb_sku',
@@ -309,7 +307,7 @@ export class SkusService {
 
   private buildSnapshotFromSku(sku: {
     sku: string;
-    erpSku: string | null;
+    rbSku: string | null;
     asin: string | null;
     fnsku: string | null;
     fbmSku: string | null;
@@ -322,7 +320,7 @@ export class SkusService {
   }): ProductSnapshot {
     return {
       sku: this.normalizeNullableString(sku.sku),
-      erpSku: this.normalizeNullableString(sku.erpSku),
+      rbSku: this.normalizeNullableString(sku.rbSku),
       asin: this.normalizeNullableString(sku.asin),
       fnsku: this.normalizeNullableString(sku.fnsku),
       fbmSku: this.normalizeNullableString(sku.fbmSku),
@@ -338,7 +336,7 @@ export class SkusService {
   private buildAfterSnapshot(beforeData: ProductSnapshot, row: ImportSkuRow): ProductSnapshot {
     return {
       sku: this.normalizeNullableString(row.sku) ?? beforeData.sku,
-      erpSku: this.normalizeNullableString(row.erpSku) ?? beforeData.erpSku,
+      rbSku: this.normalizeNullableString(row.rbSku) ?? beforeData.rbSku,
       asin: this.normalizeNullableString(row.asin) ?? beforeData.asin,
       fnsku: this.normalizeNullableString(row.fnsku) ?? beforeData.fnsku,
       fbmSku: this.normalizeNullableString(row.fbmSku) ?? beforeData.fbmSku,
@@ -391,7 +389,7 @@ export class SkusService {
     const created = await tx.sku.create({
       data: {
         sku: row.sku,
-        erpSku: row.erpSku ?? undefined,
+        rbSku: row.rbSku ?? undefined,
         asin: row.asin ?? undefined,
         fnsku: row.fnsku ?? undefined,
         fbmSku: row.fbmSku ?? undefined,
@@ -418,3 +416,4 @@ export class SkusService {
     });
   }
 }
+

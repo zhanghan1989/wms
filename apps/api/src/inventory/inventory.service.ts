@@ -64,7 +64,7 @@ export class InventoryService {
         OR: [
           { model: { contains: key } },
           { sku: { contains: key } },
-          { erpSku: { contains: key } },
+          { rbSku: { contains: key } },
           { asin: { contains: key } },
           { fnsku: { contains: key } },
           { fbmSku: { contains: key } },
@@ -123,7 +123,7 @@ export class InventoryService {
           select: {
             id: true,
             sku: true,
-            erpSku: true,
+            rbSku: true,
             asin: true,
             fnsku: true,
           },
@@ -1035,7 +1035,7 @@ export class InventoryService {
           id: true,
           sku: true,
           model: true,
-          erpSku: true,
+          rbSku: true,
         },
       }),
       this.prisma.inventoryBoxSku.groupBy({
@@ -1192,7 +1192,7 @@ export class InventoryService {
       skuId: string;
       sku: string;
       model: string | null;
-      erpSku: string | null;
+      rbSku: string | null;
       availableStock: number;
       lockedStock: number;
       inTransitStock: number;
@@ -1206,7 +1206,7 @@ export class InventoryService {
       skuId: string;
       sku: string;
       model: string | null;
-      erpSku: string | null;
+      rbSku: string | null;
       totalStock: number;
       availableStock: number;
       inTransitStock: number;
@@ -1215,7 +1215,7 @@ export class InventoryService {
       skuId: string;
       sku: string;
       model: string | null;
-      erpSku: string | null;
+      rbSku: string | null;
       totalStock: number;
       availableStock: number;
       inTransitStock: number;
@@ -1249,7 +1249,7 @@ export class InventoryService {
             skuId,
             sku: sku.sku,
             model: sku.model,
-            erpSku: sku.erpSku,
+            rbSku: sku.rbSku,
             totalStock: stock,
             availableStock: available,
             inTransitStock: inTransit,
@@ -1260,7 +1260,7 @@ export class InventoryService {
             skuId,
             sku: sku.sku,
             model: sku.model,
-            erpSku: sku.erpSku,
+            rbSku: sku.rbSku,
             totalStock: stock,
             availableStock: available,
             inTransitStock: inTransit,
@@ -1290,7 +1290,7 @@ export class InventoryService {
         skuId,
         sku: sku.sku,
         model: sku.model,
-        erpSku: sku.erpSku,
+        rbSku: sku.rbSku,
         availableStock: available,
         lockedStock: locked,
         inTransitStock: inTransit,
@@ -1340,7 +1340,7 @@ export class InventoryService {
           skuId,
           sku: sku?.sku ?? skuId,
           model: sku?.model ?? null,
-          erpSku: sku?.erpSku ?? null,
+          rbSku: sku?.rbSku ?? null,
           qty30d,
           avgDailyOutbound: qty30d / 30,
         };
@@ -1364,7 +1364,7 @@ export class InventoryService {
           skuId: item.skuId,
           sku: sku?.sku ?? item.skuId,
           model: sku?.model ?? null,
-          erpSku: sku?.erpSku ?? null,
+          rbSku: sku?.rbSku ?? null,
           qty7d: item.qty7d,
           prev7d: item.prev7d,
           ratio: item.ratio,
@@ -2074,7 +2074,7 @@ export class InventoryService {
       where: {
         OR: [
           { sku: { contains: keyword } },
-          { erpSku: { contains: keyword } },
+          { rbSku: { contains: keyword } },
           { asin: { contains: keyword } },
           { fnsku: { contains: keyword } },
         ],
@@ -2119,3 +2119,4 @@ export class InventoryService {
     return `${boxId.toString()}-${skuId.toString()}`;
   }
 }
+

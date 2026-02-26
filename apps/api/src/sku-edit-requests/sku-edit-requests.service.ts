@@ -8,7 +8,7 @@ import { CreateSkuEditRequestDto } from './dto/create-sku-edit-request.dto';
 
 type ProductSnapshot = {
   sku: string | null;
-  erpSku: string | null;
+  rbSku: string | null;
   asin: string | null;
   fnsku: string | null;
   fbmSku: string | null;
@@ -23,7 +23,7 @@ type EditableProductField = Exclude<keyof ProductSnapshot, 'sku'>;
 
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'sku',
-  'erpSku',
+  'rbSku',
   'asin',
   'fnsku',
   'fbmSku',
@@ -47,7 +47,7 @@ function ensureSnapshot(value: unknown): ProductSnapshot {
   const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
   return {
     sku: normalizeNullableString(source.sku),
-    erpSku: normalizeNullableString(source.erpSku),
+    rbSku: normalizeNullableString(source.rbSku),
     asin: normalizeNullableString(source.asin),
     fnsku: normalizeNullableString(source.fnsku),
     fbmSku: normalizeNullableString(source.fbmSku),
@@ -134,7 +134,7 @@ export class SkuEditRequestsService {
 
     const beforeData: ProductSnapshot = {
       sku: normalizeNullableString(sku.sku),
-      erpSku: normalizeNullableString(sku.erpSku),
+      rbSku: normalizeNullableString(sku.rbSku),
       asin: normalizeNullableString(sku.asin),
       fnsku: normalizeNullableString(sku.fnsku),
       fbmSku: normalizeNullableString(sku.fbmSku),
@@ -160,7 +160,7 @@ export class SkuEditRequestsService {
     const afterData: ProductSnapshot = {
       // SKU cannot be edited in product edit requests.
       sku: beforeData.sku,
-      erpSku: resolveEditableField('erpSku', beforeData.erpSku),
+      rbSku: resolveEditableField('rbSku', beforeData.rbSku),
       asin: resolveEditableField('asin', beforeData.asin),
       fnsku: resolveEditableField('fnsku', beforeData.fnsku),
       fbmSku: resolveEditableField('fbmSku', beforeData.fbmSku),
@@ -228,7 +228,7 @@ export class SkuEditRequestsService {
     return this.prisma.$transaction(async (tx) => {
       const skuUpdateData: Prisma.SkuUpdateInput = {
         sku: targetSkuCode,
-        erpSku: afterSnapshot.erpSku,
+        rbSku: afterSnapshot.rbSku,
         asin: afterSnapshot.asin,
         fnsku: afterSnapshot.fnsku,
         fbmSku: afterSnapshot.fbmSku,
@@ -389,3 +389,4 @@ export class SkuEditRequestsService {
     });
   }
 }
+

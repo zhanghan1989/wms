@@ -221,7 +221,7 @@ model BatchInboundItem {
 model Sku {
   id                BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
   sku               String                     @unique @db.VarChar(128)
-  erpSku            String?                    @map("erp_sku") @db.VarChar(128)
+  rbSku            String?                    @map("erp_sku") @db.VarChar(128)
   asin              String?                    @db.VarChar(32)
   fnsku             String?                    @db.VarChar(32)
   fbmSku            String?                    @map("fbm_sku") @db.VarChar(128)
@@ -560,3 +560,4 @@ model OperationAuditLog {
   @@index([eventType, createdAt])
   @@map("operation_audit_logs")
 }
+

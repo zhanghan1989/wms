@@ -8,7 +8,7 @@ export class CreateSkuDto {
   @IsOptional()
   @IsString()
   @Length(1, 128)
-  erpSku?: string;
+  rbSku?: string;
 
   @IsOptional()
   @IsString()
@@ -60,3 +60,4 @@ export class CreateSkuDto {
   @Max(1)
   status?: number;
 }
+

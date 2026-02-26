@@ -4,7 +4,7 @@ export class UpdateSkuDto {
   @IsOptional()
   @IsString()
   @Length(1, 128)
-  erpSku?: string;
+  rbSku?: string;
 
   @IsOptional()
   @IsString()
@@ -56,3 +56,4 @@ export class UpdateSkuDto {
   @Max(1)
   status?: number;
 }
+
