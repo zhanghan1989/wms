@@ -2123,7 +2123,7 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
       ];
       const rightRows = [
         ["SKU", displayText(sku.sku)],
-        ["erpSKU", displayText(sku.erpSku)],
+        ["rbSKU", displayText(sku.erpSku)],
         ["ASIN", displayText(sku.asin)],
         ["FNSKU", displayText(sku.fnsku)],
         ["库存总数量", totalQty],
@@ -2823,7 +2823,7 @@ function renderProductEditRequestDetail(item) {
     ["asin", "ASIN"],
     ["fnsku", "FNSKU"],
     ["fbmSku", "FBMSKU"],
-    ["erpSku", "erpSKU"],
+    ["erpSku", "rbSKU"],
   ];
   const changedSet = new Set(Array.isArray(item?.changedFields) ? item.changedFields : []);
   const beforeData = item?.beforeData || {};

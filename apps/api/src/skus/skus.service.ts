@@ -260,7 +260,17 @@ export class SkusService {
 
       result.push({
         sku,
-        erpSku: this.pickField(normalized, ['erpsku', 'erp sku', 'erp_sku', 'rb编码', 'rbcode', 'rb']),
+        erpSku: this.pickField(normalized, [
+          'erpsku',
+          'erp sku',
+          'erp_sku',
+          'rbsku',
+          'rb sku',
+          'rb_sku',
+          'rb编码',
+          'rbcode',
+          'rb',
+        ]),
         asin: this.pickField(normalized, ['asin']),
         fnsku: this.pickField(normalized, ['fnsku']),
         fbmSku: this.pickField(normalized, ['fbmsku', 'fbm sku', 'fbm_sku', 'fbm', 'fbm编码', 'fbmcode']),
