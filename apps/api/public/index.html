@@ -963,7 +963,7 @@
   </div>
 
   <div id="shelfManageModal" class="modal hidden">
-    <div class="modal-card modal-wide modal-manage">
+    <div class="modal-card modal-wide modal-manage modal-manage-scroll">
       <div class="modal-head">
         <h3>货架管理</h3>
         <button type="button" class="ghost" data-action="closeShelfManageModal">关闭</button>
@@ -973,15 +973,17 @@
         <input id="shelfManageNameInput" maxlength="128" placeholder="请输入货架名称（可选）" />
         <button type="submit" class="small-btn manage-create-btn">新增货架</button>
       </form>
+      <div id="shelfManageTableWrap" class="manage-table-scroll">
       <table>
         <thead><tr><th>货架号</th><th>名称</th><th>操作</th></tr></thead>
         <tbody id="shelfManageBody"></tbody>
       </table>
+      </div>
     </div>
   </div>
 
   <div id="boxManageModal" class="modal hidden">
-    <div class="modal-card modal-wide modal-manage">
+    <div class="modal-card modal-wide modal-manage modal-manage-scroll">
       <div class="modal-head">
         <h3>箱号管理</h3>
         <button type="button" class="ghost" data-action="closeBoxManageModal">关闭</button>
@@ -993,10 +995,12 @@
         </select>
         <button type="submit" class="small-btn manage-create-btn">新增箱号</button>
       </form>
+      <div id="boxManageTableWrap" class="manage-table-scroll">
       <table>
         <thead><tr><th>箱号</th><th>所属货架</th><th>操作</th></tr></thead>
         <tbody id="boxManageBody"></tbody>
       </table>
+      </div>
     </div>
   </div>
 

@@ -958,6 +958,33 @@ pre {
   width: min(820px, 100%);
 }
 
+.modal-card.modal-wide.modal-manage.modal-manage-scroll {
+  height: min(78vh, 680px);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-card.modal-wide.modal-manage.modal-manage-scroll .manage-table-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.modal-card.modal-wide.modal-manage.modal-manage-scroll .manage-table-scroll table {
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+.modal-card.modal-wide.modal-manage.modal-manage-scroll .manage-table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
 .batch-detail-modal-card {
   max-height: 86vh;
   overflow: auto;

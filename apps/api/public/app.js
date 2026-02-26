@@ -54,6 +54,10 @@ const state = {
   shopEditingIds: new Set(),
   shelfEditingIds: new Set(),
   boxEditingIds: new Set(),
+  shelfManageVisibleCount: 10,
+  boxManageVisibleCount: 10,
+  manageModalInitialPageSize: 10,
+  manageModalLoadStep: 20,
   departmentOptionEditingCodes: new Set(),
   roleOptionEditingCodes: new Set(),
   auditFbaRequestNoById: {},
@@ -2665,6 +2669,34 @@ function getBoxesSortedForManage() {
   );
 }
 
+function resetShelfManageVisibleCount() {
+  state.shelfManageVisibleCount = state.manageModalInitialPageSize;
+}
+
+function resetBoxManageVisibleCount() {
+  state.boxManageVisibleCount = state.manageModalInitialPageSize;
+}
+
+function loadMoreShelvesManageIfNeeded() {
+  const wrap = $("shelfManageTableWrap");
+  if (!wrap) return;
+  const total = getShelvesSortedForManage().length;
+  if (state.shelfManageVisibleCount >= total) return;
+  if (wrap.scrollTop + wrap.clientHeight < wrap.scrollHeight - 24) return;
+  state.shelfManageVisibleCount = Math.min(total, state.shelfManageVisibleCount + state.manageModalLoadStep);
+  renderShelvesManageTable();
+}
+
+function loadMoreBoxesManageIfNeeded() {
+  const wrap = $("boxManageTableWrap");
+  if (!wrap) return;
+  const total = getBoxesSortedForManage().length;
+  if (state.boxManageVisibleCount >= total) return;
+  if (wrap.scrollTop + wrap.clientHeight < wrap.scrollHeight - 24) return;
+  state.boxManageVisibleCount = Math.min(total, state.boxManageVisibleCount + state.manageModalLoadStep);
+  renderBoxesManageTable();
+}
+
 function buildShelfManageSelectOptions(selectedShelfId) {
   const selected = String(selectedShelfId || "");
   const rows = getShelvesSortedForManage();
@@ -2685,8 +2717,14 @@ function renderShelvesManageTable() {
   const body = $("shelfManageBody");
   if (!body) return;
   const rows = getShelvesSortedForManage();
+  const visibleCount = Math.min(
+    rows.length,
+    Math.max(state.shelfManageVisibleCount || 0, state.manageModalInitialPageSize),
+  );
+  state.shelfManageVisibleCount = visibleCount;
+  const visibleRows = rows.slice(0, visibleCount);
   body.innerHTML =
-    rows
+    visibleRows
       .map((item) => {
         const itemId = String(item.id);
         const editing = state.shelfEditingIds.has(itemId);
@@ -2724,8 +2762,14 @@ function renderBoxesManageTable() {
   const body = $("boxManageBody");
   if (!body) return;
   const rows = getBoxesSortedForManage();
+  const visibleCount = Math.min(
+    rows.length,
+    Math.max(state.boxManageVisibleCount || 0, state.manageModalInitialPageSize),
+  );
+  state.boxManageVisibleCount = visibleCount;
+  const visibleRows = rows.slice(0, visibleCount);
   body.innerHTML =
-    rows
+    visibleRows
       .map((item) => {
         const itemId = String(item.id);
         const editing = state.boxEditingIds.has(itemId);
@@ -4976,7 +5020,12 @@ function bindForms() {
   $("openShelfManageModal").addEventListener("click", async () => {
     try {
       state.shelfEditingIds = new Set();
+      resetShelfManageVisibleCount();
       await Promise.all([loadShelves(), loadBoxes()]);
+      const wrap = $("shelfManageTableWrap");
+      if (wrap) {
+        wrap.scrollTop = 0;
+      }
       openModal("shelfManageModal");
     } catch (error) {
       showToast(error.message, true);
@@ -4986,7 +5035,12 @@ function bindForms() {
   $("openBoxManageModal").addEventListener("click", async () => {
     try {
       state.boxEditingIds = new Set();
+      resetBoxManageVisibleCount();
       await Promise.all([loadShelves(), loadBoxes()]);
+      const wrap = $("boxManageTableWrap");
+      if (wrap) {
+        wrap.scrollTop = 0;
+      }
       openModal("boxManageModal");
     } catch (error) {
       showToast(error.message, true);
@@ -6724,6 +6778,20 @@ function bindScrollLoad() {
   if (myAuditCard) {
     myAuditCard.addEventListener("scroll", () => {
       loadMoreMyAuditIfNeeded();
+    });
+  }
+
+  const shelfManageTableWrap = $("shelfManageTableWrap");
+  if (shelfManageTableWrap) {
+    shelfManageTableWrap.addEventListener("scroll", () => {
+      loadMoreShelvesManageIfNeeded();
+    });
+  }
+
+  const boxManageTableWrap = $("boxManageTableWrap");
+  if (boxManageTableWrap) {
+    boxManageTableWrap.addEventListener("scroll", () => {
+      loadMoreBoxesManageIfNeeded();
     });
   }
 }
