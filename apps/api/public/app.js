@@ -380,8 +380,12 @@ function openPrintLabelWindow(labelData) {
       .label-barcode {
         height: 40%;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: center;
+        box-sizing: border-box;
+        padding: 0 1.2mm;
+        margin-top: 0.5mm;
+        overflow: hidden;
       }
       .label-barcode svg {
         width: 100%;
