@@ -61,18 +61,32 @@ export class InventoryService {
     const safePage = Number.isInteger(page) && page > 0 ? page : 1;
     const safePageSizeRaw = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 10;
     const safePageSize = Math.min(50, safePageSizeRaw);
+    const offset = (safePage - 1) * safePageSize;
+    const exactWhere: Prisma.SkuWhereInput = {
+      OR: [
+        { sku: { equals: key } },
+        { asin: { equals: key } },
+        { fnsku: { equals: key } },
+        { fbmSku: { equals: key } },
+        { rbSku: { equals: key } },
+      ],
+    };
+
+    const exactCount = await this.prisma.sku.count({ where: exactWhere });
+    if (exactCount > 0) {
+      return this.prisma.sku.findMany({
+        where: exactWhere,
+        skip: offset,
+        take: safePageSize,
+        orderBy: { id: 'desc' },
+      });
+    }
+
     return this.prisma.sku.findMany({
       where: {
-        OR: [
-          { model: { contains: key } },
-          { sku: { contains: key } },
-          { rbSku: { contains: key } },
-          { asin: { contains: key } },
-          { fnsku: { contains: key } },
-          { fbmSku: { contains: key } },
-        ],
+        model: { contains: key },
       },
-      skip: (safePage - 1) * safePageSize,
+      skip: offset,
       take: safePageSize,
       orderBy: { id: 'desc' },
     });
@@ -2324,4 +2338,3 @@ export class InventoryService {
     return `${boxId.toString()}-${skuId.toString()}`;
   }
 }
-
