@@ -333,6 +333,8 @@ function buildCode39BarcodeSvg(value) {
 function openPrintLabelWindow(labelData) {
   const fnsku = normalizeFnskuForLabel(labelData?.fnsku);
   const printQty = normalizeLabelPrintQty(labelData?.qty);
+  const skuText = String(labelData?.sku || "").trim();
+  const newProductText = `新品-${skuText || "-"}`;
   const barcodeSvg = buildCode39BarcodeSvg(fnsku);
   const pageWidth = LABEL_5030_SIZE_MM.width;
   const pageHeight = LABEL_5030_SIZE_MM.height;
@@ -394,18 +396,33 @@ function openPrintLabelWindow(labelData) {
       .label-bottom {
         flex: 1;
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         justify-content: center;
-        text-align: center;
-        font-size: 4.5mm;
-        font-weight: 700;
-        color: #111;
-        line-height: 1.1;
+        padding-top: 1.2mm;
         overflow: hidden;
         word-break: break-all;
       }
       .label-bottom-text {
         width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.8mm;
+      }
+      .label-fnsku {
+        text-align: center;
+        font-size: 4.5mm;
+        font-weight: 700;
+        color: #111;
+        line-height: 1.1;
+        transform: translateY(-0.8mm);
+      }
+      .label-sku {
+        text-align: center;
+        font-size: 3.4mm;
+        font-weight: 700;
+        color: #111;
+        line-height: 1.2;
       }
     </style>
   </head>
@@ -415,7 +432,12 @@ function openPrintLabelWindow(labelData) {
         () => `<div class="print-page">
       <div class="label">
         <div class="label-barcode">${barcodeSvg}</div>
-        <div class="label-bottom"><span class="label-bottom-text">${escapeHtml(fnsku)}</span></div>
+        <div class="label-bottom">
+          <div class="label-bottom-text">
+            <span class="label-fnsku">${escapeHtml(fnsku)}</span>
+            <span class="label-sku">${escapeHtml(newProductText)}</span>
+          </div>
+        </div>
       </div>
     </div>`,
       )
@@ -5896,6 +5918,7 @@ function bindDelegates() {
           labelData: {
             fnsku: row?.sku?.fnsku || "",
             qty: actualQty,
+            sku: row?.sku?.sku || "",
           },
         });
       } else if (action === "fbaReopenRow") {
