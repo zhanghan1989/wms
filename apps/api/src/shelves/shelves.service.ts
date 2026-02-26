@@ -29,9 +29,11 @@ export class ShelvesService {
   }
 
   async create(payload: CreateShelfDto, operatorId: bigint, requestId?: string): Promise<unknown> {
-    const exists = await this.prisma.shelf.findUnique({
+    const shelfCode = this.normalizeShelfCode(payload.shelfCode);
+    if (!shelfCode) throw new BadRequestException('货架号格式无效');
+    const exists = await this.prisma.shelf.findFirst({
       where: {
-        shelfCode: payload.shelfCode,
+        OR: [{ shelfCode }, { shelfCode: this.toLegacyShelfCode(shelfCode) }],
       },
     });
     if (exists) throw new BadRequestException('货架号已存在');
@@ -39,7 +41,7 @@ export class ShelvesService {
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.shelf.create({
         data: {
-          shelfCode: payload.shelfCode,
+          shelfCode,
           name: payload.name ?? null,
           status: payload.status ?? 1,
         },
@@ -69,9 +71,19 @@ export class ShelvesService {
     const shelf = await this.prisma.shelf.findUnique({ where: { id } });
     if (!shelf) throw new NotFoundException('货架不存在');
 
+    if (payload.shelfCode) {
+      payload.shelfCode = this.normalizeShelfCode(payload.shelfCode);
+      if (!payload.shelfCode) {
+        throw new BadRequestException('货架号格式无效');
+      }
+    }
+
     if (payload.shelfCode && payload.shelfCode !== shelf.shelfCode) {
-      const duplicate = await this.prisma.shelf.findUnique({
-        where: { shelfCode: payload.shelfCode },
+      const duplicate = await this.prisma.shelf.findFirst({
+        where: {
+          id: { not: id },
+          OR: [{ shelfCode: payload.shelfCode }, { shelfCode: this.toLegacyShelfCode(payload.shelfCode) }],
+        },
       });
       if (duplicate) {
         throw new BadRequestException('货架号已存在');
@@ -160,5 +172,24 @@ export class ShelvesService {
       throw error;
     }
     return { success: true };
+  }
+
+  private normalizeShelfCode(raw: string | null | undefined): string {
+    const value = String(raw ?? '').trim().toUpperCase();
+    if (!value) return '';
+
+    if (/^\d{1,3}$/.test(value)) {
+      return value.padStart(Math.max(2, value.length), '0');
+    }
+
+    const matched = value.match(/^S[-_\s]?(\d{1,3})$/);
+    if (!matched) {
+      return '';
+    }
+    return matched[1].padStart(Math.max(2, matched[1].length), '0');
+  }
+
+  private toLegacyShelfCode(normalized: string): string {
+    return `S-${normalized}`;
   }
 }

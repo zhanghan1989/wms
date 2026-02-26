@@ -1167,8 +1167,7 @@ export class BatchInboundService {
     if (!normalized) {
       return 0;
     }
-    const [, raw] = normalized.split('-');
-    return Number(raw);
+    return Number(normalized);
   }
 
   private normalizeBoxCode(raw: string | null | undefined): string {
@@ -1190,7 +1189,7 @@ export class BatchInboundService {
   }
 
   private formatBoxCode(num: number): string {
-    return `B-${num.toString().padStart(3, '0')}`;
+    return num.toString().padStart(3, '0');
   }
 
   private formatBoxCodeFromDigits(rawDigits: string): string {
@@ -1198,7 +1197,7 @@ export class BatchInboundService {
     if (!digits) {
       return '';
     }
-    return `B-${digits.padStart(Math.max(3, digits.length), '0')}`;
+    return digits.padStart(Math.max(3, digits.length), '0');
   }
 
   private normalizeHeader(header: string): string {

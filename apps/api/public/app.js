@@ -847,11 +847,11 @@ function parseFixedDigits(raw, length, fieldName) {
 }
 
 function buildBoxCode(rawDigits) {
-  return `B-${parseFixedDigits(rawDigits, 3, "箱号")}`;
+  return parseFixedDigits(rawDigits, 3, "箱号");
 }
 
 function buildShelfCode(rawDigits) {
-  return `S-${parseFixedDigits(rawDigits, 2, "货架号")}`;
+  return parseFixedDigits(rawDigits, 2, "货架号");
 }
 
 function clearStats() {
@@ -2996,12 +2996,12 @@ function normalizeBoxCodeInput(raw) {
   const value = String(raw ?? "").trim().toUpperCase();
   if (!value) return "";
   if (/^\d{1,6}$/.test(value)) {
-    return `B-${value.padStart(Math.max(3, value.length), "0")}`;
+    return value.padStart(Math.max(3, value.length), "0");
   }
-  const prefixed = value.match(/^B-(\d{1,6})$/);
+  const prefixed = value.match(/^B[-_\s]?(\d{1,6})$/);
   if (prefixed) {
     const digits = prefixed[1];
-    return `B-${digits.padStart(Math.max(3, digits.length), "0")}`;
+    return digits.padStart(Math.max(3, digits.length), "0");
   }
   return value;
 }
@@ -3009,7 +3009,7 @@ function normalizeBoxCodeInput(raw) {
 function resolveEnabledBoxCode(raw) {
   const normalized = normalizeBoxCodeInput(raw);
   if (!normalized) return "";
-  const found = getEnabledBoxesSorted().find((box) => String(box.boxCode).toUpperCase() === normalized);
+  const found = getEnabledBoxesSorted().find((box) => normalizeBoxCodeInput(box?.boxCode) === normalized);
   return found?.boxCode || "";
 }
 
@@ -3017,7 +3017,7 @@ function findEnabledBoxByCode(raw) {
   const normalized = normalizeBoxCodeInput(raw);
   if (!normalized) return null;
   return (
-    getEnabledBoxesSorted().find((box) => String(box.boxCode).toUpperCase() === normalized) || null
+    getEnabledBoxesSorted().find((box) => normalizeBoxCodeInput(box?.boxCode) === normalized) || null
   );
 }
 
@@ -3031,12 +3031,12 @@ function normalizeShelfCodeInput(raw) {
   const value = String(raw ?? "").trim().toUpperCase();
   if (!value) return "";
   if (/^\d{1,3}$/.test(value)) {
-    return `S-${value.padStart(Math.max(2, value.length), "0")}`;
+    return value.padStart(Math.max(2, value.length), "0");
   }
-  const prefixed = value.match(/^S-(\d{1,3})$/);
+  const prefixed = value.match(/^S[-_\s]?(\d{1,3})$/);
   if (prefixed) {
     const digits = prefixed[1];
-    return `S-${digits.padStart(Math.max(2, digits.length), "0")}`;
+    return digits.padStart(Math.max(2, digits.length), "0");
   }
   return value;
 }
@@ -3046,7 +3046,7 @@ function resolveEnabledShelfCode(raw, excludeShelfId = null) {
   if (!normalized) return "";
   const found = getEnabledShelvesSorted().find((shelf) => {
     if (excludeShelfId && String(shelf.id) === String(excludeShelfId)) return false;
-    return String(shelf.shelfCode).toUpperCase() === normalized;
+    return normalizeShelfCodeInput(shelf?.shelfCode) === normalized;
   });
   return found?.shelfCode || "";
 }
@@ -5820,7 +5820,7 @@ function bindDelegates() {
           throw new Error("货架号格式无效");
         }
         const codeChanged = normalizedCode !== originalCode;
-        if (codeChanged && !/^S-\d{2}$/.test(normalizedCode)) {
+        if (codeChanged && !/^\d{2}$/.test(normalizedCode)) {
           throw new Error("货架号必须是2位数字");
         }
 
@@ -5902,7 +5902,7 @@ function bindDelegates() {
           throw new Error("箱号格式无效");
         }
         const codeChanged = normalizedCode !== originalCode;
-        if (codeChanged && !/^B-\d{3}$/.test(normalizedCode)) {
+        if (codeChanged && !/^\d{3}$/.test(normalizedCode)) {
           throw new Error("箱号必须是3位数字");
         }
 

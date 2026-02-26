@@ -39,7 +39,8 @@ export class BoxesService {
   }
 
   async create(payload: CreateBoxDto, operatorId: bigint, requestId?: string): Promise<unknown> {
-    const boxCode = payload.boxCode.trim().toUpperCase();
+    const boxCode = this.normalizeBoxCode(payload.boxCode);
+    if (!boxCode) throw new BadRequestException('箱号格式无效');
     const lockedOrderNo = await this.findLockingBatchInboundOrderNo(boxCode);
     if (lockedOrderNo) {
       throw new BadRequestException(
@@ -47,8 +48,10 @@ export class BoxesService {
       );
     }
 
-    const exists = await this.prisma.box.findUnique({
-      where: { boxCode },
+    const exists = await this.prisma.box.findFirst({
+      where: {
+        OR: [{ boxCode }, { boxCode: this.toLegacyBoxCode(boxCode) }],
+      },
     });
     if (exists) throw new BadRequestException('箱号已存在');
 
@@ -91,7 +94,10 @@ export class BoxesService {
     if (!box) throw new NotFoundException('箱号不存在');
 
     if (payload.boxCode) {
-      const nextBoxCode = payload.boxCode.trim().toUpperCase();
+      const nextBoxCode = this.normalizeBoxCode(payload.boxCode);
+      if (!nextBoxCode) {
+        throw new BadRequestException('箱号格式无效');
+      }
       if (nextBoxCode === box.boxCode) {
         payload.boxCode = nextBoxCode;
       } else {
@@ -102,8 +108,11 @@ export class BoxesService {
           );
         }
 
-        const duplicate = await this.prisma.box.findUnique({
-          where: { boxCode: nextBoxCode },
+        const duplicate = await this.prisma.box.findFirst({
+          where: {
+            id: { not: id },
+            OR: [{ boxCode: nextBoxCode }, { boxCode: this.toLegacyBoxCode(nextBoxCode) }],
+          },
         });
         if (duplicate) throw new BadRequestException('箱号已存在');
       }
@@ -249,6 +258,8 @@ export class BoxesService {
   }
 
   private async findLockingBatchInboundOrderNo(boxCode: string): Promise<string | null> {
+    const normalized = this.normalizeBoxCode(boxCode);
+    if (!normalized) return null;
     const orders = await this.prisma.batchInboundOrder.findMany({
       where: {
         status: {
@@ -264,7 +275,7 @@ export class BoxesService {
 
     for (const order of orders) {
       const codes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
-      if (codes.includes(boxCode)) {
+      if (codes.includes(normalized)) {
         return order.orderNo;
       }
     }
@@ -279,9 +290,28 @@ export class BoxesService {
     return Array.from(
       new Set(
         value
-          .map((item) => String(item ?? '').trim().toUpperCase())
+          .map((item) => this.normalizeBoxCode(String(item ?? '')))
           .filter((item) => Boolean(item)),
       ),
     );
+  }
+
+  private normalizeBoxCode(raw: string | null | undefined): string {
+    const value = String(raw ?? '').trim().toUpperCase();
+    if (!value) return '';
+
+    if (/^\d{1,6}$/.test(value)) {
+      return value.padStart(Math.max(3, value.length), '0');
+    }
+
+    const matched = value.match(/^B[-_\s]?(\d{1,6})$/);
+    if (!matched) {
+      return '';
+    }
+    return matched[1].padStart(Math.max(3, matched[1].length), '0');
+  }
+
+  private toLegacyBoxCode(normalized: string): string {
+    return `B-${normalized}`;
   }
 }

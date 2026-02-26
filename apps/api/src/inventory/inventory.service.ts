@@ -40,7 +40,7 @@ const FBA_REPLENISH_MARK = 'FBA补货';
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = '正在编辑产品申请中，请管理员确认后再执行相关操作。';
 const STOCK_ADJUSTMENT_WAREHOUSE_ID = '64774';
 const INVENTORY_BULK_UPDATE_TEMPLATE_FILE = '批量更新库存.xlsx';
-const BULK_UPDATE_DEFAULT_SHELF_CODE = 'S-00';
+const BULK_UPDATE_DEFAULT_SHELF_CODE = '00';
 const BULK_UPDATE_DEFAULT_SHELF_NAME = '\u9ed8\u8ba4\u8d27\u67b6';
 const LOW_COVERAGE_DAYS = 14;
 const OUT_OF_STOCK_DAYS = 7;
@@ -2174,8 +2174,10 @@ export class InventoryService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<{ id: bigint }> {
-    const existed = await tx.shelf.findUnique({
-      where: { shelfCode: BULK_UPDATE_DEFAULT_SHELF_CODE },
+    const existed = await tx.shelf.findFirst({
+      where: {
+        OR: [{ shelfCode: BULK_UPDATE_DEFAULT_SHELF_CODE }, { shelfCode: `S-${BULK_UPDATE_DEFAULT_SHELF_CODE}` }],
+      },
       select: {
         id: true,
         shelfCode: true,
