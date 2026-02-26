@@ -734,6 +734,14 @@ function getRoleOptionsWithFallback() {
   return sortUserOptions(items);
 }
 
+function getAvailableDepartmentOptionItems() {
+  return getDepartmentOptionsWithFallback().filter((item) => Number(item?.status) !== 1);
+}
+
+function getAvailableRoleOptionItems() {
+  return getRoleOptionsWithFallback().filter((item) => Number(item?.status) !== 1);
+}
+
 function isUserOptionEnabled(options, code) {
   const target = String(code || "");
   const item = (Array.isArray(options) ? options : []).find(
@@ -1567,6 +1575,50 @@ function renderRoleOptionsTable() {
 function renderUserOptionsTable() {
   renderDepartmentOptionsTable();
   renderRoleOptionsTable();
+  renderDepartmentOptionCreateForm();
+  renderRoleOptionCreateForm();
+}
+
+function renderDepartmentOptionCreateForm() {
+  const codeSelect = $("departmentOptionCreateCode");
+  const nameInput = $("departmentOptionCreateName");
+  if (!codeSelect || !nameInput) return;
+  const options = getAvailableDepartmentOptionItems();
+  codeSelect.innerHTML = [
+    `<option value="">${"\u8bf7\u9009\u62e9\u90e8\u95e8\u7f16\u7801"}</option>`,
+    ...options.map(
+      (item) =>
+        `<option value="${escapeHtml(item.code)}">${escapeHtml(
+          String(item.name || item.code) + " (" + String(item.code || "") + ")",
+        )}</option>`,
+    ),
+  ].join("");
+  codeSelect.disabled = options.length === 0;
+  if (!codeSelect.disabled && !codeSelect.value && options.length) {
+    codeSelect.value = String(options[0].code || "");
+  }
+  nameInput.disabled = options.length === 0;
+}
+
+function renderRoleOptionCreateForm() {
+  const codeSelect = $("roleOptionCreateCode");
+  const nameInput = $("roleOptionCreateName");
+  if (!codeSelect || !nameInput) return;
+  const options = getAvailableRoleOptionItems();
+  codeSelect.innerHTML = [
+    `<option value="">${"\u8bf7\u9009\u62e9\u89d2\u8272\u7f16\u7801"}</option>`,
+    ...options.map(
+      (item) =>
+        `<option value="${escapeHtml(item.code)}">${escapeHtml(
+          String(item.name || item.code) + " (" + String(item.code || "") + ")",
+        )}</option>`,
+    ),
+  ].join("");
+  codeSelect.disabled = options.length === 0;
+  if (!codeSelect.disabled && !codeSelect.value && options.length) {
+    codeSelect.value = String(options[0].code || "");
+  }
+  nameInput.disabled = options.length === 0;
 }
 
 function renderUserSelectOptions() {
@@ -4939,6 +4991,8 @@ function bindForms() {
     try {
       state.departmentOptionEditingCodes = new Set();
       await loadUserOptions();
+      $("departmentOptionCreateForm")?.reset();
+      renderDepartmentOptionCreateForm();
       openModal("departmentManageModal");
     } catch (error) {
       showToast(error.message, true);
@@ -4949,6 +5003,8 @@ function bindForms() {
     try {
       state.roleOptionEditingCodes = new Set();
       await loadUserOptions();
+      $("roleOptionCreateForm")?.reset();
+      renderRoleOptionCreateForm();
       openModal("roleManageModal");
     } catch (error) {
       showToast(error.message, true);
@@ -5619,6 +5675,54 @@ function bindDelegates() {
       $("boxManageCodeInput").value = "";
       showToast("箱号已新增");
       await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("departmentOptionCreateForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const code = String($("departmentOptionCreateCode")?.value || "").trim();
+      const name = String($("departmentOptionCreateName")?.value || "").trim();
+      if (!code) {
+        throw new Error("\u8bf7\u9009\u62e9\u90e8\u95e8\u7f16\u7801");
+      }
+      const payload = { code };
+      if (name) payload.name = name;
+
+      await request("/user-options/departments", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      $("departmentOptionCreateForm")?.reset();
+      showToast("\u90e8\u95e8\u65b0\u589e\u6210\u529f");
+      await Promise.all([loadUserOptions(), loadUsers(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("roleOptionCreateForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const code = String($("roleOptionCreateCode")?.value || "").trim();
+      const name = String($("roleOptionCreateName")?.value || "").trim();
+      if (!code) {
+        throw new Error("\u8bf7\u9009\u62e9\u89d2\u8272\u7f16\u7801");
+      }
+      const payload = { code };
+      if (name) payload.name = name;
+
+      await request("/user-options/roles", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      $("roleOptionCreateForm")?.reset();
+      showToast("\u89d2\u8272\u65b0\u589e\u6210\u529f");
+      await Promise.all([loadUserOptions(), loadUsers(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -6662,4 +6766,3 @@ updateFbaOutboundButtonState();
 updateFbaSelectAll();
 switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));
-

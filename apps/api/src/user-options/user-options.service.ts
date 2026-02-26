@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Department, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateDepartmentOptionDto, CreateRoleOptionDto } from './dto/create-user-option.dto';
 import { UpdateUserOptionDto } from './dto/update-user-option.dto';
 
 const DEPARTMENT_DEFAULTS: Array<{ code: Department; name: string; sort: number }> = [
@@ -53,6 +54,70 @@ export class UserOptionsService {
     ]);
 
     return { departments, roles };
+  }
+
+  async createDepartment(payload: CreateDepartmentOptionDto): Promise<unknown> {
+    await this.ensureSeeded();
+    const code = this.parseDepartmentCode(payload.code);
+    const option = await this.prisma.departmentOption.findUnique({ where: { code } });
+    const nextName = this.normalizeOptionalName(payload.name);
+    const defaultOption = DEPARTMENT_DEFAULTS.find((item) => item.code === code);
+
+    if (option && option.status === 1) {
+      throw new BadRequestException('\u90e8\u95e8\u5df2\u5b58\u5728');
+    }
+
+    if (option) {
+      return this.prisma.departmentOption.update({
+        where: { code },
+        data: {
+          status: 1,
+          name: nextName ?? option.name,
+          sort: payload.sort ?? option.sort,
+        },
+      });
+    }
+
+    return this.prisma.departmentOption.create({
+      data: {
+        code,
+        name: nextName ?? defaultOption?.name ?? code,
+        status: 1,
+        sort: payload.sort ?? defaultOption?.sort ?? 0,
+      },
+    });
+  }
+
+  async createRole(payload: CreateRoleOptionDto): Promise<unknown> {
+    await this.ensureSeeded();
+    const code = this.parseRoleCode(payload.code);
+    const option = await this.prisma.roleOption.findUnique({ where: { code } });
+    const nextName = this.normalizeOptionalName(payload.name);
+    const defaultOption = ROLE_DEFAULTS.find((item) => item.code === code);
+
+    if (option && option.status === 1) {
+      throw new BadRequestException('\u89d2\u8272\u5df2\u5b58\u5728');
+    }
+
+    if (option) {
+      return this.prisma.roleOption.update({
+        where: { code },
+        data: {
+          status: 1,
+          name: nextName ?? option.name,
+          sort: payload.sort ?? option.sort,
+        },
+      });
+    }
+
+    return this.prisma.roleOption.create({
+      data: {
+        code,
+        name: nextName ?? defaultOption?.name ?? code,
+        status: 1,
+        sort: payload.sort ?? defaultOption?.sort ?? 0,
+      },
+    });
   }
 
   async updateDepartment(codeParam: string, payload: UpdateUserOptionDto): Promise<unknown> {
@@ -109,6 +174,15 @@ export class UserOptionsService {
     }
 
     return data;
+  }
+
+  private normalizeOptionalName(value: string | undefined): string | undefined {
+    if (value === undefined) return undefined;
+    const name = String(value || '').trim();
+    if (!name) {
+      throw new BadRequestException('\u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a');
+    }
+    return name;
   }
 
   private parseDepartmentCode(codeParam: string): Department {
