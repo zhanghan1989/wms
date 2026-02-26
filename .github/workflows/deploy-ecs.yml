@@ -38,6 +38,7 @@ jobs:
           script_stop: true
           script: |
             set -eu
+            JOB_START_TS="$(date +%s)"
             retry() {
               max_attempts="$1"
               shift
@@ -56,19 +57,42 @@ jobs:
                 attempt=$((attempt + 1))
               done
             }
+            timed() {
+              label="$1"
+              shift
+              start_ts="$(date +%s)"
+              echo ">>> [start] ${label}"
+              "$@"
+              end_ts="$(date +%s)"
+              elapsed="$((end_ts - start_ts))"
+              echo "<<< [done] ${label} (${elapsed}s)"
+            }
+            timed_retry() {
+              label="$1"
+              max_attempts="$2"
+              shift 2
+              start_ts="$(date +%s)"
+              echo ">>> [start] ${label}"
+              retry "${max_attempts}" "$@"
+              end_ts="$(date +%s)"
+              elapsed="$((end_ts - start_ts))"
+              echo "<<< [done] ${label} (${elapsed}s)"
+            }
             cd ~/wms
-            git fetch --all --prune
-            git checkout main
-            git reset --hard origin/main
-            git rev-parse --short HEAD
-            retry 3 docker compose up -d db redis
+            timed "git_fetch" git fetch --all --prune
+            timed "git_checkout_main" git checkout main
+            timed "git_reset_origin_main" git reset --hard origin/main
+            timed "git_show_head" git rev-parse --short HEAD
+            timed_retry "compose_up_db_redis" 3 docker compose up -d db redis
+            timed_retry "compose_build_api_once" 3 docker compose build api
             echo "Running prisma migrate deploy..."
-            retry 3 docker compose run --rm --build api npm run -w api prisma:migrate:deploy
-            retry 3 docker compose up -d --build api
-            docker compose ps
-            docker compose logs --tail=120 api || true
+            timed_retry "prisma_migrate_deploy" 3 docker compose run --rm --no-deps api npm run -w api prisma:migrate:deploy
+            timed_retry "compose_up_api_recreate" 3 docker compose up -d --force-recreate api
+            timed "compose_ps" docker compose ps
+            timed "api_logs_tail_120" sh -c "docker compose logs --tail=120 api || true"
             echo "Smoke check static assets..."
             READY=0
+            SMOKE_START_TS="$(date +%s)"
             for i in $(seq 1 30); do
               if curl -fsS http://127.0.0.1:3000/ >/dev/null 2>&1; then
                 READY=1
@@ -83,8 +107,12 @@ jobs:
               docker compose logs --tail=200 api || true
               exit 1
             fi
-            curl -fI http://127.0.0.1:3000/
-            curl -fI http://127.0.0.1:3000/app.js
-            curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
-            grep -q "normalizeErrorMessage" /tmp/wms_app.js
+            SMOKE_END_TS="$(date +%s)"
+            echo "<<< [done] smoke_wait_ready ($((SMOKE_END_TS - SMOKE_START_TS))s)"
+            timed "smoke_head_root" curl -fI http://127.0.0.1:3000/
+            timed "smoke_head_app_js" curl -fI http://127.0.0.1:3000/app.js
+            timed "smoke_download_app_js" curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
+            timed "smoke_grep_marker" grep -q "normalizeErrorMessage" /tmp/wms_app.js
+            JOB_END_TS="$(date +%s)"
+            echo "=== Deploy total elapsed: $((JOB_END_TS - JOB_START_TS))s ==="
             echo "Smoke check passed."
