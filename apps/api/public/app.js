@@ -378,7 +378,7 @@ function openPrintLabelWindow(labelData) {
         flex-direction: column;
       }
       .label-barcode {
-        height: 66%;
+        height: 40%;
         display: flex;
         align-items: center;
         justify-content: center;
