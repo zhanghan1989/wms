@@ -129,6 +129,22 @@ export class InventoryController {
     return this.inventoryService.getFbaPendingSummary();
   }
 
+  @Get('fba-replenishments/outbound-excel')
+  async downloadFbaOutboundExcel(@Res() res: Response): Promise<void> {
+    const file = await this.inventoryService.buildFbaOutboundExcel();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
   @Get('sku-totals')
   async getSkuInventoryTotals(): Promise<Record<string, number>> {
     return this.inventoryService.getSkuInventoryTotals();

@@ -1758,6 +1758,96 @@ export class InventoryService {
     };
   }
 
+  async buildFbaOutboundExcel(): Promise<{ fileName: string; content: Buffer }> {
+    const rows = await this.prisma.fbaReplenishment.findMany({
+      where: {
+        status: 'outbound',
+      },
+      orderBy: {
+        outboundAt: 'desc',
+      },
+      include: {
+        sku: {
+          select: {
+            sku: true,
+            rbSku: true,
+            asin: true,
+            fnsku: true,
+            fbmSku: true,
+            model: true,
+            brand: true,
+            type: true,
+            color: true,
+            shop: true,
+            remark: true,
+          },
+        },
+        box: {
+          select: {
+            boxCode: true,
+            shelf: {
+              select: {
+                shelfCode: true,
+              },
+            },
+          },
+        },
+        creator: {
+          select: {
+            username: true,
+          },
+        },
+        confirmer: {
+          select: {
+            username: true,
+          },
+        },
+        outbounder: {
+          select: {
+            username: true,
+          },
+        },
+      },
+    });
+
+    const data = rows.map((row) => ({
+      申请单号: row.requestNo ?? '',
+      状态: '已出库',
+      SKU: row.sku?.sku ?? '',
+      rbSKU: row.sku?.rbSku ?? '',
+      ASIN: row.sku?.asin ?? '',
+      FNSKU: row.sku?.fnsku ?? '',
+      FBMSKU: row.sku?.fbmSku ?? '',
+      型号: row.sku?.model ?? '',
+      品牌: row.sku?.brand ?? '',
+      类型: row.sku?.type ?? '',
+      颜色: row.sku?.color ?? '',
+      店铺: row.sku?.shop ?? '',
+      产品备注: row.sku?.remark ?? '',
+      箱号: row.box?.boxCode ?? '',
+      货架号: row.box?.shelf?.shelfCode ?? '',
+      申请数量: Number(row.requestedQty ?? 0),
+      实际数量: Number(row.actualQty ?? row.requestedQty ?? 0),
+      快递号: row.expressNo ?? '',
+      申请时间: this.formatDateTimeForExport(row.createdAt),
+      确认时间: this.formatDateTimeForExport(row.confirmedAt),
+      出库时间: this.formatDateTimeForExport(row.outboundAt),
+      申请人: row.creator?.username ?? '',
+      确认人: row.confirmer?.username ?? '',
+      出库人: row.outbounder?.username ?? '',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'FBA已出库');
+    const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    return {
+      fileName: `fba_outbound_${this.formatDateForFilename(new Date())}.xlsx`,
+      content,
+    };
+  }
+
   private parseBulkInventoryUpdateRows(fileBuffer: Buffer): BulkInventoryUpdateRow[] {
     let workbook: XLSX.WorkBook;
     try {
@@ -1884,6 +1974,12 @@ export class InventoryService {
   private formatDateForFilename(date: Date): string {
     const parts = getZonedDateParts(date, APP_TIMEZONE);
     return `${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}`;
+  }
+
+  private formatDateTimeForExport(date: Date | null | undefined): string {
+    if (!date) return '';
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
   }
 
   private escapeCsvCell(value: string | number): string {
