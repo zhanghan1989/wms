@@ -40,6 +40,8 @@ const FBA_REPLENISH_MARK = 'FBA补货';
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = '正在编辑产品申请中，请管理员确认后再执行相关操作。';
 const STOCK_ADJUSTMENT_WAREHOUSE_ID = '64774';
 const INVENTORY_BULK_UPDATE_TEMPLATE_FILE = '批量更新库存.xlsx';
+const BULK_UPDATE_DEFAULT_SHELF_CODE = 'S-00';
+const BULK_UPDATE_DEFAULT_SHELF_NAME = '\u9ed8\u8ba4\u8d27\u67b6';
 const LOW_COVERAGE_DAYS = 14;
 const OUT_OF_STOCK_DAYS = 7;
 const PRODUCTION_TARGET_DAYS = 45;
@@ -1498,15 +1500,42 @@ export class InventoryService {
         throw new UnprocessableEntityException(`以下SKU不存在：${preview}${suffix}`);
       }
 
-      const boxByCode = new Map(boxes.map((item) => [item.boxCode, item]));
+      const boxByCode = new Map<
+        string,
+        {
+          id: bigint;
+          boxCode: string;
+          status: number;
+          shelf: { status: number } | null;
+        }
+      >(boxes.map((item) => [item.boxCode, item]));
       const missingBoxCodes = boxCodes.filter((boxCode) => !boxByCode.has(boxCode));
       if (missingBoxCodes.length > 0) {
-        const preview = missingBoxCodes.slice(0, 20).join('、');
-        const suffix = missingBoxCodes.length > 20 ? ' 等' : '';
-        throw new UnprocessableEntityException(`以下箱号不存在：${preview}${suffix}`);
+        const defaultShelf = await this.resolveOrCreateBulkUpdateDefaultShelf(
+          tx,
+          operatorId,
+          requestId,
+        );
+        for (const boxCode of missingBoxCodes) {
+          const resolvedBox = await this.resolveOrCreateBulkUpdateBox(
+            tx,
+            boxCode,
+            defaultShelf.id,
+            operatorId,
+            requestId,
+          );
+          const mappedBox = {
+            id: resolvedBox.id,
+            boxCode: resolvedBox.boxCode,
+            status: resolvedBox.status,
+            shelf: { status: resolvedBox.shelfStatus },
+          };
+          boxByCode.set(boxCode, mappedBox);
+          boxByCode.set(resolvedBox.boxCode, mappedBox);
+        }
       }
 
-      const disabledBoxCodes = boxes
+      const disabledBoxCodes = Array.from(boxByCode.values())
         .filter((item) => Number(item.status) !== 1 || Number(item.shelf?.status ?? 0) !== 1)
         .map((item) => item.boxCode);
       if (disabledBoxCodes.length > 0) {
@@ -2113,6 +2142,182 @@ export class InventoryService {
     });
     if (!box) throw new NotFoundException('箱号不存在');
     return box;
+  }
+
+  private async resolveOrCreateBulkUpdateDefaultShelf(
+    tx: Prisma.TransactionClient,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ id: bigint }> {
+    const existed = await tx.shelf.findUnique({
+      where: { shelfCode: BULK_UPDATE_DEFAULT_SHELF_CODE },
+      select: {
+        id: true,
+        shelfCode: true,
+        name: true,
+        status: true,
+      },
+    });
+
+    if (!existed) {
+      const created = await tx.shelf.create({
+        data: {
+          shelfCode: BULK_UPDATE_DEFAULT_SHELF_CODE,
+          name: BULK_UPDATE_DEFAULT_SHELF_NAME,
+          status: 1,
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'shelf',
+        entityId: created.id,
+        action: AuditAction.create,
+        eventType: AuditEventType.SHELF_CREATED,
+        beforeData: null,
+        afterData: created as unknown as Record<string, unknown>,
+        operatorId,
+        requestId,
+        remark: 'auto created from bulk inventory update',
+      });
+
+      return { id: created.id };
+    }
+
+    if (Number(existed.status) === 1) {
+      return { id: existed.id };
+    }
+
+    const updated = await tx.shelf.update({
+      where: { id: existed.id },
+      data: { status: 1 },
+      select: {
+        id: true,
+        shelfCode: true,
+        name: true,
+        status: true,
+      },
+    });
+
+    await this.auditService.create({
+      db: tx,
+      entityType: 'shelf',
+      entityId: updated.id,
+      action: AuditAction.update,
+      eventType: AuditEventType.SHELF_FIELD_UPDATED,
+      beforeData: existed as unknown as Record<string, unknown>,
+      afterData: updated as unknown as Record<string, unknown>,
+      operatorId,
+      requestId,
+      remark: 'enabled for bulk inventory update',
+    });
+
+    return { id: updated.id };
+  }
+
+  private async resolveOrCreateBulkUpdateBox(
+    tx: Prisma.TransactionClient,
+    boxCode: string,
+    defaultShelfId: bigint,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ id: bigint; boxCode: string; status: number; shelfStatus: number }> {
+    const found = await tx.box.findUnique({
+      where: { boxCode },
+      select: {
+        id: true,
+        boxCode: true,
+        status: true,
+        shelf: {
+          select: {
+            status: true,
+          },
+        },
+      },
+    });
+
+    if (found) {
+      return {
+        id: found.id,
+        boxCode: found.boxCode,
+        status: Number(found.status ?? 0),
+        shelfStatus: Number(found.shelf?.status ?? 0),
+      };
+    }
+
+    try {
+      const created = await tx.box.create({
+        data: {
+          boxCode,
+          shelfId: defaultShelfId,
+          status: 1,
+        },
+        select: {
+          id: true,
+          boxCode: true,
+          status: true,
+          shelf: {
+            select: {
+              status: true,
+            },
+          },
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'box',
+        entityId: created.id,
+        action: AuditAction.create,
+        eventType: AuditEventType.BOX_CREATED,
+        beforeData: null,
+        afterData: {
+          id: created.id,
+          boxCode: created.boxCode,
+          shelfId: defaultShelfId,
+          status: created.status,
+        },
+        operatorId,
+        requestId,
+        remark: 'auto created from bulk inventory update',
+      });
+
+      return {
+        id: created.id,
+        boxCode: created.boxCode,
+        status: Number(created.status ?? 0),
+        shelfStatus: Number(created.shelf?.status ?? 0),
+      };
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        const existing = await tx.box.findUnique({
+          where: { boxCode },
+          select: {
+            id: true,
+            boxCode: true,
+            status: true,
+            shelf: {
+              select: {
+                status: true,
+              },
+            },
+          },
+        });
+
+        if (existing) {
+          return {
+            id: existing.id,
+            boxCode: existing.boxCode,
+            status: Number(existing.status ?? 0),
+            shelfStatus: Number(existing.shelf?.status ?? 0),
+          };
+        }
+      }
+      throw error;
+    }
   }
 
   private inventoryKey(boxId: bigint, skuId: bigint): string {
