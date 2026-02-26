@@ -1257,6 +1257,18 @@ function switchPanel(targetId) {
   if (panel) panel.classList.add("active");
   if (targetId === "inventory") {
     focusInventorySearch();
+    return;
+  }
+  if (targetId === "users" && state.me?.role === "admin" && !state.users.length) {
+    Promise.all([loadUserOptions(), loadUsers()]).catch((error) => showToast(error.message, true));
+    return;
+  }
+  if (targetId === "audit" && state.me?.role === "admin" && !state.auditLogs.length) {
+    loadAudit().catch((error) => showToast(error.message, true));
+    return;
+  }
+  if (targetId === "overview" && !state.overviewDashboard) {
+    loadOverviewDashboard().catch((error) => showToast(error.message, true));
   }
 }
 
@@ -4474,22 +4486,8 @@ async function reloadAll() {
   }
 
   const isAdmin = state.me?.role === "admin";
-  const tasks = [
-    loadOverviewDashboard(),
-    loadInventory(),
-    loadBrands(),
-    loadSkuTypes(),
-    loadShops(),
-    loadProductEditRequests(),
-    loadProductEditPendingSummary(),
-    loadShelves(),
-    loadBoxes(),
-    loadBatchInboundOrders(),
-    loadFbaReplenishments(),
-  ];
-  if (isAdmin) {
-    tasks.push(loadUserOptions(), loadUsers(), loadAudit());
-  } else {
+  const tasks = [loadOverviewDashboard(), loadInventory(), loadProductEditPendingSummary(), loadFbaPendingSummary()];
+  if (!isAdmin) {
     state.departmentOptions = [];
     state.roleOptions = [];
     state.departmentOptionEditingCodes = new Set();

@@ -62,27 +62,38 @@ export class InventoryService {
     const safePageSizeRaw = Number.isInteger(pageSize) && pageSize > 0 ? pageSize : 10;
     const safePageSize = Math.min(50, safePageSizeRaw);
     const offset = (safePage - 1) * safePageSize;
-    const exactWhere: Prisma.SkuWhereInput = {
-      OR: [
-        { sku: { equals: key } },
-        { asin: { equals: key } },
-        { fnsku: { equals: key } },
-        { fbmSku: { equals: key } },
-        { rbSku: { equals: key } },
-      ],
-    };
 
-    const exactCount = await this.prisma.sku.count({ where: exactWhere });
-    if (exactCount > 0) {
-      return this.prisma.sku.findMany({
-        where: exactWhere,
+    const skuExactWhere: Prisma.SkuWhereInput = { sku: { equals: key } };
+    const skuExactExists = await this.prisma.sku.findFirst({
+      where: skuExactWhere,
+      select: { id: true },
+    });
+    if (skuExactExists) {
+      return await this.prisma.sku.findMany({
+        where: skuExactWhere,
         skip: offset,
         take: safePageSize,
         orderBy: { id: 'desc' },
       });
     }
 
-    return this.prisma.sku.findMany({
+    const otherExactWhere: Prisma.SkuWhereInput = {
+      OR: [{ asin: { equals: key } }, { fnsku: { equals: key } }, { fbmSku: { equals: key } }, { rbSku: { equals: key } }],
+    };
+    const otherExactExists = await this.prisma.sku.findFirst({
+      where: otherExactWhere,
+      select: { id: true },
+    });
+    if (otherExactExists) {
+      return await this.prisma.sku.findMany({
+        where: otherExactWhere,
+        skip: offset,
+        take: safePageSize,
+        orderBy: { id: 'desc' },
+      });
+    }
+
+    return await this.prisma.sku.findMany({
       where: {
         model: { contains: key },
       },
