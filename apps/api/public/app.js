@@ -3078,9 +3078,33 @@ function getEnabledShelvesSorted() {
     .sort((a, b) => String(a.shelfCode).localeCompare(String(b.shelfCode), "en", { numeric: true }));
 }
 
+function formatShelfCodeWithName(shelf) {
+  const rawCode = shelf && typeof shelf === "object" ? shelf?.shelfCode : shelf;
+  const shelfCode = normalizeShelfCodeInput(rawCode);
+  if (!shelfCode) return "";
+
+  let shelfName = "";
+  if (shelf && typeof shelf === "object") {
+    shelfName = String(shelf?.name || "").trim();
+  }
+  if (!shelfName) {
+    const matched = (Array.isArray(state.shelves) ? state.shelves : []).find(
+      (item) => normalizeShelfCodeInput(item?.shelfCode) === shelfCode,
+    );
+    shelfName = String(matched?.name || "").trim();
+  }
+
+  return shelfName ? `${shelfCode}-${shelfName}` : shelfCode;
+}
+
 function normalizeShelfCodeInput(raw) {
   const value = String(raw ?? "").trim().toUpperCase();
   if (!value) return "";
+  const labeled = value.match(/^(\d{1,3})\s*[-_/].*$/);
+  if (labeled) {
+    const digits = labeled[1];
+    return digits.padStart(Math.max(2, digits.length), "0");
+  }
   if (/^\d{1,3}$/.test(value)) {
     return value.padStart(Math.max(2, value.length), "0");
   }
@@ -3133,11 +3157,18 @@ function renderMoveShelfTargetOptions(keyword = "") {
   const matches = getEnabledShelvesSorted().filter((shelf) => {
     if (currentBox && String(shelf.id) === String(currentBox.shelf?.id)) return false;
     if (!raw) return true;
-    if (digits) return String(shelf.shelfCode).replace(/\D/g, "").includes(digits);
-    return String(shelf.shelfCode).toUpperCase().includes(raw);
+    const shelfCode = String(shelf.shelfCode || "");
+    const shelfName = String(shelf.name || "");
+    const shelfLabel = formatShelfCodeWithName(shelf);
+    if (digits) return shelfCode.replace(/\D/g, "").includes(digits);
+    return (
+      shelfCode.toUpperCase().includes(raw) ||
+      shelfName.toUpperCase().includes(raw) ||
+      shelfLabel.toUpperCase().includes(raw)
+    );
   });
   datalist.innerHTML = matches
-    .map((shelf) => `<option value="${escapeHtml(shelf.shelfCode)}"></option>`)
+    .map((shelf) => `<option value="${escapeHtml(formatShelfCodeWithName(shelf))}"></option>`)
     .join("");
   if (prev) input.value = prev;
 }
@@ -3146,7 +3177,7 @@ function syncMoveShelfCurrentDisplay() {
   const currentInput = $("moveShelfCurrentCode");
   if (!currentInput) return;
   const box = findEnabledBoxByCode($("moveShelfBoxCode")?.value || "");
-  currentInput.value = box?.shelf?.shelfCode || "";
+  currentInput.value = formatShelfCodeWithName(box?.shelf);
 }
 
 function renderMoveProductNewBoxOptions(keyword = "") {
@@ -3173,7 +3204,7 @@ function syncMoveProductOldShelfDisplay() {
   if (!shelfInput) return;
   const selectedBoxCode = resolveEnabledBoxCode($("moveProductOldBoxCode")?.value || "");
   const box = findEnabledBoxByCode(selectedBoxCode);
-  shelfInput.value = box?.shelf?.shelfCode || "";
+  shelfInput.value = formatShelfCodeWithName(box?.shelf);
 }
 
 function syncMoveProductNewShelfDisplay() {
@@ -3181,7 +3212,7 @@ function syncMoveProductNewShelfDisplay() {
   if (!shelfInput) return;
   const newBoxCode = resolveEnabledBoxCode($("moveProductNewBoxCode")?.value || "");
   const box = findEnabledBoxByCode(newBoxCode);
-  shelfInput.value = box?.shelf?.shelfCode || "";
+  shelfInput.value = formatShelfCodeWithName(box?.shelf);
 }
 
 async function refreshMoveProductOldBoxOptionsBySku() {
@@ -3345,6 +3376,9 @@ async function loadShelves() {
   renderShelfOptionsForSelect("modalNewBoxShelfId", "请选择货架号");
   renderShelfOptionsForSelect("boxManageShelfId", "请选择货架号");
   renderMoveShelfTargetOptions($("moveShelfTargetCode")?.value || "");
+  syncMoveShelfCurrentDisplay();
+  syncMoveProductOldShelfDisplay();
+  syncMoveProductNewShelfDisplay();
   renderShelvesManageTable();
   renderBoxesManageTable();
 
@@ -4360,9 +4394,11 @@ async function submitMoveBoxShelfForm() {
   if (!targetShelfCode) {
     throw new Error("请选择目标货架号");
   }
-  $("moveShelfTargetCode").value = targetShelfCode;
   const targetShelf = getEnabledShelvesSorted().find(
     (item) => String(item.shelfCode).toUpperCase() === String(targetShelfCode).toUpperCase(),
+  );
+  $("moveShelfTargetCode").value = formatShelfCodeWithName(
+    targetShelf || { shelfCode: targetShelfCode },
   );
   const targetShelfId = Number(targetShelf?.id || 0);
   if (!Number.isInteger(targetShelfId) || targetShelfId <= 0) {
@@ -5216,7 +5252,10 @@ function bindForms() {
     const currentBox = findEnabledBoxByCode($("moveShelfBoxCode")?.value || "");
     const resolved = resolveEnabledShelfCode(event.target.value, currentBox?.shelf?.id ?? null);
     if (resolved) {
-      event.target.value = resolved;
+      const matched = getEnabledShelvesSorted().find(
+        (item) => normalizeShelfCodeInput(item?.shelfCode) === normalizeShelfCodeInput(resolved),
+      );
+      event.target.value = formatShelfCodeWithName(matched || { shelfCode: resolved });
     }
   });
   const moveProductSkuControl = $("moveProductSkuId");
