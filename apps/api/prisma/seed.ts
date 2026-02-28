@@ -1,5 +1,5 @@
 import { hash } from 'bcryptjs';
-import { Department, PrismaClient, Role } from '@prisma/client';
+import { PrismaClient, Role } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -11,14 +11,14 @@ async function main(): Promise<void> {
     where: { username: 'admin' },
     update: {
       role: Role.system_admin,
-      department: Department.china_warehouse,
+      department: 'china_warehouse',
       status: 1,
       passwordHash: adminPassword,
     },
     create: {
       username: 'admin',
       role: Role.system_admin,
-      department: Department.china_warehouse,
+      department: 'china_warehouse',
       status: 1,
       passwordHash: adminPassword,
     },
@@ -28,14 +28,14 @@ async function main(): Promise<void> {
     where: { username: 'employee' },
     update: {
       role: Role.employee,
-      department: Department.china_warehouse,
+      department: 'china_warehouse',
       status: 1,
       passwordHash: employeePassword,
     },
     create: {
       username: 'employee',
       role: Role.employee,
-      department: Department.china_warehouse,
+      department: 'china_warehouse',
       status: 1,
       passwordHash: employeePassword,
     },

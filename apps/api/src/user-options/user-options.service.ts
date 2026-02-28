@@ -1,13 +1,13 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Department, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDepartmentOptionDto } from './dto/create-user-option.dto';
 import { UpdateUserOptionDto } from './dto/update-user-option.dto';
 
-const DEPARTMENT_DEFAULTS: Array<{ code: Department; name: string; sort: number }> = [
-  { code: Department.factory, name: '工厂', sort: 10 },
-  { code: Department.overseas_warehouse, name: '海外仓', sort: 20 },
-  { code: Department.china_warehouse, name: '中国仓', sort: 30 },
+const DEPARTMENT_DEFAULTS: Array<{ code: string; name: string; sort: number }> = [
+  { code: 'factory', name: '\u5de5\u5382', sort: 10 },
+  { code: 'overseas_warehouse', name: '\u6d77\u5916\u4ed3', sort: 20 },
+  { code: 'china_warehouse', name: '\u4e2d\u56fd\u4ed3', sort: 30 },
 ];
 
 const ROLE_DEFAULTS: Array<{ code: Role; name: string; sort: number }> = [
@@ -24,9 +24,10 @@ export class UserOptionsService {
     await this.ensureDefaults();
   }
 
-  async assertDepartmentEnabled(code: Department): Promise<void> {
+  async assertDepartmentEnabled(code: string): Promise<void> {
     await this.ensureDefaults();
-    const option = await this.prisma.departmentOption.findUnique({ where: { code } });
+    const normalizedCode = this.normalizeDepartmentCode(code);
+    const option = await this.prisma.departmentOption.findUnique({ where: { code: normalizedCode } });
     if (!option || option.status !== 1) {
       throw new BadRequestException('部门已禁用或不存在');
     }
@@ -41,7 +42,7 @@ export class UserOptionsService {
   }
 
   async list(): Promise<{
-    departments: Array<{ id: bigint; code: Department; name: string; status: number; sort: number }>;
+    departments: Array<{ id: bigint; code: string; name: string; status: number; sort: number }>;
     roles: Array<{ id: bigint; code: Role; name: string; status: number; sort: number }>;
   }> {
     await this.ensureSeeded();
@@ -59,30 +60,57 @@ export class UserOptionsService {
 
   async createDepartment(payload: CreateDepartmentOptionDto): Promise<unknown> {
     await this.ensureSeeded();
-    const code = this.parseDepartmentCode(payload.code);
-    const option = await this.prisma.departmentOption.findUnique({ where: { code } });
     const nextName = this.normalizeOptionalName(payload.name);
-    const defaultOption = DEPARTMENT_DEFAULTS.find((item) => item.code === code);
+    if (!nextName) {
+      throw new BadRequestException('\u90e8\u95e8\u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a');
+    }
+    const requestedCode = payload.code ? this.normalizeDepartmentCode(payload.code) : undefined;
+    const [optionByCode, optionByName] = await Promise.all([
+      requestedCode ? this.prisma.departmentOption.findUnique({ where: { code: requestedCode } }) : Promise.resolve(null),
+      this.prisma.departmentOption.findFirst({
+        where: {
+          name: nextName,
+        },
+      }),
+    ]);
 
-    if (option && option.status === 1) {
+    if (optionByName && optionByName.status === 1) {
       throw new BadRequestException('\u90e8\u95e8\u5df2\u5b58\u5728');
     }
 
-    if (option) {
+    if (optionByName) {
       return this.prisma.departmentOption.update({
-        where: { code },
+        where: { code: optionByName.code },
         data: {
           status: 1,
-          name: nextName ?? option.name,
-          sort: payload.sort ?? option.sort,
+          name: nextName,
+          sort: payload.sort ?? optionByName.sort,
         },
       });
     }
 
+    if (optionByCode) {
+      if (optionByCode.status === 1) {
+        throw new BadRequestException('\u90e8\u95e8\u5df2\u5b58\u5728');
+      }
+      return this.prisma.departmentOption.update({
+        where: { code: optionByCode.code },
+        data: {
+          status: 1,
+          name: nextName,
+          sort: payload.sort ?? optionByCode.sort,
+        },
+      });
+    }
+
+    const defaultOption = requestedCode
+      ? DEPARTMENT_DEFAULTS.find((item) => item.code === requestedCode)
+      : undefined;
+    const code = requestedCode ?? (await this.generateDepartmentCode());
     return this.prisma.departmentOption.create({
       data: {
         code,
-        name: nextName ?? defaultOption?.name ?? code,
+        name: nextName,
         status: 1,
         sort: payload.sort ?? defaultOption?.sort ?? 0,
       },
@@ -91,7 +119,7 @@ export class UserOptionsService {
 
   async updateDepartment(codeParam: string, payload: UpdateUserOptionDto): Promise<unknown> {
     await this.ensureSeeded();
-    const code = this.parseDepartmentCode(codeParam);
+    const code = this.normalizeDepartmentCode(codeParam);
     const option = await this.prisma.departmentOption.findUnique({ where: { code } });
     if (!option) {
       throw new NotFoundException('部门不存在');
@@ -139,12 +167,23 @@ export class UserOptionsService {
     return name;
   }
 
-  private parseDepartmentCode(codeParam: string): Department {
-    const value = String(codeParam || '').trim() as Department;
-    if (!Object.values(Department).includes(value)) {
+  private normalizeDepartmentCode(codeParam: string): string {
+    const value = String(codeParam || '').trim();
+    if (!value) {
       throw new BadRequestException('部门编码不合法');
     }
     return value;
+  }
+
+  private async generateDepartmentCode(): Promise<string> {
+    for (let index = 0; index < 10; index += 1) {
+      const code = `dept_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      const exists = await this.prisma.departmentOption.findUnique({ where: { code } });
+      if (!exists) {
+        return code;
+      }
+    }
+    throw new BadRequestException('\u90e8\u95e8\u521b\u5efa\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5');
   }
 
   private async ensureDefaults(): Promise<void> {

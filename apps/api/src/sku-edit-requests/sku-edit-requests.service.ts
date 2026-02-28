@@ -1,5 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, Department, Prisma, ProductEditRequestStatus } from '@prisma/client';
+import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
@@ -319,7 +319,7 @@ export class SkuEditRequestsService {
   }
 
   private async ensureCanConfirmByOperator(operatorId: bigint): Promise<void> {
-    const requiredDepartmentCode: Department = Department.factory;
+    const requiredDepartmentCode = 'factory';
     const denyMessage = PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY;
 
     const [operator, departmentOption, roleOption] = await Promise.all([

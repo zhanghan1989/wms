@@ -13,12 +13,6 @@ enum Role {
   system_admin
 }
 
-enum Department {
-  factory
-  overseas_warehouse
-  china_warehouse
-}
-
 enum ItemCodeStatus {
   in_stock
   outbound
@@ -136,7 +130,7 @@ model User {
   username                   String                 @unique @db.VarChar(64)
   passwordHash               String?                @map("password_hash") @db.VarChar(255)
   role                       Role
-  department                 Department             @default(china_warehouse)
+  department                 String                 @default("china_warehouse") @db.VarChar(64)
   status                     Int                    @default(1) @db.TinyInt
   createdAt                  DateTime               @default(now()) @map("created_at")
   updatedAt                  DateTime               @updatedAt @map("updated_at")
@@ -158,7 +152,7 @@ model User {
 
 model DepartmentOption {
   id        BigInt     @id @default(autoincrement()) @db.UnsignedBigInt
-  code      Department @unique
+  code      String   @unique @db.VarChar(64)
   name      String     @db.VarChar(64)
   status    Int        @default(1) @db.TinyInt
   sort      Int        @default(0)

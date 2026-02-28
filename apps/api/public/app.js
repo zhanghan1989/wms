@@ -1653,24 +1653,13 @@ function renderUserOptionsTable() {
 }
 
 function renderDepartmentOptionCreateForm() {
-  const codeSelect = $("departmentOptionCreateCode");
+  const form = $("departmentOptionCreateForm");
   const nameInput = $("departmentOptionCreateName");
-  if (!codeSelect || !nameInput) return;
-  const options = getAvailableDepartmentOptionItems();
-  codeSelect.innerHTML = [
-    `<option value="">${"\u8bf7\u9009\u62e9\u90e8\u95e8\u7f16\u7801"}</option>`,
-    ...options.map(
-      (item) =>
-        `<option value="${escapeHtml(item.code)}">${escapeHtml(
-          String(item.name || item.code) + " (" + String(item.code || "") + ")",
-        )}</option>`,
-    ),
-  ].join("");
-  codeSelect.disabled = options.length === 0;
-  if (!codeSelect.disabled && !codeSelect.value && options.length) {
-    codeSelect.value = String(options[0].code || "");
-  }
-  nameInput.disabled = options.length === 0;
+  const submitBtn = form?.querySelector('button[type="submit"]');
+  if (!form || !nameInput || !submitBtn) return;
+  nameInput.disabled = false;
+  nameInput.placeholder = "\u8bf7\u8f93\u5165\u90e8\u95e8\u540d\u79f0";
+  submitBtn.disabled = false;
 }
 
 function renderRoleOptionCreateForm() {
@@ -5833,13 +5822,11 @@ function bindDelegates() {
   $("departmentOptionCreateForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      const code = String($("departmentOptionCreateCode")?.value || "").trim();
       const name = String($("departmentOptionCreateName")?.value || "").trim();
-      if (!code) {
-        throw new Error("\u8bf7\u9009\u62e9\u90e8\u95e8\u7f16\u7801");
+      if (!name) {
+        throw new Error("\u8bf7\u8f93\u5165\u90e8\u95e8\u540d\u79f0");
       }
-      const payload = { code };
-      if (name) payload.name = name;
+      const payload = { name };
 
       await request("/user-options/departments", {
         method: "POST",

@@ -1,4 +1,4 @@
-import { Department, Role } from '@prisma/client';
+import { Role } from '@prisma/client';
 import { IsEnum, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 
 export class CreateUserDto {
@@ -11,8 +11,9 @@ export class CreateUserDto {
   role: Role = Role.employee;
 
   @IsOptional()
-  @IsEnum(Department)
-  department: Department = Department.china_warehouse;
+  @IsString()
+  @Length(1, 64)
+  department = 'china_warehouse';
 
   @IsOptional()
   @Min(0)

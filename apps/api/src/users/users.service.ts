@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { hash } from 'bcryptjs';
-import { AuditAction, Department, Prisma, Role } from '@prisma/client';
+import { AuditAction, Prisma, Role } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../constants/audit-event-type';
 import { parseId } from '../common/utils';
@@ -56,7 +56,7 @@ export class UsersService {
     requestId?: string,
   ): Promise<unknown> {
     const nextRole = payload.role ?? Role.employee;
-    const nextDepartment = payload.department ?? Department.china_warehouse;
+    const nextDepartment = String(payload.department ?? 'china_warehouse').trim();
     await Promise.all([
       this.userOptionsService.assertRoleEnabled(nextRole),
       this.userOptionsService.assertDepartmentEnabled(nextDepartment),
@@ -122,7 +122,7 @@ export class UsersService {
     const data: {
       username?: string;
       role?: Role;
-      department?: Department;
+      department?: string;
       status?: number;
     } = {};
 
@@ -138,7 +138,7 @@ export class UsersService {
     }
 
     if (payload.role) data.role = payload.role;
-    if (payload.department) data.department = payload.department;
+    if (payload.department) data.department = String(payload.department).trim();
     if (typeof payload.status === 'number') data.status = payload.status;
 
     if (data.role) {
