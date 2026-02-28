@@ -114,6 +114,10 @@
             <button type="button" id="openShelfManageModal">货架管理</button>
             <button id="downloadStockAdjustmentCsvBtn" type="button">rbSKU+库存下载</button>
             <button type="button" id="openBulkInventoryUpdateModal">批量更新库存</button>
+            <button type="button" id="openEmptyBoxManageModal" class="btn-with-badge">
+              空箱管理
+              <span id="emptyBoxManageBadge" class="quick-badge hidden">0</span>
+            </button>
           </div>
         </article>
 
@@ -448,7 +452,6 @@
             <ul class="stats">
               <li><span>90天无销量 SKU</span><strong id="overviewNoSales90Count">-</strong></li>
               <li><span>270天无销量 SKU</span><strong id="overviewNoSales270Count">-</strong></li>
-              <li><span>在库为0空箱子</span><strong id="overviewEmptyBoxCount">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
               <h4>90天无销量 SKU（仅显示有库存）</h4>
@@ -480,18 +483,6 @@
                   </tr>
                 </thead>
                 <tbody id="overviewNoSales270Body"></tbody>
-              </table>
-            </div>
-            <div class="overview-table-wrap">
-              <h4>在库为0空箱子</h4>
-              <table>
-                <thead>
-                  <tr>
-                    <th>箱号</th>
-                    <th>货架号</th>
-                  </tr>
-                </thead>
-                <tbody id="overviewEmptyBoxBody"></tbody>
               </table>
             </div>
           </article>
@@ -1003,6 +994,27 @@
     </div>
   </div>
 
+  <div id="emptyBoxManageModal" class="modal hidden">
+    <div class="modal-card modal-wide modal-manage modal-manage-scroll">
+      <div class="modal-head">
+        <h3>空箱管理</h3>
+        <button type="button" class="ghost" data-action="closeEmptyBoxManageModal">关闭</button>
+      </div>
+      <div id="emptyBoxManageTableWrap" class="manage-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>箱号</th>
+              <th>货架</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="emptyBoxManageBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div id="departmentManageModal" class="modal hidden">
     <div class="modal-card modal-wide modal-manage">
       <div class="modal-head">
@@ -1102,4 +1114,3 @@
   <script type="module" src="/app.js"></script>
 </body>
 </html>
-

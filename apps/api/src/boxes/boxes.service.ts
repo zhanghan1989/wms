@@ -38,6 +38,51 @@ export class BoxesService {
     });
   }
 
+  async listEmpty(): Promise<unknown[]> {
+    const [boxes, inventoryRows] = await Promise.all([
+      this.prisma.box.findMany({
+        where: {
+          status: 1,
+          shelf: {
+            status: 1,
+          },
+        },
+        select: {
+          id: true,
+          boxCode: true,
+          shelf: {
+            select: {
+              id: true,
+              shelfCode: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: { boxCode: 'asc' },
+      }),
+      this.prisma.inventoryBoxSku.groupBy({
+        by: ['boxId'],
+        _sum: { qty: true },
+      }),
+    ]);
+
+    const inventoryByBox = new Map<string, number>();
+    inventoryRows.forEach((row) => {
+      inventoryByBox.set(row.boxId.toString(), Number(row._sum.qty ?? 0));
+    });
+
+    return boxes
+      .map((box) => ({
+        id: box.id.toString(),
+        boxCode: box.boxCode,
+        shelfId: box.shelf?.id?.toString() ?? null,
+        shelfCode: box.shelf?.shelfCode ?? null,
+        shelfName: box.shelf?.name ?? null,
+        totalStock: inventoryByBox.get(box.id.toString()) ?? 0,
+      }))
+      .filter((box) => box.totalStock <= 0);
+  }
+
   async create(payload: CreateBoxDto, operatorId: bigint, requestId?: string): Promise<unknown> {
     const boxCode = this.normalizeBoxCode(payload.boxCode);
     if (!boxCode) throw new BadRequestException('箱号格式无效');

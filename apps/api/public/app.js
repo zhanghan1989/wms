@@ -3,6 +3,7 @@ const state = {
   me: null,
   shelves: [],
   boxes: [],
+  emptyBoxes: [],
   inventorySkus: [],
   brands: [],
   skuTypes: [],
@@ -989,14 +990,12 @@ function clearOverviewDashboard() {
     "overviewTargetDays",
     "overviewNoSales90Count",
     "overviewNoSales270Count",
-    "overviewEmptyBoxCount",
   ].forEach((id) => setTextById(id, "-"));
   renderOverviewTable("overviewTopDemandBody", "", 5);
   renderOverviewTable("overviewAnomalyBody", "", 6);
   renderOverviewTable("overviewProductionBody", "", 9);
   renderOverviewTable("overviewNoSales90Body", "", 6);
   renderOverviewTable("overviewNoSales270Body", "", 6);
-  renderOverviewTable("overviewEmptyBoxBody", "", 2);
 }
 
 function renderOverviewDashboard(data) {
@@ -1026,7 +1025,6 @@ function renderOverviewDashboard(data) {
   setTextById("overviewTargetDays", formatOverviewNumber(production.targetDays));
   setTextById("overviewNoSales90Count", formatOverviewNumber(obsolete.noSales90dCount));
   setTextById("overviewNoSales270Count", formatOverviewNumber(obsolete.noSales270dCount));
-  setTextById("overviewEmptyBoxCount", formatOverviewNumber(obsolete.emptyBoxCount));
 
   const topRows = (Array.isArray(demand.topSkus) ? demand.topSkus : [])
     .map(
@@ -1114,18 +1112,6 @@ function renderOverviewDashboard(data) {
     )
     .join("");
   renderOverviewTable("overviewNoSales270Body", noSales270Rows, 6);
-
-  const emptyBoxRows = (Array.isArray(obsolete.emptyBoxes) ? obsolete.emptyBoxes : [])
-    .map(
-      (item) => `
-      <tr>
-        <td>${escapeHtml(displayText(item.boxCode))}</td>
-        <td>${escapeHtml(displayText(item.shelfCode))}</td>
-      </tr>
-    `,
-    )
-    .join("");
-  renderOverviewTable("overviewEmptyBoxBody", emptyBoxRows, 2);
 }
 
 async function loadOverviewDashboard() {
@@ -2219,6 +2205,7 @@ async function loadInventory() {
     request("/skus"),
     request("/inventory/sku-totals"),
     loadFbaPendingSummary(),
+    loadEmptyBoxes(),
   ]);
   state.inventorySkus = skus;
   state.inventoryTotalsBySku = totals || {};
@@ -2879,6 +2866,45 @@ function renderBoxesManageTable() {
       .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
 }
 
+function renderEmptyBoxManageBadge() {
+  const badge = $("emptyBoxManageBadge");
+  if (!badge) return;
+  const count = Array.isArray(state.emptyBoxes) ? state.emptyBoxes.length : 0;
+  badge.textContent = String(count);
+  badge.classList.toggle("hidden", count <= 0);
+}
+
+function renderEmptyBoxManageTable() {
+  const body = $("emptyBoxManageBody");
+  if (!body) return;
+  const rows = Array.isArray(state.emptyBoxes) ? state.emptyBoxes : [];
+  body.innerHTML =
+    rows
+      .map((item) => {
+        const shelfLabel = formatShelfCodeWithName({
+          shelfCode: item?.shelfCode,
+          name: item?.shelfName,
+        });
+        return `
+      <tr>
+        <td>${escapeHtml(displayText(item?.boxCode))}</td>
+        <td>${escapeHtml(displayText(shelfLabel))}</td>
+        <td>
+          <button
+            class="tiny-btn danger"
+            data-action="deleteEmptyBox"
+            data-id="${escapeHtml(item?.id || "")}"
+            data-code="${escapeHtml(item?.boxCode || "")}"
+          >
+            废除
+          </button>
+        </td>
+      </tr>
+    `;
+      })
+      .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
+}
+
 function canSelectProductEditRequestForBatchConfirm(item) {
   if (!item || String(item?.status || "") !== "pending") {
     return false;
@@ -3435,6 +3461,13 @@ async function loadBoxes() {
     `,
     )
     .join("");
+}
+
+async function loadEmptyBoxes() {
+  const rows = await request("/boxes/empty");
+  state.emptyBoxes = Array.isArray(rows) ? rows : [];
+  renderEmptyBoxManageBadge();
+  renderEmptyBoxManageTable();
 }
 
 function getBatchInboundStatusText(status, order = null) {
@@ -4529,6 +4562,7 @@ async function reloadAll() {
     $("shopsBody").innerHTML = "";
     $("shelfManageBody").innerHTML = "";
     $("boxManageBody").innerHTML = "";
+    $("emptyBoxManageBody").innerHTML = "";
     $("dataBackupBody").innerHTML = "";
     $("productEditRequestBody").innerHTML = "";
     $("departmentOptionsBody").innerHTML = "";
@@ -4547,6 +4581,7 @@ async function reloadAll() {
     state.myAuditLogs = [];
     state.skuEditRequests = [];
     state.inventorySkus = [];
+    state.emptyBoxes = [];
     state.inventorySortedSkus = [];
     state.inventoryLocations = new Map();
     state.inventoryTotalsBySku = {};
@@ -4581,6 +4616,8 @@ async function reloadAll() {
     renderUserOptionsTable();
     renderFbaPendingBadge();
     renderProductEditPendingBadge();
+    renderEmptyBoxManageBadge();
+    renderEmptyBoxManageTable();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
     resetInventorySearchState();
@@ -4589,7 +4626,12 @@ async function reloadAll() {
   }
 
   const isAdmin = hasAdminAccess(state.me?.role);
-  const tasks = [loadOverviewDashboard(), loadInventory(), loadProductEditPendingSummary(), loadFbaPendingSummary()];
+  const tasks = [
+    loadOverviewDashboard(),
+    loadInventory(),
+    loadProductEditPendingSummary(),
+    loadFbaPendingSummary(),
+  ];
   if (!isAdmin) {
     state.departmentOptions = [];
     state.roleOptions = [];
@@ -5192,6 +5234,19 @@ function bindForms() {
   $("openBulkInventoryUpdateModal").addEventListener("click", () => {
     $("bulkInventoryUpdateForm").reset();
     openModal("bulkInventoryUpdateModal");
+  });
+
+  $("openEmptyBoxManageModal").addEventListener("click", async () => {
+    try {
+      await loadEmptyBoxes();
+      const wrap = $("emptyBoxManageTableWrap");
+      if (wrap) {
+        wrap.scrollTop = 0;
+      }
+      openModal("emptyBoxManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   const openCreateBoxModal = async () => {
@@ -6031,6 +6086,27 @@ function bindDelegates() {
     }
   });
 
+  $("emptyBoxManageBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='deleteEmptyBox']");
+    if (!button) return;
+    const id = button.dataset.id;
+    if (!id) return;
+    const boxCode = button.dataset.code || id;
+    try {
+      const ok = await openActionConfirmModal(
+        `确认废除空箱 ${boxCode} 吗？`,
+        "确认操作",
+        "确认废除",
+      );
+      if (!ok) return;
+      await request(`/boxes/${id}`, { method: "DELETE" });
+      showToast("空箱已废除");
+      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("moveBoxShelfForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -6602,6 +6678,11 @@ function bindDelegates() {
       closeModal("boxManageModal");
       return;
     }
+    const emptyBoxManageClose = event.target.closest("button[data-action='closeEmptyBoxManageModal']");
+    if (emptyBoxManageClose) {
+      closeModal("emptyBoxManageModal");
+      return;
+    }
 
     const departmentManageClose = event.target.closest("button[data-action='closeDepartmentManageModal']");
     if (departmentManageClose) {
@@ -6746,6 +6827,12 @@ function bindDelegates() {
   $("boxManageModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("boxManageModal");
+    }
+  });
+
+  $("emptyBoxManageModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("emptyBoxManageModal");
     }
   });
 

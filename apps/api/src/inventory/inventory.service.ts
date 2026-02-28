@@ -1053,8 +1053,6 @@ export class InventoryService {
       outbound7Rows,
       outbound90Rows,
       outbound270Rows,
-      activeBoxes,
-      inventoryByBoxRows,
     ] = await Promise.all([
       this.prisma.sku.findMany({
         where: { status: 1 },
@@ -1130,27 +1128,6 @@ export class InventoryService {
         },
         _sum: { qtyDelta: true },
       }),
-      this.prisma.box.findMany({
-        where: {
-          status: 1,
-          shelf: {
-            status: 1,
-          },
-        },
-        select: {
-          id: true,
-          boxCode: true,
-          shelf: {
-            select: {
-              shelfCode: true,
-            },
-          },
-        },
-      }),
-      this.prisma.inventoryBoxSku.groupBy({
-        by: ['boxId'],
-        _sum: { qty: true },
-      }),
     ]);
 
     const skuById = new Map(
@@ -1202,11 +1179,6 @@ export class InventoryService {
     const outbound7BySku = toOutboundMap(outbound7Rows);
     const outbound90BySku = toOutboundMap(outbound90Rows);
     const outbound270BySku = toOutboundMap(outbound270Rows);
-
-    const inventoryByBox = new Map<string, number>();
-    inventoryByBoxRows.forEach((row) => {
-      inventoryByBox.set(row.boxId.toString(), Number(row._sum.qty ?? 0));
-    });
 
     let totalStock = 0;
     let availableStock = 0;
@@ -1348,18 +1320,6 @@ export class InventoryService {
     sortByStockDesc(noSales90dSkus);
     sortByStockDesc(noSales270dSkus);
 
-    const emptyBoxes = activeBoxes
-      .map((box) => ({
-        boxId: box.id.toString(),
-        boxCode: box.boxCode,
-        shelfCode: box.shelf?.shelfCode ?? null,
-        totalStock: inventoryByBox.get(box.id.toString()) ?? 0,
-      }))
-      .filter((box) => box.totalStock <= 0)
-      .sort((a, b) =>
-        String(a.boxCode || '').localeCompare(String(b.boxCode || ''), 'en', { numeric: true }),
-      );
-
     const topSkus = Array.from(outbound30BySku.entries())
       .map(([skuId, qty30d]) => {
         const sku = skuById.get(skuId);
@@ -1444,8 +1404,6 @@ export class InventoryService {
         noSales270dCount: noSales270dSkus.length,
         noSales90dSkus: noSales90dSkus.slice(0, 100),
         noSales270dSkus: noSales270dSkus.slice(0, 100),
-        emptyBoxCount: emptyBoxes.length,
-        emptyBoxes: emptyBoxes.slice(0, 200),
       },
     };
   }
