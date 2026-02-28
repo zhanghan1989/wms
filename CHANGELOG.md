@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.2 - 2026-02-28
+
+### Added
+- Empty box management in overseas warehouse, including empty-box badge, list modal, and physical delete entry.
+- Dedicated API endpoint for empty box listing: `GET /api/boxes/empty`.
+
+### Changed
+- Role and department management flows simplified for name-first operations.
+- Product edit approval permissions aligned so the `admin` account and Foshan factory admins can approve requests.
+- `admin` account is now reserved as the only system administrator identity.
+
+### Fixed
+- Logout no longer shows spurious unauthorized errors caused by in-flight requests.
+- Shelf display in move-box and move-product flows now shows `货架号-名称`.
+- Role creation input remains editable even when there are no inactive built-in roles to restore.
+
 ## v1.0.1 - 2026-02-26
 
 ### Added
