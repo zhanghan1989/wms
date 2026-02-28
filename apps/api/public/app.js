@@ -769,6 +769,7 @@ function hasAdminAccess(role) {
 
 function getDepartmentText(department) {
   const code = String(department || "");
+  if (!code) return "";
   const item = state.departmentOptions.find((option) => option.code === code);
   if (item?.name) return item.name;
   if (code === "factory") return "工厂";
@@ -793,6 +794,10 @@ function getDepartmentOptionsWithFallback() {
 function getRoleOptionsWithFallback() {
   const items = state.roleOptions.length ? state.roleOptions : DEFAULT_ROLE_OPTIONS;
   return sortUserOptions(items);
+}
+
+function getAssignableRoleOptions() {
+  return getRoleOptionsWithFallback().filter((item) => String(item?.code || "") !== "system_admin");
 }
 
 function getAvailableDepartmentOptionItems() {
@@ -839,12 +844,14 @@ function canCurrentUserConfirmFactoryProductEditRequest() {
   const user = state.me;
   if (!user) return false;
   if (!hasAdminAccess(user.role)) return false;
-  if (String(user.department || "") !== "factory") return false;
   if (Number(user.status) !== 1) return false;
 
   const roleEnabled = isUserOptionEnabled(getRoleOptionsWithFallback(), String(user.role || ""));
+  if (!roleEnabled) return false;
+  if (String(user.role || "") === "system_admin") return true;
+  if (String(user.department || "") !== "factory") return false;
   const departmentEnabled = isUserOptionEnabled(getDepartmentOptionsWithFallback(), "factory");
-  return roleEnabled && departmentEnabled;
+  return departmentEnabled;
 }
 
 function getProductEditConfirmContactMessage() {
@@ -1697,7 +1704,7 @@ function renderUserSelectOptions() {
 
   if (newRoleEl) {
     const selected = newRoleEl.value || "employee";
-    const options = getRoleOptionsWithFallback().filter((item) => Number(item.status) === 1);
+    const options = getAssignableRoleOptions().filter((item) => Number(item.status) === 1);
     newRoleEl.innerHTML = options
       .map((item) => `<option value="${escapeHtml(item.code)}">${escapeHtml(item.name || item.code)}</option>`)
       .join("");
@@ -1725,7 +1732,9 @@ function renderUserSelectOptions() {
 
   if (editRoleEl) {
     const selected = editRoleEl.value || "employee";
-    const options = getRoleOptionsWithFallback().filter((item) => Number(item.status) === 1 || item.code === selected);
+    const options = getAssignableRoleOptions().filter(
+      (item) => Number(item.status) === 1 || item.code === selected,
+    );
     editRoleEl.innerHTML = options
       .map((item) => {
         const suffix = Number(item.status) === 1 ? "" : "（禁用）";
@@ -1783,16 +1792,11 @@ function renderUsersTable() {
   const users = state.users.slice(0, state.usersVisibleCount);
   body.innerHTML =
     users
-      .map(
-        (user) => `
-      <tr>
-        <td>${escapeHtml(user.username)}</td>
-        <td>${escapeHtml(getDepartmentText(user.department))}</td>
-        <td>${escapeHtml(getRoleText(user.role))}</td>
-        <td>${getStatusText(user.status)}</td>
-        <td>${formatDate(user.updatedAt)}</td>
-        <td>
-          <div class="action-row">
+      .map((user) => {
+        const isProtectedUser = String(user.username || "").trim() === "admin";
+        const actions = isProtectedUser
+          ? ""
+          : `
             <button
               type="button"
               class="tiny-btn"
@@ -1800,10 +1804,10 @@ function renderUsersTable() {
               data-id="${escapeHtml(user.id)}"
               data-username="${escapeHtml(user.username)}"
               data-role="${escapeHtml(user.role)}"
-              data-department="${escapeHtml(user.department || "china_warehouse")}"
+              data-department="${escapeHtml(user.department || "")}"
               data-status="${escapeHtml(Number(user.status) === 1 ? 1 : 0)}"
             >
-              编辑
+              \u7f16\u8f91
             </button>
             <button
               type="button"
@@ -1813,13 +1817,21 @@ function renderUsersTable() {
               data-username="${escapeHtml(user.username)}"
               data-password-initialized="${user.passwordInitialized ? "1" : "0"}"
             >
-              ${user.passwordInitialized ? "重置密码" : "激活用户"}
-            </button>
-          </div>
+              ${user.passwordInitialized ? "\u91cd\u7f6e\u5bc6\u7801" : "\u6fc0\u6d3b\u7528\u6237"}
+            </button>`;
+        return `
+      <tr>
+        <td>${escapeHtml(user.username)}</td>
+        <td>${escapeHtml(getDepartmentText(user.department))}</td>
+        <td>${escapeHtml(getRoleText(user.role))}</td>
+        <td>${getStatusText(user.status)}</td>
+        <td>${formatDate(user.updatedAt)}</td>
+        <td>
+          <div class="action-row">${actions}</div>
         </td>
       </tr>
-    `,
-      )
+    `;
+      })
       .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
 }
 
@@ -1916,7 +1928,7 @@ function openEditUserModal(userId, username, role, department, status = 1) {
   $("editUserId").value = String(userId);
   $("editUsername").value = String(username || "");
   renderUserSelectOptions();
-  const normalizedRole = ["employee", "admin", "system_admin"].includes(String(role || "")) ? String(role) : "employee";
+  const normalizedRole = ["employee", "admin"].includes(String(role || "")) ? String(role) : "employee";
   $("editUserRole").value = normalizedRole;
   $("editUserDepartment").value = department || "china_warehouse";
   syncEditUserActionButtons(userId, status, username);

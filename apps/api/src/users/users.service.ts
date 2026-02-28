@@ -15,6 +15,8 @@ import { UpdateUserDto } from './dto/update-user.dto';
 
 @Injectable()
 export class UsersService {
+  private readonly protectedUsername = 'admin';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
@@ -42,7 +44,7 @@ export class UsersService {
       id: user.id,
       username: user.username,
       role: user.role,
-      department: user.department,
+      department: user.username === this.protectedUsername ? '' : user.department,
       status: user.status,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
@@ -118,6 +120,10 @@ export class UsersService {
     const id = parseId(idParam, 'userId');
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('用户不存在');
+
+    if (user.username === this.protectedUsername) {
+      throw new BadRequestException('\u7cfb\u7edf\u7ba1\u7406\u5458\u8d26\u53f7\u4e0d\u5141\u8bb8\u7f16\u8f91');
+    }
 
     const data: {
       username?: string;
@@ -302,6 +308,10 @@ export class UsersService {
     const id = parseId(idParam, 'userId');
     const user = await this.prisma.user.findUnique({ where: { id } });
     if (!user) throw new NotFoundException('用户不存在');
+
+    if (user.username === this.protectedUsername) {
+      throw new BadRequestException('\u7cfb\u7edf\u7ba1\u7406\u5458\u8d26\u53f7\u4e0d\u5141\u8bb8\u91cd\u7f6e\u5bc6\u7801');
+    }
 
     const nextPassword = String(password || '').trim();
     if (!nextPassword || nextPassword.length < 6 || nextPassword.length > 64) {

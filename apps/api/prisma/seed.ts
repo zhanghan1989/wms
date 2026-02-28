@@ -11,14 +11,14 @@ async function main(): Promise<void> {
     where: { username: 'admin' },
     update: {
       role: Role.system_admin,
-      department: 'china_warehouse',
+      department: '',
       status: 1,
       passwordHash: adminPassword,
     },
     create: {
       username: 'admin',
       role: Role.system_admin,
-      department: 'china_warehouse',
+      department: '',
       status: 1,
       passwordHash: adminPassword,
     },

@@ -353,12 +353,15 @@ export class SkuEditRequestsService {
 
     const roleStatusMap = new Map(roleOption.map((item) => [String(item.code), Number(item.status ?? 1)]));
     const operatorRole = String(operator?.role ?? '');
+    const isSystemAdmin = operatorRole === 'system_admin';
+    const isFactoryAdmin =
+      operatorRole === 'admin' &&
+      String(operator?.department) === String(requiredDepartmentCode) &&
+      Number(departmentOption?.status ?? 1) === 1;
     const isAllowed =
       Boolean(operator) &&
       Number(operator?.status) === 1 &&
-      ['admin', 'system_admin'].includes(operatorRole) &&
-      String(operator?.department) === String(requiredDepartmentCode) &&
-      Number(departmentOption?.status ?? 1) === 1 &&
+      (isSystemAdmin || isFactoryAdmin) &&
       Number(roleStatusMap.get(operatorRole) ?? 1) === 1;
 
     if (!isAllowed) {

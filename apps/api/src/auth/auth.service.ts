@@ -8,6 +8,8 @@ import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AuthService {
+  private readonly protectedUsername = 'admin';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -50,7 +52,7 @@ export class AuthService {
         id: user.id,
         username: user.username,
         role: user.role,
-        department: user.department,
+        department: user.username === this.protectedUsername ? '' : user.department,
         status: user.status,
       },
     };
@@ -75,7 +77,7 @@ export class AuthService {
       id: user.id,
       username: user.username,
       role: user.role,
-      department: user.department,
+      department: user.username === this.protectedUsername ? '' : user.department,
       status: user.status,
     };
   }
