@@ -26,6 +26,10 @@ export class RolesGuard implements CanActivate {
     if (!user) {
       return false;
     }
-    return requiredRoles.includes(user.role);
+    const effectiveRoles = new Set<Role>([user.role]);
+    if (user.role === Role.system_admin) {
+      effectiveRoles.add(Role.admin);
+    }
+    return requiredRoles.some((role) => effectiveRoles.has(role));
   }
 }

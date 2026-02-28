@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Department, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateDepartmentOptionDto, CreateRoleOptionDto } from './dto/create-user-option.dto';
+import { CreateDepartmentOptionDto } from './dto/create-user-option.dto';
 import { UpdateUserOptionDto } from './dto/update-user-option.dto';
 
 const DEPARTMENT_DEFAULTS: Array<{ code: Department; name: string; sort: number }> = [
@@ -13,6 +13,7 @@ const DEPARTMENT_DEFAULTS: Array<{ code: Department; name: string; sort: number 
 const ROLE_DEFAULTS: Array<{ code: Role; name: string; sort: number }> = [
   { code: Role.employee, name: '员工', sort: 10 },
   { code: Role.admin, name: '管理者', sort: 20 },
+  { code: Role.system_admin, name: '系统管理员', sort: 30 },
 ];
 
 @Injectable()
@@ -88,38 +89,6 @@ export class UserOptionsService {
     });
   }
 
-  async createRole(payload: CreateRoleOptionDto): Promise<unknown> {
-    await this.ensureSeeded();
-    const code = payload.code ? this.parseRoleCode(payload.code) : await this.pickAvailableRoleCode();
-    const option = await this.prisma.roleOption.findUnique({ where: { code } });
-    const nextName = this.normalizeOptionalName(payload.name);
-    const defaultOption = ROLE_DEFAULTS.find((item) => item.code === code);
-
-    if (option && option.status === 1) {
-      throw new BadRequestException('\u89d2\u8272\u5df2\u5b58\u5728');
-    }
-
-    if (option) {
-      return this.prisma.roleOption.update({
-        where: { code },
-        data: {
-          status: 1,
-          name: nextName ?? option.name,
-          sort: payload.sort ?? option.sort,
-        },
-      });
-    }
-
-    return this.prisma.roleOption.create({
-      data: {
-        code,
-        name: nextName ?? defaultOption?.name ?? code,
-        status: 1,
-        sort: payload.sort ?? defaultOption?.sort ?? 0,
-      },
-    });
-  }
-
   async updateDepartment(codeParam: string, payload: UpdateUserOptionDto): Promise<unknown> {
     await this.ensureSeeded();
     const code = this.parseDepartmentCode(codeParam);
@@ -130,21 +99,6 @@ export class UserOptionsService {
 
     const data = this.buildUpdateData(payload);
     return this.prisma.departmentOption.update({
-      where: { code },
-      data,
-    });
-  }
-
-  async updateRole(codeParam: string, payload: UpdateUserOptionDto): Promise<unknown> {
-    await this.ensureSeeded();
-    const code = this.parseRoleCode(codeParam);
-    const option = await this.prisma.roleOption.findUnique({ where: { code } });
-    if (!option) {
-      throw new NotFoundException('角色不存在');
-    }
-
-    const data = this.buildUpdateData(payload);
-    return this.prisma.roleOption.update({
       where: { code },
       data,
     });
@@ -193,33 +147,6 @@ export class UserOptionsService {
     return value;
   }
 
-  private parseRoleCode(codeParam: string): Role {
-    const value = String(codeParam || '').trim() as Role;
-    if (!Object.values(Role).includes(value)) {
-      throw new BadRequestException('角色编码不合法');
-    }
-    return value;
-  }
-
-  private async pickAvailableRoleCode(): Promise<Role> {
-    const options = await this.prisma.roleOption.findMany({
-      select: {
-        code: true,
-        status: true,
-      },
-    });
-    const disabledCodeSet = new Set(
-      options
-        .filter((item) => Number(item.status) !== 1)
-        .map((item) => String(item.code)),
-    );
-    const next = ROLE_DEFAULTS.find((item) => disabledCodeSet.has(String(item.code)));
-    if (!next) {
-      throw new BadRequestException('\u89d2\u8272\u5df2\u5b58\u5728');
-    }
-    return next.code;
-  }
-
   private async ensureDefaults(): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       for (const option of DEPARTMENT_DEFAULTS) {
@@ -250,3 +177,4 @@ export class UserOptionsService {
     });
   }
 }
+

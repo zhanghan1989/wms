@@ -10,6 +10,7 @@ datasource db {
 enum Role {
   employee
   admin
+  system_admin
 }
 
 enum Department {

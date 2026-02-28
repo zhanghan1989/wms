@@ -338,21 +338,28 @@ export class SkuEditRequestsService {
           status: true,
         },
       }),
-      this.prisma.roleOption.findUnique({
-        where: { code: 'admin' },
+      this.prisma.roleOption.findMany({
+        where: {
+          code: {
+            in: ['admin', 'system_admin'],
+          },
+        },
         select: {
+          code: true,
           status: true,
         },
       }),
     ]);
 
+    const roleStatusMap = new Map(roleOption.map((item) => [String(item.code), Number(item.status ?? 1)]));
+    const operatorRole = String(operator?.role ?? '');
     const isAllowed =
       Boolean(operator) &&
       Number(operator?.status) === 1 &&
-      String(operator?.role) === 'admin' &&
+      ['admin', 'system_admin'].includes(operatorRole) &&
       String(operator?.department) === String(requiredDepartmentCode) &&
       Number(departmentOption?.status ?? 1) === 1 &&
-      Number(roleOption?.status ?? 1) === 1;
+      Number(roleStatusMap.get(operatorRole) ?? 1) === 1;
 
     if (!isAllowed) {
       throw new ForbiddenException(denyMessage);

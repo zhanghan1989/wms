@@ -78,8 +78,9 @@ const DEFAULT_DEPARTMENT_OPTIONS = [
 ];
 
 const DEFAULT_ROLE_OPTIONS = [
-  { code: "employee", name: "员工", status: 1, sort: 10 },
-  { code: "admin", name: "管理者", status: 1, sort: 20 },
+  { code: "employee", name: "\u5458\u5de5", status: 1, sort: 10 },
+  { code: "admin", name: "\u7ba1\u7406\u8005", status: 1, sort: 20 },
+  { code: "system_admin", name: "\u7cfb\u7edf\u7ba1\u7406\u5458", status: 1, sort: 30 },
 ];
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = "正在编辑产品申请中，请管理员确认后再执行相关操作。";
 
@@ -758,7 +759,12 @@ function getRoleText(role) {
   const code = String(role || "");
   const item = state.roleOptions.find((option) => option.code === code);
   if (item?.name) return item.name;
-  return code === "admin" ? "管理者" : "员工";
+  if (code === "system_admin") return "\u7cfb\u7edf\u7ba1\u7406\u5458";
+  return code === "admin" ? "\u7ba1\u7406\u8005" : "\u5458\u5de5";
+}
+
+function hasAdminAccess(role) {
+  return ["admin", "system_admin"].includes(String(role || ""));
 }
 
 function getDepartmentText(department) {
@@ -832,11 +838,11 @@ function normalizeProductEditChangedFields(changedFields) {
 function canCurrentUserConfirmFactoryProductEditRequest() {
   const user = state.me;
   if (!user) return false;
-  if (String(user.role || "") !== "admin") return false;
+  if (!hasAdminAccess(user.role)) return false;
   if (String(user.department || "") !== "factory") return false;
   if (Number(user.status) !== 1) return false;
 
-  const roleEnabled = isUserOptionEnabled(getRoleOptionsWithFallback(), "admin");
+  const roleEnabled = isUserOptionEnabled(getRoleOptionsWithFallback(), String(user.role || ""));
   const departmentEnabled = isUserOptionEnabled(getDepartmentOptionsWithFallback(), "factory");
   return roleEnabled && departmentEnabled;
 }
@@ -1310,11 +1316,11 @@ function switchPanel(targetId) {
     focusInventorySearch();
     return;
   }
-  if (targetId === "users" && state.me?.role === "admin" && !state.users.length) {
+  if (targetId === "users" && hasAdminAccess(state.me?.role) && !state.users.length) {
     Promise.all([loadUserOptions(), loadUsers()]).catch((error) => showToast(error.message, true));
     return;
   }
-  if (targetId === "audit" && state.me?.role === "admin" && !state.auditLogs.length) {
+  if (targetId === "audit" && hasAdminAccess(state.me?.role) && !state.auditLogs.length) {
     loadAudit().catch((error) => showToast(error.message, true));
     return;
   }
@@ -1921,7 +1927,8 @@ function openEditUserModal(userId, username, role, department, status = 1) {
   $("editUserId").value = String(userId);
   $("editUsername").value = String(username || "");
   renderUserSelectOptions();
-  $("editUserRole").value = role === "admin" ? "admin" : "employee";
+  const normalizedRole = ["employee", "admin", "system_admin"].includes(String(role || "")) ? String(role) : "employee";
+  $("editUserRole").value = normalizedRole;
   $("editUserDepartment").value = department || "china_warehouse";
   syncEditUserActionButtons(userId, status, username);
   openModal("editUserModal");
@@ -4512,7 +4519,7 @@ async function reloadAll() {
     $("dataBackupBody").innerHTML = "";
     $("productEditRequestBody").innerHTML = "";
     $("departmentOptionsBody").innerHTML = "";
-    $("roleOptionsBody").innerHTML = "";
+    if ($("roleOptionsBody")) $("roleOptionsBody").innerHTML = "";
     renderProductEditRequestDetail(null);
     state.brands = [];
     state.skuTypes = [];
@@ -4568,7 +4575,7 @@ async function reloadAll() {
     return;
   }
 
-  const isAdmin = state.me?.role === "admin";
+  const isAdmin = hasAdminAccess(state.me?.role);
   const tasks = [loadOverviewDashboard(), loadInventory(), loadProductEditPendingSummary(), loadFbaPendingSummary()];
   if (!isAdmin) {
     state.departmentOptions = [];
@@ -4582,7 +4589,7 @@ async function reloadAll() {
     state.auditVisibleCount = 0;
     $("usersBody").innerHTML = "";
     $("departmentOptionsBody").innerHTML = "";
-    $("roleOptionsBody").innerHTML = "";
+    if ($("roleOptionsBody")) $("roleOptionsBody").innerHTML = "";
     $("auditBody").innerHTML = "";
     $("statUsers").textContent = "-";
     renderUserSelectOptions();
@@ -5146,18 +5153,6 @@ function bindForms() {
       $("departmentOptionCreateForm")?.reset();
       renderDepartmentOptionCreateForm();
       openModal("departmentManageModal");
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("openRoleManageModal").addEventListener("click", async () => {
-    try {
-      state.roleOptionEditingCodes = new Set();
-      await loadUserOptions();
-      $("roleOptionCreateForm")?.reset();
-      renderRoleOptionCreateForm();
-      openModal("roleManageModal");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -5858,32 +5853,6 @@ function bindDelegates() {
       showToast(error.message, true);
     }
   });
-
-  $("roleOptionCreateForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const name = String($("roleOptionCreateName")?.value || "").trim();
-      if (!name) {
-        throw new Error("\u8bf7\u8f93\u5165\u89d2\u8272\u540d\u79f0");
-      }
-      if (!getAvailableRoleOptionItems().length) {
-        throw new Error("\u5f53\u524d\u6ca1\u6709\u53ef\u65b0\u589e\u89d2\u8272\uff0c\u5982\u9700\u4fee\u6539\u540d\u79f0\u8bf7\u70b9\u4e0b\u65b9\u201c\u53d8\u66f4\u201d");
-      }
-      const payload = { name };
-
-      await request("/user-options/roles", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-
-      $("roleOptionCreateForm")?.reset();
-      showToast("\u89d2\u8272\u65b0\u589e\u6210\u529f");
-      await Promise.all([loadUserOptions(), loadUsers(), loadAudit()]);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
   $("shelfManageBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -6372,10 +6341,6 @@ function bindDelegates() {
     handleUserOptionClick(event, "departments");
   });
 
-  $("roleOptionsBody").addEventListener("click", (event) => {
-    handleUserOptionClick(event, "roles");
-  });
-
   $("productEditRequestBody").addEventListener("change", (event) => {
     const checkbox = event.target.closest("input[data-action='toggleProductEditRequestSelect']");
     if (!checkbox) return;
@@ -6631,12 +6596,6 @@ function bindDelegates() {
       closeModal("departmentManageModal");
       return;
     }
-
-    const roleManageClose = event.target.closest("button[data-action='closeRoleManageModal']");
-    if (roleManageClose) {
-      closeModal("roleManageModal");
-      return;
-    }
     const productEditRequestDetailClose = event.target.closest(
       "button[data-action='closeProductEditRequestDetailModal']",
     );
@@ -6781,12 +6740,6 @@ function bindDelegates() {
   $("departmentManageModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("departmentManageModal");
-    }
-  });
-
-  $("roleManageModal").addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) {
-      closeModal("roleManageModal");
     }
   });
 
