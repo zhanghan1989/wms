@@ -1673,9 +1673,11 @@ function renderRoleOptionCreateForm() {
   const submitBtn = form?.querySelector('button[type="submit"]');
   if (!form || !nameInput || !submitBtn) return;
   const options = getAvailableRoleOptionItems();
-  nameInput.disabled = options.length === 0;
-  nameInput.placeholder = options.length === 0 ? "没有可新增角色" : "请输入角色名称";
-  submitBtn.disabled = options.length === 0;
+  nameInput.disabled = false;
+  nameInput.placeholder = options.length === 0
+    ? "当前没有可新增角色，如需改名请点下方“变更”"
+    : "请输入角色名称";
+  submitBtn.disabled = false;
 }
 
 function renderUserSelectOptions() {
@@ -5863,6 +5865,9 @@ function bindDelegates() {
       const name = String($("roleOptionCreateName")?.value || "").trim();
       if (!name) {
         throw new Error("\u8bf7\u8f93\u5165\u89d2\u8272\u540d\u79f0");
+      }
+      if (!getAvailableRoleOptionItems().length) {
+        throw new Error("\u5f53\u524d\u6ca1\u6709\u53ef\u65b0\u589e\u89d2\u8272\uff0c\u5982\u9700\u4fee\u6539\u540d\u79f0\u8bf7\u70b9\u4e0b\u65b9\u201c\u53d8\u66f4\u201d");
       }
       const payload = { name };
 
