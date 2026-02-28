@@ -1668,24 +1668,14 @@ function renderDepartmentOptionCreateForm() {
 }
 
 function renderRoleOptionCreateForm() {
-  const codeSelect = $("roleOptionCreateCode");
+  const form = $("roleOptionCreateForm");
   const nameInput = $("roleOptionCreateName");
-  if (!codeSelect || !nameInput) return;
+  const submitBtn = form?.querySelector('button[type="submit"]');
+  if (!form || !nameInput || !submitBtn) return;
   const options = getAvailableRoleOptionItems();
-  codeSelect.innerHTML = [
-    `<option value="">${"\u8bf7\u9009\u62e9\u89d2\u8272\u7f16\u7801"}</option>`,
-    ...options.map(
-      (item) =>
-        `<option value="${escapeHtml(item.code)}">${escapeHtml(
-          String(item.name || item.code) + " (" + String(item.code || "") + ")",
-        )}</option>`,
-    ),
-  ].join("");
-  codeSelect.disabled = options.length === 0;
-  if (!codeSelect.disabled && !codeSelect.value && options.length) {
-    codeSelect.value = String(options[0].code || "");
-  }
   nameInput.disabled = options.length === 0;
+  nameInput.placeholder = options.length === 0 ? "没有可新增角色" : "请输入角色名称";
+  submitBtn.disabled = options.length === 0;
 }
 
 function renderUserSelectOptions() {
@@ -5870,13 +5860,11 @@ function bindDelegates() {
   $("roleOptionCreateForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      const code = String($("roleOptionCreateCode")?.value || "").trim();
       const name = String($("roleOptionCreateName")?.value || "").trim();
-      if (!code) {
-        throw new Error("\u8bf7\u9009\u62e9\u89d2\u8272\u7f16\u7801");
+      if (!name) {
+        throw new Error("\u8bf7\u8f93\u5165\u89d2\u8272\u540d\u79f0");
       }
-      const payload = { code };
-      if (name) payload.name = name;
+      const payload = { name };
 
       await request("/user-options/roles", {
         method: "POST",

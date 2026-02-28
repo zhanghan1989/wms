@@ -90,7 +90,7 @@ export class UserOptionsService {
 
   async createRole(payload: CreateRoleOptionDto): Promise<unknown> {
     await this.ensureSeeded();
-    const code = this.parseRoleCode(payload.code);
+    const code = payload.code ? this.parseRoleCode(payload.code) : await this.pickAvailableRoleCode();
     const option = await this.prisma.roleOption.findUnique({ where: { code } });
     const nextName = this.normalizeOptionalName(payload.name);
     const defaultOption = ROLE_DEFAULTS.find((item) => item.code === code);
@@ -199,6 +199,25 @@ export class UserOptionsService {
       throw new BadRequestException('角色编码不合法');
     }
     return value;
+  }
+
+  private async pickAvailableRoleCode(): Promise<Role> {
+    const options = await this.prisma.roleOption.findMany({
+      select: {
+        code: true,
+        status: true,
+      },
+    });
+    const disabledCodeSet = new Set(
+      options
+        .filter((item) => Number(item.status) !== 1)
+        .map((item) => String(item.code)),
+    );
+    const next = ROLE_DEFAULTS.find((item) => disabledCodeSet.has(String(item.code)));
+    if (!next) {
+      throw new BadRequestException('\u89d2\u8272\u5df2\u5b58\u5728');
+    }
+    return next.code;
   }
 
   private async ensureDefaults(): Promise<void> {

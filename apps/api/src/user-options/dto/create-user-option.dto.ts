@@ -18,8 +18,9 @@ export class CreateDepartmentOptionDto {
 }
 
 export class CreateRoleOptionDto {
+  @IsOptional()
   @IsEnum(Role)
-  code!: Role;
+  code?: Role;
 
   @IsOptional()
   @IsString()
