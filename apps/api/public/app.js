@@ -68,6 +68,9 @@ const state = {
 
 let deleteConfirmResolver = null;
 let actionConfirmResolver = null;
+let suppressAuthErrorToastUntil = 0;
+
+const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 
 const $ = (id) => document.getElementById(id);
 
@@ -146,6 +149,9 @@ const AUDIT_ENTITY_TEXT_MAP = {
 const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = "仅佛山工厂管理者可确认编辑申请";
 
 function showToast(message, isError = false, options = {}) {
+  if (String(message || "") === SILENT_AUTH_ERROR_MESSAGE) {
+    return;
+  }
   showErrorModal(message, isError, options);
 }
 
@@ -1463,7 +1469,13 @@ async function request(path, options = {}) {
   }
 
   if (!res.ok || payload.code !== 0) {
-    throw new Error(normalizeErrorMessage(payload.message || `HTTP ${res.status}`));
+    const message = normalizeErrorMessage(payload.message || `HTTP ${res.status}`);
+    const shouldSuppressAuthError =
+      res.status === 401 && (!state.token || Date.now() < suppressAuthErrorToastUntil);
+    if (shouldSuppressAuthError) {
+      throw new Error(SILENT_AUTH_ERROR_MESSAGE);
+    }
+    throw new Error(message);
   }
 
   return payload.data;
@@ -4634,6 +4646,7 @@ function bindForms() {
   const handleLogout = async () => {
     state.token = "";
     state.me = null;
+    suppressAuthErrorToastUntil = Date.now() + 3000;
     localStorage.removeItem("wms_token");
     document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden"));
     showToast("已退出登录");
