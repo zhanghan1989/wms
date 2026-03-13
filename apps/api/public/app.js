@@ -50,6 +50,12 @@ const state = {
   selectedEditUserId: null,
   selectedResetPasswordUserId: null,
   selectedFbaIds: new Set(),
+  amazonConnections: [],
+  amazonInboundJobs: [],
+  selectedAmazonInboundJobId: null,
+  selectedAmazonInboundJobDetail: null,
+  amazonTransportationSelections: new Map(),
+  amazonPackingDrafts: new Map(),
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
   shopEditingIds: new Set(),
@@ -87,6 +93,11 @@ const DEFAULT_ROLE_OPTIONS = [
   { code: "system_admin", name: "\u7cfb\u7edf\u7ba1\u7406\u5458", status: 1, sort: 30 },
 ];
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = "正在编辑产品申请中，请管理员确认后再执行相关操作。";
+const AMAZON_PLACEMENT_SPLIT_BLOCK_MESSAGE =
+  "Amazon 检测到本次出库会分仓。请回到 FBA补货申请一览减少勾选的申请单号，确保不分仓后再重新执行出库。";
+const AMAZON_TRANSPORTATION_CARRIER_PREFERENCES = ["佐川", "ヤマト"];
+const AMAZON_OAUTH_CONTEXT_STORAGE_KEY = "wms_amazon_oauth_context";
+const AMAZON_OAUTH_POPUP_NAME = "wms_amazon_oauth_popup";
 
 const AUDIT_EVENT_TEXT_MAP = {
   box_created: "新增箱号",
@@ -130,6 +141,25 @@ const AUDIT_EVENT_TEXT_MAP = {
   inventory_adjust_created: "创建库存调整单",
   inventory_adjust_confirmed: "确认库存调整单",
   inventory_adjust_voided: "作废库存调整单",
+  amazon_connection_created: "新增Amazon连接",
+  amazon_connection_updated: "更新Amazon连接",
+  amazon_connection_deleted: "删除Amazon连接",
+  amazon_connection_authorization_started: "发起Amazon授权",
+  amazon_connection_authorization_completed: "完成Amazon授权",
+  amazon_inbound_job_created: "创建Amazon任务",
+  amazon_inbound_job_payload_built: "生成Amazon请求载荷",
+  amazon_inbound_job_pushed: "推送Amazon任务",
+  amazon_inbound_job_push_failed: "Amazon任务推送失败",
+  amazon_inbound_job_sync_failed: "Amazon任务同步失败",
+  amazon_inbound_job_synced: "同步Amazon任务状态",
+  amazon_inbound_job_placement_updated: "更新Amazon分仓步骤",
+  amazon_inbound_job_transportation_updated: "更新Amazon运输步骤",
+  amazon_inbound_job_labels_updated: "获取Amazon箱唛",
+  amazon_inbound_job_tracking_updated: "回传Amazon物流单号",
+  amazon_inbound_job_automation_updated: "更新Amazon自动处理摘要",
+  amazon_inbound_job_shipments_synced: "同步Amazon货件信息",
+  amazon_inbound_job_packing_updated: "更新Amazon装箱步骤",
+  amazon_inbound_job_packing_information_updated: "提交Amazon装箱信息",
 };
 
 const AUDIT_ENTITY_TEXT_MAP = {
@@ -902,6 +932,660 @@ function getFbaStatusText(status) {
   return displayText(status);
 }
 
+function getAmazonInboundJobStatusText(status) {
+  if (status === "draft") return "草稿";
+  if (status === "payload_ready") return "载荷已生成";
+  if (status === "pushed") return "已推送";
+  if (status === "failed") return "失败";
+  if (status === "closed") return "已关闭";
+  return displayText(status);
+}
+
+function getAmazonConnectionStatusText(status) {
+  return Number(status) === 1 ? "启用" : "停用";
+}
+
+function parseCommaSeparatedList(value, { upperCase = false } = {}) {
+  const items = String(value || "")
+    .split(",")
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  return upperCase ? items.map((item) => item.toUpperCase()) : items;
+}
+
+function stringifyPrettyJson(value) {
+  if (value === null || value === undefined) return "-";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function getAmazonTransportationSelectionKey(jobId, shipmentId) {
+  return `${jobId}:${shipmentId}`;
+}
+
+function pickAmazonTransportationShipmentId(item) {
+  return String(
+    item?.shipmentId ||
+      item?.shipment?.shipmentId ||
+      item?.shipment?.amazonShipmentId ||
+      item?.amazonShipmentId ||
+      "",
+  ).trim();
+}
+
+function pickAmazonTransportationOptionId(item) {
+  return String(
+    item?.transportationOptionId ||
+      item?.optionId ||
+      item?.shippingOptionId ||
+      item?.deliveryWindowOptionId ||
+      "",
+  ).trim();
+}
+
+function pickAmazonTransportationMode(item) {
+  return displayText(
+    item?.shippingMode ||
+      item?.transportationMode ||
+      item?.mode ||
+      item?.shippingSolution ||
+      item?.solutionType ||
+      item?.carrierName,
+  );
+}
+
+function pickAmazonTransportationFee(item) {
+  return displayText(
+    item?.fee?.amount ??
+      item?.cost?.amount ??
+      item?.estimatedCharge?.amount ??
+      item?.quote?.amount ??
+      item?.shippingCost?.amount,
+  );
+}
+
+function normalizeAmazonTransportationRows(transportationOptions) {
+  if (!Array.isArray(transportationOptions)) return [];
+  return transportationOptions
+    .map((item) => {
+      const shipmentId = pickAmazonTransportationShipmentId(item);
+      const transportationOptionId = pickAmazonTransportationOptionId(item);
+      if (!shipmentId || !transportationOptionId) return null;
+      return {
+        shipmentId,
+        shipmentName: displayText(item?.shipmentName || item?.shipment?.shipmentName),
+        transportationOptionId,
+        mode: pickAmazonTransportationMode(item),
+        fee: pickAmazonTransportationFee(item),
+        carrierName: displayText(item?.carrierName || item?.carrier?.name),
+        status: displayText(item?.status),
+      };
+    })
+    .filter(Boolean);
+}
+
+function renderAmazonBoxItemSummary(items) {
+  if (!Array.isArray(items) || !items.length) {
+    return '<span class="muted">-</span>';
+  }
+  return items
+    .map((item) => {
+      const code = String(item?.msku || item?.fnsku || item?.asin || "").trim() || "-";
+      const quantity = displayText(item?.quantity);
+      const extra = [String(item?.fnsku || "").trim(), String(item?.asin || "").trim()]
+        .filter(Boolean)
+        .join(" / ");
+      return `${escapeHtml(code)} x ${escapeHtml(quantity)}${
+        extra ? `<div class="muted">${escapeHtml(extra)}</div>` : ""
+      }`;
+    })
+    .join('<div class="amazon-box-item-divider"></div>');
+}
+
+function buildAmazonShipmentAutomationRows(shipments, labelsState, trackingState) {
+  return (Array.isArray(shipments) ? shipments : []).map((shipment) => {
+    const amazonShipmentId = String(shipment?.amazonShipmentId || "").trim();
+    const boxes = Array.isArray(shipment?.boxes) ? shipment.boxes : [];
+    const labelRecord =
+      labelsState?.[amazonShipmentId] && typeof labelsState[amazonShipmentId] === "object"
+        ? labelsState[amazonShipmentId]
+        : {};
+    const trackingRecord =
+      trackingState?.[amazonShipmentId] && typeof trackingState[amazonShipmentId] === "object"
+        ? trackingState[amazonShipmentId]
+        : {};
+    const issues = [];
+    if (!amazonShipmentId) {
+      issues.push("缺少 Amazon 货件ID");
+    }
+    if (!shipment?.shipmentConfirmationId) {
+      issues.push("缺少 shipmentConfirmationId");
+    }
+    if (boxes.length !== 1) {
+      issues.push("不是默认单箱");
+    }
+    const labelReady = Boolean(labelRecord?.downloadUrl);
+    const trackingItems = Array.isArray(
+      trackingRecord?.request?.trackingDetails?.spdTrackingDetail?.boxIdToTrackingIdList,
+    )
+      ? trackingRecord.request.trackingDetails.spdTrackingDetail.boxIdToTrackingIdList
+      : [];
+    const trackingReady = trackingItems.some((item) => String(item?.trackingId || "").trim());
+    return {
+      amazonShipmentId,
+      labelReady,
+      trackingReady,
+      issues,
+      labelUpdatedAt: displayText(labelRecord?.requestedAt),
+      trackingUpdatedAt: displayText(trackingRecord?.updatedAt),
+    };
+  });
+}
+
+function renderAmazonShipmentAutomationSummary(rows) {
+  if (!Array.isArray(rows) || !rows.length) {
+    return '<div class="muted">当前还没有 Amazon shipment，自动处理结果将在 shipment 同步后显示。</div>';
+  }
+  const successCount = rows.filter((row) => row.labelReady && row.trackingReady && !row.issues.length).length;
+  const warningCount = rows.filter((row) => row.issues.length || !row.labelReady || !row.trackingReady).length;
+  return `
+    <div class="amazon-automation-summary-head">
+      <div><strong>成功货件：</strong>${escapeHtml(String(successCount))}</div>
+      <div><strong>待处理货件：</strong>${escapeHtml(String(warningCount))}</div>
+    </div>
+    <div class="amazon-automation-summary-list">
+      ${rows
+        .map(
+          (row) => `
+            <article class="amazon-automation-card ${row.issues.length || !row.labelReady || !row.trackingReady ? "is-warning" : "is-success"}">
+              <div><strong>货件ID：</strong>${escapeHtml(displayText(row.amazonShipmentId))}</div>
+              <div><strong>箱唛：</strong>${escapeHtml(row.labelReady ? "已完成" : "未完成")}</div>
+              <div><strong>物流单号：</strong>${escapeHtml(row.trackingReady ? "已回传" : "未回传")}</div>
+              <div><strong>箱唛时间：</strong>${escapeHtml(row.labelUpdatedAt)}</div>
+              <div><strong>物流时间：</strong>${escapeHtml(row.trackingUpdatedAt)}</div>
+              <div><strong>说明：</strong>${escapeHtml(row.issues.length ? row.issues.join("；") : "自动处理已完成")}</div>
+            </article>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderAmazonAutomationStatusCell(responsePayload) {
+  const automationState =
+    responsePayload?.automation && typeof responsePayload.automation === "object" ? responsePayload.automation : {};
+  const shipmentRows = Array.isArray(automationState?.shipmentRows) ? automationState.shipmentRows : [];
+  if (!shipmentRows.length) {
+    return '<span class="amazon-pill is-muted">未运行</span>';
+  }
+  const warningCount = Number(automationState?.warningCount || 0);
+  const pendingCount = shipmentRows.filter((row) => row?.issues?.length || !row?.labelReady || !row?.trackingReady).length;
+  if (!pendingCount && warningCount <= 0) {
+    return '<span class="amazon-pill">已完成</span>';
+  }
+  return `<span class="amazon-pill is-muted">待处理 ${escapeHtml(String(Math.max(pendingCount, warningCount, 1)))}</span>`;
+}
+
+function buildAmazonAutomationSummaryPayload(detail, artifactSummary, expressNo) {
+  const responsePayload =
+    detail?.responsePayload && typeof detail.responsePayload === "object" ? detail.responsePayload : {};
+  const labelsState = responsePayload?.labels && typeof responsePayload.labels === "object" ? responsePayload.labels : {};
+  const trackingState =
+    responsePayload?.trackingDetails && typeof responsePayload.trackingDetails === "object"
+      ? responsePayload.trackingDetails
+      : {};
+  return {
+    summary: {
+      lastRunSource: "auto_outbound_flow",
+      expressNo: String(expressNo || "").trim(),
+      labelCount: Number(artifactSummary?.labelCount || 0),
+      trackingCount: Number(artifactSummary?.trackingCount || 0),
+      warningCount: Array.isArray(artifactSummary?.warnings) ? artifactSummary.warnings.length : 0,
+      warnings: Array.isArray(artifactSummary?.warnings) ? artifactSummary.warnings : [],
+      shipmentRows: buildAmazonShipmentAutomationRows(
+        Array.isArray(detail?.shipments) ? detail.shipments : [],
+        labelsState,
+        trackingState,
+      ),
+    },
+  };
+}
+
+function seedAmazonTransportationSelections(jobId, rows, confirmedSelections = []) {
+  const confirmedMap = new Map(
+    (Array.isArray(confirmedSelections) ? confirmedSelections : [])
+      .map((item) => [
+        String(item?.shipmentId || "").trim(),
+        String(item?.transportationOptionId || "").trim(),
+      ])
+      .filter(([shipmentId, transportationOptionId]) => shipmentId && transportationOptionId),
+  );
+
+  const shipmentIds = [...new Set(rows.map((row) => row.shipmentId))];
+  shipmentIds.forEach((shipmentId) => {
+    const key = getAmazonTransportationSelectionKey(jobId, shipmentId);
+    if (state.amazonTransportationSelections.has(key)) {
+      return;
+    }
+    const confirmed = confirmedMap.get(shipmentId);
+    if (confirmed) {
+      state.amazonTransportationSelections.set(key, confirmed);
+      return;
+    }
+    const firstRow = rows.find((row) => row.shipmentId === shipmentId);
+    if (firstRow) {
+      state.amazonTransportationSelections.set(key, firstRow.transportationOptionId);
+    }
+  });
+}
+
+function pickAmazonPackingOptionId(item) {
+  return String(item?.packingOptionId || item?.optionId || item?.packingId || "").trim();
+}
+
+function normalizeAmazonPackingOptions(options) {
+  if (!Array.isArray(options)) return [];
+  return options
+    .map((item) => {
+      const packingOptionId = pickAmazonPackingOptionId(item);
+      if (!packingOptionId) return null;
+      const packingGroups = Array.isArray(item?.packingGroups)
+        ? item.packingGroups
+        : Array.isArray(item?.groups)
+          ? item.groups
+          : [];
+      return {
+        packingOptionId,
+        packingGroups,
+        groupCount: packingGroups.length,
+        status: displayText(item?.status),
+        fee: displayText(item?.fees?.amount ?? item?.packingFee?.amount ?? item?.serviceFee?.amount),
+      };
+    })
+    .filter(Boolean);
+}
+
+function extractAmazonPackingGroupSkuSet(group) {
+  const candidates = [
+    ...(Array.isArray(group?.items) ? group.items : []),
+    ...(Array.isArray(group?.skus) ? group.skus : []),
+    ...(Array.isArray(group?.mskus) ? group.mskus : []),
+  ];
+  return new Set(
+    candidates
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        return String(item?.msku || item?.sellerSku || item?.sku || "").trim();
+      })
+      .filter(Boolean),
+  );
+}
+
+function buildDefaultAmazonPackingInformation(job, packingState, packingOptions) {
+  const selectedPackingOptionId = String(packingState?.selectedPackingOptionId || "").trim();
+  const selectedPackingOption =
+    packingOptions.find((item) => item.packingOptionId === selectedPackingOptionId) || packingOptions[0];
+  const packingGroups = Array.isArray(selectedPackingOption?.packingGroups)
+    ? selectedPackingOption.packingGroups
+    : [];
+  const groups = (packingGroups.length
+    ? packingGroups
+    : [{ packingGroupId: "REPLACE_ME_PACKING_GROUP", items: [] }]).map((group, index) => ({
+    packingGroupId: String(group?.packingGroupId || group?.groupId || `GROUP_${index + 1}`),
+    skuSet: extractAmazonPackingGroupSkuSet(group),
+    boxes: [],
+  }));
+
+  const aggregatedItems = [];
+  const skuIndexMap = new Map();
+  job.items.forEach((item) => {
+    const sku = String(item?.sku?.sku || "").trim();
+    const qty = Number(item?.actualQty ?? item?.requestedQty ?? 0);
+    if (!sku || qty <= 0) return;
+    const existingIndex = skuIndexMap.get(sku);
+    if (existingIndex !== undefined) {
+      aggregatedItems[existingIndex].quantity += qty;
+      return;
+    }
+    skuIndexMap.set(sku, aggregatedItems.length);
+    aggregatedItems.push({
+      msku: sku,
+      quantity: qty,
+    });
+  });
+
+  if (aggregatedItems.length) {
+    const defaultCartonRef = buildAmazonDefaultCartonRef(job);
+    groups[0].boxes.push({
+      contentInformationSource: "BOX_CONTENT_PROVIDED",
+      boxId: defaultCartonRef || undefined,
+      templateName: defaultCartonRef || undefined,
+      quantity: 1,
+      dimensions: {
+        unitOfMeasurement: "CM",
+        length: 1,
+        width: 1,
+        height: 1,
+      },
+      weight: {
+        unit: "KG",
+        value: 1,
+      },
+      items: aggregatedItems,
+    });
+  }
+
+  const packageGroupings = groups
+    .filter((group) => group.boxes.length > 0)
+    .map((group) => ({
+      packingGroupId: group.packingGroupId,
+      boxes: group.boxes,
+    }));
+
+  return {
+    packageGroupings: packageGroupings.length
+      ? packageGroupings
+      : [
+          {
+            packingGroupId: groups[0]?.packingGroupId || "REPLACE_ME_PACKING_GROUP",
+            boxes: [],
+          },
+        ],
+  };
+}
+
+function buildAmazonDefaultCartonRef(job) {
+  const currentRef = String(
+    (Array.isArray(job?.items) ? job.items : [])
+      .map((item) => String(item?.fbaCartonRef || "").trim())
+      .find(Boolean) || "",
+  ).trim();
+  return currentRef || `${String(job?.jobNo || "AFBA")}-BOX-1`;
+}
+
+function parseAmazonPackingDraft(raw) {
+  try {
+    const record = JSON.parse(String(raw || "").trim() || "{}");
+    return record && typeof record === "object" ? record : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildAmazonPackingFormRows(packingInformation) {
+  const packageGroupings = Array.isArray(packingInformation?.packageGroupings)
+    ? packingInformation.packageGroupings
+    : [];
+  const rows = [];
+  packageGroupings.forEach((group, groupIndex) => {
+    const packingGroupId = String(group?.packingGroupId || `GROUP_${groupIndex + 1}`).trim();
+    const boxes = Array.isArray(group?.boxes) ? group.boxes : [];
+    boxes.forEach((box, boxIndex) => {
+      const items = Array.isArray(box?.items) ? box.items : [];
+      rows.push({
+        groupIndex,
+        boxIndex,
+        packingGroupId,
+        cartonRef: String(box?.boxId || box?.templateName || "").trim(),
+        templateName: String(box?.templateName || "").trim(),
+        itemCount: items.length,
+        items: items.map((item, itemIndex) => ({
+          itemIndex,
+          sku: String(item?.msku || item?.sellerSku || item?.sku || "").trim(),
+          quantity: Number(item?.quantity ?? 0) || 0,
+        })),
+        totalQty: items.reduce((sum, item) => sum + (Number(item?.quantity ?? 0) || 0), 0),
+        itemSummary: items
+          .map((item) => {
+            const sku = String(item?.msku || item?.sellerSku || item?.sku || "").trim();
+            const qty = Number(item?.quantity ?? 0) || 0;
+            return sku ? `${sku} x ${qty}` : "";
+          })
+          .filter(Boolean)
+          .join(" / "),
+        weight: Number(box?.weight?.value ?? 0) || 0,
+        length: Number(box?.dimensions?.length ?? 0) || 0,
+        width: Number(box?.dimensions?.width ?? 0) || 0,
+        height: Number(box?.dimensions?.height ?? 0) || 0,
+      });
+    });
+  });
+  return rows;
+}
+
+function renderAmazonPackingForm(job, packingDraft) {
+  const parsedDraft = parseAmazonPackingDraft(packingDraft);
+  if (!parsedDraft) {
+    return '<div class="muted amazon-section-hint">当前 JSON 无法解析，结构化表单已暂停。请先修正下方 JSON，再点击“从JSON刷新表单”。</div>';
+  }
+
+  const rows = buildAmazonPackingFormRows(parsedDraft);
+  return `
+    <div class="muted amazon-section-hint">这里仅允许维护 FBA箱标识、重量和尺寸。出库后箱内 SKU 与数量已经冻结，不能再修改。</div>
+    ${
+      !rows.length
+        ? '<div class="muted amazon-section-hint">当前装箱草稿还没有 box，可先点“重置模板”。</div>'
+        : ""
+    }
+    <div class="amazon-packing-form-list">
+      ${rows
+        .map((row, index) => {
+          const commonAttrs = `data-job-id="${escapeHtml(String(job.id))}" data-group-index="${escapeHtml(
+            String(row.groupIndex),
+          )}" data-box-index="${escapeHtml(String(row.boxIndex))}" data-action="amazonPackingField"`;
+          return `
+            <article class="amazon-packing-box-card">
+              <div class="amazon-packing-box-head">
+                <div class="amazon-packing-box-title">
+                  <strong>FBA箱 ${index + 1}</strong>
+                  <span class="muted">分组 ${escapeHtml(displayText(row.packingGroupId))} / 明细 ${escapeHtml(
+                    displayText(row.itemCount),
+                  )} / 总数量 ${escapeHtml(displayText(row.totalQty))}</span>
+                </div>
+              </div>
+              <div class="amazon-packing-box-grid">
+                <label>
+                  FBA箱标识
+                  <input type="text" value="${escapeHtml(row.cartonRef)}" ${commonAttrs} data-field="cartonRef" />
+                </label>
+                <label>
+                  重量(KG)
+                  <input type="number" min="0" step="0.01" value="${escapeHtml(String(row.weight || 0))}" ${commonAttrs} data-field="weight" />
+                </label>
+                <label>
+                  长(CM)
+                  <input type="number" min="0" step="0.1" value="${escapeHtml(String(row.length || 0))}" ${commonAttrs} data-field="length" />
+                </label>
+                <label>
+                  宽(CM)
+                  <input type="number" min="0" step="0.1" value="${escapeHtml(String(row.width || 0))}" ${commonAttrs} data-field="width" />
+                </label>
+                <label>
+                  高(CM)
+                  <input type="number" min="0" step="0.1" value="${escapeHtml(String(row.height || 0))}" ${commonAttrs} data-field="height" />
+                </label>
+              </div>
+              <div class="amazon-packing-item-list">
+                <div class="amazon-packing-item-list-head">
+                  <strong>箱内商品（只读）</strong>
+                </div>
+                ${
+                  row.items.length
+                    ? row.items
+                        .map(
+                          (item) => `
+                            <div class="amazon-packing-item-row">
+                              <div class="amazon-packing-item-cell">
+                                <span class="amazon-packing-item-label">SKU</span>
+                                <strong>${escapeHtml(item.sku || "-")}</strong>
+                              </div>
+                              <div class="amazon-packing-item-cell">
+                                <span class="amazon-packing-item-label">商品数量</span>
+                                <strong>${escapeHtml(String(item.quantity || 0))}</strong>
+                              </div>
+                            </div>
+                          `,
+                        )
+                        .join("")
+                    : '<div class="muted amazon-packing-field-note">当前箱还没有商品，请先新增商品。</div>'
+                }
+              </div>
+              <div class="muted amazon-packing-field-note">当前箱明细：${escapeHtml(row.itemSummary || "-")}</div>
+            </article>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function buildAmazonPackingEditorHint(job) {
+  const items = Array.isArray(job?.items) ? job.items : [];
+  const cartonRefs = [buildAmazonDefaultCartonRef(job)].filter(Boolean);
+  const requestNos = Array.from(
+    new Set(items.map((item) => String(item?.fbaReplenishment?.requestNo || "").trim()).filter(Boolean)),
+  );
+  const sourceBoxCodes = Array.from(
+    new Set(
+      items
+        .map((item) => String(item?.sourceInventoryBox?.boxCode || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  const cartonRefExample = cartonRefs.slice(0, 3).join(" / ") || "FBA箱标识";
+  const requestNoExample = requestNos.slice(0, 3).join(" / ") || "申请单号";
+  const sourceBoxExample = sourceBoxCodes.slice(0, 3).join(" / ") || "库存箱号";
+  return `boxId/templateName 默认使用 FBA 箱标识，例如：${cartonRefExample}；申请单号 ${requestNoExample} 只作为箱内来源，不作为箱标识；不要填写来源库存箱号，例如：${sourceBoxExample}。`;
+}
+
+function buildExpectedAmazonPackingSkuQtyMap(job) {
+  const map = new Map();
+  (Array.isArray(job?.items) ? job.items : []).forEach((item) => {
+    const sku = String(item?.sku?.sku || "").trim();
+    const qty = Number(item?.actualQty ?? item?.requestedQty ?? 0) || 0;
+    if (!sku || qty <= 0) return;
+    map.set(sku, (map.get(sku) || 0) + qty);
+  });
+  return map;
+}
+
+function buildSubmittedAmazonPackingSkuQtyMap(packingInformation) {
+  const map = new Map();
+  const groupings = Array.isArray(packingInformation?.packageGroupings) ? packingInformation.packageGroupings : [];
+  groupings.forEach((group) => {
+    const boxes = Array.isArray(group?.boxes) ? group.boxes : [];
+    boxes.forEach((box) => {
+      const items = Array.isArray(box?.items) ? box.items : [];
+      items.forEach((item) => {
+        const sku = String(item?.msku || item?.sellerSku || item?.sku || "").trim();
+        const qty = Number(item?.quantity ?? 0) || 0;
+        if (!sku || qty <= 0) return;
+        map.set(sku, (map.get(sku) || 0) + qty);
+      });
+    });
+  });
+  return map;
+}
+
+function validateAmazonPackingItemsLocked(job, packingInformation) {
+  const expected = buildExpectedAmazonPackingSkuQtyMap(job);
+  const submitted = buildSubmittedAmazonPackingSkuQtyMap(packingInformation);
+  if (expected.size !== submitted.size) {
+    throw new Error("出库后箱内 SKU 和数量不可修改，请保持与出库申请一致。");
+  }
+  for (const [sku, qty] of expected.entries()) {
+    if ((submitted.get(sku) || 0) !== qty) {
+      throw new Error(`出库后箱内 SKU 和数量不可修改，SKU ${sku} 当前应为 ${qty}。`);
+    }
+  }
+}
+
+function validateAmazonPackingInformation(job, packingInformation) {
+  const items = Array.isArray(job?.items) ? job.items : [];
+  const sourceBoxCodes = new Set(
+    items
+      .map((item) => String(item?.sourceInventoryBox?.boxCode || "").trim())
+      .filter(Boolean),
+  );
+  const packageGroupings = Array.isArray(packingInformation?.packageGroupings)
+    ? packingInformation.packageGroupings
+    : [];
+
+  packageGroupings.forEach((group, groupIndex) => {
+    const boxes = Array.isArray(group?.boxes) ? group.boxes : [];
+    boxes.forEach((box, boxIndex) => {
+      const boxId = String(box?.boxId || "").trim();
+      const templateName = String(box?.templateName || "").trim();
+      if (boxId && sourceBoxCodes.has(boxId)) {
+        throw new Error(
+          `第 ${groupIndex + 1} 组第 ${boxIndex + 1} 个箱的 boxId=${boxId} 是来源库存箱号，请改为 FBA 箱标识。`,
+        );
+      }
+      if (templateName && sourceBoxCodes.has(templateName)) {
+        throw new Error(
+          `第 ${groupIndex + 1} 组第 ${boxIndex + 1} 个箱的 templateName=${templateName} 是来源库存箱号，请改为 FBA 箱标识。`,
+        );
+      }
+    });
+  });
+  validateAmazonPackingItemsLocked(job, packingInformation);
+}
+
+function updateAmazonPackingDraft(jobId, updater) {
+  const input = $("amazonPackingInformationInput");
+  const currentRaw =
+    String(input?.value || "").trim() ||
+    String(state.amazonPackingDrafts.get(String(jobId)) || "").trim();
+  const draft = parseAmazonPackingDraft(currentRaw);
+  if (!draft) {
+    throw new Error("当前装箱 JSON 无法解析，请先修正后再操作");
+  }
+
+  updater(draft);
+
+  const nextRaw = stringifyPrettyJson(draft);
+  state.amazonPackingDrafts.set(String(jobId), nextRaw);
+  if (input && String(input.dataset.jobId || "").trim() === String(jobId)) {
+    input.value = nextRaw;
+  }
+}
+
+function updateAmazonPackingDraftFromField(jobId, groupIndex, boxIndex, field, value, itemIndex) {
+  updateAmazonPackingDraft(jobId, (draft) => {
+    const packageGroupings = Array.isArray(draft.packageGroupings) ? draft.packageGroupings : [];
+    const grouping = packageGroupings[groupIndex];
+    const boxes = Array.isArray(grouping?.boxes) ? grouping.boxes : [];
+    const box = boxes[boxIndex];
+    if (!grouping || !box) {
+      throw new Error("未找到对应的装箱行，请刷新表单后重试");
+    }
+
+    if (field === "cartonRef") {
+      const nextValue = String(value || "").trim();
+      box.boxId = nextValue || undefined;
+      box.templateName = nextValue || undefined;
+    } else if (field === "weight") {
+      const nextValue = Number(value);
+      box.weight = {
+        ...(box.weight && typeof box.weight === "object" ? box.weight : {}),
+        unit: String(box?.weight?.unit || "KG"),
+        value: Number.isFinite(nextValue) ? nextValue : 0,
+      };
+    } else if (field === "length" || field === "width" || field === "height") {
+      const nextValue = Number(value);
+      box.dimensions = {
+        ...(box.dimensions && typeof box.dimensions === "object" ? box.dimensions : {}),
+        unitOfMeasurement: String(box?.dimensions?.unitOfMeasurement || "CM"),
+        [field]: Number.isFinite(nextValue) ? nextValue : 0,
+      };
+    }
+  });
+}
+
 function getProductEditRequestStatusText(status) {
   if (status === "pending") return "待处理";
   if (status === "confirmed") return "已确认";
@@ -1562,6 +2246,7 @@ async function loadMe() {
     state.token = "";
     state.me = null;
     localStorage.removeItem("wms_token");
+    clearAmazonOauthContext();
     $("sessionInfo").textContent = "登录失效";
     setAuthGate(false);
     applyRoleView();
@@ -4171,6 +4856,1188 @@ async function reopenFbaReplenishmentRequest(id) {
   });
 }
 
+async function listAmazonConnections() {
+  return request("/amazon-fba/connections");
+}
+
+async function createAmazonConnection(payload) {
+  return request("/amazon-fba/connections", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function updateAmazonConnection(id, payload) {
+  return request(`/amazon-fba/connections/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function startAmazonConnectionAuthorization(id, payload) {
+  return request(`/amazon-fba/connections/${id}/oauth/start`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function completeAmazonConnectionAuthorization(id, payload) {
+  return request(`/amazon-fba/connections/${id}/oauth/complete`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function listAmazonInboundJobs() {
+  return request("/amazon-fba/jobs");
+}
+
+async function getAmazonInboundJobDetail(id) {
+  return request(`/amazon-fba/jobs/${id}`);
+}
+
+async function createAmazonInboundJob(payload) {
+  return request("/amazon-fba/jobs", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function buildAmazonInboundJobPayload(id) {
+  return request(`/amazon-fba/jobs/${id}/build-payload`, {
+    method: "POST",
+  });
+}
+
+async function pushAmazonInboundJob(id, payload) {
+  return request(`/amazon-fba/jobs/${id}/push`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function syncAmazonInboundJob(id) {
+  return request(`/amazon-fba/jobs/${id}/sync`, {
+    method: "POST",
+  });
+}
+
+async function generateAmazonPlacementOptions(id) {
+  return request(`/amazon-fba/jobs/${id}/placement-options/generate`, {
+    method: "POST",
+  });
+}
+
+async function listAmazonPlacementOptions(id) {
+  return request(`/amazon-fba/jobs/${id}/placement-options`);
+}
+
+async function markAmazonPlacementSplitDetected(id) {
+  return request(`/amazon-fba/jobs/${id}/placement-split-detected`, {
+    method: "POST",
+  });
+}
+
+async function confirmAmazonPlacementOption(id, placementOptionId) {
+  return request(`/amazon-fba/jobs/${id}/placement-options/${encodeURIComponent(placementOptionId)}/confirm`, {
+    method: "POST",
+  });
+}
+
+async function generateAmazonPackingOptions(id) {
+  return request(`/amazon-fba/jobs/${id}/packing-options/generate`, {
+    method: "POST",
+  });
+}
+
+async function listAmazonPackingOptions(id) {
+  return request(`/amazon-fba/jobs/${id}/packing-options`);
+}
+
+async function confirmAmazonPackingOption(id, packingOptionId) {
+  return request(`/amazon-fba/jobs/${id}/packing-options/${encodeURIComponent(packingOptionId)}/confirm`, {
+    method: "POST",
+  });
+}
+
+async function setAmazonPackingInformation(id, payload) {
+  return request(`/amazon-fba/jobs/${id}/packing-information`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function submitAmazonDefaultPackingInformation(id) {
+  const detail = await getAmazonInboundJobDetail(id);
+  const responsePayload =
+    detail?.responsePayload && typeof detail.responsePayload === "object" ? detail.responsePayload : {};
+  const packingState =
+    responsePayload?.packingOptions && typeof responsePayload.packingOptions === "object"
+      ? responsePayload.packingOptions
+      : {};
+  const packingOptions = normalizeAmazonPackingOptions(
+    Array.isArray(packingState?.options) ? packingState.options : [],
+  );
+  const packingInformation = buildDefaultAmazonPackingInformation(detail, packingState, packingOptions);
+  validateAmazonPackingInformation(detail, packingInformation);
+  state.amazonPackingDrafts.set(String(id), stringifyPrettyJson(packingInformation));
+  await setAmazonPackingInformation(id, { packingInformation });
+  return packingInformation;
+}
+
+function getAmazonPlacementShipmentCount(option) {
+  if (Array.isArray(option?.shipmentIds)) {
+    return option.shipmentIds.filter(Boolean).length;
+  }
+  if (Array.isArray(option?.shipments)) {
+    return option.shipments.length;
+  }
+  const count = Number(option?.shipmentCount ?? option?.shipmentsCount ?? NaN);
+  return Number.isFinite(count) ? count : null;
+}
+
+function getAmazonPlacementOptionId(option) {
+  return String(option?.placementOptionId || option?.placementId || "").trim();
+}
+
+async function ensureAmazonPlacementDoesNotSplit(id) {
+  await generateAmazonPlacementOptions(id);
+  await syncAmazonInboundJob(id);
+  const detail = await listAmazonPlacementOptions(id);
+  const responsePayload =
+    detail?.responsePayload && typeof detail.responsePayload === "object" ? detail.responsePayload : {};
+  const placementState =
+    responsePayload?.placementOptions && typeof responsePayload.placementOptions === "object"
+      ? responsePayload.placementOptions
+      : {};
+  const placementOptions = Array.isArray(placementState?.options) ? placementState.options : [];
+  const singleShipmentOption = placementOptions.find((item) => {
+    const shipmentCount = getAmazonPlacementShipmentCount(item);
+    return shipmentCount === 1 && Boolean(getAmazonPlacementOptionId(item));
+  });
+  if (singleShipmentOption) {
+    await confirmAmazonPlacementOption(id, getAmazonPlacementOptionId(singleShipmentOption));
+    return getAmazonInboundJobDetail(id);
+  }
+  await markAmazonPlacementSplitDetected(id);
+  const error = new Error(AMAZON_PLACEMENT_SPLIT_BLOCK_MESSAGE);
+  error.amazonPlacementSplit = true;
+  throw error;
+}
+
+function buildAmazonTransportationSelectionsFromRows(rows) {
+  const grouped = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    const shipmentId = String(row?.shipmentId || "").trim();
+    const transportationOptionId = String(row?.transportationOptionId || "").trim();
+    if (!shipmentId || !transportationOptionId) return;
+    if (!grouped.has(shipmentId)) {
+      grouped.set(shipmentId, []);
+    }
+    grouped.get(shipmentId).push(row);
+  });
+  const shipmentIds = [...grouped.keys()];
+  if (!shipmentIds.length) {
+    return [];
+  }
+  const selections = [];
+  for (const shipmentId of shipmentIds) {
+    const options = grouped.get(shipmentId) || [];
+    if (options.length === 1) {
+      selections.push({
+        shipmentId,
+        transportationOptionId: String(options[0]?.transportationOptionId || "").trim(),
+      });
+      continue;
+    }
+    let selected = null;
+    for (const keyword of AMAZON_TRANSPORTATION_CARRIER_PREFERENCES) {
+      const matched = options.filter((option) => {
+        const carrierName = String(option?.carrierName || "").trim();
+        const mode = String(option?.mode || "").trim();
+        return carrierName.includes(keyword) || mode.includes(keyword);
+      });
+      if (matched.length === 1) {
+        selected = matched[0];
+        break;
+      }
+      if (matched.length > 1) {
+        return [];
+      }
+    }
+    if (!selected) {
+      return [];
+    }
+    selections.push({
+      shipmentId,
+      transportationOptionId: String(selected?.transportationOptionId || "").trim(),
+    });
+  }
+  return selections.filter((item) => item.shipmentId && item.transportationOptionId);
+}
+
+async function maybeAutoConfirmAmazonTransportation(id, placementOptionId) {
+  if (!placementOptionId) {
+    return { autoConfirmed: false, detail: await getAmazonInboundJobDetail(id) };
+  }
+  await generateAmazonTransportationOptions(id, { placementOptionId });
+  await syncAmazonInboundJob(id);
+  const detail = await listAmazonTransportationOptions(id, placementOptionId);
+  const responsePayload =
+    detail?.responsePayload && typeof detail.responsePayload === "object" ? detail.responsePayload : {};
+  const transportationState =
+    responsePayload?.transportationOptions && typeof responsePayload.transportationOptions === "object"
+      ? responsePayload.transportationOptions
+      : {};
+  const transportationOptions = Array.isArray(transportationState?.options) ? transportationState.options : [];
+  const transportationRows = normalizeAmazonTransportationRows(transportationOptions);
+  const transportationSelections = buildAmazonTransportationSelectionsFromRows(transportationRows);
+  if (!transportationSelections.length) {
+    return { autoConfirmed: false, detail };
+  }
+  await confirmAmazonTransportationOptions(id, { transportationSelections });
+  return {
+    autoConfirmed: true,
+    detail: await getAmazonInboundJobDetail(id),
+  };
+}
+
+async function generateAmazonTransportationOptions(id, payload) {
+  return request(`/amazon-fba/jobs/${id}/transportation-options/generate`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function listAmazonTransportationOptions(id, placementOptionId) {
+  const suffix = placementOptionId
+    ? `?placementOptionId=${encodeURIComponent(placementOptionId)}`
+    : "";
+  return request(`/amazon-fba/jobs/${id}/transportation-options${suffix}`);
+}
+
+async function confirmAmazonTransportationOptions(id, payload) {
+  return request(`/amazon-fba/jobs/${id}/transportation-options/confirm`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function getAmazonShipmentLabels(jobId, shipmentId, payload) {
+  return request(`/amazon-fba/jobs/${jobId}/shipments/${shipmentId}/labels`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function updateAmazonShipmentTracking(jobId, shipmentId, payload) {
+  return request(`/amazon-fba/jobs/${jobId}/shipments/${shipmentId}/tracking`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function updateAmazonAutomationSummary(jobId, payload) {
+  return request(`/amazon-fba/jobs/${jobId}/automation-summary`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function maybeAutoHandleAmazonShipmentArtifacts(jobId, expressNo) {
+  const normalizedExpressNo = String(expressNo || "").trim();
+  await syncAmazonInboundJob(jobId);
+  const detail = await getAmazonInboundJobDetail(jobId);
+  const shipments = Array.isArray(detail?.shipments) ? detail.shipments : [];
+  if (!shipments.length) {
+    return { labelCount: 0, trackingCount: 0, warnings: ["Amazon shipment 尚未同步出来"] };
+  }
+  let labelCount = 0;
+  let trackingCount = 0;
+  const warnings = [];
+  for (const shipment of shipments) {
+    const boxes = Array.isArray(shipment?.boxes) ? shipment.boxes : [];
+    if (boxes.length !== 1) {
+      warnings.push(`货件 ${displayText(shipment?.amazonShipmentId)} 不是默认单箱，已跳过箱唛和物流单号自动处理`);
+      continue;
+    }
+    try {
+      const labelResult = await getAmazonShipmentLabels(jobId, shipment.id, {});
+      if (labelResult) {
+        labelCount += 1;
+      }
+    } catch (error) {
+      warnings.push(`货件 ${displayText(shipment?.amazonShipmentId)} 取箱唛失败：${error.message}`);
+      continue;
+    }
+    if (!normalizedExpressNo) {
+      warnings.push(`货件 ${displayText(shipment?.amazonShipmentId)} 缺少快递号，已跳过物流单号回传`);
+      continue;
+    }
+    try {
+      await updateAmazonShipmentTracking(jobId, shipment.id, { trackingId: normalizedExpressNo });
+      trackingCount += 1;
+    } catch (error) {
+      warnings.push(`货件 ${displayText(shipment?.amazonShipmentId)} 回传物流单号失败：${error.message}`);
+    }
+  }
+  return {
+    labelCount,
+    trackingCount,
+    warnings,
+    detail: await getAmazonInboundJobDetail(jobId),
+  };
+}
+
+function getActiveAmazonConnections() {
+  return state.amazonConnections.filter((item) => Number(item?.status) === 1);
+}
+
+function updateAmazonJobConnectionOptions() {
+  const select = $("amazonJobConnectionId");
+  if (!select) return;
+  const activeConnections = getActiveAmazonConnections();
+  const previousValue = String(select.value || "");
+
+  if (!activeConnections.length) {
+    select.innerHTML = '<option value="">请先配置启用连接</option>';
+    select.value = "";
+    updateCreateAmazonJobButtonState();
+    return;
+  }
+
+  select.innerHTML = activeConnections
+    .map(
+      (item) =>
+        `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)} / ${escapeHtml(
+          item.marketplaceId,
+        )} / ${escapeHtml(item.region?.toUpperCase?.() || item.region || "-")}</option>`,
+    )
+    .join("");
+
+  const nextValue = activeConnections.some((item) => String(item.id) === previousValue)
+    ? previousValue
+    : String(activeConnections[0].id);
+  select.value = nextValue;
+  updateCreateAmazonJobButtonState();
+}
+
+function updateCreateAmazonJobButtonState() {
+  const button = $("createAmazonInboundJobBtn");
+  const summary = $("amazonJobSummary");
+  const select = $("amazonJobConnectionId");
+  if (!button) return;
+
+  const selectedCount = state.selectedFbaIds.size;
+  const activeConnections = getActiveAmazonConnections();
+  const selectedConnectionId = String(select?.value || "");
+  const hasConnection = activeConnections.some((item) => String(item.id) === selectedConnectionId);
+
+  button.disabled = selectedCount <= 0 || !hasConnection;
+  button.textContent = selectedCount > 0 ? `生成Amazon任务（${selectedCount}）` : "生成Amazon任务";
+
+  if (!summary) return;
+  if (!activeConnections.length) {
+    summary.textContent = "请先创建并启用 Amazon 店铺连接。";
+    return;
+  }
+  if (selectedCount <= 0) {
+    summary.textContent = "选择待出库申请单后，可生成 Amazon 推送任务。";
+    return;
+  }
+  const currentConnection = activeConnections.find((item) => String(item.id) === selectedConnectionId);
+  summary.textContent = `将使用 ${displayText(currentConnection?.name)} 创建 1 个 Amazon 任务，并把 ${selectedCount} 条 FBA 补货默认合并为 1 个 FBA 箱。`;
+}
+
+function renderAmazonConnections() {
+  const body = $("amazonConnectionsBody");
+  const summary = $("amazonConnectionSummary");
+  if (!body || !summary) return;
+
+  if (!state.amazonConnections.length) {
+    summary.textContent = "还没有配置 Amazon 店铺连接。";
+    body.innerHTML = '<div class="muted">创建连接后，才能将 FBA 补货任务推送到 Amazon。</div>';
+    updateAmazonJobConnectionOptions();
+    return;
+  }
+
+  const activeCount = getActiveAmazonConnections().length;
+  summary.textContent = `共 ${state.amazonConnections.length} 个连接，当前启用 ${activeCount} 个。`;
+
+  body.innerHTML = state.amazonConnections
+    .map((item) => {
+      const authConfig = item?.authConfig && typeof item.authConfig === "object" ? item.authConfig : {};
+      const shipFromAddress =
+        authConfig?.shipFromAddress && typeof authConfig.shipFromAddress === "object"
+          ? authConfig.shipFromAddress
+          : {};
+      const destinationMarketplaces = Array.isArray(authConfig?.destinationMarketplaces)
+        ? authConfig.destinationMarketplaces.filter(Boolean)
+        : [];
+      const locationText = [shipFromAddress?.city, shipFromAddress?.countryCode].filter(Boolean).join(" / ");
+      const authState = getAmazonAuthorizationState(item);
+      return `
+        <article class="amazon-connection-item">
+          <div class="amazon-connection-head">
+            <div>
+              <h4>${escapeHtml(displayText(item.name))}</h4>
+              <div class="amazon-connection-meta">
+                <span class="amazon-pill${Number(item.status) === 1 ? "" : " is-muted"}">${escapeHtml(
+                  getAmazonConnectionStatusText(item.status),
+                )}</span>
+                <span class="amazon-pill${escapeHtml(authState.className)}">${escapeHtml(authState.text)}</span>
+                <span>Marketplace：${escapeHtml(displayText(item.marketplaceId))}</span>
+                <span>区域：${escapeHtml(displayText(item.region).toUpperCase())}</span>
+                <span>Seller：${escapeHtml(displayText(item.sellerId))}</span>
+              </div>
+            </div>
+            <div class="action-row">
+              <button type="button" class="ghost" data-action="authorizeAmazonConnection" data-id="${escapeHtml(item.id)}">授权</button>
+              <button type="button" class="ghost" data-action="editAmazonConnection" data-id="${escapeHtml(item.id)}">编辑</button>
+            </div>
+          </div>
+          <div class="amazon-connection-meta">
+            <span>发货地址：${escapeHtml(locationText || "-")}</span>
+            <span>目的站点：${escapeHtml(destinationMarketplaces.join(", ") || item.marketplaceId || "-")}</span>
+            <span>备注：${escapeHtml(displayText(item.remark))}</span>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+
+  updateAmazonJobConnectionOptions();
+}
+
+function renderAmazonInboundJobs() {
+  const tbody = $("amazonInboundJobsBody");
+  if (!tbody) return;
+
+  if (!state.amazonInboundJobs.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">还没有 Amazon 任务</td></tr>';
+    updateCreateAmazonJobButtonState();
+    return;
+  }
+
+  tbody.innerHTML = state.amazonInboundJobs
+    .map((item) => {
+      const actionButtons = [
+        `<button class="tiny-btn" data-action="amazonBuildPayload" data-id="${escapeHtml(item.id)}">载荷</button>`,
+        `<button class="tiny-btn" data-action="amazonPushJob" data-id="${escapeHtml(item.id)}" data-job-no="${escapeHtml(
+          item.jobNo,
+        )}">推送</button>`,
+        `<button class="tiny-btn" data-action="amazonSyncJob" data-id="${escapeHtml(item.id)}">同步</button>`,
+        `<button class="tiny-btn ghost" data-action="amazonOpenJobDetail" data-id="${escapeHtml(item.id)}">详情</button>`,
+      ].join("");
+      return `
+        <tr>
+          <td>${escapeHtml(displayText(item.jobNo))}</td>
+          <td>${escapeHtml(getAmazonInboundJobStatusText(item.status))}</td>
+          <td>${escapeHtml(displayText(item.connection?.name))}</td>
+          <td>${escapeHtml(displayText(item?._count?.items ?? 0))}</td>
+          <td>${escapeHtml(displayText(item.amazonInboundPlanId))}</td>
+          <td>${renderAmazonAutomationStatusCell(item.responsePayload)}</td>
+          <td>${escapeHtml(formatDate(item.lastSyncAt))}</td>
+          <td>${escapeHtml(displayText(item.lastError))}</td>
+          <td><div class="action-row">${actionButtons}</div></td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  updateCreateAmazonJobButtonState();
+}
+
+async function loadAmazonConnections() {
+  if (!state.token) {
+    state.amazonConnections = [];
+    renderAmazonConnections();
+    return;
+  }
+
+  const list = await listAmazonConnections();
+  state.amazonConnections = Array.isArray(list) ? list : [];
+  renderAmazonConnections();
+}
+
+async function loadAmazonInboundJobs() {
+  if (!state.token) {
+    state.amazonInboundJobs = [];
+    renderAmazonInboundJobs();
+    return;
+  }
+
+  const list = await listAmazonInboundJobs();
+  state.amazonInboundJobs = Array.isArray(list) ? list : [];
+  renderAmazonInboundJobs();
+}
+
+function getAmazonAuthorizationState(connection) {
+  const authConfig = connection?.authConfig && typeof connection.authConfig === "object" ? connection.authConfig : {};
+  const hasRefreshToken = Boolean(String(authConfig?.refreshToken || "").trim());
+  const pendingState = Boolean(String(authConfig?.oauthState || "").trim());
+  if (hasRefreshToken) {
+    return {
+      text: "已授权",
+      className: "",
+    };
+  }
+  if (pendingState) {
+    return {
+      text: "授权中",
+      className: " is-warn",
+    };
+  }
+  return {
+    text: "未授权",
+    className: " is-muted",
+  };
+}
+
+function persistAmazonOauthContext(context) {
+  localStorage.setItem(AMAZON_OAUTH_CONTEXT_STORAGE_KEY, JSON.stringify(context || {}));
+}
+
+function clearAmazonOauthContext() {
+  localStorage.removeItem(AMAZON_OAUTH_CONTEXT_STORAGE_KEY);
+}
+
+async function openAmazonAuthorizationPopup(connectionId) {
+  const id = String(connectionId || "").trim();
+  if (!id) {
+    throw new Error("Amazon连接不存在");
+  }
+  const popup = window.open("", AMAZON_OAUTH_POPUP_NAME, "width=720,height=820");
+  if (!popup) {
+    throw new Error("浏览器拦截了授权弹窗，请允许弹窗后重试");
+  }
+  popup.document.write("<!doctype html><title>Amazon授权</title><p style='font-family:sans-serif;padding:24px;'>正在跳转 Amazon 授权页面...</p>");
+  popup.document.close();
+  try {
+    const result = await startAmazonConnectionAuthorization(id, { origin: window.location.origin });
+    persistAmazonOauthContext({
+      connectionId: id,
+      state: result?.state || "",
+      loginUri: result?.loginUri || "",
+      redirectUri: result?.redirectUri || "",
+      authorizationVersion: result?.authorizationVersion || "published",
+      createdAt: new Date().toISOString(),
+    });
+    popup.location.href = result.authorizationUrl;
+  } catch (error) {
+    popup.close();
+    throw error;
+  }
+}
+
+function handleAmazonOauthMessage(event) {
+  if (event.origin !== window.location.origin) return;
+  const data = event.data && typeof event.data === "object" ? event.data : null;
+  if (!data || data.type !== "amazon-oauth-completed") return;
+  clearAmazonOauthContext();
+  showToast(`Amazon 授权已完成，店铺 ${displayText(data.connectionName || data.connectionId)} 已绑定`);
+  Promise.all([loadAmazonConnections(), loadAudit()]).catch((error) => {
+    showToast(error.message, true);
+  });
+}
+
+function openAmazonConnectionModal(connection = null) {
+  const authConfig = connection?.authConfig && typeof connection.authConfig === "object" ? connection.authConfig : {};
+  const shipFromAddress =
+    authConfig?.shipFromAddress && typeof authConfig.shipFromAddress === "object"
+      ? authConfig.shipFromAddress
+      : {};
+  $("amazonConnectionModalTitle").textContent = connection ? "编辑Amazon店铺连接" : "新建Amazon店铺连接";
+  $("amazonConnectionSubmitBtn").textContent = connection ? "保存变更" : "创建连接";
+  $("amazonConnectionId").value = connection ? String(connection.id) : "";
+  $("amazonConnectionName").value = connection?.name || "";
+  $("amazonConnectionMarketplaceId").value = connection?.marketplaceId || "";
+  $("amazonConnectionRegion").value = connection?.region || "na";
+  $("amazonConnectionStatus").value = String(connection?.status ?? 1);
+  $("amazonConnectionSellerId").value = connection?.sellerId || "";
+  $("amazonConnectionClientId").value = authConfig?.clientId || "";
+  $("amazonConnectionClientSecret").value = authConfig?.clientSecret || "";
+  $("amazonConnectionRefreshToken").value = authConfig?.refreshToken || "";
+  $("amazonConnectionApplicationId").value = authConfig?.applicationId || "";
+  $("amazonConnectionAuthorizationVersion").value = authConfig?.authorizationVersion === "beta" ? "beta" : "published";
+  $("amazonConnectionSellerCentralUrl").value = authConfig?.sellerCentralUrl || "";
+  $("amazonConnectionAppName").value = authConfig?.appName || "";
+  $("amazonConnectionAppVersion").value = authConfig?.appVersion || "";
+  $("amazonConnectionLabelOwner").value = authConfig?.labelOwner === "AMAZON" ? "AMAZON" : "SELLER";
+  $("amazonConnectionPrepOwner").value = authConfig?.prepOwner === "AMAZON" ? "AMAZON" : "SELLER";
+  $("amazonConnectionDestinationMarketplaces").value = Array.isArray(authConfig?.destinationMarketplaces)
+    ? authConfig.destinationMarketplaces.join(", ")
+    : "";
+  $("amazonConnectionShipFromName").value = shipFromAddress?.name || "";
+  $("amazonConnectionShipFromCompanyName").value = shipFromAddress?.companyName || "";
+  $("amazonConnectionShipFromAddressLine1").value = shipFromAddress?.addressLine1 || "";
+  $("amazonConnectionShipFromAddressLine2").value = shipFromAddress?.addressLine2 || "";
+  $("amazonConnectionShipFromCity").value = shipFromAddress?.city || "";
+  $("amazonConnectionShipFromStateOrProvinceCode").value = shipFromAddress?.stateOrProvinceCode || "";
+  $("amazonConnectionShipFromDistrictOrCounty").value = shipFromAddress?.districtOrCounty || "";
+  $("amazonConnectionShipFromCountryCode").value = shipFromAddress?.countryCode || "";
+  $("amazonConnectionShipFromPostalCode").value = shipFromAddress?.postalCode || "";
+  $("amazonConnectionShipFromPhoneNumber").value = shipFromAddress?.phoneNumber || "";
+  $("amazonConnectionRemark").value = connection?.remark || "";
+  $("amazonConnectionAuthorizeBtn").classList.toggle("hidden", !connection);
+  $("amazonConnectionAuthorizeBtn").dataset.id = connection ? String(connection.id) : "";
+  openModal("amazonConnectionModal");
+}
+
+function collectAmazonConnectionFormPayload() {
+  const destinationMarketplaces = parseCommaSeparatedList(
+    $("amazonConnectionDestinationMarketplaces").value,
+    { upperCase: true },
+  );
+  const authConfig = {
+    clientId: String($("amazonConnectionClientId").value || "").trim(),
+    clientSecret: String($("amazonConnectionClientSecret").value || "").trim(),
+    refreshToken: String($("amazonConnectionRefreshToken").value || "").trim(),
+    applicationId: String($("amazonConnectionApplicationId").value || "").trim(),
+    authorizationVersion:
+      String($("amazonConnectionAuthorizationVersion").value || "").trim() === "beta" ? "beta" : "published",
+    shipFromAddress: {
+      name: String($("amazonConnectionShipFromName").value || "").trim(),
+      addressLine1: String($("amazonConnectionShipFromAddressLine1").value || "").trim(),
+      city: String($("amazonConnectionShipFromCity").value || "").trim(),
+      countryCode: String($("amazonConnectionShipFromCountryCode").value || "").trim().toUpperCase(),
+      postalCode: String($("amazonConnectionShipFromPostalCode").value || "").trim(),
+      phoneNumber: String($("amazonConnectionShipFromPhoneNumber").value || "").trim(),
+    },
+  };
+
+  const optionalAuthFields = {
+    appName: $("amazonConnectionAppName").value,
+    appVersion: $("amazonConnectionAppVersion").value,
+    labelOwner: $("amazonConnectionLabelOwner").value,
+    prepOwner: $("amazonConnectionPrepOwner").value,
+    companyName: $("amazonConnectionShipFromCompanyName").value,
+    addressLine2: $("amazonConnectionShipFromAddressLine2").value,
+    stateOrProvinceCode: $("amazonConnectionShipFromStateOrProvinceCode").value,
+    districtOrCounty: $("amazonConnectionShipFromDistrictOrCounty").value,
+  };
+
+  if (destinationMarketplaces.length) {
+    authConfig.destinationMarketplaces = destinationMarketplaces;
+  }
+  if (String(optionalAuthFields.appName || "").trim()) authConfig.appName = String(optionalAuthFields.appName).trim();
+  if (String(optionalAuthFields.appVersion || "").trim()) authConfig.appVersion = String(optionalAuthFields.appVersion).trim();
+  authConfig.labelOwner = optionalAuthFields.labelOwner === "AMAZON" ? "AMAZON" : "SELLER";
+  authConfig.prepOwner = optionalAuthFields.prepOwner === "AMAZON" ? "AMAZON" : "SELLER";
+  if (String($("amazonConnectionSellerCentralUrl").value || "").trim()) {
+    authConfig.sellerCentralUrl = String($("amazonConnectionSellerCentralUrl").value).trim();
+  }
+  if (String(optionalAuthFields.companyName || "").trim()) {
+    authConfig.shipFromAddress.companyName = String(optionalAuthFields.companyName).trim();
+  }
+  if (String(optionalAuthFields.addressLine2 || "").trim()) {
+    authConfig.shipFromAddress.addressLine2 = String(optionalAuthFields.addressLine2).trim();
+  }
+  if (String(optionalAuthFields.stateOrProvinceCode || "").trim()) {
+    authConfig.shipFromAddress.stateOrProvinceCode = String(optionalAuthFields.stateOrProvinceCode).trim();
+  }
+  if (String(optionalAuthFields.districtOrCounty || "").trim()) {
+    authConfig.shipFromAddress.districtOrCounty = String(optionalAuthFields.districtOrCounty).trim();
+  }
+
+  return {
+    name: String($("amazonConnectionName").value || "").trim(),
+    marketplaceId: String($("amazonConnectionMarketplaceId").value || "").trim().toUpperCase(),
+    region: String($("amazonConnectionRegion").value || "").trim().toLowerCase(),
+    sellerId: String($("amazonConnectionSellerId").value || "").trim(),
+    status: Number($("amazonConnectionStatus").value || 1),
+    authConfig,
+    remark: String($("amazonConnectionRemark").value || "").trim(),
+  };
+}
+
+function renderAmazonJobDetail(job) {
+  const container = $("amazonJobDetail");
+  if (!container) return;
+  if (!job) {
+    state.selectedAmazonInboundJobDetail = null;
+    container.className = "batch-detail-empty muted";
+    container.textContent = "请先选择一条 Amazon 任务。";
+    return;
+  }
+  state.selectedAmazonInboundJobDetail = job;
+
+  const responsePayload =
+    job?.responsePayload && typeof job.responsePayload === "object" ? job.responsePayload : {};
+  const packingState =
+    responsePayload?.packingOptions && typeof responsePayload.packingOptions === "object"
+      ? responsePayload.packingOptions
+      : {};
+  const packingOptions = normalizeAmazonPackingOptions(
+    Array.isArray(packingState?.options) ? packingState.options : [],
+  );
+  const selectedPackingOptionId = String(packingState?.selectedPackingOptionId || "").trim();
+  const placementState =
+    responsePayload?.placementOptions && typeof responsePayload.placementOptions === "object"
+      ? responsePayload.placementOptions
+      : {};
+  const placementOptions = Array.isArray(placementState?.options) ? placementState.options : [];
+  const selectedPlacementOptionId = String(placementState?.selectedPlacementOptionId || "").trim();
+  const transportationState =
+    responsePayload?.transportationOptions && typeof responsePayload.transportationOptions === "object"
+      ? responsePayload.transportationOptions
+      : {};
+  const transportationOptions = Array.isArray(transportationState?.options)
+    ? transportationState.options
+    : [];
+  const transportationRows = normalizeAmazonTransportationRows(transportationOptions);
+  const confirmedTransportationSelections = Array.isArray(transportationState?.confirmedSelections)
+    ? transportationState.confirmedSelections
+    : [];
+  const labelsState = responsePayload?.labels && typeof responsePayload.labels === "object" ? responsePayload.labels : {};
+  const trackingState =
+    responsePayload?.trackingDetails && typeof responsePayload.trackingDetails === "object"
+      ? responsePayload.trackingDetails
+      : {};
+  const automationState =
+    responsePayload?.automation && typeof responsePayload.automation === "object" ? responsePayload.automation : {};
+  const automationRows = Array.isArray(automationState?.shipmentRows)
+    ? automationState.shipmentRows
+    : buildAmazonShipmentAutomationRows(job.shipments, labelsState, trackingState);
+  const defaultTrackingId = String(
+    (Array.isArray(job.items) ? job.items : [])
+      .map((item) => String(item?.fbaReplenishment?.expressNo || "").trim())
+      .find(Boolean) || "",
+  ).trim();
+  seedAmazonTransportationSelections(String(job.id), transportationRows, confirmedTransportationSelections);
+  const packingDraftKey = String(job.id);
+  const packingDraft =
+    state.amazonPackingDrafts.get(packingDraftKey) ||
+    stringifyPrettyJson(
+      packingState?.packingInformationRequest ||
+        buildDefaultAmazonPackingInformation(job, packingState, packingOptions),
+    );
+  state.amazonPackingDrafts.set(packingDraftKey, packingDraft);
+
+  container.className = "amazon-job-detail";
+  container.innerHTML = `
+    <section class="amazon-job-detail-section">
+      <div class="amazon-job-detail-grid">
+        <div><strong>任务号：</strong>${escapeHtml(displayText(job.jobNo))}</div>
+        <div><strong>状态：</strong>${escapeHtml(getAmazonInboundJobStatusText(job.status))}</div>
+        <div><strong>店铺连接：</strong>${escapeHtml(displayText(job.connection?.name))}</div>
+        <div><strong>Marketplace：</strong>${escapeHtml(displayText(job.connection?.marketplaceId))}</div>
+        <div><strong>Amazon计划：</strong>${escapeHtml(displayText(job.amazonInboundPlanId))}</div>
+        <div><strong>Operation ID：</strong>${escapeHtml(displayText(job.lastOperationId))}</div>
+        <div><strong>创建人：</strong>${escapeHtml(displayText(job.creator?.username))}</div>
+        <div><strong>推送人：</strong>${escapeHtml(displayText(job.pusher?.username))}</div>
+        <div><strong>最近同步：</strong>${escapeHtml(formatDate(job.lastSyncAt))}</div>
+        <div><strong>最近错误：</strong>${escapeHtml(displayText(job.lastError))}</div>
+      </div>
+    </section>
+    <section class="amazon-job-detail-section">
+      <h4>自动处理结果</h4>
+      <div class="amazon-job-detail-grid">
+        <div><strong>最近自动处理：</strong>${escapeHtml(displayText(automationState?.updatedAt))}</div>
+        <div><strong>自动箱唛次数：</strong>${escapeHtml(displayText(automationState?.labelCount))}</div>
+        <div><strong>自动物流次数：</strong>${escapeHtml(displayText(automationState?.trackingCount))}</div>
+        <div><strong>自动警告数：</strong>${escapeHtml(displayText(automationState?.warningCount))}</div>
+      </div>
+      ${
+        Array.isArray(automationState?.warnings) && automationState.warnings.length
+          ? `<div class="amazon-automation-warning-list">${automationState.warnings
+              .map((item) => `<div class="amazon-automation-warning-item">${escapeHtml(displayText(item))}</div>`)
+              .join("")}</div>`
+          : ""
+      }
+      ${renderAmazonShipmentAutomationSummary(automationRows)}
+    </section>
+    <section class="amazon-job-detail-section">
+      <h4>任务明细</h4>
+      <div class="amazon-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>申请单号</th>
+              <th>SKU</th>
+              <th>型号</th>
+              <th>来源库存箱号</th>
+              <th>数量</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              Array.isArray(job.items) && job.items.length
+                ? job.items
+                    .map(
+                      (item) => `
+                        <tr>
+                          <td>${escapeHtml(displayText(item.fbaReplenishment?.requestNo))}</td>
+                          <td>${escapeHtml(displayText(item.sku?.sku))}</td>
+                          <td>${escapeHtml(displayText(item.sku?.model))}</td>
+                          <td>${escapeHtml(displayText(item.sourceInventoryBox?.boxCode))}</td>
+                          <td>${escapeHtml(displayText(item.actualQty ?? item.requestedQty))}</td>
+                        </tr>
+                      `,
+                    )
+                    .join("")
+                : '<tr><td colspan="5" class="muted">暂无任务明细</td></tr>'
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="amazon-job-detail-section">
+      <h4>货件与箱信息</h4>
+      ${
+        Array.isArray(job.shipments) && job.shipments.length
+          ? job.shipments
+              .map(
+                (shipment) => {
+                  const shipmentLabelState =
+                    labelsState?.[shipment.amazonShipmentId] && typeof labelsState[shipment.amazonShipmentId] === "object"
+                      ? labelsState[shipment.amazonShipmentId]
+                      : {};
+                  const labelRequest =
+                    shipmentLabelState?.request && typeof shipmentLabelState.request === "object"
+                      ? shipmentLabelState.request
+                      : {};
+                  const defaultBoxIds = Array.isArray(shipment.boxes)
+                    ? shipment.boxes.map((box) => String(box.amazonBoxId || "").trim()).filter(Boolean).join(",")
+                    : "";
+                  const singleBoxId = Array.isArray(shipment.boxes) && shipment.boxes.length === 1
+                    ? String(shipment.boxes[0]?.amazonBoxId || "").trim()
+                    : "";
+                  const hasSingleAmazonBox = Array.isArray(shipment.boxes) && shipment.boxes.length === 1 && !!singleBoxId;
+                  const shipmentTrackingState =
+                    trackingState?.[shipment.amazonShipmentId] && typeof trackingState[shipment.amazonShipmentId] === "object"
+                      ? trackingState[shipment.amazonShipmentId]
+                      : {};
+                  const trackingRequest =
+                    shipmentTrackingState?.request && typeof shipmentTrackingState.request === "object"
+                      ? shipmentTrackingState.request
+                      : {};
+                  const trackingItems = Array.isArray(
+                    trackingRequest?.trackingDetails?.spdTrackingDetail?.boxIdToTrackingIdList,
+                  )
+                    ? trackingRequest.trackingDetails.spdTrackingDetail.boxIdToTrackingIdList
+                    : [];
+                  const lastTrackingId = String(
+                    trackingItems.map((item) => String(item?.trackingId || "").trim()).find(Boolean) || defaultTrackingId,
+                  ).trim();
+                  return `
+                  <article class="amazon-shipment-card">
+                    <div class="amazon-job-detail-grid">
+                      <div><strong>货件ID：</strong>${escapeHtml(displayText(shipment.amazonShipmentId))}</div>
+                      <div><strong>确认号：</strong>${escapeHtml(displayText(shipment.shipmentConfirmationId))}</div>
+                      <div><strong>状态：</strong>${escapeHtml(displayText(shipment.status))}</div>
+                      <div><strong>名称：</strong>${escapeHtml(displayText(shipment.shipmentName))}</div>
+                      <div><strong>目的仓：</strong>${escapeHtml(displayText(shipment.destinationCode))}</div>
+                      <div><strong>当前Amazon箱ID：</strong>${escapeHtml(displayText(singleBoxId || defaultBoxIds || "-"))}</div>
+                      <div><strong>最近箱唛：</strong>${
+                        shipmentLabelState?.downloadUrl
+                          ? `<a href="${escapeHtml(String(shipmentLabelState.downloadUrl))}" target="_blank" rel="noreferrer">打开下载链接</a>`
+                          : '<span class="muted">未获取</span>'
+                      }</div>
+                      <div><strong>最近物流单号：</strong>${escapeHtml(displayText(lastTrackingId))}</div>
+                    </div>
+                    <div class="amazon-label-form">
+                      <label>
+                        LabelType
+                        <input type="text" id="amazonLabelType-${escapeHtml(String(shipment.id))}" value="${escapeHtml(
+                          String(labelRequest?.LabelType || "PACKAGE_LABEL"),
+                        )}" />
+                      </label>
+                      <label>
+                        PageType
+                        <input type="text" id="amazonPageType-${escapeHtml(String(shipment.id))}" value="${escapeHtml(
+                          String(labelRequest?.PageType || "PackageLabel_Letter_2"),
+                        )}" />
+                      </label>
+                      <button type="button" class="tiny-btn" data-action="amazonGetShipmentLabels" data-id="${escapeHtml(
+                        job.id,
+                      )}" data-shipment-id="${escapeHtml(String(shipment.id))}" ${hasSingleAmazonBox ? "" : "disabled"}>取箱唛</button>
+                    </div>
+                    <div class="amazon-label-form">
+                      <label>
+                        Tracking ID
+                        <input type="text" id="amazonTrackingId-${escapeHtml(String(shipment.id))}" value="${escapeHtml(
+                          lastTrackingId,
+                        )}" placeholder="默认取当前出库快递号" />
+                      </label>
+                      <button type="button" class="tiny-btn" data-action="amazonUpdateShipmentTracking" data-id="${escapeHtml(
+                        job.id,
+                      )}" data-shipment-id="${escapeHtml(String(shipment.id))}" ${hasSingleAmazonBox ? "" : "disabled"}>回传物流单号</button>
+                    </div>
+                    ${
+                      hasSingleAmazonBox
+                        ? ""
+                        : `<div class="muted amazon-section-hint">当前货件不是默认单箱，箱唛和物流单号请改为人工处理。</div>`
+                    }
+                    <div class="amazon-table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Amazon箱ID</th>
+                            <th>序号</th>
+                            <th>模板</th>
+                            <th>内容来源</th>
+                            <th>数量</th>
+                            <th>箱内商品</th>
+                            <th>状态</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          ${
+                            Array.isArray(shipment.boxes) && shipment.boxes.length
+                              ? shipment.boxes
+                                  .map(
+                                    (box) => `
+                                      <tr>
+                                        <td>${escapeHtml(displayText(box.amazonBoxId))}</td>
+                                        <td>${escapeHtml(displayText(box.boxSequence))}</td>
+                                        <td>${escapeHtml(displayText(box.templateName))}</td>
+                                        <td>${escapeHtml(displayText(box.contentSource))}</td>
+                                        <td>${escapeHtml(displayText(box.quantity))}</td>
+                                        <td>${renderAmazonBoxItemSummary(box.items)}</td>
+                                        <td>${escapeHtml(displayText(box.status))}</td>
+                                      </tr>
+                                    `,
+                                  )
+                                  .join("")
+                              : '<tr><td colspan="7" class="muted">该货件暂无箱信息</td></tr>'
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+                `;
+                },
+              )
+              .join("")
+          : '<div class="muted">同步后会在这里显示 Amazon shipment 和 box 信息。</div>'
+      }
+    </section>
+    <section class="amazon-job-detail-section">
+      <div class="card-head">
+        <h4>装箱方案</h4>
+        <div class="amazon-job-toolbar">
+          <button type="button" class="ghost" data-action="amazonGeneratePackingOptions" data-id="${escapeHtml(job.id)}">生成装箱</button>
+          <button type="button" class="ghost" data-action="amazonListPackingOptions" data-id="${escapeHtml(job.id)}">刷新装箱</button>
+        </div>
+      </div>
+      <div class="amazon-job-detail-grid">
+        <div><strong>已选方案：</strong>${escapeHtml(displayText(selectedPackingOptionId))}</div>
+        <div><strong>方案数：</strong>${escapeHtml(displayText(packingOptions.length))}</div>
+      </div>
+      <div class="muted amazon-section-hint">默认规则：本次勾选出库的所有申请单商品先合并为 1 个待发 FBA 箱；这里的装箱箱是 Amazon/FBA 货件箱，不是申请单号，也不是库存来源箱号。</div>
+      <div class="amazon-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>装箱方案ID</th>
+              <th>分组数</th>
+              <th>费用</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              packingOptions.length
+                ? packingOptions
+                    .map((item) => {
+                      const statusText =
+                        item.packingOptionId === selectedPackingOptionId ? "已选中" : item.status;
+                      return `
+                        <tr>
+                          <td>${escapeHtml(item.packingOptionId)}</td>
+                          <td>${escapeHtml(displayText(item.groupCount))}</td>
+                          <td>${escapeHtml(item.fee)}</td>
+                          <td>${escapeHtml(statusText)}</td>
+                          <td>
+                            <button type="button" class="tiny-btn" data-action="amazonConfirmPackingOption" data-id="${escapeHtml(
+                              job.id,
+                            )}" data-packing-option-id="${escapeHtml(item.packingOptionId)}">确认装箱</button>
+                          </td>
+                        </tr>
+                      `;
+                    })
+                    .join("")
+                : '<tr><td colspan="5" class="muted">先生成并刷新装箱方案</td></tr>'
+            }
+          </tbody>
+        </table>
+      </div>
+      <div class="card-head">
+        <h4>装箱信息 JSON</h4>
+        <div class="amazon-job-toolbar">
+          <button type="button" class="ghost" data-action="amazonReloadPackingForm" data-id="${escapeHtml(job.id)}">从JSON刷新表单</button>
+          <button type="button" class="ghost" data-action="amazonResetPackingInformationDraft" data-id="${escapeHtml(job.id)}">重置模板</button>
+          <button type="button" data-action="amazonSubmitPackingInformation" data-id="${escapeHtml(job.id)}">提交装箱信息</button>
+        </div>
+      </div>
+      ${renderAmazonPackingForm(job, packingDraft)}
+      <div class="muted amazon-section-hint">${escapeHtml(buildAmazonPackingEditorHint(job))}</div>
+      <textarea
+        id="amazonPackingInformationInput"
+        class="amazon-json-editor"
+        data-job-id="${escapeHtml(job.id)}"
+        rows="16"
+      >${escapeHtml(packingDraft)}</textarea>
+      <pre class="amazon-json-preview">${escapeHtml(stringifyPrettyJson(packingState || null))}</pre>
+    </section>
+    <section class="amazon-job-detail-section">
+      <div class="card-head">
+        <h4>分仓方案</h4>
+        <div class="amazon-job-toolbar">
+          <button type="button" class="ghost" data-action="amazonGeneratePlacementOptions" data-id="${escapeHtml(job.id)}">生成分仓</button>
+          <button type="button" class="ghost" data-action="amazonListPlacementOptions" data-id="${escapeHtml(job.id)}">刷新分仓</button>
+        </div>
+      </div>
+      <div class="amazon-job-detail-grid">
+        <div><strong>已选方案：</strong>${escapeHtml(displayText(selectedPlacementOptionId))}</div>
+        <div><strong>方案数：</strong>${escapeHtml(displayText(placementOptions.length))}</div>
+      </div>
+      <div class="amazon-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>分仓方案ID</th>
+              <th>货件数</th>
+              <th>费用</th>
+              <th>状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              placementOptions.length
+                ? placementOptions
+                    .map((item) => {
+                      const placementOptionId = displayText(item?.placementOptionId || item?.placementId);
+                      const shipmentCount = Array.isArray(item?.shipmentIds)
+                        ? item.shipmentIds.length
+                        : Array.isArray(item?.shipments)
+                          ? item.shipments.length
+                          : "-";
+                      const feeText = displayText(
+                        item?.fees?.amount ??
+                          item?.placementFee?.amount ??
+                          item?.placementServiceFee?.amount,
+                      );
+                      const statusText =
+                        String(placementOptionId) === selectedPlacementOptionId ? "已选中" : displayText(item?.status);
+                      return `
+                        <tr>
+                          <td>${escapeHtml(placementOptionId)}</td>
+                          <td>${escapeHtml(displayText(shipmentCount))}</td>
+                          <td>${escapeHtml(feeText)}</td>
+                          <td>${escapeHtml(statusText)}</td>
+                          <td>
+                            ${
+                              placementOptionId && String(placementOptionId) !== "-"
+                                ? `<button type="button" class="tiny-btn" data-action="amazonConfirmPlacementOption" data-id="${escapeHtml(
+                                    job.id,
+                                  )}" data-placement-option-id="${escapeHtml(placementOptionId)}">确认分仓</button>`
+                                : '<span class="muted">-</span>'
+                            }
+                          </td>
+                        </tr>
+                      `;
+                    })
+                    .join("")
+                : '<tr><td colspan="5" class="muted">先生成并刷新分仓方案</td></tr>'
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="amazon-job-detail-section">
+      <div class="card-head">
+        <h4>运输方案</h4>
+        <div class="amazon-job-toolbar">
+          <button type="button" class="ghost" data-action="amazonGenerateTransportationOptions" data-id="${escapeHtml(job.id)}" data-placement-option-id="${escapeHtml(
+            selectedPlacementOptionId,
+          )}">生成运输</button>
+          <button type="button" class="ghost" data-action="amazonListTransportationOptions" data-id="${escapeHtml(job.id)}" data-placement-option-id="${escapeHtml(
+            selectedPlacementOptionId,
+          )}">刷新运输</button>
+          <button type="button" data-action="amazonConfirmTransportationOptions" data-id="${escapeHtml(job.id)}">确认运输</button>
+        </div>
+      </div>
+      <div class="amazon-job-detail-grid">
+        <div><strong>当前分仓方案：</strong>${escapeHtml(displayText(transportationState?.placementOptionId || selectedPlacementOptionId))}</div>
+        <div><strong>运输方案数：</strong>${escapeHtml(displayText(transportationRows.length))}</div>
+      </div>
+      <div class="amazon-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>选择</th>
+              <th>货件ID</th>
+              <th>货件名称</th>
+              <th>运输方案ID</th>
+              <th>模式</th>
+              <th>承运商</th>
+              <th>费用</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${
+              transportationRows.length
+                ? transportationRows
+                    .map((row) => {
+                      const checked =
+                        state.amazonTransportationSelections.get(
+                          getAmazonTransportationSelectionKey(String(job.id), row.shipmentId),
+                        ) === row.transportationOptionId;
+                      return `
+                        <tr>
+                          <td>
+                            <input
+                              type="radio"
+                              data-action="amazonSelectTransportationOption"
+                              data-job-id="${escapeHtml(job.id)}"
+                              data-shipment-id="${escapeHtml(row.shipmentId)}"
+                              data-transportation-option-id="${escapeHtml(row.transportationOptionId)}"
+                              name="amazonTransport-${escapeHtml(job.id)}-${escapeHtml(row.shipmentId)}"
+                              ${checked ? "checked" : ""}
+                            />
+                          </td>
+                          <td>${escapeHtml(row.shipmentId)}</td>
+                          <td>${escapeHtml(row.shipmentName)}</td>
+                          <td>${escapeHtml(row.transportationOptionId)}</td>
+                          <td>${escapeHtml(row.mode)}</td>
+                          <td>${escapeHtml(row.carrierName)}</td>
+                          <td>${escapeHtml(row.fee)}</td>
+                          <td>${escapeHtml(row.status)}</td>
+                        </tr>
+                      `;
+                    })
+                    .join("")
+                : '<tr><td colspan="8" class="muted">先确认分仓，再生成并刷新运输方案</td></tr>'
+            }
+          </tbody>
+        </table>
+      </div>
+      <pre class="amazon-json-preview">${escapeHtml(stringifyPrettyJson(transportationState || null))}</pre>
+    </section>
+    <section class="amazon-job-detail-section">
+      <h4>请求载荷</h4>
+      <pre class="amazon-json-preview">${escapeHtml(stringifyPrettyJson(job.requestPayload))}</pre>
+    </section>
+    <section class="amazon-job-detail-section">
+      <h4>Amazon响应</h4>
+      <pre class="amazon-json-preview">${escapeHtml(stringifyPrettyJson(job.responsePayload))}</pre>
+    </section>
+  `;
+}
+
+async function loadAndOpenAmazonJobDetail(id) {
+  const detail = await getAmazonInboundJobDetail(id);
+  state.selectedAmazonInboundJobId = String(id);
+  state.selectedAmazonInboundJobDetail = detail;
+  renderAmazonJobDetail(detail);
+  openModal("amazonJobDetailModal");
+}
+
 function syncSelectedFbaIds() {
   const selectableIds = new Set(
     state.fbaReplenishments
@@ -4199,10 +6066,14 @@ function updateFbaSelectAll() {
 
 function updateFbaOutboundButtonState() {
   const button = $("fbaBatchOutboundBtn");
-  if (!button) return;
+  if (!button) {
+    updateCreateAmazonJobButtonState();
+    return;
+  }
   const count = state.selectedFbaIds.size;
   button.disabled = count <= 0;
   button.textContent = count > 0 ? `出库（${count}）` : "出库";
+  updateCreateAmazonJobButtonState();
 }
 
 function openFbaOutboundModal() {
@@ -4555,7 +6426,10 @@ async function reloadAll() {
     $("inventoryBody").innerHTML = "";
     $("batchInboundBody").innerHTML = "";
     $("fbaReplenishmentBody").innerHTML = "";
+    $("amazonConnectionsBody").innerHTML = "";
+    $("amazonInboundJobsBody").innerHTML = "";
     renderBatchInboundDetail(null);
+    renderAmazonJobDetail(null);
     $("inventorySearchResults").textContent = "-";
     $("brandsBody").innerHTML = "";
     $("skuTypesBody").innerHTML = "";
@@ -4598,6 +6472,11 @@ async function reloadAll() {
     state.fbaPendingBySku = {};
     state.fbaPendingByBoxSku = {};
     state.selectedFbaIds = new Set();
+    state.amazonConnections = [];
+    state.amazonInboundJobs = [];
+    state.selectedAmazonInboundJobId = null;
+    state.amazonTransportationSelections = new Map();
+    state.amazonPackingDrafts = new Map();
     state.selectedProductEditRequestId = null;
     state.selectedProductEditRequestChangedFields = [];
     state.selectedProductEditRequestIds = new Set();
@@ -4618,6 +6497,8 @@ async function reloadAll() {
     renderProductEditPendingBadge();
     renderEmptyBoxManageBadge();
     renderEmptyBoxManageTable();
+    renderAmazonConnections();
+    renderAmazonInboundJobs();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
     resetInventorySearchState();
@@ -4690,6 +6571,7 @@ function bindForms() {
     state.me = null;
     suppressAuthErrorToastUntil = Date.now() + 3000;
     localStorage.removeItem("wms_token");
+    clearAmazonOauthContext();
     document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden"));
     showToast("已退出登录");
     await reloadAll();
@@ -5027,11 +6909,23 @@ function bindForms() {
   $("openFbaReplenishmentPanel").addEventListener("click", async () => {
     try {
       switchPanel("fbaReplenishment");
-      await loadFbaReplenishments();
-      await loadFbaPendingSummary();
+      await Promise.all([
+        loadFbaReplenishments(),
+        loadFbaPendingSummary(),
+        loadAmazonConnections(),
+        loadAmazonInboundJobs(),
+      ]);
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("openAmazonConnectionModalBtn").addEventListener("click", () => {
+    openAmazonConnectionModal();
+  });
+
+  $("createAmazonConnectionBtn").addEventListener("click", () => {
+    openAmazonConnectionModal();
   });
 
   $("downloadFbaOutboundExcelBtn").addEventListener("click", async (event) => {
@@ -5062,9 +6956,99 @@ function bindForms() {
     renderFbaReplenishmentList();
   });
 
+  $("amazonJobConnectionId").addEventListener("change", () => {
+    updateCreateAmazonJobButtonState();
+  });
+
+  $("createAmazonInboundJobBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "生成中...", async () => {
+        const connectionId = Number($("amazonJobConnectionId").value || 0);
+        if (!Number.isInteger(connectionId) || connectionId <= 0) {
+          throw new Error("请先选择可用的 Amazon 店铺连接");
+        }
+        const fbaReplenishmentIds = Array.from(state.selectedFbaIds)
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0);
+        if (!fbaReplenishmentIds.length) {
+          throw new Error("请先选择待出库申请单");
+        }
+        const created = await createAmazonInboundJob({
+          connectionId,
+          fbaReplenishmentIds,
+        });
+        state.selectedFbaIds = new Set();
+        renderFbaReplenishmentList();
+        showToast(`Amazon任务已创建：${displayText(created?.jobNo)}`);
+        await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+        if (created?.id) {
+          await loadAndOpenAmazonJobDetail(created.id);
+        }
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("refreshAmazonInboundJobsBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "刷新中...", async () => {
+        await Promise.all([loadAmazonConnections(), loadAmazonInboundJobs()]);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("amazonConnectionForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "保存中...", async () => {
+        const id = String($("amazonConnectionId").value || "").trim();
+        const payload = collectAmazonConnectionFormPayload();
+        if (id) {
+          await updateAmazonConnection(id, payload);
+          showToast("Amazon连接已更新");
+        } else {
+          const createPayload = { ...payload };
+          delete createPayload.status;
+          await createAmazonConnection(createPayload);
+          showToast("Amazon连接已创建");
+        }
+        closeModal("amazonConnectionModal");
+        await Promise.all([loadAmazonConnections(), loadAudit()]);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("amazonConnectionAuthorizeBtn").addEventListener("click", async () => {
+    const button = $("amazonConnectionAuthorizeBtn");
+    const id = String(button?.dataset.id || "").trim();
+    if (!id) {
+      showToast("请先保存 Amazon 连接，再执行授权", true);
+      return;
+    }
+    try {
+      await withBusyButton(button, "跳转中...", async () => {
+        await openAmazonAuthorizationPopup(id);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("fbaOutboundForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
+    let createdAmazonJob = null;
+    let outboundCompleted = false;
+    let transportationAutoConfirmed = false;
+    let artifactSummary = null;
     try {
       await withBusyButton(submitButton, "处理中...", async () => {
         const expressNo = String($("fbaOutboundExpressNo").value || "").trim();
@@ -5087,23 +7071,121 @@ function bindForms() {
           throw new Error(SKU_EDIT_PENDING_BLOCK_MESSAGE);
         }
 
+        const connectionId = Number($("amazonJobConnectionId").value || 0);
+        const currentConnection = getActiveAmazonConnections().find((item) => Number(item.id) === connectionId);
+        if (!currentConnection) {
+          throw new Error("请先选择可用的 Amazon 店铺连接，再执行出库并发起亚马逊补货申请");
+        }
+
+        createdAmazonJob = await createAmazonInboundJob({
+          connectionId,
+          fbaReplenishmentIds: ids,
+        });
+        if (createdAmazonJob?.id) {
+          await pushAmazonInboundJob(createdAmazonJob.id, {
+            idempotencyKey: `${displayText(createdAmazonJob?.jobNo || "AFBA")}-${Date.now()}`,
+          });
+          await submitAmazonDefaultPackingInformation(createdAmazonJob.id);
+          const placementDetail = await ensureAmazonPlacementDoesNotSplit(createdAmazonJob.id);
+          const placementResponsePayload =
+            placementDetail?.responsePayload && typeof placementDetail.responsePayload === "object"
+              ? placementDetail.responsePayload
+              : {};
+          const placementState =
+            placementResponsePayload?.placementOptions &&
+            typeof placementResponsePayload.placementOptions === "object"
+              ? placementResponsePayload.placementOptions
+              : {};
+          const selectedPlacementOptionId = String(placementState?.selectedPlacementOptionId || "").trim();
+          const transportResult = await maybeAutoConfirmAmazonTransportation(
+            createdAmazonJob.id,
+            selectedPlacementOptionId,
+          );
+          transportationAutoConfirmed = Boolean(transportResult?.autoConfirmed);
+        }
         await outboundFbaReplenishmentRequests(ids, expressNo);
+        outboundCompleted = true;
+        if (createdAmazonJob?.id) {
+          try {
+            artifactSummary = await maybeAutoHandleAmazonShipmentArtifacts(createdAmazonJob.id, expressNo);
+            if (artifactSummary?.detail) {
+              try {
+                await updateAmazonAutomationSummary(
+                  createdAmazonJob.id,
+                  buildAmazonAutomationSummaryPayload(artifactSummary.detail, artifactSummary, expressNo),
+                );
+              } catch (summaryError) {
+                artifactSummary.warnings = [
+                  ...(Array.isArray(artifactSummary.warnings) ? artifactSummary.warnings : []),
+                  `自动处理摘要保存失败：${summaryError.message}`,
+                ];
+              }
+            }
+          } catch (artifactError) {
+            artifactSummary = {
+              labelCount: 0,
+              trackingCount: 0,
+              warnings: [`自动处理箱唛/物流单号失败：${artifactError.message}`],
+            };
+            try {
+              const artifactDetail = await getAmazonInboundJobDetail(createdAmazonJob.id);
+              await updateAmazonAutomationSummary(
+                createdAmazonJob.id,
+                buildAmazonAutomationSummaryPayload(artifactDetail, artifactSummary, expressNo),
+              );
+            } catch {
+              // Keep outbound success independent from automation-summary persistence.
+            }
+          }
+        }
         closeModal("fbaOutboundModal");
         state.selectedFbaIds = new Set();
-        showToast("出库完成");
+        const artifactWarningText =
+          artifactSummary?.warnings && artifactSummary.warnings.length
+            ? `，但有 ${artifactSummary.warnings.length} 项需人工处理`
+            : "";
+        showToast(
+          createdAmazonJob?.jobNo
+            ? `出库完成，Amazon任务已发起并通过单仓校验${
+                transportationAutoConfirmed ? "，运输方案已自动确认" : "，运输方案待人工处理"
+              }${
+                artifactSummary?.labelCount || artifactSummary?.trackingCount
+                  ? `，已自动取箱唛 ${artifactSummary.labelCount || 0} 次并回传物流单号 ${artifactSummary.trackingCount || 0} 次`
+                  : ""
+              }${artifactWarningText}：${displayText(createdAmazonJob.jobNo)}`
+            : "出库完成",
+        );
         await loadFbaReplenishments();
         await loadFbaPendingSummary();
         await loadInventory();
         await loadBoxes();
+        await loadAmazonInboundJobs();
 
         const keyword = $("inventoryKeyword").value.trim();
         if (state.inventorySearchMode && keyword) {
           await searchInventoryProducts(keyword);
         }
         await loadAudit();
+        if (createdAmazonJob?.id) {
+          await loadAndOpenAmazonJobDetail(createdAmazonJob.id);
+        }
       });
     } catch (error) {
-      showToast(error.message, true);
+      if (createdAmazonJob?.id) {
+        await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+        if (outboundCompleted) {
+          await Promise.all([loadFbaReplenishments(), loadFbaPendingSummary(), loadInventory(), loadBoxes()]);
+        }
+      }
+      if (error?.amazonPlacementSplit) {
+        closeModal("fbaOutboundModal");
+        showErrorModal(error.message, true);
+        return;
+      }
+      const extraHint = createdAmazonJob?.jobNo
+        ? `（Amazon任务 ${displayText(createdAmazonJob.jobNo)} 已保留，可在下方继续处理）`
+        : "";
+      showToast(`${error.message}${extraHint}`, true);
     }
   });
 
@@ -6250,6 +8332,384 @@ function bindDelegates() {
     updateFbaOutboundButtonState();
   });
 
+  $("amazonConnectionsBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+
+    const id = String(button.dataset.id || "").trim();
+    if (!id) return;
+    const connection = state.amazonConnections.find((item) => String(item?.id) === id);
+    if (!connection) {
+      showToast("Amazon连接不存在或列表未刷新", true);
+      return;
+    }
+    if (button.dataset.action === "authorizeAmazonConnection") {
+      try {
+        await withBusyButton(button, "跳转中...", async () => {
+          await openAmazonAuthorizationPopup(id);
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+      return;
+    }
+    openAmazonConnectionModal(connection);
+  });
+
+  $("amazonInboundJobsBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+
+    const id = String(button.dataset.id || "").trim();
+    if (!id) return;
+    const job = state.amazonInboundJobs.find((item) => String(item?.id) === id);
+
+    try {
+      if (button.dataset.action === "amazonOpenJobDetail") {
+        await loadAndOpenAmazonJobDetail(id);
+        return;
+      }
+
+      if (button.dataset.action === "amazonBuildPayload") {
+        await withBusyButton(button, "生成中...", async () => {
+          await buildAmazonInboundJobPayload(id);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon请求载荷已生成");
+        return;
+      }
+
+      if (button.dataset.action === "amazonPushJob") {
+        await withBusyButton(button, "推送中...", async () => {
+          await pushAmazonInboundJob(id, {
+            idempotencyKey: `${displayText(button.dataset.jobNo || job?.jobNo || id)}-${Date.now()}`,
+          });
+          try {
+            await submitAmazonDefaultPackingInformation(id);
+          } finally {
+            await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+            await loadAndOpenAmazonJobDetail(id);
+          }
+        });
+        showToast("Amazon任务已推送，并已提交默认装箱信息");
+        return;
+      }
+
+      if (button.dataset.action === "amazonSyncJob") {
+        await withBusyButton(button, "同步中...", async () => {
+          await syncAmazonInboundJob(id);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon任务状态已同步");
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("amazonJobDetail").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+
+    const id = String(button.dataset.id || "").trim();
+    if (!id) return;
+
+    try {
+      if (button.dataset.action === "amazonGeneratePlacementOptions") {
+        await withBusyButton(button, "生成中...", async () => {
+          await generateAmazonPlacementOptions(id);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon分仓生成请求已提交");
+        return;
+      }
+
+      if (button.dataset.action === "amazonListPlacementOptions") {
+        await withBusyButton(button, "刷新中...", async () => {
+          await listAmazonPlacementOptions(id);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon分仓方案已刷新");
+        return;
+      }
+
+      if (button.dataset.action === "amazonConfirmPlacementOption") {
+        const placementOptionId = String(button.dataset.placementOptionId || "").trim();
+        if (!placementOptionId) {
+          throw new Error("缺少分仓方案ID");
+        }
+        await withBusyButton(button, "确认中...", async () => {
+          await confirmAmazonPlacementOption(id, placementOptionId);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast(`已确认分仓方案：${placementOptionId}`);
+        return;
+      }
+
+      if (button.dataset.action === "amazonGeneratePackingOptions") {
+        await withBusyButton(button, "生成中...", async () => {
+          await generateAmazonPackingOptions(id);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon装箱生成请求已提交");
+        return;
+      }
+
+      if (button.dataset.action === "amazonListPackingOptions") {
+        await withBusyButton(button, "刷新中...", async () => {
+          await listAmazonPackingOptions(id);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon装箱方案已刷新");
+        return;
+      }
+
+      if (button.dataset.action === "amazonConfirmPackingOption") {
+        const packingOptionId = String(button.dataset.packingOptionId || "").trim();
+        if (!packingOptionId) {
+          throw new Error("缺少装箱方案ID");
+        }
+        await withBusyButton(button, "确认中...", async () => {
+          await confirmAmazonPackingOption(id, packingOptionId);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast(`已确认装箱方案：${packingOptionId}`);
+        return;
+      }
+
+      if (button.dataset.action === "amazonResetPackingInformationDraft") {
+        const currentDetail = await getAmazonInboundJobDetail(id);
+        const responsePayload =
+          currentDetail?.responsePayload && typeof currentDetail.responsePayload === "object"
+            ? currentDetail.responsePayload
+            : {};
+        const packingState =
+          responsePayload?.packingOptions && typeof responsePayload.packingOptions === "object"
+            ? responsePayload.packingOptions
+            : {};
+        const packingOptions = normalizeAmazonPackingOptions(
+          Array.isArray(packingState?.options) ? packingState.options : [],
+        );
+        state.amazonPackingDrafts.set(
+          id,
+          stringifyPrettyJson(buildDefaultAmazonPackingInformation(currentDetail, packingState, packingOptions)),
+        );
+        renderAmazonJobDetail(currentDetail);
+        showToast("装箱信息模板已重置");
+        return;
+      }
+
+      if (button.dataset.action === "amazonReloadPackingForm") {
+        const currentDetail = state.selectedAmazonInboundJobDetail;
+        if (!currentDetail || String(currentDetail.id) !== id) {
+          throw new Error("请先重新打开当前 Amazon 任务详情");
+        }
+        const input = $("amazonPackingInformationInput");
+        const raw = String(input?.value || "").trim();
+        if (!raw) {
+          throw new Error("请先填写装箱信息 JSON");
+        }
+        const packingInformation = parseAmazonPackingDraft(raw);
+        if (!packingInformation) {
+          throw new Error("装箱信息 JSON 格式无效，无法刷新结构化表单");
+        }
+        state.amazonPackingDrafts.set(id, stringifyPrettyJson(packingInformation));
+        renderAmazonJobDetail(currentDetail);
+        showToast("结构化表单已按当前 JSON 刷新");
+        return;
+      }
+
+      if (button.dataset.action === "amazonSubmitPackingInformation") {
+        const input = $("amazonPackingInformationInput");
+        const raw = String(input?.value || "").trim();
+        if (!raw) {
+          throw new Error("请先填写装箱信息 JSON");
+        }
+        let packingInformation;
+        try {
+          packingInformation = JSON.parse(raw);
+        } catch {
+          throw new Error("装箱信息 JSON 格式无效");
+        }
+        validateAmazonPackingInformation(currentDetail, packingInformation);
+        await withBusyButton(button, "提交中...", async () => {
+          await setAmazonPackingInformation(id, { packingInformation });
+          state.amazonPackingDrafts.set(id, raw);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon装箱信息已提交");
+        return;
+      }
+
+      if (button.dataset.action === "amazonGenerateTransportationOptions") {
+        const placementOptionId = String(button.dataset.placementOptionId || "").trim();
+        if (!placementOptionId) {
+          throw new Error("请先确认分仓方案");
+        }
+        await withBusyButton(button, "生成中...", async () => {
+          await generateAmazonTransportationOptions(id, { placementOptionId });
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon运输方案生成请求已提交");
+        return;
+      }
+
+      if (button.dataset.action === "amazonListTransportationOptions") {
+        const placementOptionId = String(button.dataset.placementOptionId || "").trim();
+        if (!placementOptionId) {
+          throw new Error("请先确认分仓方案");
+        }
+        await withBusyButton(button, "刷新中...", async () => {
+          await listAmazonTransportationOptions(id, placementOptionId);
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon运输方案已刷新");
+        return;
+      }
+
+      if (button.dataset.action === "amazonConfirmTransportationOptions") {
+        const rows = Array.from(
+          $("amazonJobDetail").querySelectorAll("input[data-action='amazonSelectTransportationOption']"),
+        )
+          .map((input) => ({
+            shipmentId: String(input.dataset.shipmentId || "").trim(),
+            transportationOptionId: String(input.dataset.transportationOptionId || "").trim(),
+            checked: Boolean(input.checked),
+          }))
+          .filter((row) => row.shipmentId && row.transportationOptionId);
+        const shipmentIds = [...new Set(rows.map((row) => row.shipmentId))];
+        const transportationSelections = shipmentIds
+          .map((shipmentId) => {
+            const selectedOptionId =
+              state.amazonTransportationSelections.get(
+                getAmazonTransportationSelectionKey(id, shipmentId),
+              ) ||
+              rows.find((row) => row.shipmentId === shipmentId && row.checked)?.transportationOptionId ||
+              "";
+            return {
+              shipmentId,
+              transportationOptionId: String(selectedOptionId || "").trim(),
+            };
+          })
+          .filter((row) => row.shipmentId && row.transportationOptionId);
+        if (!transportationSelections.length) {
+          throw new Error("请先生成并选择运输方案");
+        }
+        await withBusyButton(button, "确认中...", async () => {
+          await confirmAmazonTransportationOptions(id, { transportationSelections });
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast(`已确认 ${transportationSelections.length} 个货件的运输方案`);
+        return;
+      }
+
+      if (button.dataset.action === "amazonGetShipmentLabels") {
+        const shipmentId = String(button.dataset.shipmentId || "").trim();
+        if (!shipmentId) {
+          throw new Error("缺少货件ID");
+        }
+        const labelType = String($(`amazonLabelType-${shipmentId}`)?.value || "").trim();
+        const pageType = String($(`amazonPageType-${shipmentId}`)?.value || "").trim();
+        await withBusyButton(button, "获取中...", async () => {
+          const result = await getAmazonShipmentLabels(id, shipmentId, {
+            labelType,
+            pageType,
+          });
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+          if (result?.downloadUrl) {
+            window.open(String(result.downloadUrl), "_blank", "noopener,noreferrer");
+          }
+        });
+        showToast("Amazon箱唛请求已完成");
+        return;
+      }
+
+      if (button.dataset.action === "amazonUpdateShipmentTracking") {
+        const shipmentId = String(button.dataset.shipmentId || "").trim();
+        if (!shipmentId) {
+          throw new Error("缺少货件ID");
+        }
+        const trackingId = String($(`amazonTrackingId-${shipmentId}`)?.value || "").trim();
+        if (!trackingId) {
+          throw new Error("请先填写物流单号");
+        }
+        await withBusyButton(button, "回传中...", async () => {
+          await updateAmazonShipmentTracking(id, shipmentId, { trackingId });
+          await Promise.all([loadAmazonInboundJobs(), loadAudit()]);
+          await loadAndOpenAmazonJobDetail(id);
+        });
+        showToast("Amazon物流单号已回传");
+        return;
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("amazonJobDetail").addEventListener("change", (event) => {
+    const packingInput = event.target.closest("input[data-action='amazonPackingField']");
+    if (packingInput) {
+      const jobId = String(packingInput.dataset.jobId || "").trim();
+      const groupIndex = Number(packingInput.dataset.groupIndex);
+      const boxIndex = Number(packingInput.dataset.boxIndex);
+      const field = String(packingInput.dataset.field || "").trim();
+      if (!jobId || !Number.isInteger(groupIndex) || !Number.isInteger(boxIndex) || !field) return;
+      try {
+        updateAmazonPackingDraftFromField(jobId, groupIndex, boxIndex, field, packingInput.value);
+      } catch (error) {
+        showToast(error.message, true);
+      }
+      return;
+    }
+
+    const input = event.target.closest("input[data-action='amazonSelectTransportationOption']");
+    if (!input) return;
+    const jobId = String(input.dataset.jobId || "").trim();
+    const shipmentId = String(input.dataset.shipmentId || "").trim();
+    const transportationOptionId = String(input.dataset.transportationOptionId || "").trim();
+    if (!jobId || !shipmentId || !transportationOptionId) return;
+    state.amazonTransportationSelections.set(
+      getAmazonTransportationSelectionKey(jobId, shipmentId),
+      transportationOptionId,
+    );
+  });
+
+  $("amazonJobDetail").addEventListener("input", (event) => {
+    const packingInput = event.target.closest("input[data-action='amazonPackingField']");
+    if (packingInput) {
+      const jobId = String(packingInput.dataset.jobId || "").trim();
+      const groupIndex = Number(packingInput.dataset.groupIndex);
+      const boxIndex = Number(packingInput.dataset.boxIndex);
+      const field = String(packingInput.dataset.field || "").trim();
+      if (!jobId || !Number.isInteger(groupIndex) || !Number.isInteger(boxIndex) || !field) return;
+      try {
+        updateAmazonPackingDraftFromField(jobId, groupIndex, boxIndex, field, packingInput.value);
+      } catch (error) {
+        showToast(error.message, true);
+      }
+      return;
+    }
+
+    const textarea = event.target.closest("textarea[data-job-id]");
+    if (!textarea) return;
+    const jobId = String(textarea.dataset.jobId || "").trim();
+    if (!jobId) return;
+    state.amazonPackingDrafts.set(jobId, textarea.value);
+  });
+
   const openAdjustByAction = async (event) => {
     const button = event.target.closest(
       "button[data-action='inventoryInbound'], button[data-action='inventoryOutbound'], button[data-action='inventoryOutboundOne']",
@@ -6723,6 +9183,20 @@ function bindDelegates() {
     );
     if (fbaOutboundModalClose) {
       closeModal("fbaOutboundModal");
+      return;
+    }
+    const amazonConnectionModalClose = event.target.closest(
+      "button[data-action='closeAmazonConnectionModal']",
+    );
+    if (amazonConnectionModalClose) {
+      closeModal("amazonConnectionModal");
+      return;
+    }
+    const amazonJobDetailModalClose = event.target.closest(
+      "button[data-action='closeAmazonJobDetailModal']",
+    );
+    if (amazonJobDetailModalClose) {
+      closeModal("amazonJobDetailModal");
     }
   });
 
@@ -6860,6 +9334,18 @@ function bindDelegates() {
     }
   });
 
+  $("amazonConnectionModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("amazonConnectionModal");
+    }
+  });
+
+  $("amazonJobDetailModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("amazonJobDetailModal");
+    }
+  });
+
   $("deleteConfirmOkBtn").addEventListener("click", () => {
     resolveDeleteConfirm(true);
   });
@@ -6985,7 +9471,12 @@ function bindRefresh() {
     loadBatchInboundOrders().catch((error) => showToast(error.message, true)),
   );
   $("refreshFbaReplenishment").addEventListener("click", () =>
-    Promise.all([loadFbaReplenishments(), loadFbaPendingSummary()]).catch((error) =>
+    Promise.all([
+      loadFbaReplenishments(),
+      loadFbaPendingSummary(),
+      loadAmazonConnections(),
+      loadAmazonInboundJobs(),
+    ]).catch((error) =>
       showToast(error.message, true),
     ),
   );
@@ -6998,6 +9489,7 @@ bindForms();
 bindDelegates();
 bindScrollLoad();
 bindRefresh();
+window.addEventListener("message", handleAmazonOauthMessage);
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
 switchPanel("inventory");

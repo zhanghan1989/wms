@@ -318,6 +318,8 @@
         <div class="panel-head">
           <h2>FBA补货申请一览</h2>
           <div class="panel-tools">
+            <button id="openAmazonConnectionModalBtn" type="button" class="ghost">Amazon连接</button>
+            <button id="createAmazonInboundJobBtn" type="button">生成Amazon任务</button>
             <button id="fbaBatchOutboundBtn" type="button">出库</button>
             <button id="downloadFbaOutboundExcelBtn" type="button">下载</button>
             <button id="refreshFbaReplenishment" class="ghost">刷新</button>
@@ -340,6 +342,49 @@
           </thead>
           <tbody id="fbaReplenishmentBody"></tbody>
         </table>
+
+        <div class="cards amazon-fba-cards">
+          <article class="card">
+            <div class="card-head">
+              <h3>Amazon店铺连接</h3>
+              <button id="createAmazonConnectionBtn" type="button" class="ghost">新建连接</button>
+            </div>
+            <p id="amazonConnectionSummary" class="muted amazon-section-hint">还没有配置 Amazon 店铺连接。</p>
+            <div id="amazonConnectionsBody" class="amazon-connection-list"></div>
+          </article>
+
+          <article class="card">
+            <div class="card-head amazon-job-card-head">
+              <h3>Send To Amazon 任务</h3>
+              <div class="amazon-job-toolbar">
+                <label class="amazon-inline-field">
+                  <span>店铺连接</span>
+                  <select id="amazonJobConnectionId"></select>
+                </label>
+                <button id="refreshAmazonInboundJobsBtn" type="button" class="ghost">刷新任务</button>
+              </div>
+            </div>
+            <p id="amazonJobSummary" class="muted amazon-section-hint">选择待出库申请单后，可生成 Amazon 推送任务。</p>
+            <div class="amazon-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务号</th>
+                    <th>状态</th>
+                    <th>店铺</th>
+                    <th>补货单数</th>
+                    <th>Amazon计划</th>
+                    <th>自动处理</th>
+                    <th>最近同步</th>
+                    <th>错误</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="amazonInboundJobsBody"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section class="panel" id="overview">
@@ -1107,6 +1152,157 @@
           <button type="button" class="ghost" data-action="closeFbaOutboundModal">取消</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="amazonConnectionModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3 id="amazonConnectionModalTitle">Amazon店铺连接</h3>
+        <button type="button" class="ghost" data-action="closeAmazonConnectionModal">关闭</button>
+      </div>
+      <form id="amazonConnectionForm" class="form-grid modal-grid amazon-connection-form">
+        <input id="amazonConnectionId" type="hidden" />
+        <label>
+          连接名称
+          <input id="amazonConnectionName" maxlength="128" required />
+        </label>
+        <label>
+          Marketplace ID
+          <input id="amazonConnectionMarketplaceId" maxlength="32" placeholder="如 ATVPDKIKX0DER" required />
+        </label>
+        <label>
+          区域
+          <select id="amazonConnectionRegion" required>
+            <option value="na">北美（na）</option>
+            <option value="eu">欧洲（eu）</option>
+            <option value="fe">远东（fe）</option>
+          </select>
+        </label>
+        <label>
+          状态
+          <select id="amazonConnectionStatus">
+            <option value="1">启用</option>
+            <option value="0">停用</option>
+          </select>
+        </label>
+        <label>
+          Seller ID
+          <input id="amazonConnectionSellerId" maxlength="64" />
+        </label>
+        <label>
+          Client ID
+          <input id="amazonConnectionClientId" maxlength="255" required />
+        </label>
+        <label>
+          Client Secret
+          <input id="amazonConnectionClientSecret" maxlength="255" required />
+        </label>
+        <label>
+          Refresh Token
+          <input id="amazonConnectionRefreshToken" maxlength="2048" placeholder="可留空，改用一键授权自动回填" />
+        </label>
+        <label>
+          Application ID
+          <input id="amazonConnectionApplicationId" maxlength="255" placeholder="Amazon 应用 application_id" />
+        </label>
+        <label>
+          授权版本
+          <select id="amazonConnectionAuthorizationVersion">
+            <option value="published">正式版</option>
+            <option value="beta">测试版（beta）</option>
+          </select>
+        </label>
+        <label class="create-sku-full-row">
+          Seller Central URL
+          <input id="amazonConnectionSellerCentralUrl" maxlength="255" placeholder="可留空，按区域使用默认地址" />
+        </label>
+        <label>
+          App Name
+          <input id="amazonConnectionAppName" maxlength="128" />
+        </label>
+        <label>
+          App Version
+          <input id="amazonConnectionAppVersion" maxlength="32" placeholder="如 2026.03" />
+        </label>
+        <label>
+          Label Owner
+          <select id="amazonConnectionLabelOwner">
+            <option value="SELLER">SELLER</option>
+            <option value="AMAZON">AMAZON</option>
+          </select>
+        </label>
+        <label>
+          Prep Owner
+          <select id="amazonConnectionPrepOwner">
+            <option value="SELLER">SELLER</option>
+            <option value="AMAZON">AMAZON</option>
+          </select>
+        </label>
+        <label class="create-sku-full-row">
+          Destination Marketplaces
+          <input id="amazonConnectionDestinationMarketplaces" maxlength="255" placeholder="多个值用逗号分隔" />
+        </label>
+        <label>
+          发货人
+          <input id="amazonConnectionShipFromName" maxlength="128" required />
+        </label>
+        <label>
+          公司名
+          <input id="amazonConnectionShipFromCompanyName" maxlength="128" />
+        </label>
+        <label class="create-sku-full-row">
+          地址1
+          <input id="amazonConnectionShipFromAddressLine1" maxlength="128" required />
+        </label>
+        <label class="create-sku-full-row">
+          地址2
+          <input id="amazonConnectionShipFromAddressLine2" maxlength="128" />
+        </label>
+        <label>
+          城市
+          <input id="amazonConnectionShipFromCity" maxlength="64" required />
+        </label>
+        <label>
+          省/州代码
+          <input id="amazonConnectionShipFromStateOrProvinceCode" maxlength="64" />
+        </label>
+        <label>
+          区/县
+          <input id="amazonConnectionShipFromDistrictOrCounty" maxlength="64" />
+        </label>
+        <label>
+          国家代码
+          <input id="amazonConnectionShipFromCountryCode" maxlength="2" placeholder="如 US" required />
+        </label>
+        <label>
+          邮编
+          <input id="amazonConnectionShipFromPostalCode" maxlength="32" required />
+        </label>
+        <label>
+          电话
+          <input id="amazonConnectionShipFromPhoneNumber" maxlength="32" required />
+        </label>
+        <label class="create-sku-full-row">
+          备注
+          <textarea id="amazonConnectionRemark" rows="3" maxlength="255"></textarea>
+        </label>
+        <div class="modal-actions">
+          <button id="amazonConnectionAuthorizeBtn" type="button" class="ghost hidden">授权Amazon</button>
+          <button id="amazonConnectionSubmitBtn" type="submit">保存连接</button>
+          <button type="button" class="ghost" data-action="closeAmazonConnectionModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="amazonJobDetailModal" class="modal hidden">
+    <div class="modal-card modal-wide batch-detail-modal-card">
+      <div class="modal-head">
+        <h3>Amazon任务详情</h3>
+        <button type="button" class="ghost" data-action="closeAmazonJobDetailModal">关闭</button>
+      </div>
+      <div id="amazonJobDetail" class="batch-detail-empty muted">请先选择一条 Amazon 任务。</div>
     </div>
   </div>
 

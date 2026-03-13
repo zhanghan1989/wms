@@ -1,0 +1,5 @@
+-- No SQL changes.
+-- This migration exists to document the semantic rename in Prisma schema:
+-- `AmazonInboundJobItem.boxId` -> `AmazonInboundJobItem.sourceInventoryBoxId`
+-- `AmazonInboundJobItem.box`   -> `AmazonInboundJobItem.sourceInventoryBox`
+-- The underlying database column remains `box_id`.

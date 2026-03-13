@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Amazon 授权完成</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      background: #f4f7f4;
+      color: #163024;
+    }
+    .wrap {
+      max-width: 560px;
+      margin: 72px auto;
+      padding: 24px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #d9e6dd;
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 12px 32px rgba(20, 60, 40, 0.08);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 22px;
+    }
+    p {
+      margin: 8px 0;
+      line-height: 1.6;
+    }
+    .muted {
+      color: #5f7467;
+    }
+    .error {
+      color: #9d1c1c;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Amazon 授权处理中</h1>
+      <p id="status" class="muted">正在回写系统，请不要关闭当前窗口。</p>
+      <p id="error" class="error"></p>
+    </div>
+  </div>
+  <script>
+    const STORAGE_KEY = "wms_amazon_oauth_context";
+
+    function setStatus(text, isError) {
+      const status = document.getElementById("status");
+      const error = document.getElementById("error");
+      if (status) {
+        status.textContent = isError ? "Amazon 授权失败" : text;
+      }
+      if (error) {
+        error.textContent = isError ? text : "";
+      }
+    }
+
+    async function run() {
+      const params = new URLSearchParams(window.location.search);
+      const state = String(params.get("state") || "").trim();
+      const sellingPartnerId = String(params.get("selling_partner_id") || "").trim();
+      const spapiOauthCode = String(params.get("spapi_oauth_code") || "").trim();
+      const token = localStorage.getItem("wms_token") || "";
+      const contextRaw = localStorage.getItem(STORAGE_KEY);
+      const context = contextRaw ? JSON.parse(contextRaw) : null;
+
+      if (!token) {
+        throw new Error("当前后台登录已失效，请回到系统重新登录后再发起 Amazon 授权。");
+      }
+      if (!context || !context.connectionId || !context.state) {
+        throw new Error("本地授权上下文不存在，请回到系统重新发起 Amazon 授权。");
+      }
+      if (!state || state !== String(context.state || "")) {
+        throw new Error("授权 state 不匹配，请回到系统重新发起 Amazon 授权。");
+      }
+      if (!sellingPartnerId || !spapiOauthCode) {
+        throw new Error("Amazon 回调缺少必要参数，无法完成绑定。");
+      }
+
+      const response = await fetch(`/api/amazon-fba/connections/${encodeURIComponent(context.connectionId)}/oauth/complete`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          origin: window.location.origin,
+          state,
+          sellingPartnerId,
+          spapiOauthCode,
+        }),
+      });
+      const text = await response.text();
+      let payload;
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        payload = { message: text || "请求失败" };
+      }
+      if (!response.ok || payload.code !== 0) {
+        throw new Error(String(payload.message || `HTTP ${response.status}`));
+      }
+      localStorage.removeItem(STORAGE_KEY);
+      setStatus("Amazon 店铺授权已完成，窗口即将自动关闭。", false);
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({
+          type: "amazon-oauth-completed",
+          connectionId: String(context.connectionId || ""),
+          connectionName: payload?.data?.name || "",
+          sellerId: payload?.data?.sellerId || sellingPartnerId,
+        }, window.location.origin);
+      }
+      window.setTimeout(() => window.close(), 1200);
+    }
+
+    run().catch((error) => {
+      setStatus(error && error.message ? error.message : "Amazon 授权失败", true);
+    });
+  </script>
+</body>
+</html>

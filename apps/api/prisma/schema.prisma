@@ -56,6 +56,19 @@ enum ProductEditRequestStatus {
   deleted
 }
 
+enum AmazonInboundJobStatus {
+  draft
+  payload_ready
+  pushed
+  failed
+  closed
+}
+
+enum AmazonApiLogStatus {
+  success
+  failed
+}
+
 enum StocktakeScopeType {
   sample
 }
@@ -123,6 +136,23 @@ enum AuditEventType {
   inventory_adjust_created
   inventory_adjust_confirmed
   inventory_adjust_voided
+  amazon_connection_created
+  amazon_connection_updated
+  amazon_connection_deleted
+  amazon_inbound_job_created
+  amazon_inbound_job_payload_built
+  amazon_inbound_job_pushed
+  amazon_inbound_job_push_failed
+  amazon_inbound_job_sync_failed
+  amazon_inbound_job_synced
+  amazon_inbound_job_placement_updated
+  amazon_inbound_job_transportation_updated
+  amazon_inbound_job_labels_updated
+  amazon_inbound_job_tracking_updated
+  amazon_inbound_job_automation_updated
+  amazon_inbound_job_shipments_synced
+  amazon_inbound_job_packing_updated
+  amazon_inbound_job_packing_information_updated
 }
 
 model User {
@@ -144,6 +174,10 @@ model User {
   outboundFbaReplenishments  FbaReplenishment[]     @relation("fba_outbound_by")
   deletedFbaReplenishments   FbaReplenishment[]     @relation("fba_deleted_by")
   productEditRequests        ProductEditRequest[]   @relation("product_edit_created_by")
+  amazonShopConnections      AmazonShopConnection[] @relation("amazon_connection_created_by")
+  amazonInboundJobs          AmazonInboundJob[]     @relation("amazon_job_created_by")
+  pushedAmazonInboundJobs    AmazonInboundJob[]     @relation("amazon_job_pushed_by")
+  amazonApiLogs              AmazonApiLog[]         @relation("amazon_api_logged_by")
   stockMovements             StockMovement[]
   auditLogs                  OperationAuditLog[]
 
@@ -238,6 +272,7 @@ model Sku {
   adjustItems       InventoryAdjustOrderItem[]
   fbaReplenishments FbaReplenishment[]
   productEditRequests ProductEditRequest[]
+  amazonInboundJobItems AmazonInboundJobItem[]
 
   @@map("skus")
 }
@@ -300,6 +335,7 @@ model Box {
   stockMovements    StockMovement[]
   adjustItems       InventoryAdjustOrderItem[]
   fbaReplenishments FbaReplenishment[]
+  amazonInboundJobItems AmazonInboundJobItem[]
 
   @@map("boxes")
 }
@@ -494,6 +530,7 @@ model FbaReplenishment {
   confirmer    User?                  @relation("fba_confirmed_by", fields: [confirmedBy], references: [id])
   outbounder   User?                  @relation("fba_outbound_by", fields: [outboundBy], references: [id])
   deleter      User?                  @relation("fba_deleted_by", fields: [deletedBy], references: [id])
+  amazonInboundJobItems AmazonInboundJobItem[]
 
   @@index([status, createdAt])
   @@index([skuId, status])
@@ -518,6 +555,172 @@ model ProductEditRequest {
   @@index([createdBy, createdAt])
   @@index([status, createdAt])
   @@map("product_edit_requests")
+}
+
+model AmazonShopConnection {
+  id            BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  name          String           @unique @db.VarChar(128)
+  marketplaceId String           @map("marketplace_id") @db.VarChar(32)
+  region        String           @db.VarChar(32)
+  sellerId      String?          @map("seller_id") @db.VarChar(64)
+  status        Int              @default(1) @db.TinyInt
+  authConfig    Json?            @map("auth_config")
+  remark        String?          @db.VarChar(255)
+  createdBy     BigInt           @map("created_by") @db.UnsignedBigInt
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  creator       User             @relation("amazon_connection_created_by", fields: [createdBy], references: [id])
+  jobs          AmazonInboundJob[]
+  apiLogs       AmazonApiLog[]
+
+  @@index([status, createdAt])
+  @@map("amazon_shop_connections")
+}
+
+model AmazonInboundJob {
+  id              BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  jobNo           String                 @unique @map("job_no") @db.VarChar(64)
+  connectionId    BigInt                 @map("connection_id") @db.UnsignedBigInt
+  status          AmazonInboundJobStatus @default(draft)
+  sourceType      String                 @map("source_type") @db.VarChar(32)
+  amazonInboundPlanId String?            @map("amazon_inbound_plan_id") @db.VarChar(128)
+  lastOperationId String?                @map("last_operation_id") @db.VarChar(128)
+  requestPayload  Json?                  @map("request_payload")
+  responsePayload Json?                  @map("response_payload")
+  lastSyncAt      DateTime?              @map("last_sync_at")
+  lastError       String?                @map("last_error") @db.VarChar(512)
+  createdBy       BigInt                 @map("created_by") @db.UnsignedBigInt
+  pushedBy        BigInt?                @map("pushed_by") @db.UnsignedBigInt
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  connection      AmazonShopConnection   @relation(fields: [connectionId], references: [id])
+  creator         User                   @relation("amazon_job_created_by", fields: [createdBy], references: [id])
+  pusher          User?                  @relation("amazon_job_pushed_by", fields: [pushedBy], references: [id])
+  items           AmazonInboundJobItem[]
+  shipments       AmazonInboundShipment[]
+  boxes           AmazonInboundBox[]
+  boxItems        AmazonInboundBoxItem[]
+  apiLogs         AmazonApiLog[]
+
+  @@index([connectionId, createdAt])
+  @@index([amazonInboundPlanId])
+  @@index([status, createdAt])
+  @@map("amazon_inbound_jobs")
+}
+
+model AmazonInboundJobItem {
+  id                 BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  jobId              BigInt           @map("job_id") @db.UnsignedBigInt
+  fbaReplenishmentId BigInt           @map("fba_replenishment_id") @db.UnsignedBigInt
+  skuId              BigInt           @map("sku_id") @db.UnsignedBigInt
+  sourceInventoryBoxId BigInt         @map("box_id") @db.UnsignedBigInt
+  fbaCartonRef       String           @map("fba_carton_ref") @db.VarChar(64)
+  requestedQty       Int              @map("requested_qty")
+  actualQty          Int?             @map("actual_qty")
+  status             String           @default("draft") @db.VarChar(32)
+  createdAt          DateTime         @default(now()) @map("created_at")
+  job                AmazonInboundJob @relation(fields: [jobId], references: [id])
+  fbaReplenishment   FbaReplenishment @relation(fields: [fbaReplenishmentId], references: [id])
+  sku                Sku              @relation(fields: [skuId], references: [id])
+  sourceInventoryBox Box              @relation(fields: [sourceInventoryBoxId], references: [id])
+
+  @@unique([jobId, fbaReplenishmentId], map: "uq_amazon_job_item_job_replenishment")
+  @@index([jobId, fbaCartonRef])
+  @@index([jobId, status])
+  @@index([fbaReplenishmentId])
+  @@map("amazon_inbound_job_items")
+}
+
+model AmazonInboundShipment {
+  id               BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  jobId            BigInt           @map("job_id") @db.UnsignedBigInt
+  amazonShipmentId String           @unique @map("amazon_shipment_id") @db.VarChar(128)
+  shipmentConfirmationId String?    @map("shipment_confirmation_id") @db.VarChar(128)
+  amazonPlanId     String?          @map("amazon_plan_id") @db.VarChar(128)
+  shipmentName     String?          @map("shipment_name") @db.VarChar(128)
+  destinationCode  String?          @map("destination_code") @db.VarChar(64)
+  status           String           @db.VarChar(64)
+  payload          Json?
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  job              AmazonInboundJob @relation(fields: [jobId], references: [id])
+  boxes            AmazonInboundBox[]
+  boxItems         AmazonInboundBoxItem[]
+
+  @@index([jobId, status])
+  @@map("amazon_inbound_shipments")
+}
+
+model AmazonInboundBox {
+  id                BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  jobId             BigInt                @map("job_id") @db.UnsignedBigInt
+  shipmentId        BigInt                @map("shipment_id") @db.UnsignedBigInt
+  amazonShipmentId  String                @map("amazon_shipment_id") @db.VarChar(128)
+  amazonBoxId       String                @map("amazon_box_id") @db.VarChar(128)
+  boxSequence       Int?                  @map("box_sequence")
+  templateName      String?               @map("template_name") @db.VarChar(128)
+  contentSource     String?               @map("content_source") @db.VarChar(64)
+  quantity          Int?                  
+  status            String?               @db.VarChar(64)
+  payload           Json?
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+  job               AmazonInboundJob      @relation(fields: [jobId], references: [id])
+  shipment          AmazonInboundShipment @relation(fields: [shipmentId], references: [id])
+  items             AmazonInboundBoxItem[]
+
+  @@unique([shipmentId, amazonBoxId], map: "uq_amazon_inbound_box_shipment_box")
+  @@index([jobId, amazonShipmentId])
+  @@index([shipmentId, status])
+  @@map("amazon_inbound_boxes")
+}
+
+model AmazonInboundBoxItem {
+  id               BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  jobId            BigInt                @map("job_id") @db.UnsignedBigInt
+  shipmentId       BigInt                @map("shipment_id") @db.UnsignedBigInt
+  boxId            BigInt                @map("box_id") @db.UnsignedBigInt
+  amazonShipmentId String                @map("amazon_shipment_id") @db.VarChar(128)
+  amazonBoxId      String                @map("amazon_box_id") @db.VarChar(128)
+  msku             String?               @db.VarChar(128)
+  fnsku            String?               @db.VarChar(128)
+  asin             String?               @db.VarChar(32)
+  quantity         Int?
+  payload          Json?
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+  job              AmazonInboundJob      @relation(fields: [jobId], references: [id])
+  shipment         AmazonInboundShipment @relation(fields: [shipmentId], references: [id])
+  box              AmazonInboundBox      @relation(fields: [boxId], references: [id])
+
+  @@index([jobId, amazonShipmentId])
+  @@index([shipmentId, amazonBoxId])
+  @@index([boxId])
+  @@map("amazon_inbound_box_items")
+}
+
+model AmazonApiLog {
+  id             BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId   BigInt?              @map("connection_id") @db.UnsignedBigInt
+  jobId          BigInt?              @map("job_id") @db.UnsignedBigInt
+  action         String               @db.VarChar(64)
+  requestMethod  String?              @map("request_method") @db.VarChar(16)
+  requestUrl     String?              @map("request_url") @db.VarChar(255)
+  requestBody    Json?                @map("request_body")
+  responseStatus Int?                 @map("response_status")
+  responseBody   Json?                @map("response_body")
+  status         AmazonApiLogStatus   @default(success)
+  errorMessage   String?              @map("error_message") @db.VarChar(512)
+  createdBy      BigInt?              @map("created_by") @db.UnsignedBigInt
+  createdAt      DateTime             @default(now()) @map("created_at")
+  connection     AmazonShopConnection? @relation(fields: [connectionId], references: [id])
+  job            AmazonInboundJob?    @relation(fields: [jobId], references: [id])
+  creator        User?                @relation("amazon_api_logged_by", fields: [createdBy], references: [id])
+
+  @@index([connectionId, createdAt])
+  @@index([jobId, createdAt])
+  @@index([status, createdAt])
+  @@map("amazon_api_logs")
 }
 
 model BackupRecord {

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AuditAction, Prisma } from '@prisma/client';
+import { AuditAction, AuditEventType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QueryAuditDto } from './dto/query-audit.dto';
 import { AuditEventTypeValue } from '../constants/audit-event-type';
@@ -54,7 +54,7 @@ export class AuditService {
         entityType: payload.entityType,
         entityId: payload.entityId,
         action: payload.action,
-        eventType: payload.eventType,
+        eventType: payload.eventType as AuditEventType,
         beforeData,
         afterData,
         changedFields: changedFieldsData,
