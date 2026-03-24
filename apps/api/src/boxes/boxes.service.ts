@@ -22,11 +22,14 @@ export class BoxesService {
 
   async list(q?: string): Promise<unknown[]> {
     return this.prisma.box.findMany({
-      where: q
-        ? {
-            OR: [{ boxCode: { contains: q } }],
-          }
-        : undefined,
+      where: {
+        status: 1,
+        ...(q
+          ? {
+              OR: [{ boxCode: { contains: q } }],
+            }
+          : {}),
+      },
       include: {
         shelf: {
           select: {
@@ -265,6 +268,91 @@ export class BoxesService {
     };
   }
 
+  async archiveAndRelease(
+    idParam: string,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ success: boolean; archivedBoxCode: string; releasedBoxCode: string }> {
+    const id = parseId(idParam, 'boxId');
+    const box = await this.prisma.box.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        boxCode: true,
+        shelfId: true,
+        status: true,
+      },
+    });
+    if (!box) throw new NotFoundException('箱号不存在');
+    if (Number(box.status ?? 0) !== 1) {
+      throw new BadRequestException('该箱号已归档，不能重复释放');
+    }
+
+    const inventorySummary = await this.prisma.inventoryBoxSku.aggregate({
+      where: { boxId: id },
+      _sum: { qty: true },
+    });
+    const totalQty = Number(inventorySummary._sum.qty ?? 0);
+    if (totalQty > 0) {
+      throw new BadRequestException(`箱号暂时无法归档释放：当前库存总数量为 ${totalQty}`);
+    }
+
+    await this.ensureBoxNotUnderActiveFba(id, box.boxCode, '归档释放');
+
+    const lockingOrderNo = await this.findLockingBatchInboundOrderNo(box.boxCode);
+    if (lockingOrderNo) {
+      throw new BadRequestException(
+        `箱号暂时无法归档释放：存在批量入库单 ${lockingOrderNo} 正在采集或待入库`,
+      );
+    }
+
+    const pendingBatchInboundRows = await this.prisma.batchInboundItem.count({
+      where: {
+        boxCode: box.boxCode,
+        order: {
+          status: {
+            in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
+          },
+        },
+      },
+    });
+    if (pendingBatchInboundRows > 0) {
+      throw new BadRequestException(
+        `箱号暂时无法归档释放：存在 ${pendingBatchInboundRows} 条批量入库中的箱号记录`,
+      );
+    }
+
+    const archivedBoxCode = await this.buildArchivedBoxCode(box.boxCode);
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.box.update({
+        where: { id },
+        data: {
+          boxCode: archivedBoxCode,
+          status: 0,
+        },
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'box',
+        entityId: updated.id,
+        action: AuditAction.update,
+        eventType: AuditEventType.BOX_DISABLED,
+        beforeData: box as unknown as Record<string, unknown>,
+        afterData: updated as unknown as Record<string, unknown>,
+        operatorId,
+        requestId,
+        remark: `archived and released original box code ${box.boxCode}`,
+      });
+    });
+
+    return {
+      success: true,
+      archivedBoxCode,
+      releasedBoxCode: box.boxCode,
+    };
+  }
+
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'boxId');
     const box = await this.prisma.box.findUnique({ where: { id } });
@@ -378,6 +466,26 @@ export class BoxesService {
           .filter((item) => Boolean(item)),
       ),
     );
+  }
+
+  private async buildArchivedBoxCode(boxCode: string): Promise<string> {
+    const base = `${boxCode}#ARCHIVED`;
+    let attempt = 1;
+
+    while (attempt <= 1000) {
+      const suffix = String(attempt).padStart(3, '0');
+      const candidate = `${base}-${suffix}`;
+      const exists = await this.prisma.box.findFirst({
+        where: { boxCode: candidate },
+        select: { id: true },
+      });
+      if (!exists) {
+        return candidate;
+      }
+      attempt += 1;
+    }
+
+    throw new ConflictException(`无法为箱号 ${boxCode} 生成可用的归档编号`);
   }
 
 }

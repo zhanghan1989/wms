@@ -48,6 +48,15 @@ export class BoxesController {
     return this.boxesService.getDeleteCheck(id);
   }
 
+  @Post(':id/archive-release')
+  async archiveAndRelease(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<{ success: boolean; archivedBoxCode: string; releasedBoxCode: string }> {
+    return this.boxesService.archiveAndRelease(id, user.id, req.requestId);
+  }
+
   @Delete(':id')
   async remove(
     @Param('id') id: string,

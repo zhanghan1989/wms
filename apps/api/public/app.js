@@ -3104,6 +3104,8 @@ function renderBoxesManageTable() {
           </select>
         </td>
         <td>
+          <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>
+          <button class="tiny-btn secondary" data-action="archiveReleaseBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">归档释放</button>
           <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">删除</button>
         </td>
@@ -3111,7 +3113,7 @@ function renderBoxesManageTable() {
     `;
       })
       .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
-  const tableRows = body.querySelectorAll("tr");
+  const tableRows = [];
   visibleRows.forEach((item, index) => {
     const actionCell = tableRows[index]?.lastElementChild;
     if (!actionCell) return;
@@ -6324,6 +6326,20 @@ function bindDelegates() {
     try {
       if (action === "queryBoxManage") {
         await openBoxContentQueryModalForBoxCode(button.dataset.code || id, id);
+      } else if (action === "archiveReleaseBoxManage") {
+        const boxCode = button.dataset.code || id;
+        const ok = await openActionConfirmModal(
+          `确认归档旧箱并释放箱号 ${boxCode} ？`,
+          "旧箱会保留历史审计并隐藏，原箱号将重新可用。",
+          "归档释放",
+        );
+        if (!ok) return;
+        const result = await request(`/boxes/${id}/archive-release`, { method: "POST" });
+        state.boxEditingIds.delete(String(id));
+        showToast(
+          `箱号 ${result?.releasedBoxCode || boxCode} 已释放，旧箱已归档为 ${result?.archivedBoxCode || "-"}`,
+        );
+        await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       } else if (action === "editBoxManage") {
         const codeInput = $(`boxCodeManage-${id}`);
         const shelfSelect = $(`boxShelfManage-${id}`);
