@@ -985,6 +985,13 @@ pre {
   z-index: 1;
 }
 
+.manage-query-summary {
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  font-size: 13px;
+}
+
 .batch-detail-modal-card {
   max-height: 86vh;
   overflow: auto;

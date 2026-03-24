@@ -21,6 +21,7 @@ import {
 import { ConfirmFbaReplenishmentDto } from './dto/confirm-fba-replenishment.dto';
 import { CreateFbaReplenishmentDto } from './dto/create-fba-replenishment.dto';
 import { ManualAdjustDto } from './dto/manual-adjust.dto';
+import { MoveProductBetweenBoxesDto } from './dto/move-product-between-boxes.dto';
 import { OutboundFbaReplenishmentDto } from './dto/outbound-fba-replenishment.dto';
 
 interface AdjustOrderResult {
@@ -287,6 +288,117 @@ export class InventoryService {
       return {
         ...result,
         adjustNo: order.adjustNo,
+      };
+    });
+  }
+
+  async moveProductBetweenBoxes(
+    payload: MoveProductBetweenBoxesDto,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<AdjustOrderResult & { adjustNo: string; qty: number; oldBoxCode: string; newBoxCode: string }> {
+    const skuId = BigInt(payload.skuId);
+    const fromBoxCode = String(payload.fromBoxCode || '').trim();
+    const toBoxCode = String(payload.toBoxCode || '').trim();
+
+    if (!fromBoxCode || !toBoxCode) {
+      throw new BadRequestException('原箱号和新箱号不能为空');
+    }
+    if (fromBoxCode.toUpperCase() === toBoxCode.toUpperCase()) {
+      throw new BadRequestException('新箱号不能与原箱号相同');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const [sku, sourceBox, targetBox] = await Promise.all([
+        tx.sku.findUnique({
+          where: { id: skuId },
+          select: { id: true, sku: true },
+        }),
+        tx.box.findUnique({
+          where: { boxCode: fromBoxCode },
+          select: { id: true, boxCode: true },
+        }),
+        tx.box.findUnique({
+          where: { boxCode: toBoxCode },
+          select: { id: true, boxCode: true },
+        }),
+      ]);
+
+      if (!sku) throw new NotFoundException('SKU不存在');
+      if (!sourceBox) throw new NotFoundException('原箱号不存在');
+      if (!targetBox) throw new NotFoundException('新箱号不存在');
+
+      await this.ensureBoxesNotUnderActiveFba(tx, [sourceBox.id, targetBox.id], '移货');
+
+      const inventory = await tx.inventoryBoxSku.findUnique({
+        where: {
+          boxId_skuId: {
+            boxId: sourceBox.id,
+            skuId: sku.id,
+          },
+        },
+        select: { qty: true },
+      });
+      const qty = Number(inventory?.qty ?? 0);
+      if (!Number.isInteger(qty) || qty <= 0) {
+        throw new ConflictException('原箱号里该SKU没有可移动库存');
+      }
+
+      const order = await tx.inventoryAdjustOrder.create({
+        data: {
+          adjustNo: generateOrderNo('ADJ'),
+          status: OrderStatus.draft,
+          remark: 'move-product-between-boxes',
+          createdBy: operatorId,
+        },
+      });
+      await tx.inventoryAdjustOrderItem.createMany({
+        data: [
+          {
+            orderId: order.id,
+            boxId: sourceBox.id,
+            skuId: sku.id,
+            qtyDelta: -qty,
+            reason: '移动产品到新箱子-转出',
+          },
+          {
+            orderId: order.id,
+            boxId: targetBox.id,
+            skuId: sku.id,
+            qtyDelta: qty,
+            reason: '移动产品到新箱子-转入',
+          },
+        ],
+      });
+
+      await this.auditService.create({
+        db: tx,
+        entityType: 'inventory_adjust_order',
+        entityId: order.id,
+        action: AuditAction.create,
+        eventType: AuditEventType.INVENTORY_ADJUST_CREATED,
+        beforeData: null,
+        afterData: {
+          adjustNo: order.adjustNo,
+          status: order.status,
+          mode: 'move-product-between-boxes',
+          skuId: sku.id.toString(),
+          sku: sku.sku,
+          fromBoxCode: sourceBox.boxCode,
+          toBoxCode: targetBox.boxCode,
+          qty,
+        },
+        operatorId,
+        requestId,
+      });
+
+      const result = await this.applyAdjustOrder(tx, order.id, operatorId, requestId, false);
+      return {
+        ...result,
+        adjustNo: order.adjustNo,
+        qty,
+        oldBoxCode: sourceBox.boxCode,
+        newBoxCode: targetBox.boxCode,
       };
     });
   }
@@ -1927,6 +2039,38 @@ export class InventoryService {
     if (status === 'outbound') return '已出库';
     if (status === 'deleted') return '已删除';
     return status;
+  }
+
+  private async ensureBoxesNotUnderActiveFba(
+    tx: Prisma.TransactionClient,
+    boxIds: bigint[],
+    operationName: string,
+  ): Promise<void> {
+    const uniqueBoxIds = Array.from(new Set(boxIds.map((id) => id.toString()))).map((id) => BigInt(id));
+    if (!uniqueBoxIds.length) return;
+
+    const activeRows = await tx.fbaReplenishment.findMany({
+      where: {
+        boxId: { in: uniqueBoxIds },
+        status: { in: ['pending_confirm', 'pending_outbound'] },
+      },
+      select: {
+        requestNo: true,
+        status: true,
+        box: { select: { boxCode: true } },
+        sku: { select: { sku: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 1,
+    });
+    const activeRow = activeRows[0];
+    if (!activeRow) return;
+
+    throw new ConflictException(
+      `箱号 ${activeRow.box?.boxCode || '-'} 存在进行中的FBA补货申请 ${activeRow.requestNo}（SKU：${
+        activeRow.sku?.sku || '-'
+      }，状态：${this.getFbaStatusLabel(activeRow.status)}），禁止${operationName}`,
+    );
   }
 
   private formatDateForFilename(date: Date): string {

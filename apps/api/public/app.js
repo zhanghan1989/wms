@@ -1340,6 +1340,81 @@ function closeModal(modalId) {
   modal.classList.add("hidden");
 }
 
+function ensureOverseasWarehouseQueryUi() {
+  const actionRow = document.querySelector("#overseasWarehouse .card .action-row");
+  if (actionRow && !$("openBoxContentQueryModal")) {
+    const boxQueryBtn = document.createElement("button");
+    boxQueryBtn.type = "button";
+    boxQueryBtn.id = "openBoxContentQueryModal";
+    boxQueryBtn.textContent = "箱内商品查询";
+    actionRow.insertBefore(boxQueryBtn, $("downloadStockAdjustmentCsvBtn") || null);
+
+    const shelfQueryBtn = document.createElement("button");
+    shelfQueryBtn.type = "button";
+    shelfQueryBtn.id = "openShelfBoxQueryModal";
+    shelfQueryBtn.textContent = "货架内箱号查询";
+    actionRow.insertBefore(shelfQueryBtn, $("downloadStockAdjustmentCsvBtn") || null);
+  }
+
+  if (!$("boxContentQueryModal")) {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `
+        <div id="boxContentQueryModal" class="modal hidden">
+          <div class="modal-card modal-wide modal-manage modal-manage-scroll">
+            <div class="modal-head">
+              <h3>箱内商品查询</h3>
+              <button type="button" class="ghost" data-action="closeBoxContentQueryModal">关闭</button>
+            </div>
+            <form id="boxContentQueryForm" class="manage-inline-form manage-inline-form-triple">
+              <input id="boxContentQueryBoxCode" inputmode="numeric" maxlength="16" placeholder="请输入箱号" required />
+              <button type="submit" class="small-btn manage-create-btn">查询</button>
+              <div id="boxContentQuerySummary" class="muted manage-query-summary">请输入箱号后查询。</div>
+            </form>
+            <div class="manage-table-scroll">
+              <table>
+                <thead><tr><th>箱号</th><th>货架号</th><th>SKU</th><th>数量</th></tr></thead>
+                <tbody id="boxContentQueryBody">
+                  <tr><td colspan="4" class="muted">请输入箱号后查询。</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `,
+    );
+  }
+
+  if (!$("shelfBoxQueryModal")) {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `
+        <div id="shelfBoxQueryModal" class="modal hidden">
+          <div class="modal-card modal-wide modal-manage modal-manage-scroll">
+            <div class="modal-head">
+              <h3>货架内箱号查询</h3>
+              <button type="button" class="ghost" data-action="closeShelfBoxQueryModal">关闭</button>
+            </div>
+            <form id="shelfBoxQueryForm" class="manage-inline-form manage-inline-form-triple">
+              <input id="shelfBoxQueryShelfCode" inputmode="numeric" maxlength="16" placeholder="请输入货架号" required />
+              <button type="submit" class="small-btn manage-create-btn">查询</button>
+              <div id="shelfBoxQuerySummary" class="muted manage-query-summary">请输入货架号后查询。</div>
+            </form>
+            <div class="manage-table-scroll">
+              <table>
+                <thead><tr><th>货架号</th><th>箱号</th></tr></thead>
+                <tbody id="shelfBoxQueryBody">
+                  <tr><td colspan="2" class="muted">请输入货架号后查询。</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `,
+    );
+  }
+}
+
 function getSubmitButton(form, event) {
   if (event?.submitter instanceof HTMLButtonElement) {
     return event.submitter;
@@ -1972,6 +2047,112 @@ async function getBoxSkuInventoryRows(boxId) {
   }
 }
 
+function findBoxByAnyCode(raw) {
+  const normalized = normalizeBoxCodeInput(raw);
+  if (!normalized) return null;
+  return (
+    (Array.isArray(state.boxes) ? state.boxes : []).find(
+      (box) => normalizeBoxCodeInput(box?.boxCode) === normalized,
+    ) || null
+  );
+}
+
+function findShelfByAnyCode(raw) {
+  const normalized = normalizeShelfCodeInput(raw);
+  if (!normalized) return null;
+  return (
+    (Array.isArray(state.shelves) ? state.shelves : []).find(
+      (shelf) => normalizeShelfCodeInput(shelf?.shelfCode) === normalized,
+    ) || null
+  );
+}
+
+function resetBoxContentQueryResult() {
+  const summary = $("boxContentQuerySummary");
+  const body = $("boxContentQueryBody");
+  if (summary) summary.textContent = "请输入箱号后查询。";
+  if (body) {
+    body.innerHTML = '<tr><td colspan="4" class="muted">请输入箱号后查询。</td></tr>';
+  }
+}
+
+function resetShelfBoxQueryResult() {
+  const summary = $("shelfBoxQuerySummary");
+  const body = $("shelfBoxQueryBody");
+  if (summary) summary.textContent = "请输入货架号后查询。";
+  if (body) {
+    body.innerHTML = '<tr><td colspan="2" class="muted">请输入货架号后查询。</td></tr>';
+  }
+}
+
+function renderBoxContentQueryResult(box, rows) {
+  const summary = $("boxContentQuerySummary");
+  const body = $("boxContentQueryBody");
+  if (!summary || !body) return;
+
+  const boxCode = displayText(box?.boxCode);
+  const shelfCode = displayText(box?.shelf?.shelfCode || box?.shelfCode);
+  const sortedRows = [...(Array.isArray(rows) ? rows : [])].sort((a, b) =>
+    String(a?.sku?.sku || "").localeCompare(String(b?.sku?.sku || ""), "en", { numeric: true }),
+  );
+
+  if (!sortedRows.length) {
+    summary.textContent = `箱号 ${boxCode} 当前没有箱内商品。`;
+    body.innerHTML = `
+      <tr>
+        <td>${escapeHtml(boxCode)}</td>
+        <td>${escapeHtml(shelfCode)}</td>
+        <td class="muted">-</td>
+        <td class="muted">0</td>
+      </tr>
+    `;
+    return;
+  }
+
+  summary.textContent = `箱号 ${boxCode} 共 ${sortedRows.length} 个SKU。`;
+  body.innerHTML = sortedRows
+    .map(
+      (row) => `
+        <tr>
+          <td>${escapeHtml(boxCode)}</td>
+          <td>${escapeHtml(shelfCode)}</td>
+          <td>${escapeHtml(displayText(row?.sku?.sku))}</td>
+          <td>${escapeHtml(displayText(row?.qty))}</td>
+        </tr>
+      `,
+    )
+    .join("");
+}
+
+function renderShelfBoxQueryResult(shelf, boxes) {
+  const summary = $("shelfBoxQuerySummary");
+  const body = $("shelfBoxQueryBody");
+  if (!summary || !body) return;
+
+  const shelfCode = displayText(shelf?.shelfCode);
+  const sortedBoxes = [...(Array.isArray(boxes) ? boxes : [])].sort((a, b) =>
+    String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true }),
+  );
+
+  if (!sortedBoxes.length) {
+    summary.textContent = `货架 ${shelfCode} 当前没有箱号。`;
+    body.innerHTML = `<tr><td>${escapeHtml(shelfCode)}</td><td class="muted">-</td></tr>`;
+    return;
+  }
+
+  summary.textContent = `货架 ${shelfCode} 共 ${sortedBoxes.length} 个箱号。`;
+  body.innerHTML = sortedBoxes
+    .map(
+      (box) => `
+        <tr>
+          <td>${escapeHtml(shelfCode)}</td>
+          <td>${escapeHtml(displayText(box?.boxCode))}</td>
+        </tr>
+      `,
+    )
+    .join("");
+}
+
 function renderInventoryLocationRows(rows) {
   if (!rows.length) {
     return '<span class="muted">无库存</span>';
@@ -2200,7 +2381,7 @@ function loadMoreInventorySearchIfNeeded() {
   });
 }
 
-async function loadInventory() {
+async function loadInventory({ preserveSearch = false } = {}) {
   const [skus, totals] = await Promise.all([
     request("/skus"),
     request("/inventory/sku-totals"),
@@ -2219,9 +2400,11 @@ async function loadInventory() {
     return qtyB - qtyA;
   });
   state.inventoryVisibleCount = state.inventoryListPageSize;
-  resetInventorySearchState();
-  setInventoryDisplayMode(false);
-  renderInventoryTable();
+  if (!preserveSearch) {
+    resetInventorySearchState();
+    setInventoryDisplayMode(false);
+    renderInventoryTable();
+  }
   await refreshMoveProductOldBoxOptionsBySku();
 }
 
@@ -2247,9 +2430,10 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
       ];
       const rightRows = [
         ["SKU", displayText(sku.sku)],
-        ["rbSKU", displayText(sku.rbSku)],
         ["ASIN", displayText(sku.asin)],
         ["FNSKU", displayText(sku.fnsku)],
+        ["FBMSKU", displayText(sku.fbmSku)],
+        ["rbSKU", displayText(sku.rbSku)],
         ["库存总数量", totalQty],
       ];
       const boxTable = totalQty > 0 ? renderBoxSkuFlatTable(sku, rows, boxSkuMap) : "";
@@ -4171,6 +4355,17 @@ async function reopenFbaReplenishmentRequest(id) {
   });
 }
 
+async function moveProductBetweenBoxes({ skuId, oldBoxCode, newBoxCode }) {
+  return request("/inventory/move-product-between-boxes", {
+    method: "POST",
+    body: JSON.stringify({
+      skuId,
+      fromBoxCode: oldBoxCode,
+      toBoxCode: newBoxCode,
+    }),
+  });
+}
+
 function syncSelectedFbaIds() {
   const selectableIds = new Set(
     state.fbaReplenishments
@@ -4499,31 +4694,11 @@ async function submitMoveBoxCodeForm() {
     throw new Error("旧箱号下该SKU库存不足");
   }
 
-  await request("/inventory/manual-adjust", {
-    method: "POST",
-    body: JSON.stringify({
-      skuId,
-      boxCode: oldRow.box.boxCode,
-      qtyDelta: -qty,
-      reason: "移动产品到新箱子-转出",
-    }),
-  });
-
-  await request("/inventory/manual-adjust", {
-    method: "POST",
-    body: JSON.stringify({
-      skuId,
-      boxCode: newBoxCode,
-      qtyDelta: qty,
-      reason: "移动产品到新箱子-转入",
-    }),
-  });
-
-  return {
-    qty,
+  return moveProductBetweenBoxes({
+    skuId,
     oldBoxCode: oldRow.box.boxCode,
     newBoxCode,
-  };
+  });
 }
 
 async function initOverseasWarehousePage() {
@@ -5091,13 +5266,13 @@ function bindForms() {
         closeModal("fbaOutboundModal");
         state.selectedFbaIds = new Set();
         showToast("出库完成");
+        const keyword = $("inventoryKeyword").value.trim();
+        const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
         await loadFbaReplenishments();
         await loadFbaPendingSummary();
-        await loadInventory();
+        await loadInventory({ preserveSearch: shouldRefreshSearch });
         await loadBoxes();
-
-        const keyword = $("inventoryKeyword").value.trim();
-        if (state.inventorySearchMode && keyword) {
+        if (shouldRefreshSearch) {
           await searchInventoryProducts(keyword);
         }
         await loadAudit();
@@ -5197,6 +5372,28 @@ function bindForms() {
         wrap.scrollTop = 0;
       }
       openModal("boxManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openBoxContentQueryModal").addEventListener("click", async () => {
+    try {
+      await Promise.all([loadShelves(), loadBoxes()]);
+      $("boxContentQueryForm")?.reset();
+      resetBoxContentQueryResult();
+      openModal("boxContentQueryModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openShelfBoxQueryModal").addEventListener("click", async () => {
+    try {
+      await Promise.all([loadShelves(), loadBoxes()]);
+      $("shelfBoxQueryForm")?.reset();
+      resetShelfBoxQueryResult();
+      openModal("shelfBoxQueryModal");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -5570,13 +5767,52 @@ function bindForms() {
         await submitAdjustForm();
         closeModal("adjustModal");
         showToast(direction === "outbound" ? "FBA补货申请单已生成" : "入库成功");
-        await loadInventory();
+        await loadInventory({ preserveSearch: shouldRefreshSearch });
         await loadBoxes();
         await loadFbaReplenishments();
         await loadAudit();
         if (shouldRefreshSearch) {
           await searchInventoryProducts(keyword);
         }
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("boxContentQueryForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "查询中...", async () => {
+        await Promise.all([loadShelves(), loadBoxes()]);
+        const box = findBoxByAnyCode($("boxContentQueryBoxCode").value);
+        if (!box) {
+          throw new Error("未找到该箱号");
+        }
+        const rows = await getBoxSkuInventoryRows(box.id);
+        renderBoxContentQueryResult(box, rows);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("shelfBoxQueryForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "查询中...", async () => {
+        await Promise.all([loadShelves(), loadBoxes()]);
+        const shelf = findShelfByAnyCode($("shelfBoxQueryShelfCode").value);
+        if (!shelf) {
+          throw new Error("未找到该货架号");
+        }
+        const shelfCode = normalizeShelfCodeInput(shelf.shelfCode);
+        const boxes = (Array.isArray(state.boxes) ? state.boxes : []).filter(
+          (box) => normalizeShelfCodeInput(box?.shelf?.shelfCode || box?.shelfCode) === shelfCode,
+        );
+        renderShelfBoxQueryResult(shelf, boxes);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -6219,14 +6455,14 @@ function bindDelegates() {
         return;
       }
 
+      const keyword = $("inventoryKeyword").value.trim();
+      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
       state.selectedFbaIds.delete(String(id));
       await loadFbaReplenishments();
       await loadFbaPendingSummary();
-      await loadInventory();
+      await loadInventory({ preserveSearch: shouldRefreshSearch });
       await loadBoxes();
-
-      const keyword = $("inventoryKeyword").value.trim();
-      if (state.inventorySearchMode && keyword) {
+      if (shouldRefreshSearch) {
         await searchInventoryProducts(keyword);
       }
       await loadAudit();
@@ -6267,7 +6503,7 @@ function bindDelegates() {
         const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
         await quickOutboundOne(skuId, boxCode);
         showToast("出库1件成功");
-        await loadInventory();
+        await loadInventory({ preserveSearch: shouldRefreshSearch });
         await loadBoxes();
         await loadAudit();
         if (shouldRefreshSearch) {
@@ -6683,6 +6919,16 @@ function bindDelegates() {
       closeModal("emptyBoxManageModal");
       return;
     }
+    const boxContentQueryClose = event.target.closest("button[data-action='closeBoxContentQueryModal']");
+    if (boxContentQueryClose) {
+      closeModal("boxContentQueryModal");
+      return;
+    }
+    const shelfBoxQueryClose = event.target.closest("button[data-action='closeShelfBoxQueryModal']");
+    if (shelfBoxQueryClose) {
+      closeModal("shelfBoxQueryModal");
+      return;
+    }
 
     const departmentManageClose = event.target.closest("button[data-action='closeDepartmentManageModal']");
     if (departmentManageClose) {
@@ -6833,6 +7079,18 @@ function bindDelegates() {
   $("emptyBoxManageModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("emptyBoxManageModal");
+    }
+  });
+
+  $("boxContentQueryModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("boxContentQueryModal");
+    }
+  });
+
+  $("shelfBoxQueryModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("shelfBoxQueryModal");
     }
   });
 
@@ -6992,6 +7250,7 @@ function bindRefresh() {
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((error) => showToast(error.message, true)));
 }
 
+ensureOverseasWarehouseQueryUi();
 bindTabs();
 bindInputRules();
 bindForms();

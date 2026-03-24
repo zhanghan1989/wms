@@ -22,6 +22,7 @@ import { ConfirmFbaReplenishmentDto } from './dto/confirm-fba-replenishment.dto'
 import { CreateAdjustOrderDto } from './dto/create-adjust-order.dto';
 import { CreateFbaReplenishmentDto } from './dto/create-fba-replenishment.dto';
 import { ManualAdjustDto } from './dto/manual-adjust.dto';
+import { MoveProductBetweenBoxesDto } from './dto/move-product-between-boxes.dto';
 import { OutboundFbaReplenishmentDto } from './dto/outbound-fba-replenishment.dto';
 import { BoxSkusQueryDto, ProductBoxesQueryDto, SearchSkuDto } from './dto/search-sku.dto';
 import { InventoryService } from './inventory.service';
@@ -71,6 +72,15 @@ export class InventoryController {
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
     return this.inventoryService.manualAdjust(payload, user.id, req.requestId);
+  }
+
+  @Post('move-product-between-boxes')
+  async moveProductBetweenBoxes(
+    @Body() payload: MoveProductBetweenBoxesDto,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.inventoryService.moveProductBetweenBoxes(payload, user.id, req.requestId);
   }
 
   @Post('fba-replenishments')

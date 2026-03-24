@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -172,6 +173,9 @@ export class BoxesService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      if (payload.shelfId && BigInt(payload.shelfId) !== box.shelfId) {
+        await this.ensureBoxNotUnderActiveFba(id, box.boxCode, '移箱');
+      }
       const updated = await tx.box.update({
         where: { id },
         data: {
@@ -300,6 +304,40 @@ export class BoxesService {
     if (status === 0) return AuditEventType.BOX_DISABLED;
     if (previousBoxCode !== nextBoxCode) return AuditEventType.BOX_RENAMED;
     return AuditEventType.BOX_FIELD_UPDATED;
+  }
+
+  private async ensureBoxNotUnderActiveFba(
+    boxId: bigint,
+    boxCode: string,
+    operationName: string,
+  ): Promise<void> {
+    const activeRow = await this.prisma.fbaReplenishment.findFirst({
+      where: {
+        boxId,
+        status: { in: ['pending_confirm', 'pending_outbound'] },
+      },
+      select: {
+        requestNo: true,
+        status: true,
+        sku: { select: { sku: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!activeRow) return;
+
+    throw new ConflictException(
+      `箱号 ${boxCode} 存在进行中的FBA补货申请 ${activeRow.requestNo}（SKU：${
+        activeRow.sku?.sku || '-'
+      }，状态：${this.getFbaStatusLabel(activeRow.status)}），禁止${operationName}`,
+    );
+  }
+
+  private getFbaStatusLabel(status: string): string {
+    if (status === 'pending_confirm') return '待确认';
+    if (status === 'pending_outbound') return '待出库';
+    if (status === 'outbound') return '已出库';
+    if (status === 'deleted') return '已删除';
+    return status;
   }
 
   private async findLockingBatchInboundOrderNo(boxCode: string): Promise<string | null> {
