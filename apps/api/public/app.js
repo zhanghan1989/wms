@@ -2102,33 +2102,37 @@ function setQueryModalDirectResultMode(kind, enabled) {
   }
 }
 
-async function openBoxContentQueryModalForBoxCode(boxCode) {
-  await Promise.all([loadShelves(), loadBoxes(), loadInventory()]);
+async function openBoxContentQueryModalForBoxCode(boxCode, preferredBoxId = "") {
+  await Promise.all([loadShelves(), loadBoxes()]);
   const normalizedBoxCode = normalizeBoxCodeInput(boxCode);
-  const box = findBoxByAnyCode(normalizedBoxCode);
+  const box =
+    (Array.isArray(state.boxes) ? state.boxes : []).find(
+      (item) => String(item?.id || "") === String(preferredBoxId || ""),
+    ) || findBoxByAnyCode(normalizedBoxCode);
   if (!box) {
     throw new Error("未找到对应箱号");
   }
 
   setQueryModalDirectResultMode("box", true);
-  $("boxContentQueryBoxCode").value = normalizedBoxCode;
-  const rows = (Array.isArray(state.inventory) ? state.inventory : []).filter(
-    (row) => Number(row?.box?.id) === Number(box.id),
-  );
+  $("boxContentQueryBoxCode").value = box?.boxCode || normalizedBoxCode;
+  const rows = await getBoxSkuInventoryRows(box.id);
   renderBoxContentQueryResult(box, rows);
   openModal("boxContentQueryModal");
 }
 
-async function openShelfBoxQueryModalForShelfCode(shelfCode) {
+async function openShelfBoxQueryModalForShelfCode(shelfCode, preferredShelfId = "") {
   await Promise.all([loadShelves(), loadBoxes()]);
   const normalizedShelfCode = normalizeShelfCodeInput(shelfCode);
-  const shelf = findShelfByAnyCode(normalizedShelfCode);
+  const shelf =
+    (Array.isArray(state.shelves) ? state.shelves : []).find(
+      (item) => String(item?.id || "") === String(preferredShelfId || ""),
+    ) || findShelfByAnyCode(normalizedShelfCode);
   if (!shelf) {
     throw new Error("未找到对应货架");
   }
 
   setQueryModalDirectResultMode("shelf", true);
-  $("shelfBoxQueryShelfCode").value = normalizedShelfCode;
+  $("shelfBoxQueryShelfCode").value = shelf?.shelfCode || normalizedShelfCode;
   const boxes = (Array.isArray(state.boxes) ? state.boxes : []).filter(
     (box) => Number(box?.shelf?.id) === Number(shelf.id),
   );
@@ -6235,7 +6239,7 @@ function bindDelegates() {
     if (!id) return;
     try {
       if (action === "queryShelfManage") {
-        await openShelfBoxQueryModalForShelfCode(button.dataset.code || id);
+        await openShelfBoxQueryModalForShelfCode(button.dataset.code || id, id);
       } else if (action === "editShelfManage") {
         const codeInput = $(`shelfCodeManage-${id}`);
         const nameInput = $(`shelfNameManage-${id}`);
@@ -6320,7 +6324,7 @@ function bindDelegates() {
     if (!id) return;
     try {
       if (action === "queryBoxManage") {
-        await openBoxContentQueryModalForBoxCode(button.dataset.code || id);
+        await openBoxContentQueryModalForBoxCode(button.dataset.code || id, id);
       } else if (action === "editBoxManage") {
         const codeInput = $(`boxCodeManage-${id}`);
         const shelfSelect = $(`boxShelfManage-${id}`);
