@@ -11,6 +11,7 @@ import * as iconv from 'iconv-lite';
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
+import { buildEquivalentBoxCodes, normalizeBoxCode } from '../common/box-code';
 import { APP_TIMEZONE, generateOrderNo, getZonedDateParts, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -409,7 +410,7 @@ export class InventoryService {
     requestId?: string,
   ): Promise<unknown> {
     const skuId = BigInt(payload.skuId);
-    const boxCode = payload.boxCode.trim();
+    const boxCode = normalizeBoxCode(payload.boxCode);
     const requestedQty = Number(payload.qty);
     const remark = payload.remark?.trim() || FBA_REPLENISH_MARK;
 
@@ -429,14 +430,7 @@ export class InventoryService {
             brand: true,
           },
         }),
-        tx.box.findUnique({
-          where: { boxCode },
-          select: {
-            id: true,
-            boxCode: true,
-            shelf: { select: { shelfCode: true } },
-          },
-        }),
+        this.findBoxByEquivalentCode(tx, boxCode),
       ]);
       if (!sku) throw new NotFoundException('SKU不存在');
       if (!box) throw new NotFoundException('箱号不存在');
@@ -1558,6 +1552,7 @@ export class InventoryService {
     const rows = this.parseBulkInventoryUpdateRows(fileBuffer);
     const skuCodes = Array.from(new Set(rows.map((row) => row.sku)));
     const boxCodes = Array.from(new Set(rows.map((row) => row.boxCode)));
+    const equivalentBoxCodes = Array.from(new Set(boxCodes.flatMap((boxCode) => buildEquivalentBoxCodes(boxCode))));
 
     return this.prisma.$transaction(async (tx) => {
       const [skus, boxes] = await Promise.all([
@@ -1572,7 +1567,7 @@ export class InventoryService {
         }),
         tx.box.findMany({
           where: {
-            boxCode: { in: boxCodes },
+            boxCode: { in: equivalentBoxCodes },
           },
           select: {
             id: true,
@@ -1603,7 +1598,7 @@ export class InventoryService {
           status: number;
           shelf: { status: number } | null;
         }
-      >(boxes.map((item) => [item.boxCode, item]));
+      >(boxes.map((item) => [normalizeBoxCode(item.boxCode) || item.boxCode, item]));
       const missingBoxCodes = boxCodes.filter((boxCode) => !boxByCode.has(boxCode));
       if (missingBoxCodes.length > 0) {
         const defaultShelf = await this.resolveOrCreateBulkUpdateDefaultShelf(
@@ -1947,7 +1942,9 @@ export class InventoryService {
         normalized[this.normalizeImportHeader(key)] = String(value ?? '').trim();
       });
 
-      const boxCode = this.pickImportField(normalized, ['箱号', 'box', 'boxcode', '箱子', 'box id']);
+      const boxCode = normalizeBoxCode(
+        this.pickImportField(normalized, ['箱号', 'box', 'boxcode', '箱子', 'box id']),
+      );
       if (!boxCode) {
         errors.push(`第${rowNo}行：箱号为必填字段`);
         return;
@@ -2355,14 +2352,11 @@ export class InventoryService {
       if (!box) throw new NotFoundException('箱号不存在');
       return box;
     }
-    const boxCode = payload.boxCode?.trim();
+    const boxCode = normalizeBoxCode(payload.boxCode);
     if (!boxCode) {
       throw new BadRequestException('boxId或箱号不能为空');
     }
-    const box = await tx.box.findUnique({
-      where: { boxCode },
-      select: { id: true, boxCode: true },
-    });
+    const box = await this.findBoxByEquivalentCode(tx, boxCode);
     if (!box) throw new NotFoundException('箱号不存在');
     return box;
   }
@@ -2447,19 +2441,12 @@ export class InventoryService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<{ id: bigint; boxCode: string; status: number; shelfStatus: number }> {
-    const found = await tx.box.findUnique({
-      where: { boxCode },
-      select: {
-        id: true,
-        boxCode: true,
-        status: true,
-        shelf: {
-          select: {
-            status: true,
-          },
-        },
-      },
-    });
+    const normalizedBoxCode = normalizeBoxCode(boxCode);
+    if (!normalizedBoxCode) {
+      throw new UnprocessableEntityException('箱号格式无效');
+    }
+
+    const found = await this.findBoxByEquivalentCode(tx, normalizedBoxCode);
 
     if (found) {
       return {
@@ -2471,9 +2458,9 @@ export class InventoryService {
     }
 
     try {
-      const created = await tx.box.create({
-        data: {
-          boxCode,
+        const created = await tx.box.create({
+          data: {
+          boxCode: normalizedBoxCode,
           shelfId: defaultShelfId,
           status: 1,
         },
@@ -2518,19 +2505,7 @@ export class InventoryService {
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
-        const existing = await tx.box.findUnique({
-          where: { boxCode },
-          select: {
-            id: true,
-            boxCode: true,
-            status: true,
-            shelf: {
-              select: {
-                status: true,
-              },
-            },
-          },
-        });
+        const existing = await this.findBoxByEquivalentCode(tx, normalizedBoxCode);
 
         if (existing) {
           return {
@@ -2543,6 +2518,53 @@ export class InventoryService {
       }
       throw error;
     }
+  }
+
+  private async findBoxByEquivalentCode(
+    tx: Prisma.TransactionClient,
+    rawBoxCode: string | null | undefined,
+  ): Promise<{
+    id: bigint;
+    boxCode: string;
+    status: number;
+    shelf: { status: number; shelfCode?: string } | null;
+  } | null> {
+    const boxCode = normalizeBoxCode(rawBoxCode);
+    if (!boxCode) return null;
+
+    const box = await tx.box.findFirst({
+      where: {
+        boxCode: {
+          in: buildEquivalentBoxCodes(boxCode),
+        },
+      },
+      select: {
+        id: true,
+        boxCode: true,
+        status: true,
+        shelf: {
+          select: {
+            status: true,
+            shelfCode: true,
+          },
+        },
+      },
+      orderBy: { id: 'asc' },
+    });
+
+    if (!box) return null;
+
+    return {
+      id: box.id,
+      boxCode: box.boxCode,
+      status: Number(box.status ?? 0),
+      shelf: box.shelf
+        ? {
+            status: Number(box.shelf.status ?? 0),
+            shelfCode: box.shelf.shelfCode,
+          }
+        : null,
+    };
   }
 
   private inventoryKey(boxId: bigint, skuId: bigint): string {

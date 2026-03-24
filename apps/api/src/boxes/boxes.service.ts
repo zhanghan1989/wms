@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { AuditAction, BatchInboundOrderStatus, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { buildEquivalentBoxCodes, normalizeBoxCode } from '../common/box-code';
 import { parseId } from '../common/utils';
 import { AuditEventType, AuditEventTypeValue } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -85,7 +86,7 @@ export class BoxesService {
   }
 
   async create(payload: CreateBoxDto, operatorId: bigint, requestId?: string): Promise<unknown> {
-    const boxCode = this.normalizeBoxCode(payload.boxCode);
+    const boxCode = normalizeBoxCode(payload.boxCode);
     if (!boxCode) throw new BadRequestException('箱号格式无效');
     const lockedOrderNo = await this.findLockingBatchInboundOrderNo(boxCode);
     if (lockedOrderNo) {
@@ -96,7 +97,7 @@ export class BoxesService {
 
     const exists = await this.prisma.box.findFirst({
       where: {
-        OR: [{ boxCode }, { boxCode: this.toLegacyBoxCode(boxCode) }],
+        boxCode: { in: buildEquivalentBoxCodes(boxCode) },
       },
     });
     if (exists) throw new BadRequestException('箱号已存在');
@@ -140,7 +141,7 @@ export class BoxesService {
     if (!box) throw new NotFoundException('箱号不存在');
 
     if (payload.boxCode) {
-      const nextBoxCode = this.normalizeBoxCode(payload.boxCode);
+      const nextBoxCode = normalizeBoxCode(payload.boxCode);
       if (!nextBoxCode) {
         throw new BadRequestException('箱号格式无效');
       }
@@ -157,7 +158,7 @@ export class BoxesService {
         const duplicate = await this.prisma.box.findFirst({
           where: {
             id: { not: id },
-            OR: [{ boxCode: nextBoxCode }, { boxCode: this.toLegacyBoxCode(nextBoxCode) }],
+            boxCode: { in: buildEquivalentBoxCodes(nextBoxCode) },
           },
         });
         if (duplicate) throw new BadRequestException('箱号已存在');
@@ -341,7 +342,7 @@ export class BoxesService {
   }
 
   private async findLockingBatchInboundOrderNo(boxCode: string): Promise<string | null> {
-    const normalized = this.normalizeBoxCode(boxCode);
+    const normalized = normalizeBoxCode(boxCode);
     if (!normalized) return null;
     const orders = await this.prisma.batchInboundOrder.findMany({
       where: {
@@ -373,28 +374,10 @@ export class BoxesService {
     return Array.from(
       new Set(
         value
-          .map((item) => this.normalizeBoxCode(String(item ?? '')))
+          .map((item) => normalizeBoxCode(String(item ?? '')))
           .filter((item) => Boolean(item)),
       ),
     );
   }
 
-  private normalizeBoxCode(raw: string | null | undefined): string {
-    const value = String(raw ?? '').trim().toUpperCase();
-    if (!value) return '';
-
-    if (/^\d{1,6}$/.test(value)) {
-      return value.padStart(Math.max(3, value.length), '0');
-    }
-
-    const matched = value.match(/^B[-_\s]?(\d{1,6})$/);
-    if (!matched) {
-      return '';
-    }
-    return matched[1].padStart(Math.max(3, matched[1].length), '0');
-  }
-
-  private toLegacyBoxCode(normalized: string): string {
-    return `B-${normalized}`;
-  }
 }

@@ -14,6 +14,7 @@ import {
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
+import { buildEquivalentBoxCodes, normalizeBoxCode } from '../common/box-code';
 import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -938,12 +939,17 @@ export class BatchInboundService {
     requestId: string | undefined,
     orderNo: string,
   ): Promise<{ id: bigint; boxCode: string }> {
-    const existing = await tx.box.findUnique({
-      where: { boxCode },
+    const existing = await tx.box.findFirst({
+      where: {
+        boxCode: {
+          in: buildEquivalentBoxCodes(boxCode),
+        },
+      },
       select: {
         id: true,
         boxCode: true,
       },
+      orderBy: { id: 'asc' },
     });
     if (existing) {
       return existing;
@@ -1171,33 +1177,11 @@ export class BatchInboundService {
   }
 
   private normalizeBoxCode(raw: string | null | undefined): string {
-    const value = String(raw ?? '').trim().toUpperCase();
-    if (!value) {
-      return '';
-    }
-
-    if (/^\d{1,6}$/.test(value)) {
-      return this.formatBoxCodeFromDigits(value);
-    }
-
-    const matched = value.match(/^B[-_\s]?(\d{1,6})$/);
-    if (!matched) {
-      return '';
-    }
-
-    return this.formatBoxCodeFromDigits(matched[1]);
+    return normalizeBoxCode(raw);
   }
 
   private formatBoxCode(num: number): string {
     return num.toString().padStart(3, '0');
-  }
-
-  private formatBoxCodeFromDigits(rawDigits: string): string {
-    const digits = String(rawDigits ?? '').replace(/\D/g, '');
-    if (!digits) {
-      return '';
-    }
-    return digits.padStart(Math.max(3, digits.length), '0');
   }
 
   private normalizeHeader(header: string): string {

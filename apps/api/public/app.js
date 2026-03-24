@@ -2085,6 +2085,38 @@ function resetShelfBoxQueryResult() {
   }
 }
 
+async function openBoxContentQueryModalForBoxCode(boxCode) {
+  await Promise.all([loadShelves(), loadBoxes(), loadInventory()]);
+  const normalizedBoxCode = normalizeBoxCodeInput(boxCode);
+  const box = findBoxByAnyCode(normalizedBoxCode);
+  if (!box) {
+    throw new Error("未找到对应箱号");
+  }
+
+  $("boxContentQueryBoxCode").value = normalizedBoxCode;
+  const rows = (Array.isArray(state.inventory) ? state.inventory : []).filter(
+    (row) => Number(row?.box?.id) === Number(box.id),
+  );
+  renderBoxContentQueryResult(box, rows);
+  openModal("boxContentQueryModal");
+}
+
+async function openShelfBoxQueryModalForShelfCode(shelfCode) {
+  await Promise.all([loadShelves(), loadBoxes()]);
+  const normalizedShelfCode = normalizeShelfCodeInput(shelfCode);
+  const shelf = findShelfByAnyCode(normalizedShelfCode);
+  if (!shelf) {
+    throw new Error("未找到对应货架");
+  }
+
+  $("shelfBoxQueryShelfCode").value = normalizedShelfCode;
+  const boxes = (Array.isArray(state.boxes) ? state.boxes : []).filter(
+    (box) => Number(box?.shelf?.id) === Number(shelf.id),
+  );
+  renderShelfBoxQueryResult(shelf, boxes);
+  openModal("shelfBoxQueryModal");
+}
+
 function renderBoxContentQueryResult(box, rows) {
   const summary = $("boxContentQuerySummary");
   const body = $("boxContentQueryBody");
@@ -3002,6 +3034,15 @@ function renderShelvesManageTable() {
     `;
       })
       .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
+  const tableRows = body.querySelectorAll("tr");
+  visibleRows.forEach((item, index) => {
+    const actionCell = tableRows[index]?.lastElementChild;
+    if (!actionCell) return;
+    actionCell.insertAdjacentHTML(
+      "afterbegin",
+      `<button class="tiny-btn secondary" data-action="queryShelfManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.shelfCode || "")}">查询</button>`,
+    );
+  });
 }
 
 function renderBoxesManageTable() {
@@ -3048,6 +3089,15 @@ function renderBoxesManageTable() {
     `;
       })
       .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
+  const tableRows = body.querySelectorAll("tr");
+  visibleRows.forEach((item, index) => {
+    const actionCell = tableRows[index]?.lastElementChild;
+    if (!actionCell) return;
+    actionCell.insertAdjacentHTML(
+      "afterbegin",
+      `<button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>`,
+    );
+  });
 }
 
 function renderEmptyBoxManageBadge() {
@@ -6163,7 +6213,9 @@ function bindDelegates() {
     const id = button.dataset.id;
     if (!id) return;
     try {
-      if (action === "editShelfManage") {
+      if (action === "queryShelfManage") {
+        await openShelfBoxQueryModalForShelfCode(button.dataset.code || id);
+      } else if (action === "editShelfManage") {
         const codeInput = $(`shelfCodeManage-${id}`);
         const nameInput = $(`shelfNameManage-${id}`);
         if (!codeInput || !nameInput) return;
@@ -6246,7 +6298,9 @@ function bindDelegates() {
     const id = button.dataset.id;
     if (!id) return;
     try {
-      if (action === "editBoxManage") {
+      if (action === "queryBoxManage") {
+        await openBoxContentQueryModalForBoxCode(button.dataset.code || id);
+      } else if (action === "editBoxManage") {
         const codeInput = $(`boxCodeManage-${id}`);
         const shelfSelect = $(`boxShelfManage-${id}`);
         if (!codeInput || !shelfSelect) return;

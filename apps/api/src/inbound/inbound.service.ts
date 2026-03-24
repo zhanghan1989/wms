@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
+import { buildEquivalentBoxCodes, normalizeBoxCode } from '../common/box-code';
 import { generateOrderNo, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -288,7 +289,7 @@ export class InboundService {
   }
 
   private normalizeItem(item: CreateInboundOrderItemDto): InboundLine {
-    const boxCode = item.boxCode.trim();
+    const boxCode = normalizeBoxCode(item.boxCode);
     const sku = item.sku.trim();
     if (!boxCode || !sku) {
       throw new BadRequestException('箱号和SKU为必填项');
@@ -328,7 +329,7 @@ export class InboundService {
         normalized[this.normalizeHeader(key)] = String(value ?? '').trim();
       });
 
-      const boxCode = this.pickField(normalized, ['箱号', 'box', 'boxcode']);
+      const boxCode = normalizeBoxCode(this.pickField(normalized, ['箱号', 'box', 'boxcode']));
       const sku = this.pickField(normalized, ['sku', '商品编码']);
       const qtyRaw = this.pickField(normalized, ['数量', 'qty', 'count']);
 
@@ -388,12 +389,15 @@ export class InboundService {
 
   private async ensureBoxesAreNew(lines: InboundLine[]): Promise<void> {
     const uniqueBoxes = Array.from(new Set(lines.map((line) => line.boxCode)));
+    const equivalentCodes = Array.from(new Set(uniqueBoxes.flatMap((line) => buildEquivalentBoxCodes(line))));
     const existing = await this.prisma.box.findMany({
-      where: { boxCode: { in: uniqueBoxes } },
+      where: { boxCode: { in: equivalentCodes } },
       select: { boxCode: true },
     });
     if (existing.length > 0) {
-      const boxCodes = existing.map((item) => item.boxCode).join(', ');
+      const boxCodes = Array.from(
+        new Set(existing.map((item) => normalizeBoxCode(item.boxCode) || item.boxCode)),
+      ).join(', ');
       throw new UnprocessableEntityException(`箱号已存在：${boxCodes}`);
     }
   }
