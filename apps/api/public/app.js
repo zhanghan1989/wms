@@ -3107,7 +3107,6 @@ function renderBoxesManageTable() {
           <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>
           <button class="tiny-btn secondary" data-action="archiveReleaseBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">归档释放</button>
           <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
-          <button class="tiny-btn danger" data-action="deleteBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">删除</button>
         </td>
       </tr>
     `;
