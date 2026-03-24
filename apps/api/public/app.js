@@ -2235,7 +2235,7 @@ function renderEditButton(skuId) {
 
 function renderInventoryFbaJumpButton(skuCode) {
   const keyword = String(skuCode || "").trim();
-  return `<button class="tiny-btn" data-action="inventoryFbaJump" data-sku-code="${escapeHtml(keyword)}">FBA\u8865\u8d27</button>`;
+  return `<button class="tiny-btn" data-action="inventoryFbaJump" data-sku-code="${escapeHtml(keyword)}">查看</button>`;
 }
 
 function renderOutboundButton(
@@ -2401,7 +2401,6 @@ function renderInventoryTable() {
         <td>${renderQtyWithPending(totalQty, pendingQty)}</td>
         <td>
           <div class="action-row">
-            ${renderEditButton(sku.id)}
             ${renderInventoryFbaJumpButton(sku.sku)}
           </div>
         </td>
