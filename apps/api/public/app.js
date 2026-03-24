@@ -2085,6 +2085,23 @@ function resetShelfBoxQueryResult() {
   }
 }
 
+function setQueryModalDirectResultMode(kind, enabled) {
+  const isBox = kind === "box";
+  const form = $(isBox ? "boxContentQueryForm" : "shelfBoxQueryForm");
+  const input = $(isBox ? "boxContentQueryBoxCode" : "shelfBoxQueryShelfCode");
+  const submitButton = form?.querySelector("button[type='submit']");
+
+  if (form) {
+    form.classList.toggle("manage-inline-form-direct-result", Boolean(enabled));
+  }
+  if (input) {
+    input.classList.toggle("hidden", Boolean(enabled));
+  }
+  if (submitButton) {
+    submitButton.classList.toggle("hidden", Boolean(enabled));
+  }
+}
+
 async function openBoxContentQueryModalForBoxCode(boxCode) {
   await Promise.all([loadShelves(), loadBoxes(), loadInventory()]);
   const normalizedBoxCode = normalizeBoxCodeInput(boxCode);
@@ -2093,6 +2110,7 @@ async function openBoxContentQueryModalForBoxCode(boxCode) {
     throw new Error("未找到对应箱号");
   }
 
+  setQueryModalDirectResultMode("box", true);
   $("boxContentQueryBoxCode").value = normalizedBoxCode;
   const rows = (Array.isArray(state.inventory) ? state.inventory : []).filter(
     (row) => Number(row?.box?.id) === Number(box.id),
@@ -2109,6 +2127,7 @@ async function openShelfBoxQueryModalForShelfCode(shelfCode) {
     throw new Error("未找到对应货架");
   }
 
+  setQueryModalDirectResultMode("shelf", true);
   $("shelfBoxQueryShelfCode").value = normalizedShelfCode;
   const boxes = (Array.isArray(state.boxes) ? state.boxes : []).filter(
     (box) => Number(box?.shelf?.id) === Number(shelf.id),
@@ -5430,6 +5449,7 @@ function bindForms() {
   $("openBoxContentQueryModal").addEventListener("click", async () => {
     try {
       await Promise.all([loadShelves(), loadBoxes()]);
+      setQueryModalDirectResultMode("box", false);
       $("boxContentQueryForm")?.reset();
       resetBoxContentQueryResult();
       openModal("boxContentQueryModal");
@@ -5441,6 +5461,7 @@ function bindForms() {
   $("openShelfBoxQueryModal").addEventListener("click", async () => {
     try {
       await Promise.all([loadShelves(), loadBoxes()]);
+      setQueryModalDirectResultMode("shelf", false);
       $("shelfBoxQueryForm")?.reset();
       resetShelfBoxQueryResult();
       openModal("shelfBoxQueryModal");

@@ -598,6 +598,10 @@ td {
   grid-template-columns: minmax(180px, 240px) minmax(180px, 280px) auto;
 }
 
+.manage-inline-form.manage-inline-form-direct-result {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .manage-create-btn {
   width: auto;
   justify-self: start;
