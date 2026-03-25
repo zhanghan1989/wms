@@ -1394,12 +1394,19 @@ function ensureInventoryPanelUi() {
   if (!refreshButton) return;
   if ($("downloadInventorySkuSummaryBtn")) return;
 
+  let tools = refreshButton.parentElement?.querySelector(".panel-tools");
+  if (!tools) {
+    tools = document.createElement("div");
+    tools.className = "panel-tools";
+    refreshButton.parentNode?.insertBefore(tools, refreshButton);
+    tools.appendChild(refreshButton);
+  }
+
   const downloadButton = document.createElement("button");
   downloadButton.type = "button";
   downloadButton.id = "downloadInventorySkuSummaryBtn";
-  downloadButton.className = refreshButton.className;
-  downloadButton.textContent = "下载";
-  refreshButton.parentNode?.insertBefore(downloadButton, refreshButton);
+  downloadButton.textContent = "下载系统所有产品";
+  tools.insertBefore(downloadButton, refreshButton);
 }
 
 function openModal(modalId) {
