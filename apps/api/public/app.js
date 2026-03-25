@@ -2520,7 +2520,6 @@ async function loadInventory({ preserveSearch = false } = {}) {
     request("/skus"),
     request("/inventory/sku-totals"),
     loadFbaPendingSummary(),
-    loadEmptyBoxes(),
   ]);
   state.inventorySkus = skus;
   state.inventoryTotalsBySku = totals || {};
@@ -4955,10 +4954,8 @@ async function reloadAll() {
 
   const isAdmin = hasAdminAccess(state.me?.role);
   const tasks = [
-    loadOverviewDashboard(),
     loadInventory(),
     loadProductEditPendingSummary(),
-    loadFbaPendingSummary(),
   ];
   if (!isAdmin) {
     state.departmentOptions = [];
