@@ -994,6 +994,14 @@ function clearStats() {
   $("statInboundDraft").textContent = "-";
 }
 
+function buildStrictShelfCode(rawValue) {
+  const value = String(rawValue ?? "").trim().toUpperCase();
+  if (/^(?:00|[A-Z][0-9])$/.test(value)) {
+    return value;
+  }
+  throw new Error("货架号必须是00或A0格式");
+}
+
 function setTextById(id, text) {
   const el = $(id);
   if (el) {
@@ -1476,7 +1484,7 @@ function ensureOverseasWarehouseQueryUi() {
               <button type="button" class="ghost" data-action="closeShelfBoxQueryModal">关闭</button>
             </div>
             <form id="shelfBoxQueryForm" class="manage-inline-form manage-inline-form-triple">
-              <input id="shelfBoxQueryShelfCode" inputmode="numeric" maxlength="16" placeholder="请输入货架号" required />
+              <input id="shelfBoxQueryShelfCode" inputmode="text" maxlength="16" placeholder="请输入货架号（00或A0）" required />
               <button type="submit" class="small-btn manage-create-btn">查询</button>
               <div id="shelfBoxQuerySummary" class="muted manage-query-summary">请输入货架号后查询。</div>
             </form>
@@ -1651,6 +1659,20 @@ function bindDigitInput(id, maxLen) {
   });
 }
 
+function bindShelfCodeInput(id) {
+  const input = $(id);
+  if (!input) return;
+  input.addEventListener("input", () => {
+    const normalized = String(input.value || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .slice(0, 2);
+    if (input.value !== normalized) {
+      input.value = normalized;
+    }
+  });
+}
+
 function bindPositiveIntegerInput(id, { min = 1, max = null } = {}) {
   const input = $(id);
   if (!input) return;
@@ -1691,10 +1713,11 @@ function bindBatchNoInput(id) {
 }
 
 function bindInputRules() {
-  bindDigitInput("newShelfCodeDigits", 2);
+  bindShelfCodeInput("newShelfCodeDigits");
   bindDigitInput("newBoxCodeDigits", 3);
   bindDigitInput("modalNewBoxCodeDigits", 3);
-  bindDigitInput("modalNewShelfCodeDigits", 2);
+  bindShelfCodeInput("modalNewShelfCodeDigits");
+  bindShelfCodeInput("shelfManageCodeInput");
   bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
   bindBatchNoInput("batchCollectBatchNo");
 }
@@ -3469,18 +3492,12 @@ function formatShelfCodeWithName(shelf) {
 function normalizeShelfCodeInput(raw) {
   const value = String(raw ?? "").trim().toUpperCase();
   if (!value) return "";
-  const labeled = value.match(/^(\d{1,3})\s*[-_/].*$/);
+  const labeled = value.match(/^((?:00)|(?:[A-Z][0-9]))\s*[-_/].*$/);
   if (labeled) {
-    const digits = labeled[1];
-    return digits.padStart(Math.max(2, digits.length), "0");
+    return labeled[1];
   }
-  if (/^\d{1,3}$/.test(value)) {
-    return value.padStart(Math.max(2, value.length), "0");
-  }
-  const prefixed = value.match(/^S[-_\s]?(\d{1,3})$/);
-  if (prefixed) {
-    const digits = prefixed[1];
-    return digits.padStart(Math.max(2, digits.length), "0");
+  if (/^(?:00|[A-Z][0-9])$/.test(value)) {
+    return value;
   }
   return value;
 }
@@ -4758,7 +4775,7 @@ async function createBoxFromSkuModal() {
 }
 
 async function createShelfFromInventoryModal() {
-  const shelfCode = buildShelfCode($("modalNewShelfCodeDigits").value);
+  const shelfCode = buildStrictShelfCode($("modalNewShelfCodeDigits").value);
   const name = $("modalNewShelfName").value.trim() || undefined;
 
   await request("/shelves", {
@@ -5171,7 +5188,7 @@ function bindForms() {
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
       await withBusyButton(submitButton, "创建中...", async () => {
-        const shelfCode = buildShelfCode($("newShelfCodeDigits").value);
+        const shelfCode = buildStrictShelfCode($("newShelfCodeDigits").value);
         await request("/shelves", {
           method: "POST",
           body: JSON.stringify({
@@ -6247,7 +6264,7 @@ function bindDelegates() {
   $("shelfManageForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      const shelfCode = buildShelfCode($("shelfManageCodeInput").value);
+      const shelfCode = buildStrictShelfCode($("shelfManageCodeInput").value);
       const name = String($("shelfManageNameInput").value || "").trim() || undefined;
       await request("/shelves", {
         method: "POST",
@@ -6339,8 +6356,8 @@ function bindDelegates() {
           throw new Error("货架号格式无效");
         }
         const codeChanged = normalizedCode !== originalCode;
-        if (codeChanged && !/^\d{2}$/.test(normalizedCode)) {
-          throw new Error("货架号必须是2位数字");
+        if (codeChanged && !/^(?:00|[A-Z][0-9])$/.test(normalizedCode)) {
+          throw new Error("货架号必须是00或A0格式");
         }
 
         const name = String(nameInput.value || "").trim();

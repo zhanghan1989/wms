@@ -130,7 +130,7 @@
                 id="moveShelfBoxCode"
                 list="moveShelfBoxCodeList"
                 placeholder="输入数字或选择箱号"
-                inputmode="numeric"
+                inputmode="text"
                 required
               />
               <datalist id="moveShelfBoxCodeList"></datalist>
@@ -538,7 +538,7 @@
         </div>
         <form id="createShelfForm" class="form-grid compact">
           <label>货架号（S-）
-            <input id="newShelfCodeDigits" inputmode="numeric" maxlength="2" placeholder="2位数字" required />
+            <input id="newShelfCodeDigits" inputmode="text" maxlength="2" placeholder="00或A0" required />
           </label>
           <label>名称<input id="newShelfName" /></label>
           <button type="submit">新增货架</button>
@@ -890,7 +890,7 @@
       </div>
       <form id="createShelfFromInventoryForm" class="form-grid modal-grid">
         <label>货架号（S-）
-          <input id="modalNewShelfCodeDigits" inputmode="numeric" maxlength="2" placeholder="2位数字" required />
+          <input id="modalNewShelfCodeDigits" inputmode="text" maxlength="2" placeholder="00或A0" required />
         </label>
         <label>名称<input id="modalNewShelfName" /></label>
         <div class="modal-actions">
@@ -959,7 +959,7 @@
         <button type="button" class="ghost" data-action="closeShelfManageModal">关闭</button>
       </div>
       <form id="shelfManageForm" class="manage-inline-form manage-inline-form-triple">
-        <input id="shelfManageCodeInput" inputmode="numeric" maxlength="2" placeholder="货架号2位数字" required />
+        <input id="shelfManageCodeInput" inputmode="text" maxlength="2" placeholder="货架号 00或A0" required />
         <input id="shelfManageNameInput" maxlength="128" placeholder="请输入货架名称（可选）" />
         <button type="submit" class="small-btn manage-create-btn">新增货架</button>
       </form>

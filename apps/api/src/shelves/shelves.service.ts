@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateShelfDto } from './dto/create-shelf.dto';
 import { UpdateShelfDto } from './dto/update-shelf.dto';
 
-const ARCHIVED_BOX_FALLBACK_SHELF_CODES = ['Z-0', '00', 'S-00'];
+const ARCHIVED_BOX_FALLBACK_SHELF_CODES = ['00', 'S-00', 'Z-0'];
 
 @Injectable()
 export class ShelvesService {
@@ -35,7 +35,7 @@ export class ShelvesService {
     if (!shelfCode) throw new BadRequestException('货架号格式无效');
     const exists = await this.prisma.shelf.findFirst({
       where: {
-        OR: [{ shelfCode }, { shelfCode: this.toLegacyShelfCode(shelfCode) }],
+        shelfCode: { in: this.buildEquivalentShelfCodes(shelfCode) },
       },
     });
     if (exists) throw new BadRequestException('货架号已存在');
@@ -84,7 +84,7 @@ export class ShelvesService {
       const duplicate = await this.prisma.shelf.findFirst({
         where: {
           id: { not: id },
-          OR: [{ shelfCode: payload.shelfCode }, { shelfCode: this.toLegacyShelfCode(payload.shelfCode) }],
+          shelfCode: { in: this.buildEquivalentShelfCodes(payload.shelfCode) },
         },
       });
       if (duplicate) {
@@ -202,18 +202,18 @@ export class ShelvesService {
     const value = String(raw ?? '').trim().toUpperCase();
     if (!value) return '';
 
-    if (/^\d{1,3}$/.test(value)) {
-      return value.padStart(Math.max(2, value.length), '0');
+    if (/^(?:00|[A-Z][0-9])$/.test(value)) {
+      return value;
     }
-
-    const matched = value.match(/^S[-_\s]?(\d{1,3})$/);
-    if (!matched) {
-      return '';
-    }
-    return matched[1].padStart(Math.max(2, matched[1].length), '0');
+    return '';
   }
 
-  private toLegacyShelfCode(normalized: string): string {
-    return `S-${normalized}`;
+  private buildEquivalentShelfCodes(normalized: string): string[] {
+    const codes = new Set<string>([normalized]);
+    if (normalized === '00') {
+      codes.add('S-00');
+      codes.add('Z-0');
+    }
+    return Array.from(codes);
   }
 }
