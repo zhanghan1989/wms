@@ -103,6 +103,11 @@ body {
   letter-spacing: 0.02em;
 }
 
+#appTopbar .brand-title {
+  font-size: clamp(32px, 3vw, 40px);
+  line-height: 1.1;
+}
+
 .brand-sub {
   margin: 2px 0 0;
   color: var(--muted);

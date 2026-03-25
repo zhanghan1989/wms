@@ -1397,23 +1397,15 @@ function ensureBrandingUi() {
 }
 
 function ensureInventoryPanelUi() {
-  const refreshButton = $("refreshInventory");
-  if (!refreshButton) return;
+  const bulkUploadButton = $("openBulkSkuUploadModal");
+  if (!bulkUploadButton) return;
   if ($("downloadInventorySkuSummaryBtn")) return;
-
-  let tools = refreshButton.parentElement?.querySelector(".panel-tools");
-  if (!tools) {
-    tools = document.createElement("div");
-    tools.className = "panel-tools";
-    refreshButton.parentNode?.insertBefore(tools, refreshButton);
-    tools.appendChild(refreshButton);
-  }
 
   const downloadButton = document.createElement("button");
   downloadButton.type = "button";
   downloadButton.id = "downloadInventorySkuSummaryBtn";
   downloadButton.textContent = "下载系统所有产品";
-  tools.insertBefore(downloadButton, refreshButton);
+  bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
 }
 
 function openModal(modalId) {
