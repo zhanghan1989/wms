@@ -299,7 +299,7 @@ export class BoxesService {
 
     await this.ensureBoxNotUnderActiveFba(id, box.boxCode, '归档释放');
 
-    const lockingOrderNo = await this.findLockingBatchInboundOrderNo(box.boxCode);
+    const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
     if (lockingOrderNo) {
       throw new BadRequestException(
         `箱号暂时无法归档释放：存在批量入库单 ${lockingOrderNo} 正在采集或待入库`,
