@@ -1396,7 +1396,7 @@ function ensureOverseasWarehouseQueryUi() {
               <button type="button" class="ghost" data-action="closeShelfBoxQueryModal">关闭</button>
             </div>
             <form id="shelfBoxQueryForm" class="manage-inline-form manage-inline-form-triple">
-              <input id="shelfBoxQueryShelfCode" inputmode="text" maxlength="16" placeholder="请输入货架号，如 A-1" required />
+              <input id="shelfBoxQueryShelfCode" inputmode="numeric" maxlength="16" placeholder="请输入货架号" required />
               <button type="submit" class="small-btn manage-create-btn">查询</button>
               <div id="shelfBoxQuerySummary" class="muted manage-query-summary">请输入货架号后查询。</div>
             </form>
@@ -1610,34 +1610,11 @@ function bindBatchNoInput(id) {
   });
 }
 
-function bindShelfCodeInput(id) {
-  const input = $(id);
-  if (!input) return;
-  input.inputMode = "text";
-  input.maxLength = 3;
-  if (id === "shelfManageCodeInput") {
-    input.placeholder = "货架号 A-1";
-  } else {
-    input.placeholder = "A-1";
-  }
-  const normalize = () => {
-    const value = String(input.value || "")
-      .toUpperCase()
-      .replace(/\s+/g, "")
-      .replace(/_/g, "-");
-    const matched = value.match(/^([A-Z])-?([0-9])$/);
-    input.value = matched ? `${matched[1]}-${matched[2]}` : value;
-  };
-  input.addEventListener("input", normalize);
-  input.addEventListener("blur", normalize);
-}
-
 function bindInputRules() {
-  bindShelfCodeInput("newShelfCodeDigits");
+  bindDigitInput("newShelfCodeDigits", 2);
   bindDigitInput("newBoxCodeDigits", 3);
   bindDigitInput("modalNewBoxCodeDigits", 3);
-  bindShelfCodeInput("modalNewShelfCodeDigits");
-  bindShelfCodeInput("shelfManageCodeInput");
+  bindDigitInput("modalNewShelfCodeDigits", 2);
   bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
   bindBatchNoInput("batchCollectBatchNo");
 }
@@ -2085,7 +2062,7 @@ function findShelfByAnyCode(raw) {
   if (!normalized) return null;
   return (
     (Array.isArray(state.shelves) ? state.shelves : []).find(
-      (shelf) => areEquivalentShelfCodes(shelf?.shelfCode, normalized),
+      (shelf) => normalizeShelfCodeInput(shelf?.shelfCode) === normalized,
     ) || null
   );
 }
@@ -2982,7 +2959,7 @@ function renderShopsTable() {
 
 function getShelvesSortedForManage() {
   return [...(Array.isArray(state.shelves) ? state.shelves : [])].sort((a, b) =>
-    compareShelfCodes(a?.shelfCode, b?.shelfCode),
+    String(a?.shelfCode || "").localeCompare(String(b?.shelfCode || ""), "en", { numeric: true }),
   );
 }
 
@@ -3393,7 +3370,7 @@ function findEnabledBoxByCode(raw) {
 function getEnabledShelvesSorted() {
   return state.shelves
     .filter((shelf) => Number(shelf.status) === 1)
-    .sort((a, b) => compareShelfCodes(a?.shelfCode, b?.shelfCode));
+    .sort((a, b) => String(a.shelfCode).localeCompare(String(b.shelfCode), "en", { numeric: true }));
 }
 
 function formatShelfCodeWithName(shelf) {
@@ -3407,35 +3384,26 @@ function formatShelfCodeWithName(shelf) {
   }
   if (!shelfName) {
     const matched = (Array.isArray(state.shelves) ? state.shelves : []).find(
-      (item) => areEquivalentShelfCodes(item?.shelfCode, shelfCode),
+      (item) => normalizeShelfCodeInput(item?.shelfCode) === shelfCode,
     );
     shelfName = String(matched?.name || "").trim();
   }
 
-  return shelfName ? `${shelfCode} / ${shelfName}` : shelfCode;
+  return shelfName ? `${shelfCode}-${shelfName}` : shelfCode;
 }
 
 function normalizeShelfCodeInput(raw) {
   const value = String(raw ?? "").trim().toUpperCase();
   if (!value) return "";
-
-  const modernWithName = value.match(/^([A-Z])[-_\s]?([0-9])\s*\/.*$/);
-  if (modernWithName) {
-    return `${modernWithName[1]}-${modernWithName[2]}`;
-  }
-  const modern = value.match(/^([A-Z])[-_\s]?([0-9])$/);
-  if (modern) {
-    return `${modern[1]}-${modern[2]}`;
-  }
-  const legacyLabeled = value.match(/^(\d{1,3})\s*[-_/].*$/);
-  if (legacyLabeled) {
-    const digits = legacyLabeled[1];
+  const labeled = value.match(/^(\d{1,3})\s*[-_/].*$/);
+  if (labeled) {
+    const digits = labeled[1];
     return digits.padStart(Math.max(2, digits.length), "0");
   }
   if (/^\d{1,3}$/.test(value)) {
     return value.padStart(Math.max(2, value.length), "0");
   }
-  const prefixed = value.match(/^S[-_\s]?(\d{1,3})(?:\s*[-_/].*)?$/);
+  const prefixed = value.match(/^S[-_\s]?(\d{1,3})$/);
   if (prefixed) {
     const digits = prefixed[1];
     return digits.padStart(Math.max(2, digits.length), "0");
@@ -3443,45 +3411,12 @@ function normalizeShelfCodeInput(raw) {
   return value;
 }
 
-function areEquivalentShelfCodes(left, right) {
-  const normalizedLeft = normalizeShelfCodeInput(left);
-  const normalizedRight = normalizeShelfCodeInput(right);
-  if (!normalizedLeft || !normalizedRight) return false;
-  if (normalizedLeft === normalizedRight) return true;
-  const defaultAliases = new Set(["Z-0", "00"]);
-  return defaultAliases.has(normalizedLeft) && defaultAliases.has(normalizedRight);
-}
-
-function compareShelfCodes(left, right) {
-  const leftValue = normalizeShelfCodeInput(left);
-  const rightValue = normalizeShelfCodeInput(right);
-  const leftModern = leftValue.match(/^([A-Z])-([0-9])$/);
-  const rightModern = rightValue.match(/^([A-Z])-([0-9])$/);
-  if (leftModern && rightModern) {
-    const letterCompare = leftModern[1].localeCompare(rightModern[1], "en");
-    if (letterCompare !== 0) return letterCompare;
-    return Number(leftModern[2]) - Number(rightModern[2]);
-  }
-  if (leftModern) return -1;
-  if (rightModern) return 1;
-
-  return String(leftValue || "").localeCompare(String(rightValue || ""), "en", { numeric: true });
-}
-
-function buildShelfCode(rawValue) {
-  const normalized = normalizeShelfCodeInput(rawValue);
-  if (!/^[A-Z]-[0-9]$/.test(normalized)) {
-    throw new Error("货架号必须是 A-1 这种格式");
-  }
-  return normalized;
-}
-
 function resolveEnabledShelfCode(raw, excludeShelfId = null) {
   const normalized = normalizeShelfCodeInput(raw);
   if (!normalized) return "";
   const found = getEnabledShelvesSorted().find((shelf) => {
     if (excludeShelfId && String(shelf.id) === String(excludeShelfId)) return false;
-    return areEquivalentShelfCodes(shelf?.shelfCode, normalized);
+    return normalizeShelfCodeInput(shelf?.shelfCode) === normalized;
   });
   return found?.shelfCode || "";
 }
@@ -5646,7 +5581,7 @@ function bindForms() {
     const resolved = resolveEnabledShelfCode(event.target.value, currentBox?.shelf?.id ?? null);
     if (resolved) {
       const matched = getEnabledShelvesSorted().find(
-        (item) => areEquivalentShelfCodes(item?.shelfCode, resolved),
+        (item) => normalizeShelfCodeInput(item?.shelfCode) === normalizeShelfCodeInput(resolved),
       );
       event.target.value = formatShelfCodeWithName(matched || { shelfCode: resolved });
     }
@@ -5950,7 +5885,7 @@ function bindForms() {
         }
         const shelfCode = normalizeShelfCodeInput(shelf.shelfCode);
         const boxes = (Array.isArray(state.boxes) ? state.boxes : []).filter(
-          (box) => areEquivalentShelfCodes(box?.shelf?.shelfCode || box?.shelfCode, shelfCode),
+          (box) => normalizeShelfCodeInput(box?.shelf?.shelfCode || box?.shelfCode) === shelfCode,
         );
         renderShelfBoxQueryResult(shelf, boxes);
       });
@@ -6332,8 +6267,8 @@ function bindDelegates() {
           throw new Error("货架号格式无效");
         }
         const codeChanged = normalizedCode !== originalCode;
-        if (codeChanged && !/^[A-Z]-[0-9]$/.test(normalizedCode)) {
-          throw new Error("货架号必须是 A-1 这种格式");
+        if (codeChanged && !/^\d{2}$/.test(normalizedCode)) {
+          throw new Error("货架号必须是2位数字");
         }
 
         const name = String(nameInput.value || "").trim();
