@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.0.3 - 2026-03-25
+
+### Added
+- Box archive-and-release flow in management UI.
+- Backend API for releasing a box code while preserving historical box records: `POST /api/boxes/:id/archive-release`.
+
+### Changed
+- Box code normalization is now applied consistently across box creation, inbound, inventory, and batch inbound flows.
+- Management query buttons for boxes and shelves now resolve by exact selected record.
+- Homepage inventory action text simplified from `FBA补货` to `查看`.
+- Default shelf fallback code is now `Z-0`, while keeping compatibility with `00` and `S-00`.
+
+### Fixed
+- Prevented equivalent box codes such as `9` and `009` from being treated as separate active box codes.
+- Box-management queries now return the correct live content for the selected box or shelf.
+- Removed the box-management frontend delete entry to reduce operational confusion after introducing archive-and-release.
+
 ## v1.0.2 - 2026-02-28
 
 ### Added
