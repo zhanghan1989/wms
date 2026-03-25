@@ -3423,11 +3423,6 @@ function normalizeBoxCodeInput(raw) {
   if (/^\d{1,6}$/.test(value)) {
     return value.padStart(Math.max(3, value.length), "0");
   }
-  const prefixed = value.match(/^B[-_\s]?(\d{1,6})$/);
-  if (prefixed) {
-    const digits = prefixed[1];
-    return digits.padStart(Math.max(3, digits.length), "0");
-  }
   return value;
 }
 
