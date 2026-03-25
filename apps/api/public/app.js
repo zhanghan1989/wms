@@ -554,6 +554,67 @@ async function downloadStockAdjustmentCsv() {
   showToast(`已下载 ${fileName}`);
 }
 
+function escapeCsvCell(value) {
+  const text = String(value ?? "");
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function triggerCsvDownload(fileName, rows) {
+  const csvContent = `\uFEFF${rows.map((row) => row.map(escapeCsvCell).join(",")).join("\r\n")}`;
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+}
+
+async function downloadInventorySkuSummaryCsv() {
+  if (!state.token) {
+    throw new Error("请先登录系统");
+  }
+  if (!Array.isArray(state.inventorySkus) || state.inventorySkus.length === 0) {
+    await loadInventory({ preserveSearch: true });
+  }
+
+  const rows = [
+    ["型号", "品牌", "类型", "颜色", "店铺", "备注", "SKU", "ASIN", "FNSKU", "FBMSKU", "rbSKU", "库存总数"],
+  ];
+  const list =
+    Array.isArray(state.inventorySortedSkus) && state.inventorySortedSkus.length
+      ? state.inventorySortedSkus
+      : Array.isArray(state.inventorySkus)
+        ? [...state.inventorySkus]
+        : [];
+
+  list.forEach((sku) => {
+    rows.push([
+      displayText(sku?.model),
+      displayText(sku?.brand),
+      displayText(sku?.type),
+      displayText(sku?.color),
+      displayText(sku?.shop),
+      displayText(sku?.remark),
+      displayText(sku?.sku),
+      displayText(sku?.asin),
+      displayText(sku?.fnsku),
+      displayText(sku?.fbmSku),
+      displayText(sku?.rbSku),
+      Number(state.inventoryTotalsBySku?.[String(sku?.id)] ?? 0),
+    ]);
+  });
+
+  const fileName = `inventory_sku_summary_${formatDateForFilename(new Date())}.csv`;
+  triggerCsvDownload(fileName, rows);
+  showToast(`已下载 ${fileName}`);
+}
+
 async function downloadFbaOutboundExcel() {
   if (!state.token) {
     throw new Error("请先登录");
@@ -1326,6 +1387,19 @@ function switchPanel(targetId) {
   if (targetId === "overview" && !state.overviewDashboard) {
     loadOverviewDashboard().catch((error) => showToast(error.message, true));
   }
+}
+
+function ensureInventoryPanelUi() {
+  const refreshButton = $("refreshInventory");
+  if (!refreshButton) return;
+  if ($("downloadInventorySkuSummaryBtn")) return;
+
+  const downloadButton = document.createElement("button");
+  downloadButton.type = "button";
+  downloadButton.id = "downloadInventorySkuSummaryBtn";
+  downloadButton.className = refreshButton.className;
+  downloadButton.textContent = "下载";
+  refreshButton.parentNode?.insertBefore(downloadButton, refreshButton);
 }
 
 function openModal(modalId) {
@@ -7309,6 +7383,16 @@ function bindRefresh() {
   $("refreshDataBackup").addEventListener("click", () =>
     loadDataBackups().catch((error) => showToast(error.message, true)),
   );
+  $("downloadInventorySkuSummaryBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadInventorySkuSummaryCsv();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
   $("refreshInventory").addEventListener("click", () => loadInventory().catch((error) => showToast(error.message, true)));
   $("refreshOverseasWarehouse").addEventListener("click", () =>
     Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true)),
@@ -7343,6 +7427,7 @@ function bindRefresh() {
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((error) => showToast(error.message, true)));
 }
 
+ensureInventoryPanelUi();
 ensureOverseasWarehouseQueryUi();
 bindTabs();
 bindInputRules();
