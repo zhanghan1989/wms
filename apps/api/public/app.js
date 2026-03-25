@@ -1389,6 +1389,13 @@ function switchPanel(targetId) {
   }
 }
 
+function ensureBrandingUi() {
+  document.title = "日本乐天库存系统";
+  document.querySelectorAll(".brand-title").forEach((node) => {
+    node.textContent = "日本乐天库存系统";
+  });
+}
+
 function ensureInventoryPanelUi() {
   const refreshButton = $("refreshInventory");
   if (!refreshButton) return;
@@ -7434,6 +7441,7 @@ function bindRefresh() {
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((error) => showToast(error.message, true)));
 }
 
+ensureBrandingUi();
 ensureInventoryPanelUi();
 ensureOverseasWarehouseQueryUi();
 bindTabs();
