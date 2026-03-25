@@ -33,7 +33,7 @@ export class ShelvesService {
     if (!shelfCode) throw new BadRequestException('货架号格式无效');
     const exists = await this.prisma.shelf.findFirst({
       where: {
-        OR: [{ shelfCode }, { shelfCode: this.toLegacyShelfCode(shelfCode) }],
+        shelfCode: { in: this.buildEquivalentShelfCodes(shelfCode) },
       },
     });
     if (exists) throw new BadRequestException('货架号已存在');
@@ -82,7 +82,7 @@ export class ShelvesService {
       const duplicate = await this.prisma.shelf.findFirst({
         where: {
           id: { not: id },
-          OR: [{ shelfCode: payload.shelfCode }, { shelfCode: this.toLegacyShelfCode(payload.shelfCode) }],
+          shelfCode: { in: this.buildEquivalentShelfCodes(payload.shelfCode) },
         },
       });
       if (duplicate) {
@@ -178,18 +178,22 @@ export class ShelvesService {
     const value = String(raw ?? '').trim().toUpperCase();
     if (!value) return '';
 
-    if (/^\d{1,3}$/.test(value)) {
-      return value.padStart(Math.max(2, value.length), '0');
+    const modern = value.match(/^([A-Z])[-_\s]?([0-9])$/);
+    if (modern) {
+      return `${modern[1]}-${modern[2]}`;
     }
 
-    const matched = value.match(/^S[-_\s]?(\d{1,3})$/);
-    if (!matched) {
-      return '';
+    if (value === '00' || value === 'S-00') {
+      return 'Z-0';
     }
-    return matched[1].padStart(Math.max(2, matched[1].length), '0');
+
+    return '';
   }
 
-  private toLegacyShelfCode(normalized: string): string {
-    return `S-${normalized}`;
+  private buildEquivalentShelfCodes(normalized: string): string[] {
+    if (normalized === 'Z-0') {
+      return ['Z-0', '00', 'S-00'];
+    }
+    return [normalized];
   }
 }
