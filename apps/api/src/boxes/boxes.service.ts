@@ -244,7 +244,7 @@ export class BoxesService {
       }),
     ]);
 
-    const lockingOrderNo = await this.findLockingBatchInboundOrderNo(box.boxCode);
+    const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
     const reasons: string[] = [];
     if (lockingOrderNo) {
       reasons.push(`箱号已被批量入库单 ${lockingOrderNo} 锁定，请先确认或删除该单据`);
@@ -448,6 +448,34 @@ export class BoxesService {
     for (const order of orders) {
       const codes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
       if (codes.includes(normalized)) {
+        return order.orderNo;
+      }
+    }
+
+    return null;
+  }
+
+  private async findLockingBatchInboundOrderNoExact(boxCode: string): Promise<string | null> {
+    const target = String(boxCode ?? '').trim().toUpperCase();
+    if (!target) return null;
+
+    const orders = await this.prisma.batchInboundOrder.findMany({
+      where: {
+        status: {
+          in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
+        },
+      },
+      select: {
+        orderNo: true,
+        collectedBoxCodes: true,
+      },
+      orderBy: { id: 'desc' },
+    });
+
+    for (const order of orders) {
+      const rawCodes = Array.isArray(order.collectedBoxCodes) ? order.collectedBoxCodes : [];
+      const matched = rawCodes.some((item) => String(item ?? '').trim().toUpperCase() === target);
+      if (matched) {
         return order.orderNo;
       }
     }
