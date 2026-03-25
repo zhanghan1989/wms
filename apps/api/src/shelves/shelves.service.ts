@@ -7,6 +7,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateShelfDto } from './dto/create-shelf.dto';
 import { UpdateShelfDto } from './dto/update-shelf.dto';
 
+const ARCHIVED_BOX_FALLBACK_SHELF_CODES = ['Z-0', '00', 'S-00'];
+
 @Injectable()
 export class ShelvesService {
   constructor(
@@ -120,9 +122,9 @@ export class ShelvesService {
     if (!shelf) throw new NotFoundException('货架不存在');
 
     const [boxCount, sampleBoxes] = await Promise.all([
-      this.prisma.box.count({ where: { shelfId: id } }),
+      this.prisma.box.count({ where: { shelfId: id, status: 1 } }),
       this.prisma.box.findMany({
-        where: { shelfId: id },
+        where: { shelfId: id, status: 1 },
         select: { boxCode: true },
         orderBy: { boxCode: 'asc' },
         take: 3,
@@ -152,6 +154,28 @@ export class ShelvesService {
     }
     try {
       await this.prisma.$transaction(async (tx) => {
+        const archivedBoxes = await tx.box.findMany({
+          where: { shelfId: id, status: 0 },
+          select: { id: true },
+        });
+        if (archivedBoxes.length > 0) {
+          const fallbackShelf = await tx.shelf.findFirst({
+            where: {
+              id: { not: id },
+              status: 1,
+              shelfCode: { in: ARCHIVED_BOX_FALLBACK_SHELF_CODES },
+            },
+            select: { id: true },
+            orderBy: { id: 'asc' },
+          });
+          if (!fallbackShelf) {
+            throw new BadRequestException('货架下仅剩归档箱，但系统中没有可接收归档箱的默认货架，无法删除。');
+          }
+          await tx.box.updateMany({
+            where: { shelfId: id, status: 0 },
+            data: { shelfId: fallbackShelf.id },
+          });
+        }
         await tx.shelf.delete({ where: { id } });
         await this.auditService.create({
           db: tx,
