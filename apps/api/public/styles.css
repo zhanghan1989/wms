@@ -104,7 +104,7 @@ body {
 }
 
 #appTopbar .brand-title {
-  font-size: clamp(32px, 3vw, 40px);
+  font-size: clamp(28px, 2.6vw, 34px);
   line-height: 1.1;
 }
 
