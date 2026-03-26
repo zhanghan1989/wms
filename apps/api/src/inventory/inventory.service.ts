@@ -429,12 +429,20 @@ export class InventoryService {
             sku: true,
             model: true,
             brand: true,
+            fnsku: true,
+            shop: true,
           },
         }),
         this.findBoxByEquivalentCode(tx, boxCode),
       ]);
       if (!sku) throw new NotFoundException('SKU不存在');
       if (!box) throw new NotFoundException('箱号不存在');
+      if (!String(sku.fnsku ?? '').trim()) {
+        throw new BadRequestException('该SKU缺少FNSKU，无法发起FBA补货');
+      }
+      if (!String(sku.shop ?? '').trim()) {
+        throw new BadRequestException('该SKU缺少所属店铺，无法发起FBA补货');
+      }
 
       const inventory = await tx.inventoryBoxSku.findUnique({
         where: {

@@ -2734,6 +2734,25 @@ function findSkuById(skuId) {
   return state.inventorySkus.find((sku) => Number(sku.id) === Number(skuId));
 }
 
+function ensureSkuReadyForFbaReplenishment(skuId) {
+  const sku = findSkuById(skuId);
+  if (!sku) {
+    throw new Error("未找到SKU");
+  }
+
+  const fnsku = String(sku.fnsku || "").trim();
+  if (!fnsku) {
+    throw new Error("该SKU缺少FNSKU，无法发起FBA补货");
+  }
+
+  const shop = String(sku.shop || "").trim();
+  if (!shop) {
+    throw new Error("该SKU缺少所属店铺，无法发起FBA补货");
+  }
+
+  return sku;
+}
+
 async function openEditSkuModal(skuId) {
   const sku = findSkuById(skuId);
   if (!sku) {
@@ -6695,6 +6714,9 @@ function bindDelegates() {
       }
 
       const direction = action === "inventoryOutbound" ? "outbound" : "inbound";
+      if (direction === "outbound") {
+        ensureSkuReadyForFbaReplenishment(skuId);
+      }
       const maxQty = Number(button.dataset.maxQty || 0);
       openAdjustModal(
         direction,
