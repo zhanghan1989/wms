@@ -6704,7 +6704,8 @@ function bindDelegates() {
         const keyword = $("inventoryKeyword").value.trim();
         const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
         await quickOutboundOne(skuId, boxCode);
-        showToast("出库1件成功");
+        const confirmed = await openActionConfirmModal("出库1件成功", "提示", "确认");
+        if (!confirmed) return;
         await loadInventory({ preserveSearch: shouldRefreshSearch });
         await loadBoxes();
         await loadAudit();
