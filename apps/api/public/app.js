@@ -1564,10 +1564,12 @@ function resolveDeleteConfirm(confirmed) {
   }
 }
 
-function openActionConfirmModal(messageText, titleText = "确认操作", confirmText = "确认") {
+function openActionConfirmModal(messageText, titleText = "确认操作", confirmText = "确认", options = {}) {
   const title = $("actionConfirmTitle");
   const message = $("actionConfirmMessage");
   const okBtn = $("actionConfirmOkBtn");
+  const cancelBtn = $("actionConfirmCancelBtn");
+  const showCancel = options?.showCancel !== false;
   if (title) {
     title.innerHTML = `<span class="confirm-icon">!</span>${escapeHtml(titleText)}`;
   }
@@ -1576,6 +1578,9 @@ function openActionConfirmModal(messageText, titleText = "确认操作", confirm
   }
   if (okBtn) {
     okBtn.textContent = String(confirmText || "确认");
+  }
+  if (cancelBtn) {
+    cancelBtn.classList.toggle("hidden", !showCancel);
   }
   if (typeof actionConfirmResolver === "function") {
     actionConfirmResolver(false);
@@ -6785,7 +6790,7 @@ function bindDelegates() {
         const keyword = $("inventoryKeyword").value.trim();
         const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
         await quickOutboundOne(skuId, boxCode);
-        const confirmed = await openActionConfirmModal("出库1件成功", "提示", "确认");
+        const confirmed = await openActionConfirmModal("出库1件成功", "提示", "确认", { showCancel: false });
         if (!confirmed) return;
         await loadInventory({ preserveSearch: shouldRefreshSearch });
         await loadBoxes();
