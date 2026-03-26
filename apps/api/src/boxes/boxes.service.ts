@@ -21,7 +21,7 @@ export class BoxesService {
   ) {}
 
   async list(q?: string): Promise<unknown[]> {
-    return this.prisma.box.findMany({
+    const boxes = await this.prisma.box.findMany({
       where: {
         status: 1,
         ...(q
@@ -40,6 +40,190 @@ export class BoxesService {
         },
       },
       orderBy: { id: 'desc' },
+    });
+
+    if (!boxes.length) {
+      return [];
+    }
+
+    const boxIds = boxes.map((box) => box.id);
+    const boxCodes = boxes.map((box) => box.boxCode);
+    const [
+      inventorySums,
+      inventoryCounts,
+      itemCodeCounts,
+      inboundCounts,
+      outboundCounts,
+      stocktakeCounts,
+      movementCounts,
+      adjustCounts,
+      fbaHistoryCounts,
+      activeFbaCounts,
+      pendingBatchInboundCounts,
+      lockingOrders,
+    ] = await Promise.all([
+      this.prisma.inventoryBoxSku.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _sum: { qty: true },
+      }),
+      this.prisma.inventoryBoxSku.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.itemCode.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.inboundOrderItem.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.outboundOrderItem.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.stocktakeRecord.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.stockMovement.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.inventoryAdjustOrderItem.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.fbaReplenishment.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.fbaReplenishment.groupBy({
+        by: ['boxId'],
+        where: {
+          boxId: { in: boxIds },
+          status: { in: ['pending_confirm', 'pending_outbound'] },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.batchInboundItem.groupBy({
+        by: ['boxCode'],
+        where: {
+          boxCode: { in: boxCodes },
+          order: {
+            status: {
+              in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
+            },
+          },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.batchInboundOrder.findMany({
+        where: {
+          status: {
+            in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
+          },
+        },
+        select: {
+          orderNo: true,
+          collectedBoxCodes: true,
+        },
+        orderBy: { id: 'desc' },
+      }),
+    ]);
+
+    const inventorySumByBoxId = new Map(
+      inventorySums.map((row) => [row.boxId.toString(), Number(row._sum.qty ?? 0)]),
+    );
+    const inventoryCountByBoxId = new Map(
+      inventoryCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const itemCodeCountByBoxId = new Map(
+      itemCodeCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const inboundCountByBoxId = new Map(
+      inboundCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const outboundCountByBoxId = new Map(
+      outboundCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const stocktakeCountByBoxId = new Map(
+      stocktakeCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const movementCountByBoxId = new Map(
+      movementCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const adjustCountByBoxId = new Map(
+      adjustCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const fbaHistoryCountByBoxId = new Map(
+      fbaHistoryCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const activeFbaCountByBoxId = new Map(
+      activeFbaCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
+    const pendingBatchInboundCountByCode = new Map(
+      pendingBatchInboundCounts.map((row) => [String(row.boxCode), Number(row._count._all ?? 0)]),
+    );
+    const lockingOrderByCode = new Map<string, string>();
+    for (const order of lockingOrders) {
+      const rawCodes = Array.isArray(order.collectedBoxCodes) ? order.collectedBoxCodes : [];
+      for (const item of rawCodes) {
+        const code = String(item ?? '').trim().toUpperCase();
+        if (code && !lockingOrderByCode.has(code)) {
+          lockingOrderByCode.set(code, order.orderNo);
+        }
+      }
+    }
+
+    return boxes.map((box) => {
+      const boxId = box.id.toString();
+      const totalStock = inventorySumByBoxId.get(boxId) ?? 0;
+      const inventoryRows = inventoryCountByBoxId.get(boxId) ?? 0;
+      const itemCodeRows = itemCodeCountByBoxId.get(boxId) ?? 0;
+      const inboundRows = inboundCountByBoxId.get(boxId) ?? 0;
+      const outboundRows = outboundCountByBoxId.get(boxId) ?? 0;
+      const stocktakeRows = stocktakeCountByBoxId.get(boxId) ?? 0;
+      const movementRows = movementCountByBoxId.get(boxId) ?? 0;
+      const adjustRows = adjustCountByBoxId.get(boxId) ?? 0;
+      const fbaRows = fbaHistoryCountByBoxId.get(boxId) ?? 0;
+      const activeFbaRows = activeFbaCountByBoxId.get(boxId) ?? 0;
+      const pendingBatchInboundRows = pendingBatchInboundCountByCode.get(box.boxCode) ?? 0;
+      const lockingOrderNo = lockingOrderByCode.get(String(box.boxCode).trim().toUpperCase()) ?? null;
+
+      const canDelete =
+        !lockingOrderNo &&
+        pendingBatchInboundRows <= 0 &&
+        inventoryRows <= 0 &&
+        itemCodeRows <= 0 &&
+        inboundRows <= 0 &&
+        outboundRows <= 0 &&
+        stocktakeRows <= 0 &&
+        movementRows <= 0 &&
+        adjustRows <= 0 &&
+        fbaRows <= 0;
+      const canArchiveRelease =
+        !canDelete &&
+        totalStock <= 0 &&
+        activeFbaRows <= 0 &&
+        !lockingOrderNo &&
+        pendingBatchInboundRows <= 0;
+
+      return {
+        ...box,
+        totalStock,
+        canDelete,
+        canArchiveRelease,
+      };
     });
   }
 

@@ -75,6 +75,9 @@ const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 
 const $ = (id) => document.getElementById(id);
 
+$("openEmptyBoxManageModal")?.remove();
+$("emptyBoxManageModal")?.remove();
+
 const DEFAULT_DEPARTMENT_OPTIONS = [
   { code: "factory", name: "工厂", status: 1, sort: 10 },
   { code: "overseas_warehouse", name: "海外仓", status: 1, sort: 20 },
@@ -3204,6 +3207,12 @@ function renderBoxesManageTable() {
         const itemId = String(item.id);
         const editing = state.boxEditingIds.has(itemId);
         const shelfOptions = buildShelfManageSelectOptions(item?.shelf?.id);
+        const archiveReleaseAction = item?.canArchiveRelease
+          ? `<button class="tiny-btn secondary" data-action="archiveReleaseBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">归档释放</button>`
+          : "";
+        const deleteAction = item?.canDelete
+          ? `<button class="tiny-btn danger" data-action="deleteBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">删除</button>`
+          : "";
         return `
       <tr>
         <td>
@@ -3226,22 +3235,14 @@ function renderBoxesManageTable() {
         </td>
         <td>
           <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>
-          <button class="tiny-btn secondary" data-action="archiveReleaseBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">归档释放</button>
+          ${archiveReleaseAction}
           <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
+          ${deleteAction}
         </td>
       </tr>
     `;
       })
       .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
-  const tableRows = [];
-  visibleRows.forEach((item, index) => {
-    const actionCell = tableRows[index]?.lastElementChild;
-    if (!actionCell) return;
-    actionCell.insertAdjacentHTML(
-      "afterbegin",
-      `<button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>`,
-    );
-  });
 }
 
 function renderEmptyBoxManageBadge() {
@@ -4920,7 +4921,7 @@ async function reloadAll() {
     $("shopsBody").innerHTML = "";
     $("shelfManageBody").innerHTML = "";
     $("boxManageBody").innerHTML = "";
-    $("emptyBoxManageBody").innerHTML = "";
+    if ($("emptyBoxManageBody")) $("emptyBoxManageBody").innerHTML = "";
     $("dataBackupBody").innerHTML = "";
     $("productEditRequestBody").innerHTML = "";
     $("departmentOptionsBody").innerHTML = "";
@@ -5616,7 +5617,7 @@ function bindForms() {
     openModal("bulkInventoryUpdateModal");
   });
 
-  $("openEmptyBoxManageModal").addEventListener("click", async () => {
+  $("openEmptyBoxManageModal")?.addEventListener("click", async () => {
     try {
       await loadEmptyBoxes();
       const wrap = $("emptyBoxManageTableWrap");
@@ -6523,7 +6524,7 @@ function bindDelegates() {
     }
   });
 
-  $("emptyBoxManageBody").addEventListener("click", async (event) => {
+  $("emptyBoxManageBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action='deleteEmptyBox']");
     if (!button) return;
     const id = button.dataset.id;
@@ -7280,7 +7281,7 @@ function bindDelegates() {
     }
   });
 
-  $("emptyBoxManageModal").addEventListener("click", (event) => {
+  $("emptyBoxManageModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("emptyBoxManageModal");
     }
