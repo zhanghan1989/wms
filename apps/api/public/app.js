@@ -70,6 +70,8 @@ const state = {
 let deleteConfirmResolver = null;
 let actionConfirmResolver = null;
 let suppressAuthErrorToastUntil = 0;
+let adjustBoxValidationTimer = null;
+let adjustBoxValidationToken = 0;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 
@@ -3484,6 +3486,38 @@ function findEnabledBoxByCode(raw) {
   );
 }
 
+function upsertEnabledBox(box) {
+  if (!box || !box.id) return;
+  const next = Array.isArray(state.boxes) ? [...state.boxes] : [];
+  const index = next.findIndex((item) => String(item?.id) === String(box.id));
+  if (index >= 0) {
+    next[index] = { ...next[index], ...box };
+  } else {
+    next.push(box);
+  }
+  state.boxes = next;
+}
+
+async function resolveEnabledBoxCodeLive(raw) {
+  const local = resolveEnabledBoxCode(raw);
+  if (local) return local;
+
+  const normalized = normalizeBoxCodeInput(raw);
+  if (!normalized) return "";
+
+  try {
+    const boxes = await request(`/boxes?q=${encodeURIComponent(normalized)}`);
+    const matched = (Array.isArray(boxes) ? boxes : []).find(
+      (box) => normalizeBoxCodeInput(box?.boxCode) === normalized && Number(box?.status) === 1,
+    );
+    if (!matched?.boxCode) return "";
+    upsertEnabledBox(matched);
+    return matched.boxCode;
+  } catch {
+    return "";
+  }
+}
+
 function getEnabledShelvesSorted() {
   return state.shelves
     .filter((shelf) => Number(shelf.status) === 1)
@@ -3731,6 +3765,39 @@ function renderAdjustBoxSuggestions(keyword = "") {
   }
 
   hint.classList.toggle("hidden", matches.length > 0);
+}
+
+async function validateAdjustBoxInput(raw, { normalizeInput = false } = {}) {
+  const input = $("adjustBoxCode");
+  const hint = $("adjustBoxHint");
+  if (!input) return "";
+  if (input.readOnly) return normalizeBoxCodeInput(input.value);
+
+  const token = ++adjustBoxValidationToken;
+  const normalized = normalizeBoxCodeInput(raw);
+  if (!normalized) {
+    if (hint) hint.classList.add("hidden");
+    return "";
+  }
+
+  const resolved = await resolveEnabledBoxCodeLive(normalized);
+  if (token !== adjustBoxValidationToken) return "";
+
+  if (resolved) {
+    renderAdjustBoxSuggestions(resolved);
+    if (normalizeInput) {
+      input.value = resolved;
+    }
+    if (hint) hint.classList.add("hidden");
+    return resolved;
+  }
+
+  renderAdjustBoxSuggestions(normalized);
+  if (normalizeInput) {
+    input.value = normalized;
+  }
+  if (hint) hint.classList.remove("hidden");
+  return "";
 }
 
 async function loadBrands() {
@@ -4664,7 +4731,7 @@ async function submitAdjustForm() {
   const skuId = Number($("adjustSkuId").value);
   const direction = $("adjustDirection").value;
   const rawBoxCode = $("adjustBoxCode").value;
-  const boxCode = normalizeBoxCodeInput(rawBoxCode);
+  let boxCode = normalizeBoxCodeInput(rawBoxCode);
   const qty = Math.abs(Number($("adjustQty").value));
   const reason = $("adjustReason").value.trim() || undefined;
 
@@ -4673,6 +4740,12 @@ async function submitAdjustForm() {
   }
   if (!boxCode) {
     throw new Error("请选择箱号");
+  }
+  if (direction === "inbound") {
+    boxCode = await validateAdjustBoxInput(rawBoxCode, { normalizeInput: true });
+    if (!boxCode) {
+      throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
+    }
   }
   $("adjustBoxCode").value = boxCode;
   if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
@@ -5747,9 +5820,17 @@ function bindForms() {
   });
   $("adjustBoxCode").addEventListener("input", (event) => {
     renderAdjustBoxSuggestions(event.target.value);
+    clearTimeout(adjustBoxValidationTimer);
+    adjustBoxValidationTimer = setTimeout(() => {
+      validateAdjustBoxInput(event.target.value).catch(() => {});
+    }, 250);
   });
   $("adjustBoxCode").addEventListener("focus", (event) => {
     renderAdjustBoxSuggestions(event.target.value);
+  });
+  $("adjustBoxCode").addEventListener("blur", (event) => {
+    clearTimeout(adjustBoxValidationTimer);
+    validateAdjustBoxInput(event.target.value, { normalizeInput: true }).catch(() => {});
   });
   $("adjustQty").addEventListener("input", (event) => {
     const input = event.target;
