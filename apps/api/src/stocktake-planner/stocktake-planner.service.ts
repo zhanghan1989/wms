@@ -51,12 +51,33 @@ export class StocktakePlannerService {
     });
 
     if (!shelves.length) {
-      throw new BadRequestException('未找到可生成盘点任务的货架');
+      throw new BadRequestException('未找到可用于生成盘点任务的货架');
+    }
+
+    const activeBoxes = await this.prisma.box.findMany({
+      where: {
+        status: 1,
+        shelfId: {
+          in: shelves.map((item) => item.id),
+        },
+      },
+      select: {
+        shelfId: true,
+      },
+      distinct: ['shelfId'],
+    });
+    const shelfIdsWithBoxes = new Set(activeBoxes.map((item) => item.shelfId.toString()));
+
+    if (!shelfIdsWithBoxes.size) {
+      throw new BadRequestException('未找到包含箱号的有效货架');
     }
 
     const lastTask = await this.prisma.stocktakePlannerTask.findFirst({
+      where: {
+        status: StocktakePlannerTaskStatus.confirmed,
+      },
       orderBy: [
-        { plannedDate: 'desc' },
+        { confirmedAt: 'desc' },
         { id: 'desc' },
       ],
       include: {
@@ -73,8 +94,21 @@ export class StocktakePlannerService {
       ? shelves.findIndex((item) => item.shelfCode === lastShelfCode)
       : -1;
     const plannedDate = this.getTodayStart();
-    const shelf = shelves[(lastShelfIndex + 1 + shelves.length) % shelves.length];
+    let shelf = shelves.find((item) => shelfIdsWithBoxes.has(item.id.toString())) ?? null;
 
+    if (lastShelfIndex >= 0) {
+      for (let offset = 1; offset <= shelves.length; offset += 1) {
+        const candidate = shelves[(lastShelfIndex + offset) % shelves.length];
+        if (shelfIdsWithBoxes.has(candidate.id.toString())) {
+          shelf = candidate;
+          break;
+        }
+      }
+    }
+
+    if (!shelf) {
+      throw new BadRequestException('未找到可用于生成盘点任务的下一个货架');
+    }
     await this.prisma.$transaction(async (tx) => {
       const baseTaskNo = this.buildTaskNo(shelf.shelfCode, plannedDate);
       let taskNo = baseTaskNo;
