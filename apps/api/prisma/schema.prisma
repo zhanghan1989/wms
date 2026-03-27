@@ -70,6 +70,7 @@ enum StocktakeTaskStatus {
 enum StocktakePlannerTaskStatus {
   pending
   confirmed
+  canceled
 }
 
 enum MovementType {
