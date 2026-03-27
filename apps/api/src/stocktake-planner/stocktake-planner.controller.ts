@@ -32,6 +32,15 @@ export class StocktakePlannerController {
     return this.stocktakePlannerService.confirm(id, user.id, req.requestId);
   }
 
+  @Post('tasks/:id/mark-confirming')
+  async markConfirming(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.stocktakePlannerService.markConfirming(id, user.id, req.requestId);
+  }
+
   @Post('tasks/:id/cancel')
   async cancel(
     @Param('id') id: string,

@@ -2514,6 +2514,7 @@ async function loadStocktakeTasks() {
 
 function buildStocktakeTaskStatusText(task) {
   if (task?.status === "confirmed") return "已确认";
+  if (task?.status === "confirming") return "确认中";
   if (task?.status === "canceled") return "已取消";
   return "待确认";
 }
@@ -2529,6 +2530,20 @@ async function generateStocktakeTasks() {
 
 async function confirmStocktakeTask(taskId) {
   const updated = await request(`/stocktake-planner/tasks/${encodeURIComponent(taskId)}/confirm`, {
+    method: "POST",
+    body: "{}",
+  });
+  const items = Array.isArray(state.stocktakeTasks) ? [...state.stocktakeTasks] : [];
+  const index = items.findIndex((item) => String(item?.id || "") === String(taskId || ""));
+  if (index >= 0) {
+    items[index] = updated;
+  }
+  state.stocktakeTasks = items;
+  return updated;
+}
+
+async function markStocktakeTaskConfirming(taskId) {
+  const updated = await request(`/stocktake-planner/tasks/${encodeURIComponent(taskId)}/mark-confirming`, {
     method: "POST",
     body: "{}",
   });
@@ -2566,8 +2581,8 @@ function renderStocktakePlanner() {
   const visibleTasks = tasks.slice(0, Math.max(state.stocktakeVisibleCount || 0, 30));
 
   if (!tasks.length) {
-    summary.textContent = '点击"生成库存盘点任务"后，会按当前系统日期生成盘点任务。';
-    body.innerHTML = '<tr><td colspan="7" class="muted">暂无库存盘点任务。</td></tr>';
+    summary.textContent = "点击“生成库存盘点任务”后，会按规则生成盘点任务。";
+    body.innerHTML = '<tr><td colspan="7" class="muted">暂无盘点任务。</td></tr>';
     return;
   }
 
@@ -2590,9 +2605,9 @@ function renderStocktakePlanner() {
           <td>${escapeHtml(displayText(task?.confirmedByName) || "-")}</td>
           <td>
             <div class="action-row">
-              ${task?.status === "pending" || task?.status === "confirmed" ? `<button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">查看</button>` : ""}
-              ${task?.status === "pending" ? `<button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">删除</button>` : ""}
-              ${task?.status === "pending" ? `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>` : ""}
+              ${(task?.status === "pending" || task?.status === "confirming") ? `<button type="button" class="tiny-btn secondary" data-action="printStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">打印</button>` : ""}
+              ${(task?.status === "pending" || task?.status === "confirming") ? `<button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">删除</button>` : ""}
+              ${(task?.status === "pending" || task?.status === "confirming") ? `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>` : ""}
             </div>
           </td>
         </tr>
@@ -2627,7 +2642,7 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
 
   meta.innerHTML = `
     <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
-    <div><strong>任务日期：</strong>${escapeHtml(displayText(task?.plannedDateText) || formatDateOnlyInTimeZone(task?.plannedDate))}</div>
+    <div><strong>任务日期：</strong>${escapeHtml(displayText(task?.plannedDateWithWeekday) || displayText(task?.plannedDateText) || formatDateOnlyInTimeZone(task?.plannedDate))}</div>
     <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
     <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
     <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
@@ -2683,7 +2698,7 @@ function openStocktakePrintWindow(task, rows) {
     <h1>库存盘点任务明细</h1>
     <div class="meta">
       <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
-      <div><strong>任务日期：</strong>${escapeHtml(displayText(task?.plannedDateText) || formatDateOnlyInTimeZone(task?.plannedDate))}</div>
+      <div><strong>任务日期：</strong>${escapeHtml(displayText(task?.plannedDateWithWeekday) || displayText(task?.plannedDateText) || formatDateOnlyInTimeZone(task?.plannedDate))}</div>
       <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
       <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
       <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
@@ -2723,13 +2738,33 @@ async function openStocktakeTaskDetail(taskId) {
       (item) => String(item?.id || "") === String(task?.shelfId || ""),
     ) || findShelfByAnyCode(task?.shelfCode);
   if (!shelf) {
-    throw new Error("未找到对应货架");
+    throw new Error("未找到任务对应货架");
   }
   const { boxCount, rows } = await getShelfBoxQueryRows(shelf);
   renderStocktakeTaskDetail(task, rows, boxCount);
   openModal("stocktakeTaskDetailModal");
 }
 
+async function printStocktakeTask(taskId) {
+  await Promise.all([loadShelves(), loadBoxes()]);
+  const task = (Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : []).find(
+    (item) => String(item?.id || "") === String(taskId || ""),
+  );
+  if (!task) {
+    throw new Error("未找到盘点任务");
+  }
+  const shelf =
+    (Array.isArray(state.shelves) ? state.shelves : []).find(
+      (item) => String(item?.id || "") === String(task?.shelfId || ""),
+    ) || findShelfByAnyCode(task?.shelfCode);
+  if (!shelf) {
+    throw new Error("未找到任务对应货架");
+  }
+  const { rows } = await getShelfBoxQueryRows(shelf);
+  const printableTask = task?.status === "pending" ? await markStocktakeTaskConfirming(taskId) : task;
+  renderStocktakePlanner();
+  openStocktakePrintWindow(printableTask, rows);
+}
 function renderInventoryLocationRows(rows) {
   if (!rows.length) {
     return '<span class="muted">无库存</span>';
@@ -6575,12 +6610,12 @@ function bindForms() {
 }
 
 function bindDelegates() {
-  $("stocktakePlannerBody")?.addEventListener("click", async (event) => {
+    $("stocktakePlannerBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     try {
-      if (button.dataset.action === "openStocktakeTaskDetail") {
-        await openStocktakeTaskDetail(button.dataset.id || "");
+      if (button.dataset.action === "printStocktakeTask") {
+        await printStocktakeTask(button.dataset.id || "");
         return;
       }
       if (button.dataset.action === "confirmStocktakeTask") {
@@ -6603,7 +6638,6 @@ function bindDelegates() {
       showToast(error.message, true);
     }
   });
-
   $("brandsBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;

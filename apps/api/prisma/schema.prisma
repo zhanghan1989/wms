@@ -69,6 +69,7 @@ enum StocktakeTaskStatus {
 
 enum StocktakePlannerTaskStatus {
   pending
+  confirming
   confirmed
   canceled
 }

@@ -69,7 +69,7 @@ export class StocktakePlannerService {
     const shelfIdsWithBoxes = new Set(activeBoxes.map((item) => item.shelfId.toString()));
 
     if (!shelfIdsWithBoxes.size) {
-      throw new BadRequestException('未找到包含箱号的有效货架');
+      throw new BadRequestException('未找到包含启用箱号的有效货架');
     }
 
     const lastTask = await this.prisma.stocktakePlannerTask.findFirst({
@@ -107,7 +107,7 @@ export class StocktakePlannerService {
     }
 
     if (!shelf) {
-      throw new BadRequestException('未找到可用于生成盘点任务的下一个货架');
+      throw new BadRequestException('未找到包含启用箱号的下一个有效货架');
     }
     await this.prisma.$transaction(async (tx) => {
       const baseTaskNo = this.buildTaskNo(shelf.shelfCode, plannedDate);
@@ -221,6 +221,78 @@ export class StocktakePlannerService {
         entityId: next.id,
         action: AuditAction.update,
         eventType: AuditEventType.STOCKTAKE_TASK_FINISHED,
+        beforeData: current as unknown as Record<string, unknown>,
+        afterData: next as unknown as Record<string, unknown>,
+        operatorId,
+        requestId,
+      });
+      return next;
+    });
+
+    return this.toTaskDto(updated);
+  }
+
+  async markConfirming(idParam: string, operatorId: bigint, requestId?: string): Promise<unknown> {
+    const id = parseId(idParam, 'stocktakePlannerTaskId');
+    const current = await this.prisma.stocktakePlannerTask.findUnique({
+      where: { id },
+      include: {
+        shelf: {
+          select: {
+            id: true,
+            shelfCode: true,
+            name: true,
+          },
+        },
+        confirmer: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+    });
+    if (!current) {
+      throw new NotFoundException('盘点任务不存在');
+    }
+    if (current.status === StocktakePlannerTaskStatus.confirmed) {
+      return this.toTaskDto(current);
+    }
+    if (current.status === StocktakePlannerTaskStatus.canceled) {
+      throw new BadRequestException('已取消的盘点任务不可打印');
+    }
+    if (current.status === StocktakePlannerTaskStatus.confirming) {
+      return this.toTaskDto(current);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.stocktakePlannerTask.update({
+        where: { id },
+        data: {
+          status: StocktakePlannerTaskStatus.confirming,
+        },
+        include: {
+          shelf: {
+            select: {
+              id: true,
+              shelfCode: true,
+              name: true,
+            },
+          },
+          confirmer: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+      });
+      await this.auditService.create({
+        db: tx,
+        entityType: 'stocktake_task',
+        entityId: next.id,
+        action: AuditAction.update,
+        eventType: AuditEventType.STOCKTAKE_TASK_STARTED,
         beforeData: current as unknown as Record<string, unknown>,
         afterData: next as unknown as Record<string, unknown>,
         operatorId,
