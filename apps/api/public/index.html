@@ -109,16 +109,20 @@
 
         <article class="card">
           <h3>基础操作</h3>
-          <div class="action-row">
-            <button type="button" id="openBoxManageModal">箱号管理</button>
-            <button type="button" id="openShelfManageModal">货架管理</button>
-            <button type="button" id="openStocktakePlannerPanel">库存盘点</button>
-            <button id="downloadStockAdjustmentCsvBtn" type="button">rbSKU+库存下载</button>
-            <button type="button" id="openBulkInventoryUpdateModal">批量更新库存</button>
-            <button type="button" id="openEmptyBoxManageModal" class="btn-with-badge">
-              空箱管理
-              <span id="emptyBoxManageBadge" class="quick-badge hidden">0</span>
-            </button>
+          <div class="action-row action-row-split">
+            <div class="action-row-left">
+              <button type="button" id="openBoxManageModal">箱号管理</button>
+              <button type="button" id="openShelfManageModal">货架管理</button>
+              <button type="button" id="openStocktakePlannerPanel">库存盘点</button>
+              <button type="button" id="openEmptyBoxManageModal" class="btn-with-badge">
+                空箱管理
+                <span id="emptyBoxManageBadge" class="quick-badge hidden">0</span>
+              </button>
+            </div>
+            <div class="action-row-right">
+              <button id="downloadStockAdjustmentCsvBtn" type="button">BOSS系统用库存下载</button>
+              <button type="button" id="openBulkInventoryUpdateModal">批量更新库存</button>
+            </div>
           </div>
         </article>
 

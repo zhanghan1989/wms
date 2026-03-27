@@ -573,6 +573,24 @@ td {
   gap: 6px;
 }
 
+.action-row-split {
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.action-row-left,
+.action-row-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.action-row-right {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
 .product-actions {
   width: 100%;
   justify-content: space-between;
