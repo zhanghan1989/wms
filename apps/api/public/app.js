@@ -508,6 +508,37 @@ function formatDateOnlyWithWeekday(value) {
   return `${formatDateOnly(value)}(${weekdays[date.getDay()] || "-"})`;
 }
 
+const STOCKTAKE_DISPLAY_TIMEZONE = "Asia/Shanghai";
+
+function formatDateOnlyInTimeZone(value, timeZone = STOCKTAKE_DISPLAY_TIMEZONE) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const mapped = Object.fromEntries(parts.filter((item) => item.type !== "literal").map((item) => [item.type, item.value]));
+  return `${mapped.year || "0000"}/${mapped.month || "00"}/${mapped.day || "00"}`;
+}
+
+function formatDateOnlyWithWeekdayInTimeZone(value, timeZone = STOCKTAKE_DISPLAY_TIMEZONE) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "long",
+  }).formatToParts(date);
+  const mapped = Object.fromEntries(parts.filter((item) => item.type !== "literal").map((item) => [item.type, item.value]));
+  return `${mapped.year || "0000"}/${mapped.month || "00"}/${mapped.day || "00"}(${mapped.weekday || "-"})`;
+}
+
 function addDays(date, days) {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
@@ -2535,7 +2566,7 @@ function renderStocktakePlanner() {
   const visibleTasks = tasks.slice(0, Math.max(state.stocktakeVisibleCount || 0, 30));
 
   if (!tasks.length) {
-    summary.textContent = "点击“生成库存盘点任务”后，会按当前系统日期生成盘点任务。";
+    summary.textContent = '点击"生成库存盘点任务"后，会按当前系统日期生成盘点任务。';
     body.innerHTML = '<tr><td colspan="7" class="muted">暂无库存盘点任务。</td></tr>';
     return;
   }
@@ -2544,14 +2575,14 @@ function renderStocktakePlanner() {
     .map((task) => String(task?.plannedDate || ""))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-  const latestDate = formatDateOnly(plannedDates[plannedDates.length - 1] || "");
-  const earliestDate = formatDateOnly(plannedDates[0] || "");
+  const latestDate = formatDateOnlyInTimeZone(plannedDates[plannedDates.length - 1] || "");
+  const earliestDate = formatDateOnlyInTimeZone(plannedDates[0] || "");
   summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${earliestDate} - ${latestDate}。`;
   body.innerHTML = visibleTasks
     .map(
       (task) => `
         <tr>
-          <td>${escapeHtml(formatDateOnlyWithWeekday(task?.plannedDate))}</td>
+          <td>${escapeHtml(formatDateOnlyWithWeekdayInTimeZone(task?.plannedDate))}</td>
           <td>${escapeHtml(displayText(task?.taskNo))}</td>
           <td>${escapeHtml(displayText(task?.shelfCode))}</td>
           <td>${escapeHtml(buildStocktakeTaskStatusText(task))}</td>
@@ -2559,7 +2590,7 @@ function renderStocktakePlanner() {
           <td>${escapeHtml(displayText(task?.confirmedByName) || "-")}</td>
           <td>
             <div class="action-row">
-              <button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">查看</button>
+              ${task?.status === "pending" || task?.status === "confirmed" ? `<button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">查看</button>` : ""}
               ${task?.status === "pending" ? `<button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">删除</button>` : ""}
               ${task?.status === "pending" ? `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>` : ""}
             </div>
@@ -2596,7 +2627,7 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
 
   meta.innerHTML = `
     <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
-    <div><strong>任务日期：</strong>${escapeHtml(formatDateOnly(task?.plannedDate))}</div>
+    <div><strong>任务日期：</strong>${escapeHtml(formatDateOnlyInTimeZone(task?.plannedDate))}</div>
     <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
     <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
     <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
@@ -2649,10 +2680,10 @@ function openStocktakePrintWindow(task, rows) {
     </style>
   </head>
   <body>
-    <h1>库存盘点明细</h1>
+    <h1>库存盘点任务明细</h1>
     <div class="meta">
       <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
-      <div><strong>任务日期：</strong>${escapeHtml(formatDateOnly(task?.plannedDate))}</div>
+      <div><strong>任务日期：</strong>${escapeHtml(formatDateOnlyInTimeZone(task?.plannedDate))}</div>
       <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
       <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
       <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
@@ -2665,27 +2696,18 @@ function openStocktakePrintWindow(task, rows) {
           safeRows.length
             ? safeRows
                 .map(
-                  (row) => `
-          <tr>
-            <td>${escapeHtml(displayText(row?.boxCode))}</td>
-            <td>${escapeHtml(displayText(row?.sku))}</td>
-            <td>${escapeHtml(displayText(row?.qty))}</td>
-          </tr>`,
+                  (row) => `<tr><td>${escapeHtml(displayText(row?.boxCode))}</td><td>${escapeHtml(displayText(row?.sku))}</td><td>${escapeHtml(displayText(row?.qty))}</td></tr>`,
                 )
                 .join("")
             : `<tr><td colspan="3">当前没有盘点明细。</td></tr>`
         }
       </tbody>
     </table>
-    <script>
-      window.addEventListener("load", function () {
-        setTimeout(function () { window.focus(); window.print(); }, 120);
-      });
-      window.addEventListener("afterprint", function () { window.close(); });
-    </script>
   </body>
 </html>`);
   popup.document.close();
+  popup.focus();
+  popup.print();
 }
 
 async function openStocktakeTaskDetail(taskId) {
