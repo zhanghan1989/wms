@@ -41,12 +41,7 @@ export class StocktakePlannerService {
     const createdAt = new Date();
     const unfinishedTask = await this.prisma.stocktakePlannerTask.findFirst({
       where: {
-        status: {
-          in: [
-            StocktakePlannerTaskStatus.pending,
-            StocktakePlannerTaskStatus.confirming,
-          ],
-        },
+        status: StocktakePlannerTaskStatus.pending,
       },
       orderBy: [
         { createdAt: 'desc' },
