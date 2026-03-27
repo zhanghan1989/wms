@@ -1440,6 +1440,7 @@ function closeModal(modalId) {
 function ensureOverseasWarehouseQueryUi() {
   const actionRow = document.querySelector("#overseasWarehouse .card .action-row");
   const boxManageForm = $("boxManageForm");
+  const shelfManageForm = $("shelfManageForm");
   let boxQueryBtn = $("openBoxContentQueryModal");
   if (!boxQueryBtn) {
     boxQueryBtn = document.createElement("button");
@@ -1453,11 +1454,18 @@ function ensureOverseasWarehouseQueryUi() {
     boxManageForm.insertBefore(boxQueryBtn, createBtn || null);
   }
 
-  if (actionRow && !$("openShelfBoxQueryModal")) {
-    const shelfQueryBtn = document.createElement("button");
+  let shelfQueryBtn = $("openShelfBoxQueryModal");
+  if (!shelfQueryBtn) {
+    shelfQueryBtn = document.createElement("button");
     shelfQueryBtn.type = "button";
     shelfQueryBtn.id = "openShelfBoxQueryModal";
     shelfQueryBtn.textContent = "货架内箱号查询";
+  }
+  if (shelfManageForm && shelfQueryBtn) {
+    shelfQueryBtn.classList.add("small-btn", "manage-create-btn");
+    const createBtn = $("openCreateShelfFromManage");
+    shelfManageForm.insertBefore(shelfQueryBtn, createBtn || null);
+  } else if (actionRow && shelfQueryBtn && !shelfQueryBtn.parentElement) {
     actionRow.insertBefore(shelfQueryBtn, $("downloadStockAdjustmentCsvBtn") || null);
   }
 
@@ -5753,11 +5761,31 @@ function bindForms() {
     openModal("createBoxFromSkuModal");
   };
 
+  const openCreateShelfModal = async (prefill = null) => {
+    $("createShelfFromInventoryForm").reset();
+    const prefillShelfCode = String(prefill?.shelfCode || "").trim();
+    const prefillShelfName = String(prefill?.name || "").trim();
+    if (prefillShelfCode) {
+      $("modalNewShelfCodeDigits").value = prefillShelfCode;
+    }
+    if (prefillShelfName) {
+      $("modalNewShelfName").value = prefillShelfName;
+    }
+    openModal("createShelfFromInventoryModal");
+  };
+
   $("openCreateBoxFromSkuModal").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxFromAdjust").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxFromManage").addEventListener("click", async () => {
     try {
       await openCreateBoxModal();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("openCreateShelfFromManage").addEventListener("click", async () => {
+    try {
+      await openCreateShelfModal();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -6409,24 +6437,6 @@ function bindDelegates() {
       $("shopNameInput").value = "";
       showToast("店铺已新增");
       await Promise.all([loadShops(), loadInventory(), loadAudit()]);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("shelfManageForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const shelfCode = buildStrictShelfCode($("shelfManageCodeInput").value);
-      const name = String($("shelfManageNameInput").value || "").trim() || undefined;
-      await request("/shelves", {
-        method: "POST",
-        body: JSON.stringify({ shelfCode, name }),
-      });
-      $("shelfManageCodeInput").value = "";
-      $("shelfManageNameInput").value = "";
-      showToast("货架已新增");
-      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
     }

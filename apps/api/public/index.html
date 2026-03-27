@@ -889,7 +889,7 @@
         <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">关闭</button>
       </div>
       <form id="createShelfFromInventoryForm" class="form-grid modal-grid">
-        <label>货架号（S-）
+        <label>货架号
           <input id="modalNewShelfCodeDigits" inputmode="text" maxlength="2" placeholder="00或A0" required />
         </label>
         <label>名称<input id="modalNewShelfName" /></label>
@@ -958,10 +958,8 @@
         <h3>货架管理</h3>
         <button type="button" class="ghost" data-action="closeShelfManageModal">关闭</button>
       </div>
-      <form id="shelfManageForm" class="manage-inline-form manage-inline-form-triple">
-        <input id="shelfManageCodeInput" inputmode="text" maxlength="2" placeholder="货架号 00或A0" required />
-        <input id="shelfManageNameInput" maxlength="128" placeholder="请输入货架名称（可选）" />
-        <button type="submit" class="small-btn manage-create-btn">新增货架</button>
+      <form id="shelfManageForm" class="manage-inline-form manage-inline-form-actions">
+        <button id="openCreateShelfFromManage" type="button" class="small-btn manage-create-btn">新增货架</button>
       </form>
       <div id="shelfManageTableWrap" class="manage-table-scroll">
       <table>
