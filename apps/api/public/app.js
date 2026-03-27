@@ -1867,13 +1867,10 @@ function renderDepartmentOptionsTable() {
           </td>
           <td>
             <div class="action-row">
-              ${
-                task?.status === "pending"
-                  ? `<button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">??</button>
-                     <button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">??</button>
-                     <button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">??</button>`
-                  : ""
-              }
+              <button type="button" class="tiny-btn" data-action="editDepartmentOption">
+                ${editing ? "确认变更" : "变更"}
+              </button>
+              <button type="button" class="tiny-btn danger" data-action="deleteDepartmentOption">删除</button>
             </div>
           </td>
         </tr>
@@ -2485,9 +2482,7 @@ async function loadStocktakeTasks() {
 }
 
 function buildStocktakeTaskStatusText(task) {
-  if (task?.status === "confirmed") return "???";
-  if (task?.status === "canceled") return "???";
-  return "???";
+  return task?.status === "confirmed" ? "已确认" : "待确认";
 }
 
 async function generateStocktakeTasks() {
@@ -2499,23 +2494,18 @@ async function generateStocktakeTasks() {
   state.stocktakeVisibleCount = Math.min(Math.max(state.stocktakeVisibleCount || 0, 30), state.stocktakeTasks.length);
 }
 
-async function confirmStocktakeTask(taskId) {
-
-  const updated = await request(`/stocktake-planner/tasks/${encodeURIComponent(taskId)}/confirm`, {
+async function clearFutureStocktakeTasks() {
+  const result = await request("/stocktake-planner/tasks/clear-future", {
     method: "POST",
     body: "{}",
   });
-  const items = Array.isArray(state.stocktakeTasks) ? [...state.stocktakeTasks] : [];
-  const index = items.findIndex((item) => String(item?.id || "") === String(taskId || ""));
-  if (index >= 0) {
-    items[index] = updated;
-  }
-  state.stocktakeTasks = items;
-  return updated;
+  state.stocktakeTasks = Array.isArray(result?.tasks) ? result.tasks : [];
+  state.stocktakeVisibleCount = Math.min(Math.max(state.stocktakeVisibleCount || 0, 30), state.stocktakeTasks.length);
+  return result;
 }
 
-async function cancelStocktakeTask(taskId) {
-  const updated = await request(`/stocktake-planner/tasks/${encodeURIComponent(taskId)}/cancel`, {
+async function confirmStocktakeTask(taskId) {
+  const updated = await request(`/stocktake-planner/tasks/${encodeURIComponent(taskId)}/confirm`, {
     method: "POST",
     body: "{}",
   });
@@ -2532,6 +2522,7 @@ function renderStocktakePlanner() {
   const body = $("stocktakePlannerBody");
   const summary = $("stocktakePlannerSummary");
   if (!body || !summary) return;
+  $("clearFutureStocktakeTasksBtn")?.classList.toggle("hidden", !hasAdminAccess(state.me?.role));
 
   const tasks = [...(Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : [])].sort((a, b) =>
     String(b?.plannedDate || "").localeCompare(String(a?.plannedDate || ""), "en", { numeric: true }),
@@ -6039,6 +6030,21 @@ function bindForms() {
       showToast(error.message, true);
     }
   });
+
+  $("clearFutureStocktakeTasksBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      const ok = await openActionConfirmModal("确认清理今天之后的所有库存盘点任务？", "确认清理", "清理");
+      if (!ok) return;
+      await withBusyButton(button, "清理中...", async () => {
+        const result = await clearFutureStocktakeTasks();
+        renderStocktakePlanner();
+        showToast(
+          Number(result?.deletedCount || 0) > 0
+            ? `已清理 ${Number(result.deletedCount)} 条未来盘点任务`
+            : "没有可清理的未来盘点任务",
+        );
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -6568,19 +6574,11 @@ function bindDelegates() {
         return;
       }
       if (button.dataset.action === "confirmStocktakeTask") {
-        const ok = await openActionConfirmModal("?????????????????", "????", "??");
+        const ok = await openActionConfirmModal("确认将该盘点任务标记为已确认？", "确认操作", "确认");
         if (!ok) return;
         await confirmStocktakeTask(button.dataset.id || "");
         renderStocktakePlanner();
-        showToast("???????");
-        return;
-      }
-      if (button.dataset.action === "cancelStocktakeTask") {
-        const ok = await openActionConfirmModal("?????????????????", "????", "??");
-        if (!ok) return;
-        await cancelStocktakeTask(button.dataset.id || "");
-        renderStocktakePlanner();
-        showToast("???????");
+        showToast("盘点任务已确认");
       }
     } catch (error) {
       showToast(error.message, true);
