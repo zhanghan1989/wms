@@ -1,4 +1,4 @@
-﻿const state = {
+const state = {
   token: localStorage.getItem("wms_token") || "",
   me: null,
   shelves: [],
@@ -85,9 +85,9 @@ $("openEmptyBoxManageModal")?.remove();
 $("emptyBoxManageModal")?.remove();
 
 const DEFAULT_DEPARTMENT_OPTIONS = [
-  { code: "factory", name: "蟾･蜴・, status: 1, sort: 10 },
-  { code: "overseas_warehouse", name: "豬ｷ螟紋ｻ・, status: 1, sort: 20 },
-  { code: "china_warehouse", name: "荳ｭ蝗ｽ莉・, status: 1, sort: 30 },
+  { code: "factory", name: "工厂", status: 1, sort: 10 },
+  { code: "overseas_warehouse", name: "海外仓", status: 1, sort: 20 },
+  { code: "china_warehouse", name: "中国仓", status: 1, sort: 30 },
 ];
 
 const DEFAULT_ROLE_OPTIONS = [
@@ -95,68 +95,68 @@ const DEFAULT_ROLE_OPTIONS = [
   { code: "admin", name: "\u7ba1\u7406\u8005", status: 1, sort: 20 },
   { code: "system_admin", name: "\u7cfb\u7edf\u7ba1\u7406\u5458", status: 1, sort: 30 },
 ];
-const SKU_EDIT_PENDING_BLOCK_MESSAGE = "豁｣蝨ｨ郛冶ｾ台ｺｧ蜩∫筏隸ｷ荳ｭ・瑚ｯｷ邂｡逅・遭遑ｮ隶､蜷主・謇ｧ陦檎嶌蜈ｳ謫堺ｽ懊・;
+const SKU_EDIT_PENDING_BLOCK_MESSAGE = "正在编辑产品申请中，请管理员确认后再执行相关操作。";
 
 const AUDIT_EVENT_TEXT_MAP = {
-  box_created: "譁ｰ蠅樒ｮｱ蜿ｷ",
-  box_field_updated: "邂ｱ蜿ｷ菫｡諱ｯ譖ｴ譁ｰ",
-  box_renamed: "邂ｱ蜿ｷ驥榊多蜷・,
-  box_disabled: "遖∫畑邂ｱ蜿ｷ",
-  box_deleted: "蛻髯､邂ｱ蜿ｷ",
-  box_stock_increased: "邂ｱ蜀・ｺ灘ｭ伜｢槫刈",
-  box_stock_outbound: "邂ｱ蜀・ｺ灘ｭ伜・蠎・,
-  sku_created: "譁ｰ蠅樔ｺｧ蜩・,
-  sku_field_updated: "莠ｧ蜩∽ｿ｡諱ｯ譖ｴ譁ｰ",
-  sku_disabled: "遖∫畑莠ｧ蜩・,
-  sku_deleted: "蛻髯､莠ｧ蜩・,
-  shelf_created: "譁ｰ蠅櫁ｴｧ譫ｶ",
-  shelf_field_updated: "雍ｧ譫ｶ菫｡諱ｯ譖ｴ譁ｰ",
-  shelf_disabled: "遖∫畑雍ｧ譫ｶ",
-  shelf_deleted: "蛻髯､雍ｧ譫ｶ",
-  brand_created: "譁ｰ蠅槫刀迚・,
-  brand_updated: "譖ｴ譁ｰ蜩∫煙",
-  brand_deleted: "蛻髯､蜩∫煙",
-  sku_type_created: "譁ｰ蠅樒ｱｻ蝙・,
-  sku_type_updated: "譖ｴ譁ｰ邀ｻ蝙・,
-  sku_type_deleted: "蛻髯､邀ｻ蝙・,
-  shop_created: "譁ｰ蠅槫ｺ鈴銅",
-  shop_updated: "譖ｴ譁ｰ蠎鈴銅",
-  shop_deleted: "蛻髯､蠎鈴銅",
-  user_created: "譁ｰ蠅樒畑謌ｷ",
-  user_updated: "譖ｴ譁ｰ逕ｨ謌ｷ",
-  user_disabled: "遖∫畑逕ｨ謌ｷ",
-  user_deleted: "蛻髯､逕ｨ謌ｷ",
-  inbound_order_created: "蛻帛ｻｺ蜈･蠎灘黒",
-  inbound_order_confirmed: "遑ｮ隶､蜈･蠎灘黒",
-  inbound_order_voided: "菴懷ｺ溷・蠎灘黒",
-  outbound_order_created: "蛻帛ｻｺ蜃ｺ蠎灘黒",
-  outbound_order_confirmed: "遑ｮ隶､蜃ｺ蠎灘黒",
-  outbound_order_voided: "菴懷ｺ溷・蠎灘黒",
-  stocktake_task_created: "蛻帛ｻｺ逶倡せ莉ｻ蜉｡",
-  stocktake_task_started: "蠑蟋狗尨轤ｹ莉ｻ蜉｡",
-  stocktake_task_finished: "螳梧・逶倡せ莉ｻ蜉｡",
-  stocktake_task_voided: "菴懷ｺ溽尨轤ｹ莉ｻ蜉｡",
-  inventory_adjust_created: "蛻帛ｻｺ蠎灘ｭ倩ｰ・紛蜊・,
-  inventory_adjust_confirmed: "遑ｮ隶､蠎灘ｭ倩ｰ・紛蜊・,
-  inventory_adjust_voided: "菴懷ｺ溷ｺ灘ｭ倩ｰ・紛蜊・,
+  box_created: "新增箱号",
+  box_field_updated: "箱号信息更新",
+  box_renamed: "箱号重命名",
+  box_disabled: "禁用箱号",
+  box_deleted: "删除箱号",
+  box_stock_increased: "箱内库存增加",
+  box_stock_outbound: "箱内库存出库",
+  sku_created: "新增产品",
+  sku_field_updated: "产品信息更新",
+  sku_disabled: "禁用产品",
+  sku_deleted: "删除产品",
+  shelf_created: "新增货架",
+  shelf_field_updated: "货架信息更新",
+  shelf_disabled: "禁用货架",
+  shelf_deleted: "删除货架",
+  brand_created: "新增品牌",
+  brand_updated: "更新品牌",
+  brand_deleted: "删除品牌",
+  sku_type_created: "新增类型",
+  sku_type_updated: "更新类型",
+  sku_type_deleted: "删除类型",
+  shop_created: "新增店铺",
+  shop_updated: "更新店铺",
+  shop_deleted: "删除店铺",
+  user_created: "新增用户",
+  user_updated: "更新用户",
+  user_disabled: "禁用用户",
+  user_deleted: "删除用户",
+  inbound_order_created: "创建入库单",
+  inbound_order_confirmed: "确认入库单",
+  inbound_order_voided: "作废入库单",
+  outbound_order_created: "创建出库单",
+  outbound_order_confirmed: "确认出库单",
+  outbound_order_voided: "作废出库单",
+  stocktake_task_created: "创建盘点任务",
+  stocktake_task_started: "开始盘点任务",
+  stocktake_task_finished: "完成盘点任务",
+  stocktake_task_voided: "作废盘点任务",
+  inventory_adjust_created: "创建库存调整单",
+  inventory_adjust_confirmed: "确认库存调整单",
+  inventory_adjust_voided: "作废库存调整单",
 };
 
 const AUDIT_ENTITY_TEXT_MAP = {
-  box: "邂ｱ蜿ｷ",
-  sku: "莠ｧ蜩・,
-  shelf: "雍ｧ譫ｶ",
-  user: "逕ｨ謌ｷ",
-  brand: "蜩∫煙",
-  sku_type: "邀ｻ蝙・,
-  shop: "蠎鈴銅",
-  inbound_order: "蜈･蠎灘黒",
-  outbound_order: "蜃ｺ蠎灘黒",
-  stocktake_task: "逶倡せ莉ｻ蜉｡",
-  inventory_adjust_order: "蠎灘ｭ倩ｰ・紛蜊・,
-  fba_replenishment: "FBA陦･雍ｧ逕ｳ隸ｷ",
-  product_edit_request: "莠ｧ蜩∫ｼ冶ｾ醍筏隸ｷ",
+  box: "箱号",
+  sku: "产品",
+  shelf: "货架",
+  user: "用户",
+  brand: "品牌",
+  sku_type: "类型",
+  shop: "店铺",
+  inbound_order: "入库单",
+  outbound_order: "出库单",
+  stocktake_task: "盘点任务",
+  inventory_adjust_order: "库存调整单",
+  fba_replenishment: "FBA补货申请",
+  product_edit_request: "产品编辑申请",
 };
-const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = "莉・ｽ帛ｱｱ蟾･蜴らｮ｡逅・・庄遑ｮ隶､郛冶ｾ醍筏隸ｷ";
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = "仅佛山工厂管理者可确认编辑申请";
 
 function showToast(message, isError = false, options = {}) {
   if (String(message || "") === SILENT_AUTH_ERROR_MESSAGE) {
@@ -166,7 +166,7 @@ function showToast(message, isError = false, options = {}) {
 }
 
 function showErrorModal(message, isError = true, options = {}) {
-  const text = String(message || "蜿醍函譛ｪ遏･髞呵ｯｯ");
+  const text = String(message || "发生未知错误");
   const modalCard = document.querySelector("#errorModal .modal-card");
   const title = $("errorModalTitle");
   const icon = $("errorModalIcon");
@@ -180,7 +180,7 @@ function showErrorModal(message, isError = true, options = {}) {
   }
   if (title) {
     title.innerHTML = `<span id="errorModalIcon" class="confirm-icon">${isError ? "!" : "i"}</span>${
-      isError ? "髞呵ｯｯ" : "謠千､ｺ"
+      isError ? "错误" : "提示"
     }`;
   }
   if (icon && !title) {
@@ -190,7 +190,7 @@ function showErrorModal(message, isError = true, options = {}) {
     messageEl.textContent = text;
   }
   if (closeBtn) {
-    closeBtn.textContent = isError ? "謌醍衍驕謎ｺ・ : "蜈ｳ髣ｭ";
+    closeBtn.textContent = isError ? "我知道了" : "关闭";
     closeBtn.classList.toggle("danger-solid", isError);
   }
   if (printLabelBtn) {
@@ -212,16 +212,16 @@ function closeErrorModal() {
 function normalizeErrorMessage(message) {
   const raw = String(message || "").trim();
   if (!raw) {
-    return "蜿醍函譛ｪ遏･髞呵ｯｯ";
+    return "发生未知错误";
   }
 
   const exactMap = {
-    "Request failed": "隸ｷ豎ょ､ｱ雍･",
-    "Internal Server Error": "譛榊苅蝎ｨ蜀・Κ髞呵ｯｯ",
-    "Failed to fetch": "鄂醍ｻ懆ｯｷ豎ょ､ｱ雍･・瑚ｯｷ譽譟･鄂醍ｻ懆ｿ樊磁",
-    Unauthorized: "譛ｪ謗域揀・瑚ｯｷ驥肴眠逋ｻ蠖・,
-    Forbidden: "譌譚・剞謇ｧ陦瑚ｯ･謫堺ｽ・,
-    "Forbidden resource": "譌譚・剞謇ｧ陦瑚ｯ･謫堺ｽ・,
+    "Request failed": "请求失败",
+    "Internal Server Error": "服务器内部错误",
+    "Failed to fetch": "网络请求失败，请检查网络连接",
+    Unauthorized: "未授权，请重新登录",
+    Forbidden: "无权限执行该操作",
+    "Forbidden resource": "无权限执行该操作",
   };
   if (exactMap[raw]) {
     return exactMap[raw];
@@ -229,14 +229,14 @@ function normalizeErrorMessage(message) {
 
   const httpMatch = raw.match(/^HTTP\s+(\d{3})$/i);
   if (httpMatch) {
-    return `隸ｷ豎ょ､ｱ雍･・・TTP ${httpMatch[1]}・荏;
+    return `请求失败（HTTP ${httpMatch[1]}）`;
   }
 
   const lockedMatch = raw.match(
     /^box code is locked by batch inbound order\s+(.+),\s*please confirm or delete that order first$/i,
   );
   if (lockedMatch) {
-    return `邂ｱ蜿ｷ蟾ｲ陲ｫ謇ｹ驥丞・蠎灘黒 ${lockedMatch[1]} 髞∝ｮ夲ｼ瑚ｯｷ蜈育｡ｮ隶､謌門唖髯､隸･蜊墓紺`;
+    return `箱号已被批量入库单 ${lockedMatch[1]} 锁定，请先确认或删除该单据`;
   }
 
   return raw;
@@ -304,11 +304,11 @@ const CODE39_PATTERNS = {
 function normalizeFnskuForLabel(rawValue) {
   const normalized = String(rawValue || "").trim().toUpperCase();
   if (!normalized) {
-    throw new Error("fnSKU荳ｺ遨ｺ・梧裏豕墓遠蜊ｰ譬・ｭｾ");
+    throw new Error("fnSKU为空，无法打印标签");
   }
   const unsupportedChars = Array.from(normalized).filter((char) => !CODE39_PATTERNS[char]);
   if (unsupportedChars.length) {
-    throw new Error(`fnSKU蜷ｫ譛我ｸ肴髪謖∫噪荳扈ｴ遐∝ｭ礼ｬｦ・・{unsupportedChars.join(" ")}`);
+    throw new Error(`fnSKU含有不支持的一维码字符：${unsupportedChars.join(" ")}`);
   }
   return normalized;
 }
@@ -353,13 +353,13 @@ function openPrintLabelWindow(labelData) {
   const fnsku = normalizeFnskuForLabel(labelData?.fnsku);
   const printQty = normalizeLabelPrintQty(labelData?.qty);
   const skuText = String(labelData?.sku || "").trim();
-  const newProductText = `譁ｰ蜩・${skuText || "-"}`;
+  const newProductText = `新品-${skuText || "-"}`;
   const barcodeSvg = buildCode39BarcodeSvg(fnsku);
   const pageWidth = LABEL_5030_SIZE_MM.width;
   const pageHeight = LABEL_5030_SIZE_MM.height;
   const popup = window.open("", "_blank", "width=520,height=360");
   if (!popup) {
-    throw new Error("謇灘魂遯怜哨陲ｫ諡ｦ謌ｪ・瑚ｯｷ蜈∬ｮｸ蠑ｹ遯怜錘驥崎ｯ・);
+    throw new Error("打印窗口被拦截，请允许弹窗后重试");
   }
 
   popup.document.open();
@@ -367,7 +367,7 @@ function openPrintLabelWindow(labelData) {
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <title>謇灘魂譬・ｭｾ</title>
+    <title>打印标签</title>
     <style>
       @page {
         size: ${pageWidth}mm ${pageHeight}mm;
@@ -479,7 +479,7 @@ function openPrintLabelWindow(labelData) {
 
 function printPendingLabelFromErrorModal() {
   if (!state.pendingPrintLabel) {
-    throw new Error("蠖灘燕豐｡譛牙庄謇灘魂逧・・ｭｾ謨ｰ謐ｮ");
+    throw new Error("当前没有可打印的标签数据");
   }
   openPrintLabelWindow(state.pendingPrintLabel);
 }
@@ -504,7 +504,7 @@ function formatDateOnlyWithWeekday(value) {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
-  const weekdays = ["譏滓悄譌･", "譏滓悄荳", "譏滓悄莠・, "譏滓悄荳・, "譏滓悄蝗・, "譏滓悄莠・, "譏滓悄蜈ｭ"];
+  const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
   return `${formatDateOnly(value)}(${weekdays[date.getDay()] || "-"})`;
 }
 
@@ -543,7 +543,7 @@ function formatDateForFilename(date) {
 
 async function downloadStockAdjustmentCsv() {
   if (!state.token) {
-    throw new Error("隸ｷ蜈育匳蠖・);
+    throw new Error("请先登录");
   }
   let response;
   try {
@@ -589,7 +589,7 @@ async function downloadStockAdjustmentCsv() {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  showToast(`蟾ｲ荳玖ｽｽ ${fileName}`);
+  showToast(`已下载 ${fileName}`);
 }
 
 function escapeCsvCell(value) {
@@ -615,14 +615,14 @@ function triggerCsvDownload(fileName, rows) {
 
 async function downloadInventorySkuSummaryCsv() {
   if (!state.token) {
-    throw new Error("隸ｷ蜈育匳蠖慕ｳｻ扈・);
+    throw new Error("请先登录系统");
   }
   if (!Array.isArray(state.inventorySkus) || state.inventorySkus.length === 0) {
     await loadInventory({ preserveSearch: true });
   }
 
   const rows = [
-    ["蝙句捷", "蜩∫煙", "邀ｻ蝙・, "鬚懆牡", "蠎鈴銅", "螟・ｳｨ", "SKU", "ASIN", "FNSKU", "FBMSKU", "rbSKU", "蠎灘ｭ俶ｻ謨ｰ"],
+    ["型号", "品牌", "类型", "颜色", "店铺", "备注", "SKU", "ASIN", "FNSKU", "FBMSKU", "rbSKU", "库存总数"],
   ];
   const list =
     Array.isArray(state.inventorySortedSkus) && state.inventorySortedSkus.length
@@ -650,12 +650,12 @@ async function downloadInventorySkuSummaryCsv() {
 
   const fileName = `inventory_sku_summary_${formatDateForFilename(new Date())}.csv`;
   triggerCsvDownload(fileName, rows);
-  showToast(`蟾ｲ荳玖ｽｽ ${fileName}`);
+  showToast(`已下载 ${fileName}`);
 }
 
 async function downloadFbaOutboundExcel() {
   if (!state.token) {
-    throw new Error("隸ｷ蜈育匳蠖・);
+    throw new Error("请先登录");
   }
   let response;
   try {
@@ -701,12 +701,12 @@ async function downloadFbaOutboundExcel() {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  showToast(`蟾ｲ荳玖ｽｽ ${fileName}`);
+  showToast(`已下载 ${fileName}`);
 }
 
 async function downloadBatchInboundTemplate() {
   if (!state.token) {
-    throw new Error("隸ｷ蜈育匳蠖・);
+    throw new Error("请先登录");
   }
   let response;
   try {
@@ -734,7 +734,7 @@ async function downloadBatchInboundTemplate() {
   const disposition = response.headers.get("content-disposition") || "";
   const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
   const plainNameMatch = disposition.match(/filename="?([^";]+)"?/i);
-  let fileName = "謇ｹ驥丞・蠎・xlsx";
+  let fileName = "批量入库.xlsx";
   if (utf8NameMatch?.[1]) {
     try {
       fileName = decodeURIComponent(utf8NameMatch[1]);
@@ -752,12 +752,12 @@ async function downloadBatchInboundTemplate() {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  showToast(`蟾ｲ荳玖ｽｽ讓｡譚ｿ ${fileName}`);
+  showToast(`已下载模板 ${fileName}`);
 }
 
 async function downloadSkuUploadTemplate() {
   if (!state.token) {
-    throw new Error("隸ｷ蜈育匳蠖・);
+    throw new Error("请先登录");
   }
   let response;
   try {
@@ -785,7 +785,7 @@ async function downloadSkuUploadTemplate() {
   const disposition = response.headers.get("content-disposition") || "";
   const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
   const plainNameMatch = disposition.match(/filename="?([^";]+)"?/i);
-  let fileName = "謇ｹ驥丈ｸ贋ｼ莠ｧ蜩・xlsx";
+  let fileName = "批量上传产品.xlsx";
   if (utf8NameMatch?.[1]) {
     try {
       fileName = decodeURIComponent(utf8NameMatch[1]);
@@ -803,12 +803,12 @@ async function downloadSkuUploadTemplate() {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  showToast(`蟾ｲ荳玖ｽｽ讓｡譚ｿ ${fileName}`);
+  showToast(`已下载模板 ${fileName}`);
 }
 
 async function downloadInventoryUpdateTemplate() {
   if (!state.token) {
-    throw new Error("隸ｷ蜈育匳蠖・);
+    throw new Error("请先登录");
   }
   let response;
   try {
@@ -836,7 +836,7 @@ async function downloadInventoryUpdateTemplate() {
   const disposition = response.headers.get("content-disposition") || "";
   const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
   const plainNameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
-  let fileName = "謇ｹ驥乗峩譁ｰ蠎灘ｭ・xlsx";
+  let fileName = "批量更新库存.xlsx";
   if (utf8NameMatch?.[1]) {
     try {
       fileName = decodeURIComponent(utf8NameMatch[1]);
@@ -854,11 +854,11 @@ async function downloadInventoryUpdateTemplate() {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  showToast(`蟾ｲ荳玖ｽｽ讓｡譚ｿ ${fileName}`);
+  showToast(`已下载模板 ${fileName}`);
 }
 
 function getStatusText(status) {
-  return Number(status) === 1 ? "蜷ｯ逕ｨ" : "遖∫畑";
+  return Number(status) === 1 ? "启用" : "禁用";
 }
 
 function getRoleText(role) {
@@ -878,9 +878,9 @@ function getDepartmentText(department) {
   if (!code) return "";
   const item = state.departmentOptions.find((option) => option.code === code);
   if (item?.name) return item.name;
-  if (code === "factory") return "蟾･蜴・;
-  if (code === "overseas_warehouse") return "豬ｷ螟紋ｻ・;
-  return "荳ｭ蝗ｽ莉・;
+  if (code === "factory") return "工厂";
+  if (code === "overseas_warehouse") return "海外仓";
+  return "中国仓";
 }
 
 function sortUserOptions(options) {
@@ -961,7 +961,7 @@ function canCurrentUserConfirmFactoryProductEditRequest() {
 }
 
 function getProductEditConfirmContactMessage() {
-  return "隸ｷ閨皮ｳｻ菴帛ｱｱ蟾･蜴らｮ｡逅・遭遑ｮ隶､";
+  return "请联系佛山工厂管理员确认";
 }
 
 function resolveProductEditConfirmPermission(changedFields) {
@@ -994,34 +994,34 @@ function buildDefaultPasswordByUsername(username) {
 }
 
 function getFbaStatusText(status) {
-  if (status === "pending_confirm") return "蠕・｡ｮ隶､";
-  if (status === "pending_outbound") return "蠕・・蠎・;
-  if (status === "outbound") return "蟾ｲ蜃ｺ蠎・;
-  if (status === "deleted") return "蟾ｲ蛻髯､";
+  if (status === "pending_confirm") return "待确认";
+  if (status === "pending_outbound") return "待出库";
+  if (status === "outbound") return "已出库";
+  if (status === "deleted") return "已删除";
   return displayText(status);
 }
 
 function getProductEditRequestStatusText(status) {
-  if (status === "pending") return "蠕・､・炊";
-  if (status === "confirmed") return "蟾ｲ遑ｮ隶､";
-  if (status === "deleted") return "蟾ｲ蛻髯､";
+  if (status === "pending") return "待处理";
+  if (status === "confirmed") return "已确认";
+  if (status === "deleted") return "已删除";
   return displayText(status);
 }
 
 function parseFixedDigits(raw, length, fieldName) {
   const digits = String(raw ?? "").replace(/\D/g, "");
   if (digits.length !== length) {
-    throw new Error(`${fieldName}蠢・｡ｻ譏ｯ${length}菴肴焚蟄輿);
+    throw new Error(`${fieldName}必须是${length}位数字`);
   }
   return digits;
 }
 
 function buildBoxCode(rawDigits) {
-  return parseFixedDigits(rawDigits, 3, "邂ｱ蜿ｷ");
+  return parseFixedDigits(rawDigits, 3, "箱号");
 }
 
 function buildShelfCode(rawDigits) {
-  return parseFixedDigits(rawDigits, 2, "雍ｧ譫ｶ蜿ｷ");
+  return parseFixedDigits(rawDigits, 2, "货架号");
 }
 
 function clearStats() {
@@ -1037,7 +1037,7 @@ function buildStrictShelfCode(rawValue) {
   if (/^(?:00|[A-Z][0-9])$/.test(value)) {
     return value;
   }
-  throw new Error("雍ｧ譫ｶ蜿ｷ蠢・｡ｻ譏ｯ00謌泡0譬ｼ蠑・);
+  throw new Error("货架号必须是00或A0格式");
 }
 
 function setTextById(id, text) {
@@ -1170,7 +1170,7 @@ function renderOverviewDashboard(data) {
     .map((item) => {
       const priority = displayText(item.priority);
       const priorityClass =
-        priority === "邏ｧ諤･" ? "urgent" : priority === "鬮・ ? "high" : priority === "荳ｭ" ? "medium" : "normal";
+        priority === "紧急" ? "urgent" : priority === "高" ? "high" : priority === "中" ? "medium" : "normal";
       return `
       <tr>
         <td>${escapeHtml(displayText(item.sku))}</td>
@@ -1251,8 +1251,8 @@ function renderDataBackupTable() {
         const fileName = String(item?.fileName || "");
         const hasFile = Boolean(item?.hasFile);
         const action = hasFile
-          ? `<button class="tiny-btn" data-action="downloadDataBackup" data-file-name="${escapeHtml(fileName)}">荳玖ｽｽ</button>`
-          : '<span class="muted">莉・ｮｰ蠖・/span>';
+          ? `<button class="tiny-btn" data-action="downloadDataBackup" data-file-name="${escapeHtml(fileName)}">下载</button>`
+          : '<span class="muted">仅记录</span>';
         return `
       <tr>
         <td>${escapeHtml(formatDate(item?.createdAt))}</td>
@@ -1262,7 +1262,7 @@ function renderDataBackupTable() {
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="4" class="muted">證よ裏螟・ｻｽ隶ｰ蠖・/td></tr>';
+      .join("") || '<tr><td colspan="4" class="muted">暂无备份记录</td></tr>';
 }
 
 async function loadDataBackups() {
@@ -1272,20 +1272,20 @@ async function loadDataBackups() {
 }
 
 async function runDataBackupNow(button) {
-  await withBusyButton(button, "螟・ｻｽ荳ｭ...", async () => {
+  await withBusyButton(button, "备份中...", async () => {
     const result = await request("/backups/run", { method: "POST" });
     await loadDataBackups();
-    showToast(`螟・ｻｽ螳梧・・・{displayText(result?.fileName)}`);
+    showToast(`备份完成：${displayText(result?.fileName)}`);
   });
 }
 
 async function downloadDataBackup(fileName) {
   const normalizedFileName = String(fileName || "").trim();
   if (!normalizedFileName) {
-    throw new Error("郛ｺ蟆大､・ｻｽ譁・ｻｶ蜷・);
+    throw new Error("缺少备份文件名");
   }
   if (!state.token) {
-    throw new Error("隸ｷ蜈育匳蠖・);
+    throw new Error("请先登录");
   }
 
   let response;
@@ -1332,7 +1332,7 @@ async function downloadDataBackup(fileName) {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  showToast(`蟾ｲ荳玖ｽｽ螟・ｻｽ ${downloadName}`);
+  showToast(`已下载备份 ${downloadName}`);
 }
 
 function displayText(value) {
@@ -1436,9 +1436,9 @@ function switchPanel(targetId) {
 }
 
 function ensureBrandingUi() {
-  document.title = "譌･譛ｬ荵仙､ｩ蠎灘ｭ倡ｳｻ扈・;
+  document.title = "日本乐天库存系统";
   document.querySelectorAll(".brand-title").forEach((node) => {
-    node.textContent = "譌･譛ｬ荵仙､ｩ蠎灘ｭ倡ｳｻ扈・;
+    node.textContent = "日本乐天库存系统";
   });
 }
 
@@ -1450,7 +1450,7 @@ function ensureInventoryPanelUi() {
   const downloadButton = document.createElement("button");
   downloadButton.type = "button";
   downloadButton.id = "downloadInventorySkuSummaryBtn";
-  downloadButton.textContent = "荳玖ｽｽ邉ｻ扈滓園譛我ｺｧ蜩・;
+  downloadButton.textContent = "下载系统所有产品";
   bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
 }
 
@@ -1478,7 +1478,7 @@ function ensureOverseasWarehouseQueryUi() {
     boxQueryBtn = document.createElement("button");
     boxQueryBtn.type = "button";
     boxQueryBtn.id = "openBoxContentQueryModal";
-    boxQueryBtn.textContent = "邂ｱ蜀・膚蜩∵衍隸｢";
+    boxQueryBtn.textContent = "箱内商品查询";
   }
   if (boxManageForm && boxQueryBtn) {
     boxQueryBtn.classList.add("small-btn", "manage-create-btn");
@@ -1491,7 +1491,7 @@ function ensureOverseasWarehouseQueryUi() {
     shelfQueryBtn = document.createElement("button");
     shelfQueryBtn.type = "button";
     shelfQueryBtn.id = "openShelfBoxQueryModal";
-    shelfQueryBtn.textContent = "雍ｧ譫ｶ蜀・ｮｱ蜿ｷ譟･隸｢";
+    shelfQueryBtn.textContent = "货架内箱号查询";
   }
   if (shelfManageForm && shelfQueryBtn) {
     shelfQueryBtn.classList.add("small-btn", "manage-create-btn");
@@ -1508,19 +1508,19 @@ function ensureOverseasWarehouseQueryUi() {
         <div id="boxContentQueryModal" class="modal hidden">
           <div class="modal-card modal-wide modal-manage modal-manage-scroll">
             <div class="modal-head">
-              <h3>邂ｱ蜀・膚蜩∵衍隸｢</h3>
-              <button type="button" class="ghost" data-action="closeBoxContentQueryModal">蜈ｳ髣ｭ</button>
+              <h3>箱内商品查询</h3>
+              <button type="button" class="ghost" data-action="closeBoxContentQueryModal">关闭</button>
             </div>
             <form id="boxContentQueryForm" class="manage-inline-form manage-inline-form-triple">
-              <input id="boxContentQueryBoxCode" inputmode="numeric" maxlength="16" placeholder="隸ｷ霎灘・邂ｱ蜿ｷ" required />
-              <button type="submit" class="small-btn manage-create-btn">譟･隸｢</button>
-              <div id="boxContentQuerySummary" class="muted manage-query-summary">隸ｷ霎灘・邂ｱ蜿ｷ蜷取衍隸｢縲・/div>
+              <input id="boxContentQueryBoxCode" inputmode="numeric" maxlength="16" placeholder="请输入箱号" required />
+              <button type="submit" class="small-btn manage-create-btn">查询</button>
+              <div id="boxContentQuerySummary" class="muted manage-query-summary">请输入箱号后查询。</div>
             </form>
             <div class="manage-table-scroll">
               <table>
-                <thead><tr><th>邂ｱ蜿ｷ</th><th>雍ｧ譫ｶ蜿ｷ</th><th>SKU</th><th>謨ｰ驥・/th></tr></thead>
+                <thead><tr><th>箱号</th><th>货架号</th><th>SKU</th><th>数量</th></tr></thead>
                 <tbody id="boxContentQueryBody">
-                  <tr><td colspan="4" class="muted">隸ｷ霎灘・邂ｱ蜿ｷ蜷取衍隸｢縲・/td></tr>
+                  <tr><td colspan="4" class="muted">请输入箱号后查询。</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1537,19 +1537,19 @@ function ensureOverseasWarehouseQueryUi() {
         <div id="shelfBoxQueryModal" class="modal hidden">
           <div class="modal-card modal-wide modal-manage modal-manage-scroll">
             <div class="modal-head">
-              <h3>雍ｧ譫ｶ蜀・ｮｱ蜿ｷ譟･隸｢</h3>
-              <button type="button" class="ghost" data-action="closeShelfBoxQueryModal">蜈ｳ髣ｭ</button>
+              <h3>货架内箱号查询</h3>
+              <button type="button" class="ghost" data-action="closeShelfBoxQueryModal">关闭</button>
             </div>
             <form id="shelfBoxQueryForm" class="manage-inline-form manage-inline-form-triple">
-              <input id="shelfBoxQueryShelfCode" inputmode="text" maxlength="16" placeholder="隸ｷ霎灘・雍ｧ譫ｶ蜿ｷ・・0謌泡0・・ required />
-              <button type="submit" class="small-btn manage-create-btn">譟･隸｢</button>
-              <div id="shelfBoxQuerySummary" class="muted manage-query-summary">隸ｷ霎灘・雍ｧ譫ｶ蜿ｷ蜷取衍隸｢縲・/div>
+              <input id="shelfBoxQueryShelfCode" inputmode="text" maxlength="16" placeholder="请输入货架号（00或A0）" required />
+              <button type="submit" class="small-btn manage-create-btn">查询</button>
+              <div id="shelfBoxQuerySummary" class="muted manage-query-summary">请输入货架号后查询。</div>
             </form>
             <div class="manage-table-scroll">
               <table>
-                <thead><tr><th>邂ｱ蜿ｷ</th><th>SKU</th><th>謨ｰ驥・/th></tr></thead>
+                <thead><tr><th>箱号</th><th>SKU</th><th>数量</th></tr></thead>
                 <tbody id="shelfBoxQueryBody">
-                  <tr><td colspan="3" class="muted">隸ｷ霎灘・雍ｧ譫ｶ蜿ｷ蜷取衍隸｢縲・/td></tr>
+                  <tr><td colspan="3" class="muted">请输入货架号后查询。</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1566,19 +1566,19 @@ function ensureOverseasWarehouseQueryUi() {
         <div id="stocktakeTaskDetailModal" class="modal hidden">
           <div class="modal-card modal-wide modal-manage modal-manage-scroll">
             <div class="modal-head">
-              <h3>蠎灘ｭ倡尨轤ｹ譏守ｻ・/h3>
+              <h3>库存盘点明细</h3>
               <div class="panel-tools">
-                <button type="button" class="ghost" id="printStocktakeTaskDetailBtn">謇灘魂</button>
-                <button type="button" class="ghost" data-action="closeStocktakeTaskDetailModal">蜈ｳ髣ｭ</button>
+                <button type="button" class="ghost" id="printStocktakeTaskDetailBtn">打印</button>
+                <button type="button" class="ghost" data-action="closeStocktakeTaskDetailModal">关闭</button>
               </div>
             </div>
             <div id="stocktakeTaskDetailMeta" class="batch-detail-meta"></div>
-            <div id="stocktakeTaskDetailSummary" class="muted manage-query-summary">隸ｷ騾画叫逶倡せ莉ｻ蜉｡蜷取衍逵九・/div>
+            <div id="stocktakeTaskDetailSummary" class="muted manage-query-summary">请选择盘点任务后查看。</div>
             <div class="manage-table-scroll">
               <table>
-                <thead><tr><th>邂ｱ蜿ｷ</th><th>SKU</th><th>謨ｰ驥・/th></tr></thead>
+                <thead><tr><th>箱号</th><th>SKU</th><th>数量</th></tr></thead>
                 <tbody id="stocktakeTaskDetailBody">
-                  <tr><td colspan="3" class="muted">隸ｷ騾画叫逶倡せ莉ｻ蜉｡蜷取衍逵九・/td></tr>
+                  <tr><td colspan="3" class="muted">请选择盘点任务后查看。</td></tr>
                 </tbody>
               </table>
             </div>
@@ -1624,7 +1624,7 @@ async function withBusyButton(button, busyText, task) {
 function openDeleteConfirmModal(messageText) {
   const message = $("deleteConfirmMessage");
   if (message) {
-    message.textContent = String(messageText || "遑ｮ隶､蛻髯､蠖灘燕謨ｰ謐ｮ・・);
+    message.textContent = String(messageText || "确认删除当前数据？");
   }
   if (typeof deleteConfirmResolver === "function") {
     deleteConfirmResolver(false);
@@ -1645,7 +1645,7 @@ function resolveDeleteConfirm(confirmed) {
   }
 }
 
-function openActionConfirmModal(messageText, titleText = "遑ｮ隶､謫堺ｽ・, confirmText = "遑ｮ隶､", options = {}) {
+function openActionConfirmModal(messageText, titleText = "确认操作", confirmText = "确认", options = {}) {
   const title = $("actionConfirmTitle");
   const message = $("actionConfirmMessage");
   const okBtn = $("actionConfirmOkBtn");
@@ -1655,10 +1655,10 @@ function openActionConfirmModal(messageText, titleText = "遑ｮ隶､謫堺ｽ�
     title.innerHTML = `<span class="confirm-icon">!</span>${escapeHtml(titleText)}`;
   }
   if (message) {
-    message.textContent = String(messageText || "遑ｮ隶､謇ｧ陦悟ｽ灘燕謫堺ｽ懶ｼ・);
+    message.textContent = String(messageText || "确认执行当前操作？");
   }
   if (okBtn) {
-    okBtn.textContent = String(confirmText || "遑ｮ隶､");
+    okBtn.textContent = String(confirmText || "确认");
   }
   if (cancelBtn) {
     cancelBtn.classList.toggle("hidden", !showCancel);
@@ -1705,7 +1705,7 @@ async function request(path, options = {}) {
   try {
     payload = text ? JSON.parse(text) : {};
   } catch {
-    payload = { message: text || "隸ｷ豎ょ､ｱ雍･" };
+    payload = { message: text || "请求失败" };
   }
 
   if (!res.ok || payload.code !== 0) {
@@ -1728,9 +1728,9 @@ function buildDeleteBlockedMessage(entityLabel, reasons) {
         .filter((item) => Boolean(item))
     : [];
   if (!list.length) {
-    return `${entityLabel}蟄伜惠蜈ｳ閨疲焚謐ｮ・梧嘯譌ｶ譌豕募唖髯､`;
+    return `${entityLabel}存在关联数据，暂时无法删除`;
   }
-  return `${entityLabel}證よ慮譌豕募唖髯､・・{list.join("・・)}`;
+  return `${entityLabel}暂时无法删除：${list.join("；")}`;
 }
 
 function bindTabs() {
@@ -1817,7 +1817,7 @@ function bindInputRules() {
 async function loadMe() {
   if (!state.token) {
     state.me = null;
-    $("sessionInfo").textContent = "譛ｪ逋ｻ蠖・;
+    $("sessionInfo").textContent = "未登录";
     setAuthGate(false);
     applyRoleView();
     return;
@@ -1832,7 +1832,7 @@ async function loadMe() {
     state.token = "";
     state.me = null;
     localStorage.removeItem("wms_token");
-    $("sessionInfo").textContent = "逋ｻ蠖募､ｱ謨・;
+    $("sessionInfo").textContent = "登录失效";
     setAuthGate(false);
     applyRoleView();
   }
@@ -1868,9 +1868,9 @@ function renderDepartmentOptionsTable() {
           <td>
             <div class="action-row">
               <button type="button" class="tiny-btn" data-action="editDepartmentOption">
-                ${editing ? "遑ｮ隶､蜿俶峩" : "蜿俶峩"}
+                ${editing ? "确认变更" : "变更"}
               </button>
-              <button type="button" class="tiny-btn danger" data-action="deleteDepartmentOption">蛻髯､</button>
+              <button type="button" class="tiny-btn danger" data-action="deleteDepartmentOption">删除</button>
             </div>
           </td>
         </tr>
@@ -1909,9 +1909,9 @@ function renderRoleOptionsTable() {
           <td>
             <div class="action-row">
               <button type="button" class="tiny-btn" data-action="editRoleOption">
-                ${editing ? "遑ｮ隶､蜿俶峩" : "蜿俶峩"}
+                ${editing ? "确认变更" : "变更"}
               </button>
-              <button type="button" class="tiny-btn danger" data-action="deleteRoleOption">蛻髯､</button>
+              <button type="button" class="tiny-btn danger" data-action="deleteRoleOption">删除</button>
             </div>
           </td>
         </tr>
@@ -1945,8 +1945,8 @@ function renderRoleOptionCreateForm() {
   const options = getAvailableRoleOptionItems();
   nameInput.disabled = false;
   nameInput.placeholder = options.length === 0
-    ? "蠖灘燕豐｡譛牙庄譁ｰ蠅櫁ｧ定牡・悟ｦる怙謾ｹ蜷崎ｯｷ轤ｹ荳区婿窶懷序譖ｴ窶・
-    : "隸ｷ霎灘・隗定牡蜷咲ｧｰ";
+    ? "当前没有可新增角色，如需改名请点下方“变更”"
+    : "请输入角色名称";
   submitBtn.disabled = false;
 }
 
@@ -1989,7 +1989,7 @@ function renderUserSelectOptions() {
     const options = getDepartmentOptionsWithFallback().filter((item) => Number(item.status) === 1 || item.code === selected);
     editDepartmentEl.innerHTML = options
       .map((item) => {
-        const suffix = Number(item.status) === 1 ? "" : "・育ｦ∫畑・・;
+        const suffix = Number(item.status) === 1 ? "" : "（禁用）";
         return `<option value="${escapeHtml(item.code)}">${escapeHtml((item.name || item.code) + suffix)}</option>`;
       })
       .join("");
@@ -2005,7 +2005,7 @@ function renderUserSelectOptions() {
     );
     editRoleEl.innerHTML = options
       .map((item) => {
-        const suffix = Number(item.status) === 1 ? "" : "・育ｦ∫畑・・;
+        const suffix = Number(item.status) === 1 ? "" : "（禁用）";
         return `<option value="${escapeHtml(item.code)}">${escapeHtml((item.name || item.code) + suffix)}</option>`;
       })
       .join("");
@@ -2136,7 +2136,7 @@ function syncEditUserActionButtons(userId, status, username) {
     toggleBtn.dataset.id = normalizedUserId;
     toggleBtn.dataset.username = normalizedUsername;
     toggleBtn.dataset.nextStatus = normalizedStatus === 1 ? "0" : "1";
-    toggleBtn.textContent = normalizedStatus === 1 ? "遖∫畑" : "蜷ｯ逕ｨ";
+    toggleBtn.textContent = normalizedStatus === 1 ? "禁用" : "启用";
   }
   if (deleteBtn) {
     deleteBtn.dataset.id = normalizedUserId;
@@ -2146,24 +2146,24 @@ function syncEditUserActionButtons(userId, status, username) {
 
 async function toggleUserStatus(userId, username, nextStatus) {
   if (![0, 1].includes(nextStatus)) {
-    throw new Error("迥ｶ諤∝ｼ譌謨・);
+    throw new Error("状态值无效");
   }
-  const actionLabel = nextStatus === 1 ? "蜷ｯ逕ｨ" : "遖∫畑";
-  const ok = await openActionConfirmModal(`遑ｮ隶､${actionLabel}逕ｨ謌ｷ ${username} 蜷暦ｼ歔, `${actionLabel}逕ｨ謌ｷ`, actionLabel);
+  const actionLabel = nextStatus === 1 ? "启用" : "禁用";
+  const ok = await openActionConfirmModal(`确认${actionLabel}用户 ${username} 吗？`, `${actionLabel}用户`, actionLabel);
   if (!ok) return false;
 
   await request(`/users/${encodeURIComponent(userId)}`, {
     method: "PUT",
     body: JSON.stringify({ status: nextStatus }),
   });
-  showToast(`逕ｨ謌ｷ蟾ｲ${actionLabel}`);
+  showToast(`用户已${actionLabel}`);
   await Promise.all([loadUsers(), loadAudit()]);
 
   if (String(state.me?.id || "") === String(userId) && nextStatus !== 1) {
     state.token = "";
     state.me = null;
     localStorage.removeItem("wms_token");
-    showToast("蠖灘燕逕ｨ謌ｷ蟾ｲ陲ｫ遖∫畑・瑚ｯｷ驥肴眠逋ｻ蠖・);
+    showToast("当前用户已被禁用，请重新登录");
     await reloadAll();
     switchPanel("overview");
   }
@@ -2171,20 +2171,20 @@ async function toggleUserStatus(userId, username, nextStatus) {
 }
 
 async function removeUser(userId, username) {
-  const ok = await openDeleteConfirmModal(`遑ｮ隶､蛻髯､逕ｨ謌ｷ ${username} 蜷暦ｼ歔);
+  const ok = await openDeleteConfirmModal(`确认删除用户 ${username} 吗？`);
   if (!ok) return false;
 
   await request(`/users/${encodeURIComponent(userId)}`, {
     method: "DELETE",
   });
-  showToast("逕ｨ謌ｷ蟾ｲ蛻髯､");
+  showToast("用户已删除");
   await Promise.all([loadUsers(), loadAudit()]);
 
   if (String(state.me?.id || "") === String(userId)) {
     state.token = "";
     state.me = null;
     localStorage.removeItem("wms_token");
-    showToast("蠖灘燕逕ｨ謌ｷ蟾ｲ陲ｫ蛻髯､・瑚ｯｷ驥肴眠逋ｻ蠖・);
+    showToast("当前用户已被删除，请重新登录");
     await reloadAll();
     switchPanel("overview");
   }
@@ -2211,8 +2211,8 @@ function openResetUserPasswordModal(userId, username, passwordInitialized) {
   $("resetPasswordMode").value = mode;
   $("resetPasswordUsername").value = String(username || "");
   $("resetPasswordNewPassword").value = generatedPassword;
-  $("resetUserPasswordModalTitle").textContent = mode === "activate" ? "豼豢ｻ逕ｨ謌ｷ" : "驥咲ｽｮ蟇・・;
-  $("resetPasswordSubmitBtn").textContent = mode === "activate" ? "遑ｮ隶､豼豢ｻ" : "遑ｮ隶､驥咲ｽｮ";
+  $("resetUserPasswordModalTitle").textContent = mode === "activate" ? "激活用户" : "重置密码";
+  $("resetPasswordSubmitBtn").textContent = mode === "activate" ? "确认激活" : "确认重置";
   openModal("resetUserPasswordModal");
 }
 
@@ -2266,11 +2266,11 @@ function resetBoxContentQueryResult() {
   const summary = $("boxContentQuerySummary");
   const body = $("boxContentQueryBody");
   if (summary) {
-    summary.textContent = "隸ｷ霎灘・邂ｱ蜿ｷ蜷取衍隸｢縲・;
+    summary.textContent = "请输入箱号后查询。";
     summary.classList.remove("is-error");
   }
   if (body) {
-    body.innerHTML = '<tr><td colspan="4" class="muted">隸ｷ霎灘・邂ｱ蜿ｷ蜷取衍隸｢縲・/td></tr>';
+    body.innerHTML = '<tr><td colspan="4" class="muted">请输入箱号后查询。</td></tr>';
   }
 }
 
@@ -2278,11 +2278,11 @@ function renderBoxContentQueryNotFound(boxCode = "") {
   const summary = $("boxContentQuerySummary");
   const body = $("boxContentQueryBody");
   if (summary) {
-    summary.textContent = boxCode ? `譛ｪ謇ｾ蛻ｰ邂ｱ蜿ｷ ${boxCode}` : "譛ｪ謇ｾ蛻ｰ隸･邂ｱ蜿ｷ";
+    summary.textContent = boxCode ? `未找到箱号 ${boxCode}` : "未找到该箱号";
     summary.classList.add("is-error");
   }
   if (body) {
-    body.innerHTML = '<tr><td colspan="4" class="muted">隸ｷ霎灘・邂ｱ蜿ｷ蜷取衍隸｢縲・/td></tr>';
+    body.innerHTML = '<tr><td colspan="4" class="muted">请输入箱号后查询。</td></tr>';
   }
 }
 
@@ -2290,11 +2290,11 @@ function resetShelfBoxQueryResult() {
   const summary = $("shelfBoxQuerySummary");
   const body = $("shelfBoxQueryBody");
   if (summary) {
-    summary.textContent = "隸ｷ霎灘・雍ｧ譫ｶ蜿ｷ蜷取衍隸｢縲・;
+    summary.textContent = "请输入货架号后查询。";
     summary.classList.remove("is-error");
   }
   if (body) {
-    body.innerHTML = '<tr><td colspan="3" class="muted">隸ｷ霎灘・雍ｧ譫ｶ蜿ｷ蜷取衍隸｢縲・/td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="muted">请输入货架号后查询。</td></tr>';
   }
 }
 
@@ -2302,11 +2302,11 @@ function renderShelfBoxQueryNotFound(shelfCode = "") {
   const summary = $("shelfBoxQuerySummary");
   const body = $("shelfBoxQueryBody");
   if (summary) {
-    summary.textContent = "譛ｪ謇ｾ蛻ｰ隸･雍ｧ譫ｶ蜿ｷ";
+    summary.textContent = "未找到该货架号";
     summary.classList.add("is-error");
   }
   if (body) {
-    body.innerHTML = '<tr><td colspan="3" class="muted">隸ｷ霎灘・雍ｧ譫ｶ蜿ｷ蜷取衍隸｢縲・/td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="muted">请输入货架号后查询。</td></tr>';
   }
 }
 
@@ -2335,7 +2335,7 @@ async function openBoxContentQueryModalForBoxCode(boxCode, preferredBoxId = "") 
       (item) => String(item?.id || "") === String(preferredBoxId || ""),
     ) || findBoxByAnyCode(normalizedBoxCode);
   if (!box) {
-    throw new Error("譛ｪ謇ｾ蛻ｰ蟇ｹ蠎皮ｮｱ蜿ｷ");
+    throw new Error("未找到对应箱号");
   }
 
   setQueryModalDirectResultMode("box", true);
@@ -2377,7 +2377,7 @@ function renderBoxContentQueryResult(box, rows) {
   );
 
   if (!sortedRows.length) {
-    summary.textContent = `邂ｱ蜿ｷ ${boxCode} 蠖灘燕豐｡譛臥ｮｱ蜀・膚蜩√Ａ;
+    summary.textContent = `箱号 ${boxCode} 当前没有箱内商品。`;
     body.innerHTML = `
       <tr>
         <td>${escapeHtml(boxCode)}</td>
@@ -2389,7 +2389,7 @@ function renderBoxContentQueryResult(box, rows) {
     return;
   }
 
-  summary.textContent = `邂ｱ蜿ｷ ${boxCode} 蜈ｱ ${sortedRows.length} 荳ｪSKU縲Ａ;
+  summary.textContent = `箱号 ${boxCode} 共 ${sortedRows.length} 个SKU。`;
   body.innerHTML = sortedRows
     .map(
       (row) => `
@@ -2449,12 +2449,12 @@ function renderShelfBoxQueryResult(shelf, rows, boxCount = 0) {
   const safeRows = Array.isArray(rows) ? rows : [];
 
   if (!boxCount) {
-    summary.textContent = `雍ｧ譫ｶ ${shelfCode} 蠖灘燕豐｡譛臥ｮｱ蜿ｷ縲Ａ;
-    body.innerHTML = `<tr><td colspan="3" class="muted">雍ｧ譫ｶ ${escapeHtml(shelfCode)} 蠖灘燕豐｡譛臥ｮｱ蜿ｷ縲・/td></tr>`;
+    summary.textContent = `货架 ${shelfCode} 当前没有箱号。`;
+    body.innerHTML = `<tr><td colspan="3" class="muted">货架 ${escapeHtml(shelfCode)} 当前没有箱号。</td></tr>`;
     return;
   }
 
-  summary.textContent = `雍ｧ譫ｶ ${shelfCode} 蜈ｱ ${boxCount} 荳ｪ邂ｱ蜿ｷ縲Ａ;
+  summary.textContent = `货架 ${shelfCode} 共 ${boxCount} 个箱号。`;
   body.innerHTML = safeRows
     .map(
       (row) => `
@@ -2482,7 +2482,7 @@ async function loadStocktakeTasks() {
 }
 
 function buildStocktakeTaskStatusText(task) {
-  return task?.status === "confirmed" ? "蟾ｲ遑ｮ隶､" : "蠕・｡ｮ隶､";
+  return task?.status === "confirmed" ? "已确认" : "待确认";
 }
 
 async function generateStocktakeTasks() {
@@ -2530,14 +2530,14 @@ function renderStocktakePlanner() {
   const visibleTasks = tasks.slice(0, Math.max(state.stocktakeVisibleCount || 0, 30));
 
   if (!tasks.length) {
-    summary.textContent = "轤ｹ蜃ｻ窶懃函謌仙ｺ灘ｭ倡尨轤ｹ莉ｻ蜉｡窶晏錘・御ｼ壽潔譌･譛溷柱雍ｧ譫ｶ鬘ｺ蠎冗函謌千尨轤ｹ莉ｻ蜉｡縲・;
-    body.innerHTML = '<tr><td colspan="7" class="muted">證よ裏蠎灘ｭ倡尨轤ｹ莉ｻ蜉｡縲・/td></tr>';
+    summary.textContent = "点击“生成库存盘点任务”后，会按日期和货架顺序生成盘点任务。";
+    body.innerHTML = '<tr><td colspan="7" class="muted">暂无库存盘点任务。</td></tr>';
     return;
   }
 
   const latestDate = formatDateOnly(tasks[0]?.plannedDate);
   const earliestDate = formatDateOnly(tasks[tasks.length - 1]?.plannedDate);
-  summary.textContent = `蟾ｲ逕滓・ ${tasks.length} 譚｡蠎灘ｭ倡尨轤ｹ莉ｻ蜉｡・梧律譛溯激蝗ｴ ${earliestDate} - ${latestDate}縲Ａ;
+  summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${earliestDate} - ${latestDate}。`;
   body.innerHTML = visibleTasks
     .map(
       (task) => `
@@ -2550,11 +2550,11 @@ function renderStocktakePlanner() {
           <td>${escapeHtml(displayText(task?.confirmedByName) || "-")}</td>
           <td>
             <div class="action-row">
-              <button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">譟･逵・/button>
+              <button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">查看</button>
               ${
                 task?.status === "confirmed"
                   ? ""
-                  : `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">遑ｮ隶､</button>`
+                  : `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>`
               }
             </div>
           </td>
@@ -2583,27 +2583,27 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
 
   if (!task) {
     meta.innerHTML = "";
-    summary.textContent = "隸ｷ騾画叫逶倡せ莉ｻ蜉｡蜷取衍逵九・;
-    body.innerHTML = '<tr><td colspan="3" class="muted">隸ｷ騾画叫逶倡せ莉ｻ蜉｡蜷取衍逵九・/td></tr>';
+    summary.textContent = "请选择盘点任务后查看。";
+    body.innerHTML = '<tr><td colspan="3" class="muted">请选择盘点任务后查看。</td></tr>';
     return;
   }
 
   meta.innerHTML = `
-    <div><strong>莉ｻ蜉｡郛門捷・・/strong>${escapeHtml(displayText(task?.taskNo))}</div>
-    <div><strong>莉ｻ蜉｡譌･譛滂ｼ・/strong>${escapeHtml(formatDateOnly(task?.plannedDate))}</div>
-    <div><strong>雍ｧ譫ｶ蜿ｷ・・/strong>${escapeHtml(displayText(task?.shelfCode))}</div>
-    <div><strong>迥ｶ諤・ｼ・/strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
-    <div><strong>遑ｮ隶､譌･譛滂ｼ・/strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
-    <div><strong>遑ｮ隶､莠ｺ・・/strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
+    <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
+    <div><strong>任务日期：</strong>${escapeHtml(formatDateOnly(task?.plannedDate))}</div>
+    <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
+    <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
+    <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
+    <div><strong>确认人：</strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
   `;
 
   if (!boxCount) {
-    summary.textContent = `雍ｧ譫ｶ ${displayText(task?.shelfCode)} 蠖灘燕豐｡譛臥ｮｱ蜿ｷ縲Ａ;
-    body.innerHTML = `<tr><td colspan="3" class="muted">雍ｧ譫ｶ ${escapeHtml(displayText(task?.shelfCode))} 蠖灘燕豐｡譛臥ｮｱ蜿ｷ縲・/td></tr>`;
+    summary.textContent = `货架 ${displayText(task?.shelfCode)} 当前没有箱号。`;
+    body.innerHTML = `<tr><td colspan="3" class="muted">货架 ${escapeHtml(displayText(task?.shelfCode))} 当前没有箱号。</td></tr>`;
     return;
   }
 
-  summary.textContent = `雍ｧ譫ｶ ${displayText(task?.shelfCode)} 蜈ｱ ${boxCount} 荳ｪ邂ｱ蜿ｷ縲Ａ;
+  summary.textContent = `货架 ${displayText(task?.shelfCode)} 共 ${boxCount} 个箱号。`;
   body.innerHTML = state.selectedStocktakeTaskRows
     .map(
       (row) => `
@@ -2619,12 +2619,12 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
 
 function openStocktakePrintWindow(task, rows) {
   if (!task) {
-    throw new Error("譛ｪ謇ｾ蛻ｰ逶倡せ莉ｻ蜉｡");
+    throw new Error("未找到盘点任务");
   }
   const safeRows = Array.isArray(rows) ? rows : [];
   const popup = window.open("", "_blank", "width=960,height=720");
   if (!popup) {
-    throw new Error("謇灘魂遯怜哨陲ｫ諡ｦ謌ｪ・瑚ｯｷ蜈∬ｮｸ豬剰ｧ亥勣謇灘ｼ譁ｰ遯怜哨");
+    throw new Error("打印窗口被拦截，请允许浏览器打开新窗口");
   }
 
   popup.document.write(`<!doctype html>
@@ -2643,17 +2643,17 @@ function openStocktakePrintWindow(task, rows) {
     </style>
   </head>
   <body>
-    <h1>蠎灘ｭ倡尨轤ｹ譏守ｻ・/h1>
+    <h1>库存盘点明细</h1>
     <div class="meta">
-      <div><strong>莉ｻ蜉｡郛門捷・・/strong>${escapeHtml(displayText(task?.taskNo))}</div>
-      <div><strong>莉ｻ蜉｡譌･譛滂ｼ・/strong>${escapeHtml(formatDateOnly(task?.plannedDate))}</div>
-      <div><strong>雍ｧ譫ｶ蜿ｷ・・/strong>${escapeHtml(displayText(task?.shelfCode))}</div>
-      <div><strong>迥ｶ諤・ｼ・/strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
-      <div><strong>遑ｮ隶､譌･譛滂ｼ・/strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
-      <div><strong>遑ｮ隶､莠ｺ・・/strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
+      <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
+      <div><strong>任务日期：</strong>${escapeHtml(formatDateOnly(task?.plannedDate))}</div>
+      <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
+      <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
+      <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
+      <div><strong>确认人：</strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
     </div>
     <table>
-      <thead><tr><th>邂ｱ蜿ｷ</th><th>SKU</th><th>謨ｰ驥・/th></tr></thead>
+      <thead><tr><th>箱号</th><th>SKU</th><th>数量</th></tr></thead>
       <tbody>
         ${
           safeRows.length
@@ -2667,7 +2667,7 @@ function openStocktakePrintWindow(task, rows) {
           </tr>`,
                 )
                 .join("")
-            : `<tr><td colspan="3">蠖灘燕豐｡譛臥尨轤ｹ譏守ｻ・・/td></tr>`
+            : `<tr><td colspan="3">当前没有盘点明细。</td></tr>`
         }
       </tbody>
     </table>
@@ -2688,14 +2688,14 @@ async function openStocktakeTaskDetail(taskId) {
     (item) => String(item?.id || "") === String(taskId || ""),
   );
   if (!task) {
-    throw new Error("譛ｪ謇ｾ蛻ｰ逶倡せ莉ｻ蜉｡");
+    throw new Error("未找到盘点任务");
   }
   const shelf =
     (Array.isArray(state.shelves) ? state.shelves : []).find(
       (item) => String(item?.id || "") === String(task?.shelfId || ""),
     ) || findShelfByAnyCode(task?.shelfCode);
   if (!shelf) {
-    throw new Error("譛ｪ謇ｾ蛻ｰ蟇ｹ蠎碑ｴｧ譫ｶ");
+    throw new Error("未找到对应货架");
   }
   const { boxCount, rows } = await getShelfBoxQueryRows(shelf);
   renderStocktakeTaskDetail(task, rows, boxCount);
@@ -2704,7 +2704,7 @@ async function openStocktakeTaskDetail(taskId) {
 
 function renderInventoryLocationRows(rows) {
   if (!rows.length) {
-    return '<span class="muted">譌蠎灘ｭ・/span>';
+    return '<span class="muted">无库存</span>';
   }
 
   return rows
@@ -2712,31 +2712,31 @@ function renderInventoryLocationRows(rows) {
       const boxCode = row.box?.boxCode || "-";
       const shelfCode = row.box?.shelf?.shelfCode || "-";
       const qty = Number(row.qty ?? 0);
-      return `<div>${escapeHtml(boxCode)} / ${escapeHtml(shelfCode)} / 謨ｰ驥・${escapeHtml(qty)}</div>`;
+      return `<div>${escapeHtml(boxCode)} / ${escapeHtml(shelfCode)} / 数量 ${escapeHtml(qty)}</div>`;
     })
     .join("");
 }
 
-function renderInboundButton(skuId, boxCode = "", label = "譁ｰ蠅槫・蠎・, lockBox = false) {
+function renderInboundButton(skuId, boxCode = "", label = "新增入库", lockBox = false) {
   const boxAttr = boxCode ? ` data-box-code="${escapeHtml(boxCode)}"` : "";
   const lockAttr = lockBox ? ' data-lock-box="1"' : "";
   return `<button class="tiny-btn" data-action="inventoryInbound" data-sku-id="${skuId}"${boxAttr}${lockAttr}>${escapeHtml(label)}</button>`;
 }
 
 function renderEditButton(skuId) {
-  return `<button class="tiny-btn" data-action="inventoryEdit" data-sku-id="${skuId}">郛冶ｾ・/button>`;
+  return `<button class="tiny-btn" data-action="inventoryEdit" data-sku-id="${skuId}">编辑</button>`;
 }
 
 function renderInventoryFbaJumpButton(skuCode) {
   const keyword = String(skuCode || "").trim();
-  return `<button class="tiny-btn" data-action="inventoryFbaJump" data-sku-code="${escapeHtml(keyword)}">譟･逵・/button>`;
+  return `<button class="tiny-btn" data-action="inventoryFbaJump" data-sku-code="${escapeHtml(keyword)}">查看</button>`;
 }
 
 function renderOutboundButton(
   skuId,
   totalQty,
   boxCode = "",
-  { label = "FBA陦･雍ｧ", ghost = true, lockBox = false, action = "inventoryOutbound", maxQty = null } = {},
+  { label = "FBA补货", ghost = true, lockBox = false, action = "inventoryOutbound", maxQty = null } = {},
 ) {
   if (Number(totalQty) <= 0) {
     return "";
@@ -2835,21 +2835,21 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
     <div class="inventory-box-table-wrap">
       <table class="inventory-box-table">
         <thead>
-          <tr><th>邂ｱ蜿ｷ</th><th>雍ｧ譫ｶ蜿ｷ</th><th>SKU</th><th>謨ｰ驥・/th><th></th></tr>
+          <tr><th>箱号</th><th>货架号</th><th>SKU</th><th>数量</th><th></th></tr>
         </thead>
         <tbody>
           ${flatRows
             .map((row) => {
-              const inboundButton = renderInboundButton(currentSkuId, row.boxCode, "蜈･蠎・, true);
+              const inboundButton = renderInboundButton(currentSkuId, row.boxCode, "入库", true);
               const outboundPrimaryButton = renderOutboundButton(currentSkuId, row.qty, row.boxCode, {
-                label: "FBA陦･雍ｧ",
+                label: "FBA补货",
                 ghost: false,
                 lockBox: true,
                 action: "inventoryOutbound",
                 maxQty: row.qty,
               });
               const outboundOneButton = renderOutboundButton(currentSkuId, row.qty, row.boxCode, {
-                label: "蜃ｺ蠎・莉ｶ",
+                label: "出库1件",
                 ghost: false,
                 lockBox: true,
                 action: "inventoryOutboundOne",
@@ -2939,7 +2939,7 @@ async function loadInventory({ preserveSearch = false } = {}) {
   state.inventoryTotalsBySku = totals || {};
   state.inventoryLocations = new Map();
   $("statSkus").textContent = skus.length;
-  renderSkuOptionsForSelect("moveProductSkuId", "隸ｷ騾画叫SKU");
+  renderSkuOptionsForSelect("moveProductSkuId", "请选择SKU");
 
   state.inventorySortedSkus = [...skus].sort((a, b) => {
     const qtyA = Number(state.inventoryTotalsBySku?.[String(a.id)] ?? 0);
@@ -2958,7 +2958,7 @@ async function loadInventory({ preserveSearch = false } = {}) {
 function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
   const container = $("inventorySearchResults");
   if (!skus.length) {
-    container.textContent = "譛ｪ謇ｾ蛻ｰ蛹ｹ驟堺ｺｧ蜩・;
+    container.textContent = "未找到匹配产品";
     return;
   }
 
@@ -2968,12 +2968,12 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
       const pendingQty = getFbaPendingQtyBySku(sku.id);
       const leftRows = [
-        ["蝙句捷", displayText(sku.model)],
-        ["蜩∫煙", displayText(sku.brand)],
-        ["邀ｻ蝙・, displayText(sku.type)],
-        ["鬚懆牡", displayText(sku.color)],
-        ["螟・ｳｨ", displayText(sku.remark)],
-        ["蠎鈴銅", displayText(sku.shop)],
+        ["型号", displayText(sku.model)],
+        ["品牌", displayText(sku.brand)],
+        ["类型", displayText(sku.type)],
+        ["颜色", displayText(sku.color)],
+        ["备注", displayText(sku.remark)],
+        ["店铺", displayText(sku.shop)],
       ];
       const rightRows = [
         ["SKU", displayText(sku.sku)],
@@ -2981,13 +2981,13 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
         ["FNSKU", displayText(sku.fnsku)],
         ["FBMSKU", displayText(sku.fbmSku)],
         ["rbSKU", displayText(sku.rbSku)],
-        ["蠎灘ｭ俶ｻ謨ｰ驥・, totalQty],
+        ["库存总数量", totalQty],
       ];
       const boxTable = totalQty > 0 ? renderBoxSkuFlatTable(sku, rows, boxSkuMap) : "";
       const topActionRow = `
         <div class="action-row">
           ${renderEditButton(sku.id)}
-          ${renderInboundButton(sku.id, "", "譁ｰ蠅槫・蠎・)}
+          ${renderInboundButton(sku.id, "", "新增入库")}
         </div>
       `;
       return `
@@ -2998,7 +2998,7 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
               .map(
                 ([name, value]) => `
               <div class="inventory-search-field">
-                <span class="inventory-search-field-name">${escapeHtml(name)}・・/span>
+                <span class="inventory-search-field-name">${escapeHtml(name)}：</span>
                 <span class="inventory-search-field-value">${escapeHtml(value)}</span>
               </div>
             `,
@@ -3010,9 +3010,9 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
               .map(
                 ([name, value]) => `
               <div class="inventory-search-field">
-                <span class="inventory-search-field-name">${escapeHtml(name)}・・/span>
+                <span class="inventory-search-field-name">${escapeHtml(name)}：</span>
                 <span class="inventory-search-field-value">${
-                  name === "蠎灘ｭ俶ｻ謨ｰ驥・
+                  name === "库存总数量"
                     ? renderQtyWithPending(value, pendingQty)
                     : escapeHtml(value)
                 }</span>
@@ -3128,17 +3128,17 @@ function findSkuById(skuId) {
 function ensureSkuReadyForFbaReplenishment(skuId) {
   const sku = findSkuById(skuId);
   if (!sku) {
-    throw new Error("譛ｪ謇ｾ蛻ｰSKU");
+    throw new Error("未找到SKU");
   }
 
   const fnsku = String(sku.fnsku || "").trim();
   if (!fnsku) {
-    throw new Error("隸･SKU郛ｺ蟆詮NSKU・梧裏豕募書襍ｷFBA陦･雍ｧ");
+    throw new Error("该SKU缺少FNSKU，无法发起FBA补货");
   }
 
   const shop = String(sku.shop || "").trim();
   if (!shop) {
-    throw new Error("隸･SKU郛ｺ蟆第園螻槫ｺ鈴銅・梧裏豕募書襍ｷFBA陦･雍ｧ");
+    throw new Error("该SKU缺少所属店铺，无法发起FBA补货");
   }
 
   return sku;
@@ -3147,16 +3147,16 @@ function ensureSkuReadyForFbaReplenishment(skuId) {
 async function openEditSkuModal(skuId) {
   const sku = findSkuById(skuId);
   if (!sku) {
-    throw new Error("譛ｪ謇ｾ蛻ｰ莠ｧ蜩・);
+    throw new Error("未找到产品");
   }
   await Promise.all([loadBrands(), loadSkuTypes(), loadShops()]);
 
   $("editSkuId").value = String(sku.id);
   $("editModel").value = sku.model || "";
-  renderBrandOptionsForSelect("editBrand", "隸ｷ騾画叫蜩∫煙", sku.brand || "");
-  renderSkuTypeOptionsForSelect("editType", "隸ｷ騾画叫邀ｻ蝙・, sku.type || "");
+  renderBrandOptionsForSelect("editBrand", "请选择品牌", sku.brand || "");
+  renderSkuTypeOptionsForSelect("editType", "请选择类型", sku.type || "");
   $("editColor").value = sku.color || "";
-  renderShopOptionsForSelect("editShop", "隸ｷ騾画叫蠎鈴銅", sku.shop || "");
+  renderShopOptionsForSelect("editShop", "请选择店铺", sku.shop || "");
   $("editRemark").value = sku.remark || "";
   $("editSku").value = sku.sku || "";
   $("editErpSku").value = sku.rbSku || "";
@@ -3169,7 +3169,7 @@ async function openEditSkuModal(skuId) {
 async function submitEditSkuForm() {
   const skuId = Number($("editSkuId").value);
   if (!Number.isInteger(skuId) || skuId <= 0) {
-    throw new Error("隸ｷ騾画叫莠ｧ蜩・);
+    throw new Error("请选择产品");
   }
 
   const toNullableValue = (id) => {
@@ -3207,7 +3207,7 @@ function renderShelfOptionsForSelect(selectId, placeholder) {
     .map((shelf) => {
       const isEnabled = Number(shelf.status) === 1;
       const disabledAttr = isEnabled ? "" : " disabled";
-      const disabledMark = isEnabled ? "" : "・育ｦ∫畑・・;
+      const disabledMark = isEnabled ? "" : "（禁用）";
       return `<option value="${escapeHtml(shelf.id)}"${disabledAttr}>${escapeHtml(shelf.shelfCode)}${disabledMark}</option>`;
     })
     .join("");
@@ -3319,7 +3319,7 @@ function renderBrandOptionsForSelect(selectId, placeholder, selectedValue = "") 
     if (!exists) {
       const extra = document.createElement("option");
       extra.value = prev;
-      extra.textContent = `${prev}・亥紙蜿ｲ蛟ｼ・荏;
+      extra.textContent = `${prev}（历史值）`;
       select.appendChild(extra);
     }
     select.value = prev;
@@ -3340,7 +3340,7 @@ function renderSkuTypeOptionsForSelect(selectId, placeholder, selectedValue = ""
     if (!exists) {
       const extra = document.createElement("option");
       extra.value = prev;
-      extra.textContent = `${prev}・亥紙蜿ｲ蛟ｼ・荏;
+      extra.textContent = `${prev}（历史值）`;
       select.appendChild(extra);
     }
     select.value = prev;
@@ -3361,7 +3361,7 @@ function renderShopOptionsForSelect(selectId, placeholder, selectedValue = "") {
     if (!exists) {
       const extra = document.createElement("option");
       extra.value = prev;
-      extra.textContent = `${prev}・亥紙蜿ｲ蛟ｼ・荏;
+      extra.textContent = `${prev}（历史值）`;
       select.appendChild(extra);
     }
     select.value = prev;
@@ -3393,8 +3393,8 @@ function renderBrandsTable() {
           />
         </td>
         <td>
-          <button class="tiny-btn" data-action="editBrand" data-id="${escapeHtml(item.id)}">${editing ? "遑ｮ隶､蜿俶峩" : "蜿俶峩"}</button>
-          <button class="tiny-btn danger" data-action="deleteBrand" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">蛻髯､</button>
+          <button class="tiny-btn" data-action="editBrand" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
+          <button class="tiny-btn danger" data-action="deleteBrand" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
     `;
@@ -3427,8 +3427,8 @@ function renderSkuTypesTable() {
           />
         </td>
         <td>
-          <button class="tiny-btn" data-action="editSkuType" data-id="${escapeHtml(item.id)}">${editing ? "遑ｮ隶､蜿俶峩" : "蜿俶峩"}</button>
-          <button class="tiny-btn danger" data-action="deleteSkuType" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">蛻髯､</button>
+          <button class="tiny-btn" data-action="editSkuType" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
+          <button class="tiny-btn danger" data-action="deleteSkuType" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
     `;
@@ -3460,8 +3460,8 @@ function renderShopsTable() {
           />
         </td>
         <td>
-          <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "遑ｮ隶､蜿俶峩" : "蜿俶峩"}</button>
-          <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">蛻髯､</button>
+          <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
+          <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
     `;
@@ -3516,7 +3516,7 @@ function buildShelfManageSelectOptions(selectedShelfId) {
     .map((shelf) => {
       const shelfId = String(shelf.id || "");
       const selectedAttr = shelfId === selected ? " selected" : "";
-      const statusSuffix = Number(shelf?.status) === 1 ? "" : "・育ｦ∫畑・・;
+      const statusSuffix = Number(shelf?.status) === 1 ? "" : "（禁用）";
       const nameSuffix = shelf?.name ? ` / ${shelf.name}` : "";
       return `<option value="${escapeHtml(shelfId)}"${selectedAttr}>${escapeHtml(
         `${shelf?.shelfCode || "-"}${nameSuffix}${statusSuffix}`,
@@ -3561,8 +3561,8 @@ function renderShelvesManageTable() {
           />
         </td>
         <td>
-          <button class="tiny-btn" data-action="editShelfManage" data-id="${escapeHtml(item.id)}">${editing ? "遑ｮ隶､蜿俶峩" : "蜿俶峩"}</button>
-          <button class="tiny-btn danger" data-action="deleteShelfManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.shelfCode || "")}">蛻髯､</button>
+          <button class="tiny-btn" data-action="editShelfManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
+          <button class="tiny-btn danger" data-action="deleteShelfManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.shelfCode || "")}">删除</button>
         </td>
       </tr>
     `;
@@ -3574,7 +3574,7 @@ function renderShelvesManageTable() {
     if (!actionCell) return;
     actionCell.insertAdjacentHTML(
       "afterbegin",
-      `<button class="tiny-btn secondary" data-action="queryShelfManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.shelfCode || "")}">譟･隸｢</button>`,
+      `<button class="tiny-btn secondary" data-action="queryShelfManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.shelfCode || "")}">查询</button>`,
     );
   });
 }
@@ -3596,10 +3596,10 @@ function renderBoxesManageTable() {
         const editing = state.boxEditingIds.has(itemId);
         const shelfOptions = buildShelfManageSelectOptions(item?.shelf?.id);
         const archiveReleaseAction = item?.canArchiveRelease
-          ? `<button class="tiny-btn secondary" data-action="archiveReleaseBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">蠖呈｡｣驥頑叛</button>`
+          ? `<button class="tiny-btn secondary" data-action="archiveReleaseBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">归档释放</button>`
           : "";
         const deleteAction = item?.canDelete
-          ? `<button class="tiny-btn danger" data-action="deleteBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">蛻髯､</button>`
+          ? `<button class="tiny-btn danger" data-action="deleteBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">删除</button>`
           : "";
         return `
       <tr>
@@ -3622,9 +3622,9 @@ function renderBoxesManageTable() {
           </select>
         </td>
         <td>
-          <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">譟･隸｢</button>
+          <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>
           ${archiveReleaseAction}
-          <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "遑ｮ隶､蜿俶峩" : "蜿俶峩"}</button>
+          <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           ${deleteAction}
         </td>
       </tr>
@@ -3663,7 +3663,7 @@ function renderEmptyBoxManageTable() {
             data-id="${escapeHtml(item?.id || "")}"
             data-code="${escapeHtml(item?.boxCode || "")}"
           >
-            蠎滄勁
+            废除
           </button>
         </td>
       </tr>
@@ -3736,10 +3736,10 @@ function renderProductEditRequestTable() {
         <td><span class="edit-request-status">${escapeHtml(statusText)}</span></td>
         <td>${escapeHtml(displayText(creatorText))}</td>
         <td>
-          <button class="tiny-btn" data-action="openProductEditRequestDetail" data-id="${escapeHtml(item?.id)}">郛冶ｾ題ｯｦ諠・/button>
+          <button class="tiny-btn" data-action="openProductEditRequestDetail" data-id="${escapeHtml(item?.id)}">编辑详情</button>
           ${
             canDelete
-              ? `<button class="tiny-btn danger" data-action="deleteProductEditRequestRow" data-id="${escapeHtml(item?.id)}">蛻髯､</button>`
+              ? `<button class="tiny-btn danger" data-action="deleteProductEditRequestRow" data-id="${escapeHtml(item?.id)}">删除</button>`
               : ""
           }
         </td>
@@ -3768,7 +3768,7 @@ function renderProductEditRequestDetail(item) {
     state.selectedProductEditRequestId = null;
     state.selectedProductEditRequestChangedFields = [];
     meta.innerHTML = "";
-    compare.innerHTML = '<div class="muted">證よ裏謨ｰ謐ｮ</div>';
+    compare.innerHTML = '<div class="muted">暂无数据</div>';
     confirmBtn.classList.add("hidden");
     return;
   }
@@ -3776,19 +3776,19 @@ function renderProductEditRequestDetail(item) {
   state.selectedProductEditRequestId = Number(item.id);
   state.selectedProductEditRequestChangedFields = normalizeProductEditChangedFields(item?.changedFields);
   meta.innerHTML = `
-    <div><strong>SKU・・/strong>${escapeHtml(displayText(item?.sku?.sku))}</div>
-    <div><strong>逕ｳ隸ｷ莠ｺ・・/strong>${escapeHtml(displayText(item?.creator?.username))}</div>
-    <div><strong>逕ｳ隸ｷ譌ｶ髣ｴ・・/strong>${escapeHtml(formatDate(item?.createdAt))}</div>
-    <div><strong>迥ｶ諤・ｼ・/strong>${escapeHtml(getProductEditRequestStatusText(item?.status))}</div>
+    <div><strong>SKU：</strong>${escapeHtml(displayText(item?.sku?.sku))}</div>
+    <div><strong>申请人：</strong>${escapeHtml(displayText(item?.creator?.username))}</div>
+    <div><strong>申请时间：</strong>${escapeHtml(formatDate(item?.createdAt))}</div>
+    <div><strong>状态：</strong>${escapeHtml(getProductEditRequestStatusText(item?.status))}</div>
   `;
 
   const fieldDefs = [
-    ["model", "蝙句捷"],
-    ["brand", "蜩∫煙"],
-    ["type", "邀ｻ蝙・],
-    ["color", "鬚懆牡"],
-    ["shop", "謇螻樔ｺ夐ｩｬ騾雁ｺ鈴銅"],
-    ["remark", "螟・ｳｨ"],
+    ["model", "型号"],
+    ["brand", "品牌"],
+    ["type", "类型"],
+    ["color", "颜色"],
+    ["shop", "所属亚马逊店铺"],
+    ["remark", "备注"],
     ["sku", "SKU"],
     ["asin", "ASIN"],
     ["fnsku", "FNSKU"],
@@ -3810,7 +3810,7 @@ function renderProductEditRequestDetail(item) {
             const changedClass = changed ? " changed" : "";
             return `
               <div class="edit-request-field">
-                <span class="edit-request-field-name">${escapeHtml(label)}・・/span>
+                <span class="edit-request-field-name">${escapeHtml(label)}：</span>
                 <span class="edit-request-field-value${changedClass}" data-side="${escapeHtml(side)}">${escapeHtml(value)}</span>
               </div>
             `;
@@ -3820,7 +3820,7 @@ function renderProductEditRequestDetail(item) {
     </div>
   `;
 
-  compare.innerHTML = `${renderCol("蜿俶峩蜑・, beforeData, "before")}${renderCol("蜿俶峩蜷・, afterData, "after")}`;
+  compare.innerHTML = `${renderCol("变更前", beforeData, "before")}${renderCol("变更后", afterData, "after")}`;
   const canShowConfirmButton = item?.status === "pending";
   confirmBtn.classList.toggle("hidden", !canShowConfirmButton);
 }
@@ -4048,7 +4048,7 @@ async function refreshMoveProductOldBoxOptionsBySku() {
   if (!select) return;
 
   if (!Number.isInteger(skuId) || skuId <= 0) {
-    select.innerHTML = '<option value="">隸ｷ蜈磯画叫SKU</option>';
+    select.innerHTML = '<option value="">请先选择SKU</option>';
     if (hint) hint.classList.add("hidden");
     syncMoveProductOldShelfDisplay();
     return;
@@ -4066,7 +4066,7 @@ async function refreshMoveProductOldBoxOptionsBySku() {
   if (rows.length === 1) {
     select.innerHTML = options;
   } else {
-    select.innerHTML = `<option value="">隸ｷ騾画叫譌ｧ邂ｱ蜿ｷ</option>${options}`;
+    select.innerHTML = `<option value="">请选择旧箱号</option>${options}`;
   }
   if (hint) {
     hint.classList.toggle("hidden", !hasMultiple);
@@ -4193,8 +4193,8 @@ async function loadBrands() {
   state.brandEditingIds = new Set(
     [...state.brandEditingIds].filter((id) => latestIds.has(String(id))),
   );
-  renderBrandOptionsForSelect("modalNewBrand", "隸ｷ騾画叫蜩∫煙");
-  renderBrandOptionsForSelect("editBrand", "隸ｷ騾画叫蜩∫煙");
+  renderBrandOptionsForSelect("modalNewBrand", "请选择品牌");
+  renderBrandOptionsForSelect("editBrand", "请选择品牌");
   renderBrandsTable();
 }
 
@@ -4205,8 +4205,8 @@ async function loadSkuTypes() {
   state.skuTypeEditingIds = new Set(
     [...state.skuTypeEditingIds].filter((id) => latestIds.has(String(id))),
   );
-  renderSkuTypeOptionsForSelect("modalNewType", "隸ｷ騾画叫邀ｻ蝙・);
-  renderSkuTypeOptionsForSelect("editType", "隸ｷ騾画叫邀ｻ蝙・);
+  renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
+  renderSkuTypeOptionsForSelect("editType", "请选择类型");
   renderSkuTypesTable();
 }
 
@@ -4217,8 +4217,8 @@ async function loadShops() {
   state.shopEditingIds = new Set(
     [...state.shopEditingIds].filter((id) => latestIds.has(String(id))),
   );
-  renderShopOptionsForSelect("modalNewShop", "隸ｷ騾画叫蠎鈴銅");
-  renderShopOptionsForSelect("editShop", "隸ｷ騾画叫蠎鈴銅");
+  renderShopOptionsForSelect("modalNewShop", "请选择店铺");
+  renderShopOptionsForSelect("editShop", "请选择店铺");
   renderShopsTable();
 }
 
@@ -4231,9 +4231,9 @@ async function loadShelves() {
   );
   $("statShelves").textContent = shelves.length;
 
-  renderShelfOptionsForSelect("newBoxShelfId", "隸ｷ騾画叫雍ｧ譫ｶ蜿ｷ");
-  renderShelfOptionsForSelect("modalNewBoxShelfId", "隸ｷ騾画叫雍ｧ譫ｶ蜿ｷ");
-  renderShelfOptionsForSelect("boxManageShelfId", "隸ｷ騾画叫雍ｧ譫ｶ蜿ｷ");
+  renderShelfOptionsForSelect("newBoxShelfId", "请选择货架号");
+  renderShelfOptionsForSelect("modalNewBoxShelfId", "请选择货架号");
+  renderShelfOptionsForSelect("boxManageShelfId", "请选择货架号");
   renderMoveShelfTargetOptions($("moveShelfTargetCode")?.value || "");
   syncMoveShelfCurrentDisplay();
   syncMoveProductOldShelfDisplay();
@@ -4262,7 +4262,7 @@ async function loadBoxes() {
     [...state.boxEditingIds].filter((id) => latestIds.has(String(id))),
   );
   $("statBoxes").textContent = boxes.length;
-  renderBoxOptionsForInput("modalNewSkuBoxCode", "modalNewSkuBoxCodeList", "隸ｷ騾画叫蟾ｲ譛臥ｮｱ蜿ｷ謌冶・眠蠅樒ｮｱ蜿ｷ");
+  renderBoxOptionsForInput("modalNewSkuBoxCode", "modalNewSkuBoxCodeList", "请选择已有箱号或者新增箱号");
   renderAdjustBoxSuggestions($("adjustBoxCode")?.value || "");
   renderMoveShelfBoxOptions($("moveShelfBoxCode")?.value || "");
   syncMoveShelfCurrentDisplay();
@@ -4294,16 +4294,16 @@ async function loadEmptyBoxes() {
 function getBatchInboundStatusText(status, order = null) {
   if (status === "waiting_upload") {
     if (order?.domesticOrderNo && !order?.seaOrderNo) {
-      return "蠕・書豬ｷ霑・;
+      return "待发海运";
     }
     if (order?.uploadedFileName && !order?.domesticOrderNo) {
-      return "蠕・｡ｫ蝗ｽ蜀・黒蜿ｷ";
+      return "待填国内单号";
     }
-    return "遲牙ｾ・ｸ贋ｼ謇ｹ驥丞・蠎捺枚譯｣";
+    return "等待上传批量入库文档";
   }
-  if (status === "waiting_inbound") return "蠕・・蠎・;
-  if (status === "confirmed") return "蟾ｲ遑ｮ隶､";
-  if (status === "void") return "蟾ｲ菴懷ｺ・;
+  if (status === "waiting_inbound") return "待入库";
+  if (status === "confirmed") return "已确认";
+  if (status === "void") return "已作废";
   return status || "-";
 }
 
@@ -4315,7 +4315,7 @@ function formatBatchRange(order) {
   if (!order?.rangeStart || !order?.rangeEnd || !order?.expectedBoxCount) {
     return "-";
   }
-  return `${order.rangeStart} ~ ${order.rangeEnd}・・{order.expectedBoxCount}邂ｱ・荏;
+  return `${order.rangeStart} ~ ${order.rangeEnd}（${order.expectedBoxCount}箱）`;
 }
 
 function renderBatchInboundUploadOptions() {
@@ -4335,7 +4335,7 @@ function renderBatchInboundUploadOptions() {
         `<option value="${escapeHtml(order.id)}">${escapeHtml(order.orderNo)}</option>`,
     )
     .join("");
-  select.innerHTML = `<option value="">隸ｷ騾画叫蜈･蠎灘黒</option>${options}`;
+  select.innerHTML = `<option value="">请选择入库单</option>${options}`;
   if (waitingUploadOrders.some((order) => String(order.id) === String(prev))) {
     select.value = prev;
   }
@@ -4355,20 +4355,20 @@ function renderBatchInboundOrders() {
       const actions = [
         `<button class="tiny-btn ghost" data-action="batchInboundSelectOrder" data-order-id="${escapeHtml(
           order.id,
-        )}">譟･逵・/button>`,
+        )}">查看</button>`,
       ];
       if (order.status === "waiting_inbound") {
         actions.push(
           `<button class="tiny-btn" data-action="batchInboundOpenConfirm" data-order-id="${escapeHtml(
             order.id,
-          )}">遑ｮ隶､蜈･蠎・/button>`,
+          )}">确认入库</button>`,
         );
       }
       if (order.status !== "confirmed" && !order.seaOrderNo) {
         actions.push(
           `<button class="tiny-btn danger" data-action="batchInboundDeleteOrder" data-order-id="${escapeHtml(
             order.id,
-          )}" data-order-no="${escapeHtml(order.orderNo)}">蛻髯､</button>`,
+          )}" data-order-no="${escapeHtml(order.orderNo)}">删除</button>`,
         );
       }
       return `
@@ -4382,14 +4382,14 @@ function renderBatchInboundOrders() {
                 id="domesticOrderNo-${escapeHtml(order.id)}"
                 class="batch-no-input"
                 value="${escapeHtml(order.domesticOrderNo || "")}"
-                placeholder="隸ｷ霎灘・蝗ｽ蜀・黒蜿ｷ"
+                placeholder="请输入国内单号"
               />
               <button
                 class="tiny-btn"
                 data-action="batchInboundSaveDomesticOrderNo"
                 data-order-id="${escapeHtml(order.id)}"
                 data-input-id="domesticOrderNo-${escapeHtml(order.id)}"
-              >菫晏ｭ・/button>
+              >保存</button>
             </div>
           </td>
           <td>
@@ -4398,14 +4398,14 @@ function renderBatchInboundOrders() {
                 id="seaOrderNo-${escapeHtml(order.id)}"
                 class="batch-no-input"
                 value="${escapeHtml(order.seaOrderNo || "")}"
-                placeholder="隸ｷ霎灘・豬ｷ霑仙黒蜿ｷ"
+                placeholder="请输入海运单号"
               />
               <button
                 class="tiny-btn"
                 data-action="batchInboundSaveSeaOrderNo"
                 data-order-id="${escapeHtml(order.id)}"
                 data-input-id="seaOrderNo-${escapeHtml(order.id)}"
-              >菫晏ｭ・/button>
+              >保存</button>
             </div>
             ${
               order.seaOrderNo
@@ -4436,7 +4436,7 @@ function renderBatchInboundDetail(detail) {
   if (!container) return;
   if (!detail) {
     container.className = "batch-detail-empty muted";
-    container.textContent = "隸ｷ蜈磯画叫謇ｹ驥丞・蠎灘黒縲・;
+    container.textContent = "请先选择批量入库单。";
     return;
   }
 
@@ -4457,7 +4457,7 @@ function renderBatchInboundDetail(detail) {
   const headerActions = canConfirm
     ? `<button class="tiny-btn" data-action="batchInboundConfirmAll" data-order-id="${escapeHtml(
         detail.id,
-      )}">謨ｴ蜊慕｡ｮ隶､蜈･蠎・/button>`
+      )}">整单确认入库</button>`
     : "";
 
   const boxBlocks = boxCodes
@@ -4468,22 +4468,22 @@ function renderBatchInboundDetail(detail) {
         canConfirm && pendingCount > 0
           ? `<button class="tiny-btn" data-action="batchInboundConfirmBox" data-order-id="${escapeHtml(
               detail.id,
-            )}" data-box-code="${escapeHtml(boxCode)}">遑ｮ隶､謨ｴ邂ｱ</button>`
-          : `<span class="tag">${pendingCount > 0 ? "蠕・｡ｮ隶､" : "蟾ｲ遑ｮ隶､"}</span>`;
+            )}" data-box-code="${escapeHtml(boxCode)}">确认整箱</button>`
+          : `<span class="tag">${pendingCount > 0 ? "待确认" : "已确认"}</span>`;
 
       return `
         <article class="batch-box-card">
           <div class="batch-box-head">
-            <h4 class="batch-box-title">邂ｱ蜿ｷ ${escapeHtml(boxCode)}</h4>
+            <h4 class="batch-box-title">箱号 ${escapeHtml(boxCode)}</h4>
             <div class="batch-detail-actions">${boxAction}</div>
           </div>
           <table class="batch-detail-table">
             <thead>
               <tr>
                 <th>SKU</th>
-                <th>謨ｰ驥・/th>
-                <th>迥ｶ諤・/th>
-                <th>謫堺ｽ・/th>
+                <th>数量</th>
+                <th>状态</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -4493,13 +4493,13 @@ function renderBatchInboundDetail(detail) {
                     canConfirm && item.status === "pending"
                       ? `<button class="tiny-btn" data-action="batchInboundConfirmItem" data-order-id="${escapeHtml(
                           detail.id,
-                        )}" data-item-id="${escapeHtml(item.id)}">遑ｮ隶､SKU</button>`
+                        )}" data-item-id="${escapeHtml(item.id)}">确认SKU</button>`
                       : '<span class="muted">-</span>';
                   return `
                     <tr>
                       <td>${escapeHtml(item.skuCode)}</td>
                       <td>${escapeHtml(item.qty)}</td>
-                      <td>${escapeHtml(item.status === "pending" ? "蠕・｡ｮ隶､" : "蟾ｲ遑ｮ隶､")}</td>
+                      <td>${escapeHtml(item.status === "pending" ? "待确认" : "已确认")}</td>
                       <td>${itemAction}</td>
                     </tr>
                   `;
@@ -4516,16 +4516,16 @@ function renderBatchInboundDetail(detail) {
   container.innerHTML = `
     <div class="batch-detail-head">
       <div class="batch-detail-meta">
-        <div>蜊募捷・・{escapeHtml(detail.orderNo)}</div>
-        <div>迥ｶ諤・ｼ・{escapeHtml(getBatchInboundStatusText(detail.status, detail))}</div>
-        <div>驥・寔闌・峩・・{escapeHtml(formatBatchRange(detail))}</div>
-        <div>譏守ｻ・ｿ帛ｺｦ・・{escapeHtml(detail.confirmedCount ?? 0)} / ${escapeHtml(
+        <div>单号：${escapeHtml(detail.orderNo)}</div>
+        <div>状态：${escapeHtml(getBatchInboundStatusText(detail.status, detail))}</div>
+        <div>采集范围：${escapeHtml(formatBatchRange(detail))}</div>
+        <div>明细进度：${escapeHtml(detail.confirmedCount ?? 0)} / ${escapeHtml(
           detail.itemCount ?? 0,
         )}</div>
       </div>
       <div class="batch-detail-actions">${headerActions}</div>
     </div>
-    ${boxBlocks || '<div class="muted">證よ裏譏守ｻ・/div>'}
+    ${boxBlocks || '<div class="muted">暂无明细</div>'}
   `;
 }
 
@@ -4578,13 +4578,13 @@ async function submitCollectBatchInboundForm() {
   const batchNoRaw = String($("batchCollectBatchNo").value || "").trim();
   const boxCount = Number($("batchCollectBoxCount").value);
   if (!batchNoRaw) {
-    throw new Error("謇ｹ蜿ｷ荳崎・荳ｺ遨ｺ");
+    throw new Error("批号不能为空");
   }
   if (!/^[1-9]\d*$/.test(batchNoRaw)) {
-    throw new Error("謇ｹ蜿ｷ蜿ｪ閭ｽ霎灘・螟ｧ莠・逧・焚蟄・);
+    throw new Error("批号只能输入大于0的数字");
   }
   if (!Number.isInteger(boxCount) || boxCount <= 0) {
-    throw new Error("驥・寔邂ｱ謨ｰ蠢・｡ｻ譏ｯ螟ｧ莠・逧・紛謨ｰ");
+    throw new Error("采集箱数必须是大于0的整数");
   }
 
   const created = await request("/batch-inbound/orders/collect", {
@@ -4597,7 +4597,7 @@ async function submitCollectBatchInboundForm() {
 
   const hint = $("batchCollectHint");
   if (hint && created) {
-    hint.textContent = `隸ｷ菴ｿ逕ｨ莉取焚蟄・${created.rangeStart} ~ ${created.rangeEnd} 逧・${created.expectedBoxCount} 荳ｪ邂ｱ蜿ｷ縲Ａ;
+    hint.textContent = `请使用从数字 ${created.rangeStart} ~ ${created.rangeEnd} 的 ${created.expectedBoxCount} 个箱号。`;
   }
   state.selectedBatchInboundOrderId = String(created.id);
 }
@@ -4606,10 +4606,10 @@ async function submitUploadBatchInboundForm() {
   const orderId = $("batchUploadOrderId").value;
   const file = $("batchInboundFile").files?.[0];
   if (!orderId) {
-    throw new Error("隸ｷ蜈磯画叫謇ｹ驥丞・蠎灘黒");
+    throw new Error("请先选择批量入库单");
   }
   if (!file) {
-    throw new Error("隸ｷ荳贋ｼ謇ｹ驥丞・蠎捺枚譯｣");
+    throw new Error("请上传批量入库文档");
   }
 
   const formData = new FormData();
@@ -4639,7 +4639,7 @@ async function saveBatchInboundSeaOrderNo(orderId, seaOrderNo) {
 
 async function confirmBatchInboundAction(action, orderId, payload = {}) {
   if (!orderId) {
-    throw new Error("郛ｺ蟆第音驥丞・蠎灘黒ID");
+    throw new Error("缺少批量入库单ID");
   }
   let path = `/batch-inbound/orders/${orderId}/confirm-all`;
   if (action === "item") {
@@ -4719,12 +4719,12 @@ function pickAuditEntityName(item, entityType) {
 
 function formatAuditEntity(item) {
   const entityType = String(item?.entityType || "").trim();
-  const entityText = AUDIT_ENTITY_TEXT_MAP[entityType] || entityType || "螳樔ｽ・;
+  const entityText = AUDIT_ENTITY_TEXT_MAP[entityType] || entityType || "实体";
   const entityName = pickAuditEntityName(item, entityType);
   if (!entityName) {
     return entityText;
   }
-  return `${entityText}・・{entityName}`;
+  return `${entityText}：${entityName}`;
 }
 
 function getAuditEventText(eventType) {
@@ -4901,22 +4901,22 @@ function renderFbaReplenishmentList() {
           <div class="action-row">
             ${
               item.status === "pending_confirm"
-                ? `<button class="tiny-btn" data-action="fbaConfirmRow" data-id="${escapeHtml(item.id)}" data-input-id="fbaActualQty-${escapeHtml(item.id)}">遑ｮ隶､</button>`
+                ? `<button class="tiny-btn" data-action="fbaConfirmRow" data-id="${escapeHtml(item.id)}" data-input-id="fbaActualQty-${escapeHtml(item.id)}">确认</button>`
                 : ""
             }
             ${
               item.status === "pending_outbound"
-                ? `<button class="tiny-btn" data-action="fbaReopenRow" data-id="${escapeHtml(item.id)}">蜿俶峩</button>`
+                ? `<button class="tiny-btn" data-action="fbaReopenRow" data-id="${escapeHtml(item.id)}">变更</button>`
                 : ""
             }
             ${
               item.status === "pending_confirm"
-                ? `<button class="tiny-btn danger" data-action="fbaDeleteRow" data-id="${escapeHtml(item.id)}" data-request-no="${escapeHtml(item.requestNo)}">蛻髯､</button>`
+                ? `<button class="tiny-btn danger" data-action="fbaDeleteRow" data-id="${escapeHtml(item.id)}" data-request-no="${escapeHtml(item.requestNo)}">删除</button>`
                 : ""
             }
             ${
               item.status === "outbound"
-                ? `<span class="muted">${escapeHtml(item.expressNo ? `蠢ｫ騾貞捷・・{item.expressNo}` : "-")}</span>`
+                ? `<span class="muted">${escapeHtml(item.expressNo ? `快递号：${item.expressNo}` : "-")}</span>`
                 : ""
             }
             ${item.status === "deleted" ? '<span class="muted">-</span>' : ""}
@@ -5034,12 +5034,12 @@ function updateFbaOutboundButtonState() {
   if (!button) return;
   const count = state.selectedFbaIds.size;
   button.disabled = count <= 0;
-  button.textContent = count > 0 ? `蜃ｺ蠎難ｼ・{count}・荏 : "蜃ｺ蠎・;
+  button.textContent = count > 0 ? `出库（${count}）` : "出库";
 }
 
 function openFbaOutboundModal() {
   if (!state.selectedFbaIds.size) {
-    throw new Error("隸ｷ蜈磯画叫蠕・・蠎鍋筏隸ｷ蜊・);
+    throw new Error("请先选择待出库申请单");
   }
   $("fbaOutboundExpressNo").value = "";
   openModal("fbaOutboundModal");
@@ -5075,19 +5075,19 @@ function openAdjustModal(direction, skuId, presetBoxCode = "", maxQty = null) {
   } else {
     qtyInput.dataset.maxQty = "";
   }
-  $("adjustReason").value = direction === "inbound" ? "騾雍ｧ蜈･蠎・ : "FBA陦･雍ｧ";
-  $("adjustModalTitle").textContent = direction === "inbound" ? "蠎灘ｭ伜・蠎・ : "FBA陦･雍ｧ";
-  $("adjustSubmitBtn").textContent = direction === "inbound" ? "遑ｮ隶､蜈･蠎・ : "逕滓・FBA陦･雍ｧ逕ｳ隸ｷ蜊・;
+  $("adjustReason").value = direction === "inbound" ? "退货入库" : "FBA补货";
+  $("adjustModalTitle").textContent = direction === "inbound" ? "库存入库" : "FBA补货";
+  $("adjustSubmitBtn").textContent = direction === "inbound" ? "确认入库" : "生成FBA补货申请单";
   openModal("adjustModal");
 }
 
 async function quickOutboundOne(skuId, boxCode) {
   const normalizedBoxCode = normalizeBoxCodeInput(boxCode);
   if (!Number.isInteger(Number(skuId)) || Number(skuId) <= 0) {
-    throw new Error("隸ｷ騾画叫莠ｧ蜩・);
+    throw new Error("请选择产品");
   }
   if (!normalizedBoxCode) {
-    throw new Error("隸ｷ騾画叫邂ｱ蜿ｷ");
+    throw new Error("请选择箱号");
   }
 
   await loadFbaPendingSummary();
@@ -5099,7 +5099,7 @@ async function quickOutboundOne(skuId, boxCode) {
   const boxId = Number(matched?.box?.id ?? 0);
   const pendingQty = boxId > 0 ? getFbaPendingQtyByBoxSku(boxId, skuId) : 0;
   if (currentQty <= pendingQty) {
-    throw new Error("謨ｰ驥丈ｸ崎ｶｳ・瑚ｯｷ蟇ｹFBA蜃ｺ雍ｧ蜊戊ｿ幄｡御ｿｮ謾ｹ");
+    throw new Error("数量不足，请对FBA出货单进行修改");
   }
 
   await request("/inventory/manual-adjust", {
@@ -5108,7 +5108,7 @@ async function quickOutboundOne(skuId, boxCode) {
       skuId: Number(skuId),
       boxCode: normalizedBoxCode,
       qtyDelta: -1,
-      reason: "蠢ｫ騾溷・蠎・莉ｶ",
+      reason: "快速出库1件",
     }),
   });
 }
@@ -5122,20 +5122,20 @@ async function submitAdjustForm() {
   const reason = $("adjustReason").value.trim() || undefined;
 
   if (!Number.isInteger(skuId) || skuId <= 0) {
-    throw new Error("隸ｷ騾画叫莠ｧ蜩・);
+    throw new Error("请选择产品");
   }
   if (!boxCode) {
-    throw new Error("隸ｷ騾画叫邂ｱ蜿ｷ");
+    throw new Error("请选择箱号");
   }
   if (direction === "inbound") {
     boxCode = await validateAdjustBoxInput(rawBoxCode, { normalizeInput: true });
     if (!boxCode) {
-      throw new Error("邂ｱ蜿ｷ荳榊ｭ伜惠・瑚ｯｷ騾画叫蟾ｲ譛臥ｮｱ蜿ｷ謌冶・・譁ｰ蠅樒ｮｱ蜿ｷ");
+      throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
     }
   }
   $("adjustBoxCode").value = boxCode;
   if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
-    throw new Error("謨ｰ驥丞ｿ・｡ｻ荳ｺ豁｣謨ｴ謨ｰ");
+    throw new Error("数量必须为正整数");
   }
   if (direction === "outbound") {
     const latestQty = await getCurrentBoxSkuQty(skuId, boxCode);
@@ -5149,7 +5149,7 @@ async function submitAdjustForm() {
     }
   }
   if (reason && reason.length > 10) {
-    throw new Error("螟・ｳｨ譛螟・10 荳ｪ蟄・);
+    throw new Error("备注最多 10 个字");
   }
 
   if (direction === "outbound") {
@@ -5157,7 +5157,7 @@ async function submitAdjustForm() {
       skuId,
       boxCode,
       qty,
-      remark: reason || "FBA陦･雍ｧ",
+      remark: reason || "FBA补货",
     });
     return;
   }
@@ -5188,16 +5188,16 @@ async function createSkuFromModal() {
   const rawBoxCode = $("modalNewSkuBoxCode").value;
   const boxCode = resolveEnabledBoxCode(rawBoxCode);
   const qty = Math.abs(Number($("modalNewSkuQty").value));
-  const reason = "譁ｰ蟒ｺ莠ｧ蜩∝・蟋句・蠎・;
+  const reason = "新建产品初始入库";
 
-  if (!sku) throw new Error("SKU 荳崎・荳ｺ遨ｺ");
-  if (!boxCode) throw new Error("邂ｱ蜿ｷ荳榊ｭ伜惠・瑚ｯｷ騾画叫蟾ｲ譛臥ｮｱ蜿ｷ謌冶・・譁ｰ蠅樒ｮｱ蜿ｷ");
+  if (!sku) throw new Error("SKU 不能为空");
+  if (!boxCode) throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
   $("modalNewSkuBoxCode").value = boxCode;
-  if (!Number.isFinite(qty) || qty <= 0) throw new Error("謨ｰ驥丞ｿ・｡ｻ螟ｧ莠・0");
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error("数量必须大于 0");
 
   const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
   if (possibleDuplicate.some((item) => item.sku === sku)) {
-    throw new Error("SKU 蟾ｲ蟄伜惠");
+    throw new Error("SKU 已存在");
   }
 
   const createdSku = await request("/skus", {
@@ -5218,7 +5218,7 @@ async function createSkuFromModal() {
 
 async function importSkusFromExcel(file) {
   if (!file) {
-    throw new Error("隸ｷ蜈磯画叫Excel譁・ｻｶ");
+    throw new Error("请先选择Excel文件");
   }
   const formData = new FormData();
   formData.append("file", file);
@@ -5230,7 +5230,7 @@ async function importSkusFromExcel(file) {
 
 async function importBulkInventoryUpdateFromExcel(file) {
   if (!file) {
-    throw new Error("隸ｷ蜈磯画叫Excel譁・ｻｶ");
+    throw new Error("请先选择Excel文件");
   }
   const formData = new FormData();
   formData.append("file", file);
@@ -5244,7 +5244,7 @@ async function createBoxFromSkuModal() {
   const boxCode = buildBoxCode($("modalNewBoxCodeDigits").value);
   const shelfId = Number($("modalNewBoxShelfId").value);
 
-  if (!Number.isInteger(shelfId) || shelfId <= 0) throw new Error("隸ｷ騾画叫雍ｧ譫ｶ蜿ｷ");
+  if (!Number.isInteger(shelfId) || shelfId <= 0) throw new Error("请选择货架号");
 
   await request("/boxes", {
     method: "POST",
@@ -5267,7 +5267,7 @@ async function submitMoveBoxShelfForm() {
   const sourceBox = findEnabledBoxByCode($("moveShelfBoxCode").value);
   const sourceBoxId = Number(sourceBox?.id || 0);
   if (!Number.isInteger(sourceBoxId) || sourceBoxId <= 0) {
-    throw new Error("隸ｷ騾画叫邂ｱ蜿ｷ");
+    throw new Error("请选择箱号");
   }
 
   const targetShelfCode = resolveEnabledShelfCode(
@@ -5275,7 +5275,7 @@ async function submitMoveBoxShelfForm() {
     sourceBox?.shelf?.id ?? null,
   );
   if (!targetShelfCode) {
-    throw new Error("隸ｷ騾画叫逶ｮ譬・ｴｧ譫ｶ蜿ｷ");
+    throw new Error("请选择目标货架号");
   }
   const targetShelf = getEnabledShelvesSorted().find(
     (item) => String(item.shelfCode).toUpperCase() === String(targetShelfCode).toUpperCase(),
@@ -5285,10 +5285,10 @@ async function submitMoveBoxShelfForm() {
   );
   const targetShelfId = Number(targetShelf?.id || 0);
   if (!Number.isInteger(targetShelfId) || targetShelfId <= 0) {
-    throw new Error("隸ｷ騾画叫逶ｮ譬・ｴｧ譫ｶ蜿ｷ");
+    throw new Error("请选择目标货架号");
   }
   if (String(targetShelfId) === String(sourceBox?.shelf?.id)) {
-    throw new Error("譁ｰ雍ｧ譫ｶ蜿ｷ荳崎・荳取立雍ｧ譫ｶ蜿ｷ逶ｸ蜷・);
+    throw new Error("新货架号不能与旧货架号相同");
   }
 
   await request(`/boxes/${sourceBoxId}`, {
@@ -5300,41 +5300,41 @@ async function submitMoveBoxShelfForm() {
 async function submitMoveBoxCodeForm() {
   const skuId = resolveMoveProductSkuId();
   if (!Number.isInteger(skuId) || skuId <= 0) {
-    throw new Error("隸ｷ騾画叫SKU");
+    throw new Error("请选择SKU");
   }
 
   const rows = (await getSkuInventoryRows(skuId)).filter(
     (row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode,
   );
   if (!rows.length) {
-    throw new Error("隸･SKU蠖灘燕豐｡譛牙庄遘ｻ蜉ｨ蠎灘ｭ・);
+    throw new Error("该SKU当前没有可移动库存");
   }
 
   const oldBoxCode = resolveEnabledBoxCode($("moveProductOldBoxCode").value);
   if (!oldBoxCode) {
-    throw new Error("隸ｷ騾画叫譌ｧ邂ｱ蜿ｷ");
+    throw new Error("请选择旧箱号");
   }
   const oldRow = rows.find(
     (row) => String(row.box.boxCode).toUpperCase() === String(oldBoxCode).toUpperCase(),
   );
   if (!oldRow) {
     if (rows.length > 1) {
-      throw new Error("隸･SKU蟄伜惠螟壻ｸｪ邂ｱ蜿ｷ・瑚ｯｷ謇句勘謖・ｮ壽立邂ｱ蜿ｷ");
+      throw new Error("该SKU存在多个箱号，请手动指定旧箱号");
     }
-    throw new Error("譌ｧ邂ｱ蜿ｷ荳惨KU荳榊源驟・);
+    throw new Error("旧箱号与SKU不匹配");
   }
 
   const newBoxCode = resolveEnabledBoxCode($("moveProductNewBoxCode").value);
   if (!newBoxCode) {
-    throw new Error("隸ｷ騾画叫譁ｰ邂ｱ蜿ｷ");
+    throw new Error("请选择新箱号");
   }
   if (String(newBoxCode).toUpperCase() === String(oldRow.box.boxCode).toUpperCase()) {
-    throw new Error("譁ｰ邂ｱ蜿ｷ荳崎・荳取立邂ｱ蜿ｷ逶ｸ蜷・);
+    throw new Error("新箱号不能与旧箱号相同");
   }
 
   const qty = Number(oldRow.qty ?? 0);
   if (!Number.isInteger(qty) || qty <= 0) {
-    throw new Error("譌ｧ邂ｱ蜿ｷ荳玖ｯ･SKU蠎灘ｭ倅ｸ崎ｶｳ");
+    throw new Error("旧箱号下该SKU库存不足");
   }
 
   return moveProductBetweenBoxes({
@@ -5354,7 +5354,7 @@ async function initOverseasWarehousePage() {
   syncMoveShelfCurrentDisplay();
 
   $("moveBoxCodeForm")?.reset();
-  $("moveProductOldBoxCode").innerHTML = '<option value="">隸ｷ蜈磯画叫SKU</option>';
+  $("moveProductOldBoxCode").innerHTML = '<option value="">请先选择SKU</option>';
   $("moveProductOldShelfCode").value = "";
   $("moveProductNewShelfCode").value = "";
   const hint = $("moveProductOldBoxHint");
@@ -5482,7 +5482,7 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "逋ｻ蠖穂ｸｭ...", async () => {
+      await withBusyButton(submitButton, "登录中...", async () => {
         const data = await request("/auth/login", {
           method: "POST",
           body: JSON.stringify({
@@ -5492,7 +5492,7 @@ function bindForms() {
         });
         state.token = data.accessToken;
         localStorage.setItem("wms_token", state.token);
-        showToast("逋ｻ蠖墓・蜉・);
+        showToast("登录成功");
         await reloadAll();
         switchPanel("inventory");
       });
@@ -5507,7 +5507,7 @@ function bindForms() {
     suppressAuthErrorToastUntil = Date.now() + 3000;
     localStorage.removeItem("wms_token");
     document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden"));
-    showToast("蟾ｲ騾蜃ｺ逋ｻ蠖・);
+    showToast("已退出登录");
     await reloadAll();
     switchPanel("overview");
   };
@@ -5530,7 +5530,7 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "謠蝉ｺ､荳ｭ...", async () => {
+      await withBusyButton(submitButton, "提交中...", async () => {
         const username = $("newUsername").value.trim();
         await request("/users", {
           method: "POST",
@@ -5542,7 +5542,7 @@ function bindForms() {
         });
         event.target.reset();
         closeModal("createUserModal");
-        showToast("逕ｨ謌ｷ蟾ｲ譁ｰ蠅橸ｼ檎憾諤∽ｸｺ遖∫畑・瑚ｯｷ豼豢ｻ逕ｨ謌ｷ蜷守匳蠖・);
+        showToast("用户已新增，状态为禁用，请激活用户后登录");
         await Promise.all([loadUsers(), loadAudit()]);
       });
     } catch (error) {
@@ -5554,17 +5554,17 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "菫晏ｭ倅ｸｭ...", async () => {
+      await withBusyButton(submitButton, "保存中...", async () => {
         const userId = String($("editUserId").value || "").trim();
         if (!userId) {
-          throw new Error("譛ｪ騾画叫逕ｨ謌ｷ");
+          throw new Error("未选择用户");
         }
 
         const username = $("editUsername").value.trim();
         const role = $("editUserRole").value;
         const department = $("editUserDepartment").value;
         if (!username) {
-          throw new Error("隸ｷ霎灘・逕ｨ謌ｷ蜷・);
+          throw new Error("请输入用户名");
         }
 
         const payload = {
@@ -5580,7 +5580,7 @@ function bindForms() {
 
         closeModal("editUserModal");
         state.selectedEditUserId = null;
-        showToast("逕ｨ謌ｷ菫｡諱ｯ蟾ｲ譖ｴ譁ｰ");
+        showToast("用户信息已更新");
         await Promise.all([loadUsers(), loadAudit(), loadMe()]);
       });
     } catch (error) {
@@ -5592,11 +5592,11 @@ function bindForms() {
     try {
       const userId = String($("editUserId").value || "").trim();
       if (!userId) {
-        throw new Error("譛ｪ騾画叫逕ｨ謌ｷ");
+        throw new Error("未选择用户");
       }
       const user = findUserById(userId);
       if (!user) {
-        throw new Error("逕ｨ謌ｷ荳榊ｭ伜惠");
+        throw new Error("用户不存在");
       }
       const nextStatus = Number(user.status) === 1 ? 0 : 1;
       const changed = await toggleUserStatus(userId, String(user.username || ""), nextStatus);
@@ -5617,11 +5617,11 @@ function bindForms() {
     try {
       const userId = String($("editUserId").value || "").trim();
       if (!userId) {
-        throw new Error("譛ｪ騾画叫逕ｨ謌ｷ");
+        throw new Error("未选择用户");
       }
       const user = findUserById(userId);
       if (!user) {
-        throw new Error("逕ｨ謌ｷ荳榊ｭ伜惠");
+        throw new Error("用户不存在");
       }
       const deleted = await removeUser(userId, String(user.username || ""));
       if (!deleted) return;
@@ -5636,15 +5636,15 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "謠蝉ｺ､荳ｭ...", async () => {
+      await withBusyButton(submitButton, "提交中...", async () => {
         const userId = String($("resetPasswordUserId").value || "").trim();
         if (!userId) {
-          throw new Error("譛ｪ騾画叫逕ｨ謌ｷ");
+          throw new Error("未选择用户");
         }
         const mode = String($("resetPasswordMode").value || "reset");
         const password = String($("resetPasswordNewPassword").value || "").trim();
         if (password.length < 6 || password.length > 64) {
-          throw new Error("蟇・・柄蠎ｦ髴荳ｺ6蛻ｰ64菴・);
+          throw new Error("密码长度需为6到64位");
         }
 
         await request(`/users/${encodeURIComponent(userId)}/reset-password`, {
@@ -5654,7 +5654,7 @@ function bindForms() {
 
         closeModal("resetUserPasswordModal");
         state.selectedResetPasswordUserId = null;
-        showToast(mode === "activate" ? "逕ｨ謌ｷ蟾ｲ豼豢ｻ蟷ｶ隶ｾ鄂ｮ譁ｰ蟇・・ : "蟇・∝ｷｲ驥咲ｽｮ");
+        showToast(mode === "activate" ? "用户已激活并设置新密码" : "密码已重置");
         await Promise.all([loadUsers(), loadAudit()]);
       });
     } catch (error) {
@@ -5666,7 +5666,7 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "蛻帛ｻｺ荳ｭ...", async () => {
+      await withBusyButton(submitButton, "创建中...", async () => {
         const shelfCode = buildStrictShelfCode($("newShelfCodeDigits").value);
         await request("/shelves", {
           method: "POST",
@@ -5676,7 +5676,7 @@ function bindForms() {
           }),
         });
         event.target.reset();
-        showToast("雍ｧ譫ｶ蟾ｲ蛻帛ｻｺ");
+        showToast("货架已创建");
         await loadShelves();
         await loadAudit();
       });
@@ -5689,11 +5689,11 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "蛻帛ｻｺ荳ｭ...", async () => {
+      await withBusyButton(submitButton, "创建中...", async () => {
         const boxCode = buildBoxCode($("newBoxCodeDigits").value);
         const shelfId = Number($("newBoxShelfId").value);
         if (!Number.isInteger(shelfId) || shelfId <= 0) {
-          throw new Error("隸ｷ騾画叫雍ｧ譫ｶ蜿ｷ");
+          throw new Error("请选择货架号");
         }
 
         await request("/boxes", {
@@ -5705,7 +5705,7 @@ function bindForms() {
         });
 
         event.target.reset();
-        showToast("邂ｱ蜿ｷ蟾ｲ蛻帛ｻｺ");
+        showToast("箱号已创建");
         await loadShelves();
         await loadBoxes();
         await loadAudit();
@@ -5719,9 +5719,9 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "驥・寔荳ｭ...", async () => {
+      await withBusyButton(submitButton, "采集中...", async () => {
         await submitCollectBatchInboundForm();
-        showToast("邂ｱ蜿ｷ驥・寔螳梧・・悟ｷｲ蛻帛ｻｺ謇ｹ驥丞・蠎灘黒");
+        showToast("箱号采集完成，已创建批量入库单");
         await loadBatchInboundOrders();
         if (state.selectedBatchInboundOrderId) {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
@@ -5736,9 +5736,9 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "荳贋ｼ荳ｭ...", async () => {
+      await withBusyButton(submitButton, "上传中...", async () => {
         await submitUploadBatchInboundForm();
-        showToast("譁・｡｣荳贋ｼ謌仙粥");
+        showToast("文档上传成功");
         await loadBatchInboundOrders();
         if (state.selectedBatchInboundOrderId) {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
@@ -5755,7 +5755,7 @@ function bindForms() {
   $("downloadBatchInboundTemplateBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      await withBusyButton(button, "荳玖ｽｽ荳ｭ...", async () => {
+      await withBusyButton(button, "下载中...", async () => {
         await downloadBatchInboundTemplate();
       });
     } catch (error) {
@@ -5766,7 +5766,7 @@ function bindForms() {
   $("downloadSkuUploadTemplateBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      await withBusyButton(button, "荳玖ｽｽ荳ｭ...", async () => {
+      await withBusyButton(button, "下载中...", async () => {
         await downloadSkuUploadTemplate();
       });
     } catch (error) {
@@ -5777,7 +5777,7 @@ function bindForms() {
   $("downloadInventoryUpdateTemplateBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      await withBusyButton(button, "荳玖ｽｽ荳ｭ...", async () => {
+      await withBusyButton(button, "下载中...", async () => {
         await downloadInventoryUpdateTemplate();
       });
     } catch (error) {
@@ -5789,7 +5789,7 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "譽邏｢荳ｭ...", async () => {
+      await withBusyButton(submitButton, "检索中...", async () => {
         await searchInventoryProducts($("inventoryKeyword").value.trim());
       });
     } catch (error) {
@@ -5800,7 +5800,7 @@ function bindForms() {
   $("downloadStockAdjustmentCsvBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      await withBusyButton(button, "逕滓・荳ｭ...", async () => {
+      await withBusyButton(button, "生成中...", async () => {
         await downloadStockAdjustmentCsv();
       });
     } catch (error) {
@@ -5853,7 +5853,7 @@ function bindForms() {
   $("downloadFbaOutboundExcelBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      await withBusyButton(button, "荳玖ｽｽ荳ｭ...", async () => {
+      await withBusyButton(button, "下载中...", async () => {
         await downloadFbaOutboundExcel();
       });
     } catch (error) {
@@ -5882,16 +5882,16 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "螟・炊荳ｭ...", async () => {
+      await withBusyButton(submitButton, "处理中...", async () => {
         const expressNo = String($("fbaOutboundExpressNo").value || "").trim();
         if (!expressNo) {
-          throw new Error("隸ｷ霎灘・蠢ｫ騾貞捷");
+          throw new Error("请输入快递号");
         }
         const ids = Array.from(state.selectedFbaIds)
           .map((id) => Number(id))
           .filter((id) => Number.isInteger(id) && id > 0);
         if (!ids.length) {
-          throw new Error("隸ｷ蜈磯画叫蠕・・蠎鍋筏隸ｷ蜊・);
+          throw new Error("请先选择待出库申请单");
         }
         const selectedRows = state.fbaReplenishments.filter((item) =>
           ids.includes(Number(item?.id)),
@@ -5906,7 +5906,7 @@ function bindForms() {
         await outboundFbaReplenishmentRequests(ids, expressNo);
         closeModal("fbaOutboundModal");
         state.selectedFbaIds = new Set();
-        showToast("蜃ｺ蠎灘ｮ梧・");
+        showToast("出库完成");
         const keyword = $("inventoryKeyword").value.trim();
         const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
         await loadFbaReplenishments();
@@ -6021,10 +6021,10 @@ function bindForms() {
   $("regenerateStocktakeTasksBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      await withBusyButton(button, "逕滓・荳ｭ...", async () => {
+      await withBusyButton(button, "生成中...", async () => {
         await generateStocktakeTasks();
         renderStocktakePlanner();
-        showToast("已生成 1 条库存盘点任务");
+        showToast("已追加 5 条库存盘点任务");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -6034,15 +6034,15 @@ function bindForms() {
   $("clearFutureStocktakeTasksBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      const ok = await openActionConfirmModal("遑ｮ隶､貂・炊莉雁､ｩ荵句錘逧・園譛牙ｺ灘ｭ倡尨轤ｹ莉ｻ蜉｡・・, "遑ｮ隶､貂・炊", "貂・炊");
+      const ok = await openActionConfirmModal("确认清理今天之后的所有库存盘点任务？", "确认清理", "清理");
       if (!ok) return;
-      await withBusyButton(button, "貂・炊荳ｭ...", async () => {
+      await withBusyButton(button, "清理中...", async () => {
         const result = await clearFutureStocktakeTasks();
         renderStocktakePlanner();
         showToast(
           Number(result?.deletedCount || 0) > 0
-            ? `蟾ｲ貂・炊 ${Number(result.deletedCount)} 譚｡譛ｪ譚･逶倡せ莉ｻ蜉｡`
-            : "豐｡譛牙庄貂・炊逧・悴譚･逶倡せ莉ｻ蜉｡",
+            ? `已清理 ${Number(result.deletedCount)} 条未来盘点任务`
+            : "没有可清理的未来盘点任务",
         );
       });
     } catch (error) {
@@ -6114,9 +6114,9 @@ function bindForms() {
       showToast(error.message, true),
     );
     $("createSkuModalForm").reset();
-    renderBrandOptionsForSelect("modalNewBrand", "隸ｷ騾画叫蜩∫煙");
-    renderSkuTypeOptionsForSelect("modalNewType", "隸ｷ騾画叫邀ｻ蝙・);
-    renderShopOptionsForSelect("modalNewShop", "隸ｷ騾画叫蠎鈴銅");
+    renderBrandOptionsForSelect("modalNewBrand", "请选择品牌");
+    renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
+    renderShopOptionsForSelect("modalNewShop", "请选择店铺");
     $("modalNewSkuQty").value = "1";
     openModal("createSkuModal");
   });
@@ -6193,7 +6193,7 @@ function bindForms() {
     renderBoxOptionsForInput(
       "modalNewSkuBoxCode",
       "modalNewSkuBoxCodeList",
-      "隸ｷ騾画叫蟾ｲ譛臥ｮｱ蜿ｷ謌冶・眠蠅樒ｮｱ蜿ｷ",
+      "请选择已有箱号或者新增箱号",
       event.target.value,
     );
   });
@@ -6201,7 +6201,7 @@ function bindForms() {
     renderBoxOptionsForInput(
       "modalNewSkuBoxCode",
       "modalNewSkuBoxCodeList",
-      "隸ｷ騾画叫蟾ｲ譛臥ｮｱ蜿ｷ謌冶・眠蠅樒ｮｱ蜿ｷ",
+      "请选择已有箱号或者新增箱号",
       event.target.value,
     );
   });
@@ -6335,10 +6335,10 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "謠蝉ｺ､荳ｭ...", async () => {
+      await withBusyButton(submitButton, "提交中...", async () => {
         await createSkuFromModal();
         closeModal("createSkuModal");
-        showToast("莠ｧ蜩∝ｷｲ蛻帛ｻｺ蟷ｶ蜈･蠎・);
+        showToast("产品已创建并入库");
         await loadShelves();
         await loadBoxes();
         await loadInventory();
@@ -6353,12 +6353,12 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "荳贋ｼ荳ｭ...", async () => {
+      await withBusyButton(submitButton, "上传中...", async () => {
         const file = $("bulkSkuUploadFile").files?.[0];
         const result = await importSkusFromExcel(file);
         closeModal("bulkSkuUploadModal");
         showToast(
-          `荳贋ｼ螳梧・・壼・${result.totalRows}陦鯉ｼ梧眠蠅・{result.createdCount}譚｡・檎函謌千ｼ冶ｾ醍筏隸ｷ${result.editRequestCount}譚｡`,
+          `上传完成：共${result.totalRows}行，新增${result.createdCount}条，生成编辑申请${result.editRequestCount}条`,
         );
         await Promise.all([
           loadInventory(),
@@ -6376,12 +6376,12 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "荳贋ｼ荳ｭ...", async () => {
+      await withBusyButton(submitButton, "上传中...", async () => {
         const file = $("bulkInventoryUpdateFile").files?.[0];
         const result = await importBulkInventoryUpdateFromExcel(file);
         closeModal("bulkInventoryUpdateModal");
         showToast(
-          `荳贋ｼ螳梧・・壼・${result.totalRows}陦鯉ｼ瑚ｰ・紛SKU${result.changedSkuCount}荳ｪ・悟ｺ灘ｭ伜序譖ｴ譏守ｻ・{result.changedItemCount}譚｡`,
+          `上传完成：共${result.totalRows}行，调整SKU${result.changedSkuCount}个，库存变更明细${result.changedItemCount}条`,
         );
         await Promise.all([loadInventory(), loadAudit(), loadOverviewDashboard()]);
       });
@@ -6394,10 +6394,10 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "蛻帛ｻｺ荳ｭ...", async () => {
+      await withBusyButton(submitButton, "创建中...", async () => {
         const createdBoxCode = await createBoxFromSkuModal();
         closeModal("createBoxFromSkuModal");
-        showToast("邂ｱ蜿ｷ蟾ｲ蛻帛ｻｺ");
+        showToast("箱号已创建");
         await loadShelves();
         await loadBoxes();
         const createSkuModal = $("createSkuModal");
@@ -6406,7 +6406,7 @@ function bindForms() {
           renderBoxOptionsForInput(
             "modalNewSkuBoxCode",
             "modalNewSkuBoxCodeList",
-            "隸ｷ騾画叫蟾ｲ譛臥ｮｱ蜿ｷ謌冶・眠蠅樒ｮｱ蜿ｷ",
+            "请选择已有箱号或者新增箱号",
             createdBoxCode,
           );
         }
@@ -6426,10 +6426,10 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "蛻帛ｻｺ荳ｭ...", async () => {
+      await withBusyButton(submitButton, "创建中...", async () => {
         await createShelfFromInventoryModal();
         closeModal("createShelfFromInventoryModal");
-        showToast("雍ｧ譫ｶ蟾ｲ蛻帛ｻｺ");
+        showToast("货架已创建");
         await loadShelves();
         await loadAudit();
       });
@@ -6467,7 +6467,7 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "菫晏ｭ倅ｸｭ...", async () => {
+      await withBusyButton(submitButton, "保存中...", async () => {
         const currentPassword = $("profileCurrentPassword").value;
         const newPassword = $("profileNewPassword").value;
         await request("/auth/me/password", {
@@ -6475,7 +6475,7 @@ function bindForms() {
           body: JSON.stringify({ currentPassword, newPassword }),
         });
         closeModal("profileModal");
-        showToast("蟇・∝ｷｲ譖ｴ譁ｰ");
+        showToast("密码已更新");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -6486,10 +6486,10 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "謠蝉ｺ､荳ｭ...", async () => {
+      await withBusyButton(submitButton, "提交中...", async () => {
         await submitEditSkuForm();
         closeModal("editSkuModal");
-        showToast("郛冶ｾ醍筏隸ｷ蟾ｲ謠蝉ｺ､");
+        showToast("编辑申请已提交");
         await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
       });
     } catch (error) {
@@ -6501,13 +6501,13 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "螟・炊荳ｭ...", async () => {
+      await withBusyButton(submitButton, "处理中...", async () => {
         const keyword = $("inventoryKeyword").value.trim();
         const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
         const direction = $("adjustDirection").value;
         await submitAdjustForm();
         closeModal("adjustModal");
-        showToast(direction === "outbound" ? "FBA陦･雍ｧ逕ｳ隸ｷ蜊募ｷｲ逕滓・" : "蜈･蠎捺・蜉・);
+        showToast(direction === "outbound" ? "FBA补货申请单已生成" : "入库成功");
         await loadInventory({ preserveSearch: shouldRefreshSearch });
         await loadBoxes();
         await loadFbaReplenishments();
@@ -6525,7 +6525,7 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "譟･隸｢荳ｭ...", async () => {
+      await withBusyButton(submitButton, "查询中...", async () => {
         await Promise.all([loadShelves(), loadBoxes()]);
         const rawBoxCode = $("boxContentQueryBoxCode").value;
         const normalizedBoxCode = normalizeBoxCodeInput(rawBoxCode);
@@ -6546,7 +6546,7 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      await withBusyButton(submitButton, "譟･隸｢荳ｭ...", async () => {
+      await withBusyButton(submitButton, "查询中...", async () => {
         await Promise.all([loadShelves(), loadBoxes()]);
         const rawShelfCode = $("shelfBoxQueryShelfCode").value;
         const normalizedShelfCode = normalizeShelfCodeInput(rawShelfCode);
@@ -6574,11 +6574,11 @@ function bindDelegates() {
         return;
       }
       if (button.dataset.action === "confirmStocktakeTask") {
-        const ok = await openActionConfirmModal("遑ｮ隶､蟆・ｯ･逶倡せ莉ｻ蜉｡譬・ｮｰ荳ｺ蟾ｲ遑ｮ隶､・・, "遑ｮ隶､謫堺ｽ・, "遑ｮ隶､");
+        const ok = await openActionConfirmModal("确认将该盘点任务标记为已确认？", "确认操作", "确认");
         if (!ok) return;
         await confirmStocktakeTask(button.dataset.id || "");
         renderStocktakePlanner();
-        showToast("逶倡せ莉ｻ蜉｡蟾ｲ遑ｮ隶､");
+        showToast("盘点任务已确认");
       }
     } catch (error) {
       showToast(error.message, true);
@@ -6609,11 +6609,11 @@ function bindDelegates() {
 
         const name = String(input.value || "").trim();
         if (!name) {
-          throw new Error("蜩∫煙蜷咲ｧｰ荳崎・荳ｺ遨ｺ");
+          throw new Error("品牌名称不能为空");
         }
         const originalName = String(input.dataset.originalName || "").trim();
         if (!originalName) {
-          throw new Error("蜩∫煙蜴溷ｧ句ｼ荳榊ｭ伜惠");
+          throw new Error("品牌原始值不存在");
         }
         if (name === originalName) {
           state.brandEditingIds.delete(String(id));
@@ -6626,15 +6626,15 @@ function bindDelegates() {
           body: JSON.stringify({ name }),
         });
         state.brandEditingIds.delete(String(id));
-        showToast("蜩∫煙蟾ｲ譖ｴ譁ｰ・悟・閨・SKU 蜩∫煙蟾ｲ蜷梧ｭ･");
+        showToast("品牌已更新，关联 SKU 品牌已同步");
         await Promise.all([loadBrands(), loadInventory(), loadAudit()]);
       } else if (action === "deleteBrand") {
         const brandName = button.dataset.name || id;
-        const ok = await openActionConfirmModal(`遑ｮ隶､蛻髯､蜩∫煙 ${brandName}・歔, "遑ｮ隶､謫堺ｽ・, "遑ｮ隶､蛻髯､");
+        const ok = await openActionConfirmModal(`确认删除品牌 ${brandName}？`, "确认操作", "确认删除");
         if (!ok) return;
         await request(`/brands/${id}`, { method: "DELETE" });
         state.brandEditingIds.delete(String(id));
-        showToast("蜩∫煙蟾ｲ蛻髯､");
+        showToast("品牌已删除");
         await Promise.all([loadBrands(), loadInventory(), loadAudit()]);
       }
     } catch (error) {
@@ -6666,7 +6666,7 @@ function bindDelegates() {
 
         const name = String(input?.value || "").trim();
         if (!name) {
-          throw new Error("邀ｻ蝙句錐遘ｰ荳崎・荳ｺ遨ｺ");
+          throw new Error("类型名称不能为空");
         }
         const originalName = String(input.getAttribute("data-original-name") || "").trim();
         if (name === originalName) {
@@ -6679,15 +6679,15 @@ function bindDelegates() {
           body: JSON.stringify({ name }),
         });
         state.skuTypeEditingIds.delete(String(id));
-        showToast("邀ｻ蝙句ｷｲ譖ｴ譁ｰ");
+        showToast("类型已更新");
         await Promise.all([loadSkuTypes(), loadInventory(), loadAudit()]);
       } else if (action === "deleteSkuType") {
         const skuTypeName = button.dataset.name || id;
-        const ok = await openActionConfirmModal(`遑ｮ隶､蛻髯､邀ｻ蝙・${skuTypeName}・歔, "遑ｮ隶､謫堺ｽ・, "遑ｮ隶､蛻髯､");
+        const ok = await openActionConfirmModal(`确认删除类型 ${skuTypeName}？`, "确认操作", "确认删除");
         if (!ok) return;
         await request(`/sku-types/${id}`, { method: "DELETE" });
         state.skuTypeEditingIds.delete(String(id));
-        showToast("邀ｻ蝙句ｷｲ蛻髯､");
+        showToast("类型已删除");
         await Promise.all([loadSkuTypes(), loadInventory(), loadAudit()]);
       }
     } catch (error) {
@@ -6711,10 +6711,10 @@ function bindDelegates() {
         const input = $(button.dataset.inputId || "");
         const domesticOrderNo = String(input?.value || "").trim();
         if (!domesticOrderNo) {
-          throw new Error("隸ｷ霎灘・蝗ｽ蜀・黒蜿ｷ");
+          throw new Error("请输入国内单号");
         }
         await saveBatchInboundDomesticOrderNo(orderId, domesticOrderNo);
-        showToast("蝗ｽ蜀・黒蜿ｷ蟾ｲ菫晏ｭ・);
+        showToast("国内单号已保存");
         await loadBatchInboundOrders();
         if (state.selectedBatchInboundOrderId) {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
@@ -6723,10 +6723,10 @@ function bindDelegates() {
         const input = $(button.dataset.inputId || "");
         const seaOrderNo = String(input?.value || "").trim();
         if (!seaOrderNo) {
-          throw new Error("隸ｷ霎灘・豬ｷ霑仙黒蜿ｷ");
+          throw new Error("请输入海运单号");
         }
         await saveBatchInboundSeaOrderNo(orderId, seaOrderNo);
-        showToast("豬ｷ霑仙黒蜿ｷ蟾ｲ菫晏ｭ・);
+        showToast("海运单号已保存");
         await loadBatchInboundOrders();
         if (state.selectedBatchInboundOrderId) {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
@@ -6734,11 +6734,11 @@ function bindDelegates() {
       } else if (action === "batchInboundDeleteOrder") {
         const orderNo = button.dataset.orderNo || orderId;
         const ok = await openDeleteConfirmModal(
-          `遑ｮ隶､蛻髯､謇ｹ驥丞・蠎灘黒 ${orderNo} ・溷唖髯､蜷惹ｼ夐㈱謾ｾ隸･蜊暮煤螳夂噪邂ｱ蜿ｷ縲Ａ,
+          `确认删除批量入库单 ${orderNo} ？删除后会释放该单锁定的箱号。`,
         );
         if (!ok) return;
         await deleteBatchInboundOrder(orderId);
-        showToast("蛻髯､謌仙粥・悟ｷｲ驥頑叛髞∝ｮ夂ｮｱ蜿ｷ");
+        showToast("删除成功，已释放锁定箱号");
         if (String(state.selectedBatchInboundOrderId) === String(orderId)) {
           state.selectedBatchInboundOrderId = "";
           state.selectedBatchInboundOrderDetail = null;
@@ -6756,14 +6756,14 @@ function bindDelegates() {
     try {
       const name = String($("brandNameInput").value || "").trim();
       if (!name) {
-        throw new Error("隸ｷ霎灘・蜩∫煙蜷咲ｧｰ");
+        throw new Error("请输入品牌名称");
       }
       await request("/brands", {
         method: "POST",
         body: JSON.stringify({ name }),
       });
       $("brandNameInput").value = "";
-      showToast("蜩∫煙蟾ｲ譁ｰ蠅・);
+      showToast("品牌已新增");
       await Promise.all([loadBrands(), loadInventory(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
@@ -6775,14 +6775,14 @@ function bindDelegates() {
     try {
       const name = String($("skuTypeNameInput").value || "").trim();
       if (!name) {
-        throw new Error("隸ｷ霎灘・邀ｻ蝙句錐遘ｰ");
+        throw new Error("请输入类型名称");
       }
       await request("/sku-types", {
         method: "POST",
         body: JSON.stringify({ name }),
       });
       $("skuTypeNameInput").value = "";
-      showToast("邀ｻ蝙句ｷｲ譁ｰ蠅・);
+      showToast("类型已新增");
       await Promise.all([loadSkuTypes(), loadInventory(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
@@ -6813,7 +6813,7 @@ function bindDelegates() {
 
         const name = String(input?.value || "").trim();
         if (!name) {
-          throw new Error("隸ｷ霎灘・蠎鈴銅蜷咲ｧｰ");
+          throw new Error("请输入店铺名称");
         }
         const originalName = String(input.getAttribute("data-original-name") || "").trim();
         if (name === originalName) {
@@ -6826,15 +6826,15 @@ function bindDelegates() {
           body: JSON.stringify({ name }),
         });
         state.shopEditingIds.delete(String(id));
-        showToast("蠎鈴銅蟾ｲ蜿俶峩");
+        showToast("店铺已变更");
         await Promise.all([loadShops(), loadInventory(), loadAudit()]);
       } else if (action === "deleteShop") {
         const shopName = button.dataset.name || id;
-        const ok = await openActionConfirmModal(`遑ｮ隶､蛻髯､蠎鈴銅 ${shopName} ・歔, "遑ｮ隶､謫堺ｽ・, "遑ｮ隶､蛻髯､");
+        const ok = await openActionConfirmModal(`确认删除店铺 ${shopName} ？`, "确认操作", "确认删除");
         if (!ok) return;
         await request(`/shops/${id}`, { method: "DELETE" });
         state.shopEditingIds.delete(String(id));
-        showToast("蠎鈴銅蟾ｲ蛻髯､");
+        showToast("店铺已删除");
         await Promise.all([loadShops(), loadInventory(), loadAudit()]);
       }
     } catch (error) {
@@ -6847,14 +6847,14 @@ function bindDelegates() {
     try {
       const name = String($("shopNameInput").value || "").trim();
       if (!name) {
-        throw new Error("隸ｷ霎灘・蠎鈴銅蜷咲ｧｰ");
+        throw new Error("请输入店铺名称");
       }
       await request("/shops", {
         method: "POST",
         body: JSON.stringify({ name }),
       });
       $("shopNameInput").value = "";
-      showToast("蠎鈴銅蟾ｲ譁ｰ蠅・);
+      showToast("店铺已新增");
       await Promise.all([loadShops(), loadInventory(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
@@ -6876,7 +6876,7 @@ function bindDelegates() {
       });
 
       $("departmentOptionCreateForm")?.reset();
-      showToast("部门已新增");
+      showToast("\u90e8\u95e8\u65b0\u589e\u6210\u529f");
       await Promise.all([loadUserOptions(), loadUsers(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
@@ -6911,21 +6911,21 @@ function bindDelegates() {
         const originalName = String(nameInput.getAttribute("data-original-name") || "").trim();
         const rawCode = String(codeInput.value || "").trim();
         if (!rawCode) {
-          throw new Error("隸ｷ霎灘・雍ｧ譫ｶ蜿ｷ");
+          throw new Error("请输入货架号");
         }
         const normalizedCode = normalizeShelfCodeInput(rawCode);
         if (!normalizedCode) {
-          throw new Error("雍ｧ譫ｶ蜿ｷ譬ｼ蠑乗裏謨・);
+          throw new Error("货架号格式无效");
         }
         const codeChanged = normalizedCode !== originalCode;
         if (codeChanged && !/^(?:00|[A-Z][0-9])$/.test(normalizedCode)) {
-          throw new Error("雍ｧ譫ｶ蜿ｷ蠢・｡ｻ譏ｯ00謌泡0譬ｼ蠑・);
+          throw new Error("货架号必须是00或A0格式");
         }
 
         const name = String(nameInput.value || "").trim();
         const nameChanged = name !== originalName;
         if (nameChanged && !name && originalName) {
-          throw new Error("雍ｧ譫ｶ蜷咲ｧｰ荳崎・荳ｺ遨ｺ");
+          throw new Error("货架名称不能为空");
         }
         if (!codeChanged && !nameChanged) {
           state.shelfEditingIds.delete(String(id));
@@ -6942,24 +6942,24 @@ function bindDelegates() {
           body: JSON.stringify(payload),
         });
         state.shelfEditingIds.delete(String(id));
-        showToast("雍ｧ譫ｶ蟾ｲ蜿俶峩");
+        showToast("货架已变更");
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       } else if (action === "deleteShelfManage") {
         const shelfCode = button.dataset.code || id;
         const deleteCheck = await request(`/shelves/${id}/delete-check`);
         if (!deleteCheck?.canDelete) {
-          showToast(buildDeleteBlockedMessage("雍ｧ譫ｶ", deleteCheck?.reasons), true);
+          showToast(buildDeleteBlockedMessage("货架", deleteCheck?.reasons), true);
           return;
         }
         const ok = await openActionConfirmModal(
-          `遑ｮ隶､蛻髯､雍ｧ譫ｶ ${shelfCode} ・歔,
-          "遑ｮ隶､謫堺ｽ・,
-          "遑ｮ隶､蛻髯､",
+          `确认删除货架 ${shelfCode} ？`,
+          "确认操作",
+          "确认删除",
         );
         if (!ok) return;
         await request(`/shelves/${id}`, { method: "DELETE" });
         state.shelfEditingIds.delete(String(id));
-        showToast("雍ｧ譫ｶ蟾ｲ蛻髯､");
+        showToast("货架已删除");
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       }
     } catch (error) {
@@ -6979,15 +6979,15 @@ function bindDelegates() {
       } else if (action === "archiveReleaseBoxManage") {
         const boxCode = button.dataset.code || id;
         const ok = await openActionConfirmModal(
-          `遑ｮ隶､蠖呈｡｣譌ｧ邂ｱ蟷ｶ驥頑叛邂ｱ蜿ｷ ${boxCode} ・歔,
-          "譌ｧ邂ｱ莨壻ｿ晉蕗蜴・彰螳｡隶｡蟷ｶ髫占酪・悟次邂ｱ蜿ｷ蟆・㍾譁ｰ蜿ｯ逕ｨ縲・,
-          "蠖呈｡｣驥頑叛",
+          `确认归档旧箱并释放箱号 ${boxCode} ？`,
+          "旧箱会保留历史审计并隐藏，原箱号将重新可用。",
+          "归档释放",
         );
         if (!ok) return;
         const result = await request(`/boxes/${id}/archive-release`, { method: "POST" });
         state.boxEditingIds.delete(String(id));
         showToast(
-          `邂ｱ蜿ｷ ${result?.releasedBoxCode || boxCode} 蟾ｲ驥頑叛・梧立邂ｱ蟾ｲ蠖呈｡｣荳ｺ ${result?.archivedBoxCode || "-"}`,
+          `箱号 ${result?.releasedBoxCode || boxCode} 已释放，旧箱已归档为 ${result?.archivedBoxCode || "-"}`,
         );
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       } else if (action === "editBoxManage") {
@@ -7009,20 +7009,20 @@ function bindDelegates() {
         const originalCode = String(codeInput.getAttribute("data-original-code") || "").trim();
         const rawCode = String(codeInput.value || "").trim();
         if (!rawCode) {
-          throw new Error("隸ｷ霎灘・邂ｱ蜿ｷ");
+          throw new Error("请输入箱号");
         }
         const normalizedCode = normalizeBoxCodeInput(rawCode);
         if (!normalizedCode) {
-          throw new Error("邂ｱ蜿ｷ譬ｼ蠑乗裏謨・);
+          throw new Error("箱号格式无效");
         }
         const codeChanged = normalizedCode !== originalCode;
         if (codeChanged && !/^\d{3}$/.test(normalizedCode)) {
-          throw new Error("邂ｱ蜿ｷ蠢・｡ｻ譏ｯ3菴肴焚蟄・);
+          throw new Error("箱号必须是3位数字");
         }
 
         const shelfId = Number(shelfSelect.value);
         if (!Number.isInteger(shelfId) || shelfId <= 0) {
-          throw new Error("隸ｷ騾画叫雍ｧ譫ｶ蜿ｷ");
+          throw new Error("请选择货架号");
         }
         const originalShelfId = Number(String(shelfSelect.getAttribute("data-original-shelf-id") || "0"));
         const shelfChanged = shelfId !== originalShelfId;
@@ -7041,24 +7041,24 @@ function bindDelegates() {
           body: JSON.stringify(payload),
         });
         state.boxEditingIds.delete(String(id));
-        showToast("邂ｱ蜿ｷ蟾ｲ蜿俶峩");
+        showToast("箱号已变更");
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       } else if (action === "deleteBoxManage") {
         const boxCode = button.dataset.code || id;
         const deleteCheck = await request(`/boxes/${id}/delete-check`);
         if (!deleteCheck?.canDelete) {
-          showToast(buildDeleteBlockedMessage("邂ｱ蜿ｷ", deleteCheck?.reasons), true);
+          showToast(buildDeleteBlockedMessage("箱号", deleteCheck?.reasons), true);
           return;
         }
         const ok = await openActionConfirmModal(
-          `遑ｮ隶､蛻髯､邂ｱ蜿ｷ ${boxCode} ・歔,
-          "遑ｮ隶､謫堺ｽ・,
-          "遑ｮ隶､蛻髯､",
+          `确认删除箱号 ${boxCode} ？`,
+          "确认操作",
+          "确认删除",
         );
         if (!ok) return;
         await request(`/boxes/${id}`, { method: "DELETE" });
         state.boxEditingIds.delete(String(id));
-        showToast("邂ｱ蜿ｷ蟾ｲ蛻髯､");
+        showToast("箱号已删除");
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       }
     } catch (error) {
@@ -7074,13 +7074,13 @@ function bindDelegates() {
     const boxCode = button.dataset.code || id;
     try {
       const ok = await openActionConfirmModal(
-        `遑ｮ隶､蠎滄勁遨ｺ邂ｱ ${boxCode} 蜷暦ｼ歔,
-        "遑ｮ隶､謫堺ｽ・,
-        "遑ｮ隶､蠎滄勁",
+        `确认废除空箱 ${boxCode} 吗？`,
+        "确认操作",
+        "确认废除",
       );
       if (!ok) return;
       await request(`/boxes/${id}`, { method: "DELETE" });
-      showToast("遨ｺ邂ｱ蟾ｲ蠎滄勁");
+      showToast("空箱已废除");
       await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
@@ -7091,13 +7091,13 @@ function bindDelegates() {
     event.preventDefault();
     try {
       const confirmed = await openActionConfirmModal(
-        "遑ｮ隶､謇ｧ陦娯懃ｧｻ蜉ｨ邂ｱ蟄仙芦譁ｰ雍ｧ譫ｶ窶晢ｼ・,
-        "遑ｮ隶､謫堺ｽ・,
-        "遑ｮ隶､",
+        "确认执行“移动箱子到新货架”？",
+        "确认操作",
+        "确认",
       );
       if (!confirmed) return;
       await submitMoveBoxShelfForm();
-      showToast("邂ｱ蜿ｷ蟾ｲ遘ｻ蜉ｨ閾ｳ譁ｰ雍ｧ譫ｶ");
+      showToast("箱号已移动至新货架");
       await initOverseasWarehousePage();
       await loadAudit();
     } catch (error) {
@@ -7109,13 +7109,13 @@ function bindDelegates() {
     event.preventDefault();
     try {
       const confirmed = await openActionConfirmModal(
-        "遑ｮ隶､謇ｧ陦娯懃ｧｻ蜉ｨ莠ｧ蜩∝芦譁ｰ邂ｱ蟄絶晢ｼ・,
-        "遑ｮ隶､謫堺ｽ・,
-        "遑ｮ隶､",
+        "确认执行“移动产品到新箱子”？",
+        "确认操作",
+        "确认",
       );
       if (!confirmed) return;
       const result = await submitMoveBoxCodeForm();
-      showToast(`蟾ｲ蟆・{result.qty}莉ｶ莠ｧ蜩∽ｻ・${result.oldBoxCode} 遘ｻ蜉ｨ蛻ｰ ${result.newBoxCode}`);
+      showToast(`已将${result.qty}件产品从 ${result.oldBoxCode} 移动到 ${result.newBoxCode}`);
       await initOverseasWarehousePage();
       await loadAudit();
     } catch (error) {
@@ -7133,15 +7133,15 @@ function bindDelegates() {
     try {
       if (action === "batchInboundConfirmAll") {
         await confirmBatchInboundAction("all", orderId);
-        showToast("謨ｴ蜊慕｡ｮ隶､蜈･蠎捺・蜉・);
+        showToast("整单确认入库成功");
       } else if (action === "batchInboundConfirmBox") {
         const boxCode = button.dataset.boxCode;
         await confirmBatchInboundAction("box", orderId, { boxCode });
-        showToast("謨ｴ邂ｱ遑ｮ隶､蜈･蠎捺・蜉・);
+        showToast("整箱确认入库成功");
       } else if (action === "batchInboundConfirmItem") {
         const itemId = button.dataset.itemId;
         await confirmBatchInboundAction("item", orderId, { itemId });
-        showToast("SKU遑ｮ隶､蜈･蠎捺・蜉・);
+        showToast("SKU确认入库成功");
       } else {
         return;
       }
@@ -7164,7 +7164,7 @@ function bindDelegates() {
       const action = button.dataset.action;
       const id = Number(button.dataset.id);
       if (!Number.isInteger(id) || id <= 0) {
-        throw new Error("逕ｳ隸ｷ蜊肘D譌謨・);
+        throw new Error("申请单ID无效");
       }
 
       if (action === "fbaConfirmRow") {
@@ -7176,10 +7176,10 @@ function bindDelegates() {
         const input = $(inputId);
         const actualQty = Number(String(input?.value || "").trim());
         if (!Number.isInteger(actualQty) || actualQty <= 0) {
-          throw new Error("螳樣刔謨ｰ驥丞ｿ・｡ｻ譏ｯ螟ｧ莠・逧・紛謨ｰ");
+          throw new Error("实际数量必须是大于0的整数");
         }
         await confirmFbaReplenishmentRequest(id, actualQty);
-        showToast("蟾ｲ霓ｬ荳ｺ蠕・・蠎・, false, {
+        showToast("已转为待出库", false, {
           labelData: {
             fnsku: row?.sku?.fnsku || "",
             qty: actualQty,
@@ -7188,13 +7188,13 @@ function bindDelegates() {
         });
       } else if (action === "fbaReopenRow") {
         await reopenFbaReplenishmentRequest(id);
-        showToast("蟾ｲ蝗樣蛻ｰ蠕・｡ｮ隶､・悟庄驥肴眠菫ｮ謾ｹ螳樣刔謨ｰ驥・);
+        showToast("已回退到待确认，可重新修改实际数量");
       } else if (action === "fbaDeleteRow") {
         const requestNo = button.dataset.requestNo || `#${id}`;
-        const ok = await openDeleteConfirmModal(`遑ｮ隶､蛻髯､FBA陦･雍ｧ逕ｳ隸ｷ蜊・${requestNo} ・歔);
+        const ok = await openDeleteConfirmModal(`确认删除FBA补货申请单 ${requestNo} ？`);
         if (!ok) return;
         await deleteFbaReplenishmentRequest(id);
-        showToast("逕ｳ隸ｷ蜊募ｷｲ蛻髯､");
+        showToast("申请单已删除");
       } else {
         return;
       }
@@ -7246,7 +7246,7 @@ function bindDelegates() {
         const keyword = $("inventoryKeyword").value.trim();
         const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
         await quickOutboundOne(skuId, boxCode);
-        const confirmed = await openActionConfirmModal("蜃ｺ蠎・莉ｶ謌仙粥", "謠千､ｺ", "遑ｮ隶､", { showCancel: false });
+        const confirmed = await openActionConfirmModal("出库1件成功", "提示", "确认", { showCancel: false });
         if (!confirmed) return;
         await loadInventory({ preserveSearch: shouldRefreshSearch });
         await loadBoxes();
@@ -7372,7 +7372,7 @@ function bindDelegates() {
 
         const name = String(nameInput.value || "").trim();
         if (!name) {
-          throw new Error("蜷咲ｧｰ荳崎・荳ｺ遨ｺ");
+          throw new Error("名称不能为空");
         }
         const originalName = String(nameInput.getAttribute("data-original-name") || "").trim();
         if (name === originalName) {
@@ -7386,14 +7386,14 @@ function bindDelegates() {
           body: JSON.stringify({ name }),
         });
         editingSet.delete(code);
-        showToast("蜿俶峩謌仙粥");
+        showToast("变更成功");
       } else if (action === deleteAction) {
         const nameInput = row.querySelector("input[data-field='name']");
         const optionName = String(nameInput?.value || code).trim() || code;
         const ok = await openActionConfirmModal(
-          `遑ｮ隶､蛻髯､${isDepartment ? "驛ｨ髣ｨ" : "隗定牡"} ${optionName} 蜷暦ｼ歔,
-          "遑ｮ隶､謫堺ｽ・,
-          "遑ｮ隶､蛻髯､",
+          `确认删除${isDepartment ? "部门" : "角色"} ${optionName} 吗？`,
+          "确认操作",
+          "确认删除",
         );
         if (!ok) return;
         await request(`/user-options/${endpointKind}/${encodeURIComponent(code)}`, {
@@ -7401,7 +7401,7 @@ function bindDelegates() {
           body: JSON.stringify({ status: 0 }),
         });
         editingSet.delete(code);
-        showToast("蛻髯､謌仙粥");
+        showToast("删除成功");
       }
 
       await Promise.all([loadUserOptions(), loadUsers(), loadAudit()]);
@@ -7441,10 +7441,10 @@ function bindDelegates() {
       }
 
       if (button.dataset.action === "deleteProductEditRequestRow") {
-        const ok = await openDeleteConfirmModal("遑ｮ隶､蛻髯､隸･郛冶ｾ醍筏隸ｷ・・);
+        const ok = await openDeleteConfirmModal("确认删除该编辑申请？");
         if (!ok) return;
         await deleteProductEditRequest(requestId);
-        showToast("郛冶ｾ醍筏隸ｷ蟾ｲ蛻髯､");
+        showToast("编辑申请已删除");
         await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
       }
     } catch (error) {
@@ -7472,13 +7472,13 @@ function bindDelegates() {
         .map((id) => Number(id))
         .filter((id) => Number.isInteger(id) && id > 0);
       if (!ids.length) {
-        throw new Error("隸ｷ騾画叫髴隕∵音驥冗｡ｮ隶､逧・筏隸ｷ");
+        throw new Error("请选择需要批量确认的申请");
       }
 
       const ok = await openActionConfirmModal(
-        `遑ｮ隶､謇ｹ驥冗｡ｮ隶､ ${ids.length} 譚｡郛冶ｾ台ｺｧ蜩∫筏隸ｷ・歔,
-        "謇ｹ驥冗｡ｮ隶､郛冶ｾ台ｺｧ蜩∫筏隸ｷ",
-        "謇ｹ驥冗｡ｮ隶､",
+        `确认批量确认 ${ids.length} 条编辑产品申请？`,
+        "批量确认编辑产品申请",
+        "批量确认",
       );
       if (!ok) return;
 
@@ -7489,7 +7489,7 @@ function bindDelegates() {
           await confirmProductEditRequest(id);
           successCount += 1;
         } catch (error) {
-          const message = String(error?.message || "遑ｮ隶､螟ｱ雍･");
+          const message = String(error?.message || "确认失败");
           failedMessages.push(`#${id}: ${message}`);
         }
       }
@@ -7512,11 +7512,11 @@ function bindDelegates() {
       }
 
       if (!failedMessages.length) {
-        showToast(`謇ｹ驥冗｡ｮ隶､螳梧・・悟・ ${successCount} 譚｡`);
+        showToast(`批量确认完成，共 ${successCount} 条`);
       } else {
         const firstError = failedMessages[0];
         showToast(
-          `謇ｹ驥冗｡ｮ隶､螳梧・・壽・蜉・${successCount} 譚｡・悟､ｱ雍･ ${failedMessages.length} 譚｡縲・{firstError}`,
+          `批量确认完成：成功 ${successCount} 条，失败 ${failedMessages.length} 条。${firstError}`,
           true,
         );
       }
@@ -7535,16 +7535,16 @@ function bindDelegates() {
       }
       const id = Number(state.selectedProductEditRequestId || 0);
       if (!Number.isInteger(id) || id <= 0) {
-        throw new Error("隸ｷ蜈磯画叫郛冶ｾ醍筏隸ｷ");
+        throw new Error("请先选择编辑申请");
       }
       const ok = await openActionConfirmModal(
-        "遑ｮ隶､蜷惹ｼ壽ｭ｣蠑乗峩譁ｰ莠ｧ蜩∵焚謐ｮ・梧弍蜷ｦ扈ｧ扈ｭ・・,
-        "遑ｮ隶､郛冶ｾ醍筏隸ｷ",
-        "遑ｮ隶､",
+        "确认后会正式更新产品数据，是否继续？",
+        "确认编辑申请",
+        "确认",
       );
       if (!ok) return;
       await confirmProductEditRequest(id);
-      showToast("郛冶ｾ醍筏隸ｷ蟾ｲ遑ｮ隶､蟷ｶ譖ｴ譁ｰ謨ｰ謐ｮ蠎・);
+      showToast("编辑申请已确认并更新数据库");
       const detail = await loadProductEditRequestDetail(id);
       renderProductEditRequestDetail(detail);
       await Promise.all([
@@ -7973,7 +7973,7 @@ function bindRefresh() {
   $("downloadInventorySkuSummaryBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      await withBusyButton(button, "荳玖ｽｽ荳ｭ...", async () => {
+      await withBusyButton(button, "下载中...", async () => {
         await downloadInventorySkuSummaryCsv();
       });
     } catch (error) {
@@ -8028,4 +8028,3 @@ updateFbaOutboundButtonState();
 updateFbaSelectAll();
 switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));
-
