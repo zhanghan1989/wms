@@ -1726,6 +1726,7 @@ function bindInputRules() {
   bindShelfCodeInput("newShelfCodeDigits");
   bindDigitInput("newBoxCodeDigits", 3);
   bindDigitInput("modalNewBoxCodeDigits", 3);
+  bindDigitInput("boxManageCodeInput", 3);
   bindShelfCodeInput("modalNewShelfCodeDigits");
   bindShelfCodeInput("shelfManageCodeInput");
   bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
@@ -5708,11 +5709,19 @@ function bindForms() {
     }
   });
 
-  const openCreateBoxModal = async () => {
+  const openCreateBoxModal = async (prefill = null) => {
     if (!state.shelves.length) {
       await loadShelves().catch((error) => showToast(error.message, true));
     }
     $("createBoxFromSkuForm").reset();
+    const prefillBoxCode = String(prefill?.boxCode || "").trim();
+    const prefillShelfId = Number(prefill?.shelfId);
+    if (prefillBoxCode) {
+      $("modalNewBoxCodeDigits").value = prefillBoxCode.replace(/\D/g, "").slice(-3);
+    }
+    if (Number.isInteger(prefillShelfId) && prefillShelfId > 0) {
+      $("modalNewBoxShelfId").value = String(prefillShelfId);
+    }
     openModal("createBoxFromSkuModal");
   };
 
@@ -5943,6 +5952,11 @@ function bindForms() {
         if (adjustModal && !adjustModal.classList.contains("hidden")) {
           $("adjustBoxCode").value = createdBoxCode;
           renderAdjustBoxSuggestions(createdBoxCode);
+        }
+        const boxManageModal = $("boxManageModal");
+        if (boxManageModal && !boxManageModal.classList.contains("hidden")) {
+          $("boxManageCodeInput").value = "";
+          $("boxManageShelfId").value = "";
         }
         await loadAudit();
       });
@@ -6393,13 +6407,7 @@ function bindDelegates() {
       if (!Number.isInteger(shelfId) || shelfId <= 0) {
         throw new Error("请选择货架号");
       }
-      await request("/boxes", {
-        method: "POST",
-        body: JSON.stringify({ boxCode, shelfId }),
-      });
-      $("boxManageCodeInput").value = "";
-      showToast("箱号已新增");
-      await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+      await openCreateBoxModal({ boxCode, shelfId });
     } catch (error) {
       showToast(error.message, true);
     }
