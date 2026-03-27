@@ -2539,12 +2539,9 @@ function renderStocktakePlanner() {
           <td>${escapeHtml(displayText(task?.confirmedByName) || "-")}</td>
           <td>
             <div class="action-row">
-              <button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">查看</button>
-              ${
-                task?.status === "confirmed"
-                  ? ""
-                  : `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>`
-              }
+              <button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">??</button>
+              ${task?.status === "canceled" ? "" : `<button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">??</button>`}
+              ${task?.status === "pending" ? `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">??</button>` : ""}
             </div>
           </td>
         </tr>
@@ -6013,7 +6010,7 @@ function bindForms() {
       await withBusyButton(button, "生成中...", async () => {
         await generateStocktakeTasks();
         renderStocktakePlanner();
-        showToast("已追加 5 条库存盘点任务");
+        showToast("已生成 1 条库存盘点任务");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -6544,11 +6541,19 @@ function bindDelegates() {
         return;
       }
       if (button.dataset.action === "confirmStocktakeTask") {
-        const ok = await openActionConfirmModal("确认将该盘点任务标记为已确认？", "确认操作", "确认");
+        const ok = await openActionConfirmModal("?????????????????", "????", "??");
         if (!ok) return;
         await confirmStocktakeTask(button.dataset.id || "");
         renderStocktakePlanner();
-        showToast("盘点任务已确认");
+        showToast("???????");
+        return;
+      }
+      if (button.dataset.action === "cancelStocktakeTask") {
+        const ok = await openActionConfirmModal("???????????????", "????", "??");
+        if (!ok) return;
+        await cancelStocktakeTask(button.dataset.id || "");
+        renderStocktakePlanner();
+        showToast("???????");
       }
     } catch (error) {
       showToast(error.message, true);
