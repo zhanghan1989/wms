@@ -1515,9 +1515,9 @@ function ensureOverseasWarehouseQueryUi() {
             </form>
             <div class="manage-table-scroll">
               <table>
-                <thead><tr><th>货架号</th><th>箱号</th></tr></thead>
+                <thead><tr><th>箱号</th><th>SKU</th><th>数量</th></tr></thead>
                 <tbody id="shelfBoxQueryBody">
-                  <tr><td colspan="2" class="muted">请输入货架号后查询。</td></tr>
+                  <tr><td colspan="3" class="muted">请输入货架号后查询。</td></tr>
                 </tbody>
               </table>
             </div>
@@ -2228,9 +2228,24 @@ function renderBoxContentQueryNotFound(boxCode = "") {
 function resetShelfBoxQueryResult() {
   const summary = $("shelfBoxQuerySummary");
   const body = $("shelfBoxQueryBody");
-  if (summary) summary.textContent = "请输入货架号后查询。";
+  if (summary) {
+    summary.textContent = "请输入货架号后查询。";
+    summary.classList.remove("is-error");
+  }
   if (body) {
-    body.innerHTML = '<tr><td colspan="2" class="muted">请输入货架号后查询。</td></tr>';
+    body.innerHTML = '<tr><td colspan="3" class="muted">请输入货架号后查询。</td></tr>';
+  }
+}
+
+function renderShelfBoxQueryNotFound(shelfCode = "") {
+  const summary = $("shelfBoxQuerySummary");
+  const body = $("shelfBoxQueryBody");
+  if (summary) {
+    summary.textContent = "未找到该货架号";
+    summary.classList.add("is-error");
+  }
+  if (body) {
+    body.innerHTML = '<tr><td colspan="3" class="muted">请输入货架号后查询。</td></tr>';
   }
 }
 
@@ -2276,16 +2291,15 @@ async function openShelfBoxQueryModalForShelfCode(shelfCode, preferredShelfId = 
     (Array.isArray(state.shelves) ? state.shelves : []).find(
       (item) => String(item?.id || "") === String(preferredShelfId || ""),
     ) || findShelfByAnyCode(normalizedShelfCode);
-  if (!shelf) {
-    throw new Error("未找到对应货架");
-  }
-
   setQueryModalDirectResultMode("shelf", true);
   $("shelfBoxQueryShelfCode").value = shelf?.shelfCode || normalizedShelfCode;
-  const boxes = (Array.isArray(state.boxes) ? state.boxes : []).filter(
-    (box) => Number(box?.shelf?.id) === Number(shelf.id),
-  );
-  renderShelfBoxQueryResult(shelf, boxes);
+  if (!shelf) {
+    renderShelfBoxQueryNotFound(normalizedShelfCode);
+    openModal("shelfBoxQueryModal");
+    return;
+  }
+  const { boxCount, rows } = await getShelfBoxQueryRows(shelf);
+  renderShelfBoxQueryResult(shelf, rows, boxCount);
   openModal("shelfBoxQueryModal");
 }
 
@@ -2329,29 +2343,64 @@ function renderBoxContentQueryResult(box, rows) {
     .join("");
 }
 
-function renderShelfBoxQueryResult(shelf, boxes) {
+async function getShelfBoxQueryRows(shelf) {
+  const boxes = (Array.isArray(state.boxes) ? state.boxes : [])
+    .filter((box) => Number(box?.shelf?.id) === Number(shelf?.id))
+    .sort((a, b) => String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true }));
+
+  const rowsByBox = await Promise.all(
+    boxes.map(async (box) => {
+      const sortedRows = [...(await getBoxSkuInventoryRows(box.id))].sort((a, b) =>
+        String(a?.sku?.sku || "").localeCompare(String(b?.sku?.sku || ""), "en", { numeric: true }),
+      );
+
+      if (!sortedRows.length) {
+        return [
+          {
+            boxCode: displayText(box?.boxCode),
+            sku: "-",
+            qty: 0,
+          },
+        ];
+      }
+
+      return sortedRows.map((row, index) => ({
+        boxCode: index === 0 ? displayText(box?.boxCode) : "",
+        sku: displayText(row?.sku?.sku),
+        qty: displayText(row?.qty),
+      }));
+    }),
+  );
+
+  return {
+    boxCount: boxes.length,
+    rows: rowsByBox.flat(),
+  };
+}
+
+function renderShelfBoxQueryResult(shelf, rows, boxCount = 0) {
   const summary = $("shelfBoxQuerySummary");
   const body = $("shelfBoxQueryBody");
   if (!summary || !body) return;
+  summary.classList.remove("is-error");
 
   const shelfCode = displayText(shelf?.shelfCode);
-  const sortedBoxes = [...(Array.isArray(boxes) ? boxes : [])].sort((a, b) =>
-    String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true }),
-  );
+  const safeRows = Array.isArray(rows) ? rows : [];
 
-  if (!sortedBoxes.length) {
+  if (!boxCount) {
     summary.textContent = `货架 ${shelfCode} 当前没有箱号。`;
-    body.innerHTML = `<tr><td>${escapeHtml(shelfCode)}</td><td class="muted">-</td></tr>`;
+    body.innerHTML = `<tr><td colspan="3" class="muted">货架 ${escapeHtml(shelfCode)} 当前没有箱号。</td></tr>`;
     return;
   }
 
-  summary.textContent = `货架 ${shelfCode} 共 ${sortedBoxes.length} 个箱号。`;
-  body.innerHTML = sortedBoxes
+  summary.textContent = `货架 ${shelfCode} 共 ${boxCount} 个箱号。`;
+  body.innerHTML = safeRows
     .map(
-      (box) => `
+      (row) => `
         <tr>
-          <td>${escapeHtml(shelfCode)}</td>
-          <td>${escapeHtml(displayText(box?.boxCode))}</td>
+          <td>${escapeHtml(displayText(row?.boxCode))}</td>
+          <td>${escapeHtml(displayText(row?.sku))}</td>
+          <td>${escapeHtml(displayText(row?.qty))}</td>
         </tr>
       `,
     )
@@ -6149,15 +6198,15 @@ function bindForms() {
     try {
       await withBusyButton(submitButton, "查询中...", async () => {
         await Promise.all([loadShelves(), loadBoxes()]);
-        const shelf = findShelfByAnyCode($("shelfBoxQueryShelfCode").value);
+        const rawShelfCode = $("shelfBoxQueryShelfCode").value;
+        const normalizedShelfCode = normalizeShelfCodeInput(rawShelfCode);
+        const shelf = findShelfByAnyCode(rawShelfCode);
         if (!shelf) {
-          throw new Error("未找到该货架号");
+          renderShelfBoxQueryNotFound(normalizedShelfCode || String(rawShelfCode || "").trim());
+          return;
         }
-        const shelfCode = normalizeShelfCodeInput(shelf.shelfCode);
-        const boxes = (Array.isArray(state.boxes) ? state.boxes : []).filter(
-          (box) => normalizeShelfCodeInput(box?.shelf?.shelfCode || box?.shelfCode) === shelfCode,
-        );
-        renderShelfBoxQueryResult(shelf, boxes);
+        const { boxCount, rows } = await getShelfBoxQueryRows(shelf);
+        renderShelfBoxQueryResult(shelf, rows, boxCount);
       });
     } catch (error) {
       showToast(error.message, true);
