@@ -275,12 +275,13 @@ export class StocktakePlannerService {
       confirmer?: { id: bigint; username: string } | null;
     },
   ): Record<string, unknown> {
+    const taskNoDate = this.extractTaskNoDate(item.taskNo);
     return {
       id: item.id.toString(),
       taskNo: item.taskNo,
       plannedDate: item.plannedDate,
-      plannedDateText: this.formatDateOnly(item.plannedDate),
-      plannedDateWithWeekday: this.formatDateOnlyWithWeekday(item.plannedDate),
+      plannedDateText: taskNoDate?.dateText ?? this.formatDateOnly(item.plannedDate),
+      plannedDateWithWeekday: taskNoDate?.dateWithWeekday ?? this.formatDateOnlyWithWeekday(item.plannedDate),
       shelfId: item.shelfId.toString(),
       shelfCode: item.shelf?.shelfCode ?? '',
       shelfName: item.shelf?.name ?? null,
@@ -323,5 +324,19 @@ export class StocktakePlannerService {
       parts.filter((item) => item.type !== 'literal').map((item) => [item.type, item.value]),
     );
     return `${mapped.year || '0000'}/${mapped.month || '00'}/${mapped.day || '00'}(${mapped.weekday || '-'})`;
+  }
+
+  private extractTaskNoDate(
+    taskNo: string | null | undefined,
+  ): { dateText: string; dateWithWeekday: string } | null {
+    const matched = String(taskNo || '').match(/^STK-(\d{4})(\d{2})(\d{2})-/);
+    if (!matched) return null;
+    const [, year, month, day] = matched;
+    const date = new Date(`${year}-${month}-${day}T00:00:00+08:00`);
+    if (Number.isNaN(date.getTime())) return null;
+    return {
+      dateText: `${year}/${month}/${day}`,
+      dateWithWeekday: this.formatDateOnlyWithWeekday(date) || `${year}/${month}/${day}`,
+    };
   }
 }
