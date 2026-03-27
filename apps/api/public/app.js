@@ -2590,9 +2590,10 @@ function renderStocktakePlanner() {
     .map((task) => String(task?.plannedDateText || task?.plannedDate || ""))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  const confirmedCount = tasks.filter((task) => task?.status === "confirmed").length;
   const latestDate = displayText(plannedDates[plannedDates.length - 1] || "-");
   const earliestDate = displayText(plannedDates[0] || "-");
-  summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${earliestDate} - ${latestDate}。`;
+  summary.textContent = `已确认 ${confirmedCount} 条库存盘点任务，日期范围 ${earliestDate} - ${latestDate}。`;
   body.innerHTML = visibleTasks
     .map(
       (task) => `
