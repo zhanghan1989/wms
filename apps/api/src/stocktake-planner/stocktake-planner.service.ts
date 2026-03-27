@@ -130,64 +130,6 @@ export class StocktakePlannerService {
     return latest.map((item) => this.toTaskDto(item));
   }
 
-  async clearFuture(
-    operatorId: bigint,
-    requestId?: string,
-  ): Promise<{ success: true; deletedCount: number; tasks: unknown[] }> {
-    const todayStart = this.getTodayStart();
-    const futureRows = await this.prisma.stocktakePlannerTask.findMany({
-      where: {
-        plannedDate: {
-          gt: todayStart,
-        },
-      },
-      include: {
-        shelf: {
-          select: {
-            id: true,
-            shelfCode: true,
-            name: true,
-          },
-        },
-        confirmer: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-      },
-      orderBy: [
-        { plannedDate: 'desc' },
-        { shelf: { shelfCode: 'asc' } },
-      ],
-    });
-
-    if (!futureRows.length) {
-      const tasks = await this.list();
-      return { success: true, deletedCount: 0, tasks };
-    }
-
-    await this.prisma.$transaction(async (tx) => {
-      for (const row of futureRows) {
-        await tx.stocktakePlannerTask.delete({ where: { id: row.id } });
-        await this.auditService.create({
-          db: tx,
-          entityType: 'stocktake_task',
-          entityId: row.id,
-          action: AuditAction.delete,
-          eventType: AuditEventType.STOCKTAKE_TASK_VOIDED,
-          beforeData: row as unknown as Record<string, unknown>,
-          afterData: null,
-          operatorId,
-          requestId,
-        });
-      }
-    });
-
-    const tasks = await this.list();
-    return { success: true, deletedCount: futureRows.length, tasks };
-  }
-
   async confirm(idParam: string, operatorId: bigint, requestId?: string): Promise<unknown> {
     const id = parseId(idParam, 'stocktakePlannerTaskId');
     const current = await this.prisma.stocktakePlannerTask.findUnique({
@@ -245,6 +187,72 @@ export class StocktakePlannerService {
         entityId: next.id,
         action: AuditAction.update,
         eventType: AuditEventType.STOCKTAKE_TASK_FINISHED,
+        beforeData: current as unknown as Record<string, unknown>,
+        afterData: next as unknown as Record<string, unknown>,
+        operatorId,
+        requestId,
+      });
+      return next;
+    });
+
+    return this.toTaskDto(updated);
+  }
+
+  async cancel(idParam: string, operatorId: bigint, requestId?: string): Promise<unknown> {
+    const id = parseId(idParam, 'stocktakePlannerTaskId');
+    const current = await this.prisma.stocktakePlannerTask.findUnique({
+      where: { id },
+      include: {
+        shelf: {
+          select: {
+            id: true,
+            shelfCode: true,
+            name: true,
+          },
+        },
+        confirmer: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+    });
+    if (!current) {
+      throw new NotFoundException('逶倡せ莉ｻ蜉｡荳榊ｭ伜惠');
+    }
+    if (current.status === StocktakePlannerTaskStatus.canceled) {
+      return this.toTaskDto(current);
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.stocktakePlannerTask.update({
+        where: { id },
+        data: {
+          status: StocktakePlannerTaskStatus.canceled,
+        },
+        include: {
+          shelf: {
+            select: {
+              id: true,
+              shelfCode: true,
+              name: true,
+            },
+          },
+          confirmer: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+      });
+      await this.auditService.create({
+        db: tx,
+        entityType: 'stocktake_task',
+        entityId: next.id,
+        action: AuditAction.update,
+        eventType: AuditEventType.STOCKTAKE_TASK_VOIDED,
         beforeData: current as unknown as Record<string, unknown>,
         afterData: next as unknown as Record<string, unknown>,
         operatorId,
