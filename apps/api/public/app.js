@@ -66,6 +66,7 @@ const state = {
   dataBackups: [],
   pendingPrintLabel: null,
   stocktakeTasks: [],
+  stocktakeVisibleCount: 0,
   selectedStocktakeTask: null,
   selectedStocktakeTaskRows: [],
 };
@@ -2477,6 +2478,7 @@ function getEligibleStocktakeShelves() {
 async function loadStocktakeTasks() {
   const items = await request("/stocktake-planner/tasks");
   state.stocktakeTasks = Array.isArray(items) ? items : [];
+  state.stocktakeVisibleCount = Math.min(30, state.stocktakeTasks.length);
 }
 
 function buildStocktakeTaskStatusText(task) {
@@ -2489,6 +2491,7 @@ async function generateStocktakeTasks() {
     body: "{}",
   });
   state.stocktakeTasks = Array.isArray(items) ? items : [];
+  state.stocktakeVisibleCount = Math.min(Math.max(state.stocktakeVisibleCount || 0, 30), state.stocktakeTasks.length);
 }
 
 async function confirmStocktakeTask(taskId) {
@@ -2513,6 +2516,7 @@ function renderStocktakePlanner() {
   const tasks = [...(Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : [])].sort((a, b) =>
     String(b?.plannedDate || "").localeCompare(String(a?.plannedDate || ""), "en", { numeric: true }),
   );
+  const visibleTasks = tasks.slice(0, Math.max(state.stocktakeVisibleCount || 0, 30));
 
   if (!tasks.length) {
     summary.textContent = "点击“生成库存盘点任务”后，会按日期和货架顺序生成盘点任务。";
@@ -2523,7 +2527,7 @@ function renderStocktakePlanner() {
   const latestDate = formatDateOnly(tasks[0]?.plannedDate);
   const earliestDate = formatDateOnly(tasks[tasks.length - 1]?.plannedDate);
   summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${earliestDate} - ${latestDate}。`;
-  body.innerHTML = tasks
+  body.innerHTML = visibleTasks
     .map(
       (task) => `
         <tr>
@@ -2547,6 +2551,14 @@ function renderStocktakePlanner() {
       `,
     )
     .join("");
+}
+
+function loadMoreStocktakeTasksIfNeeded() {
+  const panel = $("stocktakePlanner");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.stocktakeVisibleCount >= state.stocktakeTasks.length) return;
+  state.stocktakeVisibleCount = Math.min(state.stocktakeTasks.length, state.stocktakeVisibleCount + 30);
+  renderStocktakePlanner();
 }
 
 function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
@@ -5983,6 +5995,7 @@ function bindForms() {
   $("openStocktakePlannerPanel").addEventListener("click", async () => {
     try {
       await Promise.all([loadShelves(), loadBoxes(), loadStocktakeTasks()]);
+      state.stocktakeVisibleCount = Math.min(30, state.stocktakeTasks.length);
       renderStocktakePlanner();
       switchPanel("stocktakePlanner");
     } catch (error) {
@@ -7888,6 +7901,7 @@ function bindScrollLoad() {
     loadMoreFbaReplenishmentsIfNeeded();
     loadMoreUsersIfNeeded();
     loadMoreAuditIfNeeded();
+    loadMoreStocktakeTasksIfNeeded();
   });
 
   const myAuditCard = document.querySelector("#myAuditModal .modal-card");

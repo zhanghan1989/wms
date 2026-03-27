@@ -68,42 +68,42 @@ export class StocktakePlannerService {
       },
     });
 
-    const baseDate = lastTask?.plannedDate
-      ? new Date(lastTask.plannedDate)
-      : this.addCalendarDays(this.getTodayStart(), -1);
     const lastShelfCode = lastTask?.shelf?.shelfCode ?? null;
     const lastShelfIndex = lastShelfCode
       ? shelves.findIndex((item) => item.shelfCode === lastShelfCode)
       : -1;
+    const plannedDate = this.getTodayStart();
+    const shelf = shelves[(lastShelfIndex + 1 + shelves.length) % shelves.length];
 
     await this.prisma.$transaction(async (tx) => {
-      let cursorDate = new Date(baseDate);
-      for (let index = 0; index < 5; index += 1) {
-        const plannedDate = this.getNextBusinessDate(cursorDate);
-        cursorDate = new Date(plannedDate);
-        const shelf = shelves[(lastShelfIndex + index + 1 + shelves.length) % shelves.length];
-        const task = await tx.stocktakePlannerTask.create({
-          data: {
-            taskNo: this.buildTaskNo(shelf.shelfCode, plannedDate),
-            plannedDate,
-            shelfId: shelf.id,
-            status: StocktakePlannerTaskStatus.pending,
-            createdBy: operatorId,
-            createdAt,
-          },
-        });
-        await this.auditService.create({
-          db: tx,
-          entityType: 'stocktake_task',
-          entityId: task.id,
-          action: AuditAction.create,
-          eventType: AuditEventType.STOCKTAKE_TASK_CREATED,
-          beforeData: null,
-          afterData: task as unknown as Record<string, unknown>,
-          operatorId,
-          requestId,
-        });
+      const baseTaskNo = this.buildTaskNo(shelf.shelfCode, plannedDate);
+      let taskNo = baseTaskNo;
+      let suffix = 2;
+      while (await tx.stocktakePlannerTask.findUnique({ where: { taskNo } })) {
+        taskNo = `${baseTaskNo}-${suffix}`;
+        suffix += 1;
       }
+      const task = await tx.stocktakePlannerTask.create({
+        data: {
+          taskNo,
+          plannedDate,
+          shelfId: shelf.id,
+          status: StocktakePlannerTaskStatus.pending,
+          createdBy: operatorId,
+          createdAt,
+        },
+      });
+      await this.auditService.create({
+        db: tx,
+        entityType: 'stocktake_task',
+        entityId: task.id,
+        action: AuditAction.create,
+        eventType: AuditEventType.STOCKTAKE_TASK_CREATED,
+        beforeData: null,
+        afterData: task as unknown as Record<string, unknown>,
+        operatorId,
+        requestId,
+      });
     });
 
     const latest = await this.prisma.stocktakePlannerTask.findMany({
@@ -224,25 +224,6 @@ export class StocktakePlannerService {
   private getTodayStart(): Date {
     const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
     return new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00+08:00`);
-  }
-
-  private addCalendarDays(date: Date, days: number): Date {
-    const next = new Date(date);
-    next.setDate(next.getDate() + days);
-    return next;
-  }
-
-  private getNextBusinessDate(date: Date): Date {
-    const next = new Date(date);
-    do {
-      next.setDate(next.getDate() + 1);
-    } while (this.isWeekend(next));
-    return next;
-  }
-
-  private isWeekend(date: Date): boolean {
-    const weekday = date.getDay();
-    return weekday === 0 || weekday === 6;
   }
 
   private buildTaskNo(shelfCode: string, plannedDate: Date): string {
