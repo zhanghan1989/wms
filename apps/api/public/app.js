@@ -72,6 +72,7 @@ let actionConfirmResolver = null;
 let suppressAuthErrorToastUntil = 0;
 let adjustBoxValidationTimer = null;
 let adjustBoxValidationToken = 0;
+let modalZIndexSeed = 20;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 
@@ -1424,6 +1425,8 @@ function ensureInventoryPanelUi() {
 function openModal(modalId) {
   const modal = $(modalId);
   if (!modal) return;
+  modalZIndexSeed += 1;
+  modal.style.zIndex = String(modalZIndexSeed);
   modal.classList.remove("hidden");
 }
 
@@ -1431,6 +1434,7 @@ function closeModal(modalId) {
   const modal = $(modalId);
   if (!modal) return;
   modal.classList.add("hidden");
+  modal.style.zIndex = "";
 }
 
 function ensureOverseasWarehouseQueryUi() {
