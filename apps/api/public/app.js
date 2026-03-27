@@ -2572,17 +2572,17 @@ function renderStocktakePlanner() {
   }
 
   const plannedDates = tasks
-    .map((task) => String(task?.plannedDate || ""))
+    .map((task) => String(task?.plannedDateText || task?.plannedDate || ""))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-  const latestDate = formatDateOnlyInTimeZone(plannedDates[plannedDates.length - 1] || "");
-  const earliestDate = formatDateOnlyInTimeZone(plannedDates[0] || "");
+  const latestDate = displayText(plannedDates[plannedDates.length - 1] || "-");
+  const earliestDate = displayText(plannedDates[0] || "-");
   summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${earliestDate} - ${latestDate}。`;
   body.innerHTML = visibleTasks
     .map(
       (task) => `
         <tr>
-          <td>${escapeHtml(formatDateOnlyWithWeekdayInTimeZone(task?.plannedDate))}</td>
+          <td>${escapeHtml(displayText(task?.plannedDateWithWeekday) || formatDateOnlyWithWeekdayInTimeZone(task?.plannedDate))}</td>
           <td>${escapeHtml(displayText(task?.taskNo))}</td>
           <td>${escapeHtml(displayText(task?.shelfCode))}</td>
           <td>${escapeHtml(buildStocktakeTaskStatusText(task))}</td>
@@ -2627,7 +2627,7 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
 
   meta.innerHTML = `
     <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
-    <div><strong>任务日期：</strong>${escapeHtml(formatDateOnlyInTimeZone(task?.plannedDate))}</div>
+    <div><strong>任务日期：</strong>${escapeHtml(displayText(task?.plannedDateText) || formatDateOnlyInTimeZone(task?.plannedDate))}</div>
     <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
     <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
     <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
@@ -2683,7 +2683,7 @@ function openStocktakePrintWindow(task, rows) {
     <h1>库存盘点任务明细</h1>
     <div class="meta">
       <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
-      <div><strong>任务日期：</strong>${escapeHtml(formatDateOnlyInTimeZone(task?.plannedDate))}</div>
+      <div><strong>任务日期：</strong>${escapeHtml(displayText(task?.plannedDateText) || formatDateOnlyInTimeZone(task?.plannedDate))}</div>
       <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
       <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
       <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>

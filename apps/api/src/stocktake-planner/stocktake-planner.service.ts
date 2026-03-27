@@ -279,6 +279,8 @@ export class StocktakePlannerService {
       id: item.id.toString(),
       taskNo: item.taskNo,
       plannedDate: item.plannedDate,
+      plannedDateText: this.formatDateOnly(item.plannedDate),
+      plannedDateWithWeekday: this.formatDateOnlyWithWeekday(item.plannedDate),
       shelfId: item.shelfId.toString(),
       shelfCode: item.shelf?.shelfCode ?? '',
       shelfName: item.shelf?.name ?? null,
@@ -300,5 +302,26 @@ export class StocktakePlannerService {
   private buildTaskNo(shelfCode: string, plannedDate: Date): string {
     const parts = getZonedDateParts(plannedDate, APP_TIMEZONE);
     return `STK-${parts.year}${parts.month}${parts.day}-${shelfCode}`;
+  }
+
+  private formatDateOnly(date: Date | null | undefined): string | null {
+    if (!date) return null;
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `${parts.year}/${parts.month}/${parts.day}`;
+  }
+
+  private formatDateOnlyWithWeekday(date: Date | null | undefined): string | null {
+    if (!date) return null;
+    const parts = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: APP_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      weekday: 'long',
+    }).formatToParts(date);
+    const mapped = Object.fromEntries(
+      parts.filter((item) => item.type !== 'literal').map((item) => [item.type, item.value]),
+    );
+    return `${mapped.year || '0000'}/${mapped.month || '00'}/${mapped.day || '00'}(${mapped.weekday || '-'})`;
   }
 }
