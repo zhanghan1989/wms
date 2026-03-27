@@ -2494,16 +2494,6 @@ async function generateStocktakeTasks() {
   state.stocktakeVisibleCount = Math.min(Math.max(state.stocktakeVisibleCount || 0, 30), state.stocktakeTasks.length);
 }
 
-async function clearFutureStocktakeTasks() {
-  const result = await request("/stocktake-planner/tasks/clear-future", {
-    method: "POST",
-    body: "{}",
-  });
-  state.stocktakeTasks = Array.isArray(result?.tasks) ? result.tasks : [];
-  state.stocktakeVisibleCount = Math.min(Math.max(state.stocktakeVisibleCount || 0, 30), state.stocktakeTasks.length);
-  return result;
-}
-
 async function confirmStocktakeTask(taskId) {
   const updated = await request(`/stocktake-planner/tasks/${encodeURIComponent(taskId)}/confirm`, {
     method: "POST",
@@ -2522,7 +2512,6 @@ function renderStocktakePlanner() {
   const body = $("stocktakePlannerBody");
   const summary = $("stocktakePlannerSummary");
   if (!body || !summary) return;
-  $("clearFutureStocktakeTasksBtn")?.classList.toggle("hidden", !hasAdminAccess(state.me?.role));
 
   const tasks = [...(Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : [])].sort((a, b) =>
     String(b?.plannedDate || "").localeCompare(String(a?.plannedDate || ""), "en", { numeric: true }),
@@ -6025,25 +6014,6 @@ function bindForms() {
         await generateStocktakeTasks();
         renderStocktakePlanner();
         showToast("已追加 5 条库存盘点任务");
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("clearFutureStocktakeTasksBtn")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      const ok = await openActionConfirmModal("确认清理今天之后的所有库存盘点任务？", "确认清理", "清理");
-      if (!ok) return;
-      await withBusyButton(button, "清理中...", async () => {
-        const result = await clearFutureStocktakeTasks();
-        renderStocktakePlanner();
-        showToast(
-          Number(result?.deletedCount || 0) > 0
-            ? `已清理 ${Number(result.deletedCount)} 条未来盘点任务`
-            : "没有可清理的未来盘点任务",
-        );
       });
     } catch (error) {
       showToast(error.message, true);
