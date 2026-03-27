@@ -74,10 +74,15 @@ export class StocktakePlannerService {
 
     const lastTask = await this.prisma.stocktakePlannerTask.findFirst({
       where: {
-        status: StocktakePlannerTaskStatus.confirmed,
+        status: {
+          in: [
+            StocktakePlannerTaskStatus.confirmed,
+            StocktakePlannerTaskStatus.confirming,
+          ],
+        },
       },
       orderBy: [
-        { confirmedAt: 'desc' },
+        { updatedAt: 'desc' },
         { id: 'desc' },
       ],
       include: {
