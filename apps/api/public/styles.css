@@ -603,6 +603,15 @@ td {
   grid-template-columns: minmax(180px, 240px) minmax(180px, 280px) auto;
 }
 
+.manage-inline-form.manage-inline-form-quad {
+  grid-template-columns: minmax(180px, 240px) minmax(180px, 280px) auto auto;
+}
+
+.manage-inline-form.manage-inline-form-actions {
+  grid-template-columns: auto auto;
+  justify-content: start;
+}
+
 .manage-inline-form.manage-inline-form-direct-result {
   grid-template-columns: minmax(0, 1fr);
 }

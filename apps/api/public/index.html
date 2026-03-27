@@ -978,12 +978,8 @@
         <h3>箱号管理</h3>
         <button type="button" class="ghost" data-action="closeBoxManageModal">关闭</button>
       </div>
-      <form id="boxManageForm" class="manage-inline-form manage-inline-form-triple">
-        <input id="boxManageCodeInput" inputmode="numeric" maxlength="3" placeholder="箱号3位数字" required />
-        <select id="boxManageShelfId" required>
-          <option value="">请选择货架号</option>
-        </select>
-        <button type="submit" class="small-btn manage-create-btn">新增箱号</button>
+      <form id="boxManageForm" class="manage-inline-form manage-inline-form-actions">
+        <button id="openCreateBoxFromManage" type="button" class="small-btn manage-create-btn">新增箱号</button>
       </form>
       <div id="boxManageTableWrap" class="manage-table-scroll">
       <table>

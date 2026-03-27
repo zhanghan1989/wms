@@ -1435,13 +1435,21 @@ function closeModal(modalId) {
 
 function ensureOverseasWarehouseQueryUi() {
   const actionRow = document.querySelector("#overseasWarehouse .card .action-row");
-  if (actionRow && !$("openBoxContentQueryModal")) {
-    const boxQueryBtn = document.createElement("button");
+  const boxManageForm = $("boxManageForm");
+  let boxQueryBtn = $("openBoxContentQueryModal");
+  if (!boxQueryBtn) {
+    boxQueryBtn = document.createElement("button");
     boxQueryBtn.type = "button";
     boxQueryBtn.id = "openBoxContentQueryModal";
     boxQueryBtn.textContent = "箱内商品查询";
-    actionRow.insertBefore(boxQueryBtn, $("downloadStockAdjustmentCsvBtn") || null);
+  }
+  if (boxManageForm && boxQueryBtn) {
+    boxQueryBtn.classList.add("small-btn", "manage-create-btn");
+    const createBtn = $("openCreateBoxFromManage");
+    boxManageForm.insertBefore(boxQueryBtn, createBtn || null);
+  }
 
+  if (actionRow && !$("openShelfBoxQueryModal")) {
     const shelfQueryBtn = document.createElement("button");
     shelfQueryBtn.type = "button";
     shelfQueryBtn.id = "openShelfBoxQueryModal";
@@ -5953,11 +5961,6 @@ function bindForms() {
           $("adjustBoxCode").value = createdBoxCode;
           renderAdjustBoxSuggestions(createdBoxCode);
         }
-        const boxManageModal = $("boxManageModal");
-        if (boxManageModal && !boxManageModal.classList.contains("hidden")) {
-          $("boxManageCodeInput").value = "";
-          $("boxManageShelfId").value = "";
-        }
         await loadAudit();
       });
     } catch (error) {
@@ -6399,15 +6402,9 @@ function bindDelegates() {
     }
   });
 
-  $("boxManageForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
+  $("openCreateBoxFromManage").addEventListener("click", async () => {
     try {
-      const boxCode = buildBoxCode($("boxManageCodeInput").value);
-      const shelfId = Number($("boxManageShelfId").value);
-      if (!Number.isInteger(shelfId) || shelfId <= 0) {
-        throw new Error("请选择货架号");
-      }
-      await openCreateBoxModal({ boxCode, shelfId });
+      await openCreateBoxModal();
     } catch (error) {
       showToast(error.message, true);
     }
