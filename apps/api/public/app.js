@@ -2656,12 +2656,12 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
 
 function openStocktakePrintWindow(task, rows) {
   if (!task) {
-    throw new Error("???????");
+    throw new Error("未找到盘点任务");
   }
   const safeRows = Array.isArray(rows) ? rows : [];
   const popup = window.open("", "_blank", "width=960,height=720");
   if (!popup) {
-    throw new Error("???????????????????");
+    throw new Error("打印窗口被拦截，请允许浏览器打开新窗口");
   }
 
   popup.document.write(`<!doctype html>
@@ -2680,17 +2680,17 @@ function openStocktakePrintWindow(task, rows) {
     </style>
   </head>
   <body>
-    <h1>????????</h1>
+    <h1>库存盘点任务明细</h1>
     <div class="meta">
-      <div><strong>?????</strong>${escapeHtml(displayText(task?.taskNo))}</div>
-      <div><strong>?????</strong>${escapeHtml(displayText(task?.plannedDateText) || formatDateOnlyInTimeZone(task?.plannedDate))}</div>
-      <div><strong>????</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
-      <div><strong>???</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
-      <div><strong>?????</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
-      <div><strong>????</strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
+      <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
+      <div><strong>任务日期：</strong>${escapeHtml(displayText(task?.plannedDateWithWeekday) || displayText(task?.plannedDateText) || formatDateOnlyInTimeZone(task?.plannedDate))}</div>
+      <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
+      <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
+      <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
+      <div><strong>确认人：</strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
     </div>
     <table>
-      <thead><tr><th>??</th><th>SKU</th><th>??</th><th>????</th></tr></thead>
+      <thead><tr><th>箱号</th><th>SKU</th><th>数量</th><th>实际数量</th></tr></thead>
       <tbody>
         ${
           safeRows.length
@@ -2699,7 +2699,7 @@ function openStocktakePrintWindow(task, rows) {
                   (row) => `<tr><td>${escapeHtml(displayText(row?.boxCode))}</td><td>${escapeHtml(displayText(row?.sku))}</td><td>${escapeHtml(displayText(row?.qty))}</td><td></td></tr>`,
                 )
                 .join("")
-            : `<tr><td colspan="4">?????????</td></tr>`
+            : `<tr><td colspan="4">当前没有盘点明细。</td></tr>`
         }
       </tbody>
     </table>
