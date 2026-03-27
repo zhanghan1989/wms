@@ -39,6 +39,27 @@ export class StocktakePlannerService {
 
   async generate(operatorId: bigint, requestId?: string): Promise<unknown[]> {
     const createdAt = new Date();
+    const unfinishedTask = await this.prisma.stocktakePlannerTask.findFirst({
+      where: {
+        status: {
+          in: [
+            StocktakePlannerTaskStatus.pending,
+            StocktakePlannerTaskStatus.confirming,
+          ],
+        },
+      },
+      orderBy: [
+        { createdAt: 'desc' },
+        { id: 'desc' },
+      ],
+    });
+
+    if (unfinishedTask) {
+      throw new BadRequestException(
+        '\u8bf7\u5148\u6253\u5370\u6216\u8005\u5b8c\u6210\u4e4b\u524d\u7684\u76d8\u70b9\u4efb\u52a1\u3002',
+      );
+    }
+
     const shelves = await this.prisma.shelf.findMany({
       where: {
         status: 1,
