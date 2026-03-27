@@ -67,6 +67,11 @@ enum StocktakeTaskStatus {
   void
 }
 
+enum StocktakePlannerTaskStatus {
+  pending
+  confirmed
+}
+
 enum MovementType {
   inbound
   outbound
@@ -137,6 +142,8 @@ model User {
   inboundOrders              InboundOrder[]
   outboundOrders             OutboundOrder[]
   stocktakeTasks             StocktakeTask[]
+  createdStocktakePlannerTasks   StocktakePlannerTask[] @relation("stocktake_planner_created_by")
+  confirmedStocktakePlannerTasks StocktakePlannerTask[] @relation("stocktake_planner_confirmed_by")
   adjustOrders               InventoryAdjustOrder[]
   batchInboundOrders         BatchInboundOrder[]
   createdFbaReplenishments   FbaReplenishment[]     @relation("fba_created_by")
@@ -280,6 +287,7 @@ model Shelf {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
   boxes     Box[]
+  stocktakePlannerTasks StocktakePlannerTask[]
 
   @@map("shelves")
 }
@@ -403,6 +411,26 @@ model StocktakeTask {
   records   StocktakeRecord[]
 
   @@map("stocktake_tasks")
+}
+
+model StocktakePlannerTask {
+  id          BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  taskNo      String                     @unique @map("task_no") @db.VarChar(64)
+  plannedDate DateTime                   @map("planned_date") @db.Date
+  shelfId     BigInt                     @map("shelf_id") @db.UnsignedBigInt
+  status      StocktakePlannerTaskStatus @default(pending)
+  createdBy   BigInt                     @map("created_by") @db.UnsignedBigInt
+  confirmedBy BigInt?                    @map("confirmed_by") @db.UnsignedBigInt
+  confirmedAt DateTime?                  @map("confirmed_at")
+  createdAt   DateTime                   @default(now()) @map("created_at")
+  updatedAt   DateTime                   @updatedAt @map("updated_at")
+  shelf       Shelf                      @relation(fields: [shelfId], references: [id])
+  creator     User                       @relation("stocktake_planner_created_by", fields: [createdBy], references: [id])
+  confirmer   User?                      @relation("stocktake_planner_confirmed_by", fields: [confirmedBy], references: [id])
+
+  @@index([plannedDate])
+  @@index([shelfId])
+  @@map("stocktake_planner_tasks")
 }
 
 model StocktakeRecord {
@@ -555,4 +583,3 @@ model OperationAuditLog {
   @@index([eventType, createdAt])
   @@map("operation_audit_logs")
 }
-

@@ -15,6 +15,7 @@ import { ShopsModule } from './shops/shops.module';
 import { SkuTypesModule } from './sku-types/sku-types.module';
 import { SkuEditRequestsModule } from './sku-edit-requests/sku-edit-requests.module';
 import { SkusModule } from './skus/skus.module';
+import { StocktakePlannerModule } from './stocktake-planner/stocktake-planner.module';
 import { UserOptionsModule } from './user-options/user-options.module';
 import { UsersModule } from './users/users.module';
 
@@ -35,6 +36,7 @@ import { UsersModule } from './users/users.module';
     SkuTypesModule,
     ShopsModule,
     ShelvesModule,
+    StocktakePlannerModule,
     BoxesModule,
     BatchInboundModule,
     InboundModule,

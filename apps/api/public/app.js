@@ -65,6 +65,9 @@ const state = {
   overviewDashboard: null,
   dataBackups: [],
   pendingPrintLabel: null,
+  stocktakeTasks: [],
+  selectedStocktakeTask: null,
+  selectedStocktakeTaskRows: [],
 };
 
 let deleteConfirmResolver = null;
@@ -75,7 +78,6 @@ let adjustBoxValidationToken = 0;
 let modalZIndexSeed = 20;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
-
 const $ = (id) => document.getElementById(id);
 
 $("openEmptyBoxManageModal")?.remove();
@@ -485,6 +487,27 @@ function formatDate(value) {
   if (!value) return "-";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString();
+}
+
+function formatDateOnly(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}/${month}/${day}`;
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function getTodayStart() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 function formatDateForFilename(date) {
@@ -1526,6 +1549,35 @@ function ensureOverseasWarehouseQueryUi() {
       `,
     );
   }
+
+  if (!$("stocktakeTaskDetailModal")) {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `
+        <div id="stocktakeTaskDetailModal" class="modal hidden">
+          <div class="modal-card modal-wide modal-manage modal-manage-scroll">
+            <div class="modal-head">
+              <h3>库存盘点明细</h3>
+              <div class="panel-tools">
+                <button type="button" class="ghost" id="printStocktakeTaskDetailBtn">打印</button>
+                <button type="button" class="ghost" data-action="closeStocktakeTaskDetailModal">关闭</button>
+              </div>
+            </div>
+            <div id="stocktakeTaskDetailMeta" class="batch-detail-meta"></div>
+            <div id="stocktakeTaskDetailSummary" class="muted manage-query-summary">请选择盘点任务后查看。</div>
+            <div class="manage-table-scroll">
+              <table>
+                <thead><tr><th>箱号</th><th>SKU</th><th>数量</th></tr></thead>
+                <tbody id="stocktakeTaskDetailBody">
+                  <tr><td colspan="3" class="muted">请选择盘点任务后查看。</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      `,
+    );
+  }
 }
 
 function getSubmitButton(form, event) {
@@ -2405,6 +2457,218 @@ function renderShelfBoxQueryResult(shelf, rows, boxCount = 0) {
       `,
     )
     .join("");
+}
+
+function getEligibleStocktakeShelves() {
+  return getEnabledShelvesSorted().filter((shelf) => {
+    const shelfCode = normalizeShelfCodeInput(shelf?.shelfCode);
+    return Boolean(shelfCode) && shelfCode !== "00" && !shelfCode.startsWith("S");
+  });
+}
+
+async function loadStocktakeTasks() {
+  const items = await request("/stocktake-planner/tasks");
+  state.stocktakeTasks = Array.isArray(items) ? items : [];
+}
+
+function buildStocktakeTaskStatusText(task) {
+  return task?.status === "confirmed" ? "已确认" : "待确认";
+}
+
+async function generateStocktakeTasks() {
+  const items = await request("/stocktake-planner/tasks/generate", {
+    method: "POST",
+    body: "{}",
+  });
+  state.stocktakeTasks = Array.isArray(items) ? items : [];
+}
+
+async function confirmStocktakeTask(taskId) {
+  const updated = await request(`/stocktake-planner/tasks/${encodeURIComponent(taskId)}/confirm`, {
+    method: "POST",
+    body: "{}",
+  });
+  const items = Array.isArray(state.stocktakeTasks) ? [...state.stocktakeTasks] : [];
+  const index = items.findIndex((item) => String(item?.id || "") === String(taskId || ""));
+  if (index >= 0) {
+    items[index] = updated;
+  }
+  state.stocktakeTasks = items;
+  return updated;
+}
+
+function renderStocktakePlanner() {
+  const body = $("stocktakePlannerBody");
+  const summary = $("stocktakePlannerSummary");
+  if (!body || !summary) return;
+
+  const tasks = [...(Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : [])].sort((a, b) =>
+    String(a?.plannedDate || "").localeCompare(String(b?.plannedDate || ""), "en", { numeric: true }),
+  );
+
+  if (!tasks.length) {
+    summary.textContent = "点击“生成库存盘点任务”后，会按日期和货架顺序生成盘点任务。";
+    body.innerHTML = '<tr><td colspan="7" class="muted">暂无库存盘点任务。</td></tr>';
+    return;
+  }
+
+  const firstDate = formatDateOnly(tasks[0]?.plannedDate);
+  const lastDate = formatDateOnly(tasks[tasks.length - 1]?.plannedDate);
+  summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${firstDate} - ${lastDate}。`;
+  body.innerHTML = tasks
+    .map(
+      (task) => `
+        <tr>
+          <td>${escapeHtml(formatDateOnly(task?.plannedDate))}</td>
+          <td>${escapeHtml(displayText(task?.taskNo))}</td>
+          <td>${escapeHtml(displayText(task?.shelfCode))}</td>
+          <td>${escapeHtml(buildStocktakeTaskStatusText(task))}</td>
+          <td>${escapeHtml(formatDate(task?.confirmedAt))}</td>
+          <td>${escapeHtml(displayText(task?.confirmedByName) || "-")}</td>
+          <td>
+            <div class="action-row">
+              <button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">查看</button>
+              ${
+                task?.status === "confirmed"
+                  ? ""
+                  : `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>`
+              }
+            </div>
+          </td>
+        </tr>
+      `,
+    )
+    .join("");
+}
+
+function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
+  const meta = $("stocktakeTaskDetailMeta");
+  const summary = $("stocktakeTaskDetailSummary");
+  const body = $("stocktakeTaskDetailBody");
+  if (!meta || !summary || !body) return;
+
+  state.selectedStocktakeTask = task || null;
+  state.selectedStocktakeTaskRows = Array.isArray(rows) ? rows : [];
+
+  if (!task) {
+    meta.innerHTML = "";
+    summary.textContent = "请选择盘点任务后查看。";
+    body.innerHTML = '<tr><td colspan="3" class="muted">请选择盘点任务后查看。</td></tr>';
+    return;
+  }
+
+  meta.innerHTML = `
+    <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
+    <div><strong>任务日期：</strong>${escapeHtml(formatDateOnly(task?.plannedDate))}</div>
+    <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
+    <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
+    <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
+    <div><strong>确认人：</strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
+  `;
+
+  if (!boxCount) {
+    summary.textContent = `货架 ${displayText(task?.shelfCode)} 当前没有箱号。`;
+    body.innerHTML = `<tr><td colspan="3" class="muted">货架 ${escapeHtml(displayText(task?.shelfCode))} 当前没有箱号。</td></tr>`;
+    return;
+  }
+
+  summary.textContent = `货架 ${displayText(task?.shelfCode)} 共 ${boxCount} 个箱号。`;
+  body.innerHTML = state.selectedStocktakeTaskRows
+    .map(
+      (row) => `
+        <tr>
+          <td>${escapeHtml(displayText(row?.boxCode))}</td>
+          <td>${escapeHtml(displayText(row?.sku))}</td>
+          <td>${escapeHtml(displayText(row?.qty))}</td>
+        </tr>
+      `,
+    )
+    .join("");
+}
+
+function openStocktakePrintWindow(task, rows) {
+  if (!task) {
+    throw new Error("未找到盘点任务");
+  }
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const popup = window.open("", "_blank", "width=960,height=720");
+  if (!popup) {
+    throw new Error("打印窗口被拦截，请允许浏览器打开新窗口");
+  }
+
+  popup.document.write(`<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(displayText(task?.taskNo))}</title>
+    <style>
+      body { font-family: "Microsoft YaHei", sans-serif; margin: 24px; color: #111; }
+      h1 { font-size: 24px; margin: 0 0 12px; }
+      .meta { margin-bottom: 16px; display: grid; gap: 6px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border: 1px solid #cfdad0; padding: 8px 10px; text-align: left; }
+      th { background: #eef5f0; }
+      @media print { body { margin: 12mm; } }
+    </style>
+  </head>
+  <body>
+    <h1>库存盘点明细</h1>
+    <div class="meta">
+      <div><strong>任务编号：</strong>${escapeHtml(displayText(task?.taskNo))}</div>
+      <div><strong>任务日期：</strong>${escapeHtml(formatDateOnly(task?.plannedDate))}</div>
+      <div><strong>货架号：</strong>${escapeHtml(displayText(task?.shelfCode))}</div>
+      <div><strong>状态：</strong>${escapeHtml(buildStocktakeTaskStatusText(task))}</div>
+      <div><strong>确认日期：</strong>${escapeHtml(formatDate(task?.confirmedAt))}</div>
+      <div><strong>确认人：</strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
+    </div>
+    <table>
+      <thead><tr><th>箱号</th><th>SKU</th><th>数量</th></tr></thead>
+      <tbody>
+        ${
+          safeRows.length
+            ? safeRows
+                .map(
+                  (row) => `
+          <tr>
+            <td>${escapeHtml(displayText(row?.boxCode))}</td>
+            <td>${escapeHtml(displayText(row?.sku))}</td>
+            <td>${escapeHtml(displayText(row?.qty))}</td>
+          </tr>`,
+                )
+                .join("")
+            : `<tr><td colspan="3">当前没有盘点明细。</td></tr>`
+        }
+      </tbody>
+    </table>
+    <script>
+      window.addEventListener("load", function () {
+        setTimeout(function () { window.focus(); window.print(); }, 120);
+      });
+      window.addEventListener("afterprint", function () { window.close(); });
+    </script>
+  </body>
+</html>`);
+  popup.document.close();
+}
+
+async function openStocktakeTaskDetail(taskId) {
+  await Promise.all([loadShelves(), loadBoxes()]);
+  const task = (Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : []).find(
+    (item) => String(item?.id || "") === String(taskId || ""),
+  );
+  if (!task) {
+    throw new Error("未找到盘点任务");
+  }
+  const shelf =
+    (Array.isArray(state.shelves) ? state.shelves : []).find(
+      (item) => String(item?.id || "") === String(task?.shelfId || ""),
+    ) || findShelfByAnyCode(task?.shelfCode);
+  if (!shelf) {
+    throw new Error("未找到对应货架");
+  }
+  const { boxCount, rows } = await getShelfBoxQueryRows(shelf);
+  renderStocktakeTaskDetail(task, rows, boxCount);
+  openModal("stocktakeTaskDetailModal");
 }
 
 function renderInventoryLocationRows(rows) {
@@ -5708,6 +5972,51 @@ function bindForms() {
     }
   });
 
+  $("openStocktakePlannerPanel").addEventListener("click", async () => {
+    try {
+      await Promise.all([loadShelves(), loadBoxes(), loadStocktakeTasks()]);
+      renderStocktakePlanner();
+      switchPanel("stocktakePlanner");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("backToOverseasWarehouseBtn").addEventListener("click", () => {
+    switchPanel("overseasWarehouse");
+  });
+
+  $("regenerateStocktakeTasksBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "生成中...", async () => {
+        await loadShelves();
+        const hasExistingTasks = Array.isArray(state.stocktakeTasks) && state.stocktakeTasks.length > 0;
+        if (hasExistingTasks) {
+          const ok = await openActionConfirmModal(
+            "将重新生成库存盘点任务，并覆盖当前任务列表，是否继续？",
+            "确认操作",
+            "继续生成",
+          );
+          if (!ok) return;
+        }
+        await generateStocktakeTasks();
+        renderStocktakePlanner();
+        showToast("库存盘点任务已生成");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("printStocktakeTaskDetailBtn").addEventListener("click", () => {
+    try {
+      openStocktakePrintWindow(state.selectedStocktakeTask, state.selectedStocktakeTaskRows);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openBoxManageModal").addEventListener("click", async () => {
     try {
       state.boxEditingIds = new Set();
@@ -6215,6 +6524,26 @@ function bindForms() {
 }
 
 function bindDelegates() {
+  $("stocktakePlannerBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    try {
+      if (button.dataset.action === "openStocktakeTaskDetail") {
+        await openStocktakeTaskDetail(button.dataset.id || "");
+        return;
+      }
+      if (button.dataset.action === "confirmStocktakeTask") {
+        const ok = await openActionConfirmModal("确认将该盘点任务标记为已确认？", "确认操作", "确认");
+        if (!ok) return;
+        await confirmStocktakeTask(button.dataset.id || "");
+        renderStocktakePlanner();
+        showToast("盘点任务已确认");
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("brandsBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -7307,6 +7636,11 @@ function bindDelegates() {
       closeModal("shelfBoxQueryModal");
       return;
     }
+    const stocktakeTaskDetailClose = event.target.closest("button[data-action='closeStocktakeTaskDetailModal']");
+    if (stocktakeTaskDetailClose) {
+      closeModal("stocktakeTaskDetailModal");
+      return;
+    }
 
     const departmentManageClose = event.target.closest("button[data-action='closeDepartmentManageModal']");
     if (departmentManageClose) {
@@ -7641,6 +7975,7 @@ function bindRefresh() {
 ensureBrandingUi();
 ensureInventoryPanelUi();
 ensureOverseasWarehouseQueryUi();
+renderStocktakePlanner();
 bindTabs();
 bindInputRules();
 bindForms();
