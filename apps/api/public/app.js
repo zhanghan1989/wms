@@ -2192,7 +2192,22 @@ function findShelfByAnyCode(raw) {
 function resetBoxContentQueryResult() {
   const summary = $("boxContentQuerySummary");
   const body = $("boxContentQueryBody");
-  if (summary) summary.textContent = "请输入箱号后查询。";
+  if (summary) {
+    summary.textContent = "请输入箱号后查询。";
+    summary.classList.remove("is-error");
+  }
+  if (body) {
+    body.innerHTML = '<tr><td colspan="4" class="muted">请输入箱号后查询。</td></tr>';
+  }
+}
+
+function renderBoxContentQueryNotFound(boxCode = "") {
+  const summary = $("boxContentQuerySummary");
+  const body = $("boxContentQueryBody");
+  if (summary) {
+    summary.textContent = boxCode ? `未找到箱号 ${boxCode}` : "未找到该箱号";
+    summary.classList.add("is-error");
+  }
   if (body) {
     body.innerHTML = '<tr><td colspan="4" class="muted">请输入箱号后查询。</td></tr>';
   }
@@ -2266,6 +2281,7 @@ function renderBoxContentQueryResult(box, rows) {
   const summary = $("boxContentQuerySummary");
   const body = $("boxContentQueryBody");
   if (!summary || !body) return;
+  summary.classList.remove("is-error");
 
   const boxCode = displayText(box?.boxCode);
   const shelfCode = displayText(box?.shelf?.shelfCode || box?.shelfCode);
@@ -5735,6 +5751,13 @@ function bindForms() {
 
   $("openCreateBoxFromSkuModal").addEventListener("click", openCreateBoxModal);
   $("openCreateBoxFromAdjust").addEventListener("click", openCreateBoxModal);
+  $("openCreateBoxFromManage").addEventListener("click", async () => {
+    try {
+      await openCreateBoxModal();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
   $("modalNewSkuBoxCode").addEventListener("input", (event) => {
     renderBoxOptionsForInput(
       "modalNewSkuBoxCode",
@@ -6073,9 +6096,12 @@ function bindForms() {
     try {
       await withBusyButton(submitButton, "查询中...", async () => {
         await Promise.all([loadShelves(), loadBoxes()]);
-        const box = findBoxByAnyCode($("boxContentQueryBoxCode").value);
+        const rawBoxCode = $("boxContentQueryBoxCode").value;
+        const normalizedBoxCode = normalizeBoxCodeInput(rawBoxCode);
+        const box = findBoxByAnyCode(rawBoxCode);
         if (!box) {
-          throw new Error("未找到该箱号");
+          renderBoxContentQueryNotFound(normalizedBoxCode || String(rawBoxCode || "").trim());
+          return;
         }
         const rows = await getBoxSkuInventoryRows(box.id);
         renderBoxContentQueryResult(box, rows);
@@ -6397,14 +6423,6 @@ function bindDelegates() {
       $("shelfManageNameInput").value = "";
       showToast("货架已新增");
       await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("openCreateBoxFromManage").addEventListener("click", async () => {
-    try {
-      await openCreateBoxModal();
     } catch (error) {
       showToast(error.message, true);
     }

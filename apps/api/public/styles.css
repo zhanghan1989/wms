@@ -1010,6 +1010,10 @@ pre {
   font-size: 13px;
 }
 
+.manage-query-summary.is-error {
+  color: var(--danger);
+}
+
 .batch-detail-modal-card {
   max-height: 86vh;
   overflow: auto;
