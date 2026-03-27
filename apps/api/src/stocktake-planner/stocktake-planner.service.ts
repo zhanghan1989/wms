@@ -30,7 +30,7 @@ export class StocktakePlannerService {
         },
       },
       orderBy: [
-        { plannedDate: 'asc' },
+        { plannedDate: 'desc' },
         { shelf: { shelfCode: 'asc' } },
       ],
     });
@@ -39,7 +39,6 @@ export class StocktakePlannerService {
 
   async generate(operatorId: bigint, requestId?: string): Promise<unknown[]> {
     const createdAt = new Date();
-    const baseDate = this.getTodayStart();
     const shelves = await this.prisma.shelf.findMany({
       where: {
         status: 1,
@@ -49,20 +48,40 @@ export class StocktakePlannerService {
         ],
       },
       orderBy: { shelfCode: 'asc' },
-      take: 10,
     });
 
     if (!shelves.length) {
       throw new BadRequestException('未找到可生成盘点任务的货架');
     }
 
-    const created = await this.prisma.$transaction(async (tx) => {
-      await tx.stocktakePlannerTask.deleteMany();
+    const lastTask = await this.prisma.stocktakePlannerTask.findFirst({
+      orderBy: [
+        { plannedDate: 'desc' },
+        { id: 'desc' },
+      ],
+      include: {
+        shelf: {
+          select: {
+            shelfCode: true,
+          },
+        },
+      },
+    });
 
-      const rows: StocktakePlannerTask[] = [];
-      for (const [index, shelf] of shelves.entries()) {
-        const plannedDate = new Date(baseDate);
-        plannedDate.setDate(baseDate.getDate() + index);
+    const baseDate = lastTask?.plannedDate
+      ? new Date(lastTask.plannedDate)
+      : this.addCalendarDays(this.getTodayStart(), -1);
+    const lastShelfCode = lastTask?.shelf?.shelfCode ?? null;
+    const lastShelfIndex = lastShelfCode
+      ? shelves.findIndex((item) => item.shelfCode === lastShelfCode)
+      : -1;
+
+    await this.prisma.$transaction(async (tx) => {
+      let cursorDate = new Date(baseDate);
+      for (let index = 0; index < 5; index += 1) {
+        const plannedDate = this.getNextBusinessDate(cursorDate);
+        cursorDate = new Date(plannedDate);
+        const shelf = shelves[(lastShelfIndex + index + 1 + shelves.length) % shelves.length];
         const task = await tx.stocktakePlannerTask.create({
           data: {
             taskNo: this.buildTaskNo(shelf.shelfCode, plannedDate),
@@ -73,7 +92,6 @@ export class StocktakePlannerService {
             createdAt,
           },
         });
-        rows.push(task);
         await this.auditService.create({
           db: tx,
           entityType: 'stocktake_task',
@@ -86,12 +104,9 @@ export class StocktakePlannerService {
           requestId,
         });
       }
-      return rows;
     });
 
-    const createdIds = created.map((item) => item.id);
     const latest = await this.prisma.stocktakePlannerTask.findMany({
-      where: { id: { in: createdIds } },
       include: {
         shelf: {
           select: {
@@ -108,7 +123,7 @@ export class StocktakePlannerService {
         },
       },
       orderBy: [
-        { plannedDate: 'asc' },
+        { plannedDate: 'desc' },
         { shelf: { shelfCode: 'asc' } },
       ],
     });
@@ -209,6 +224,25 @@ export class StocktakePlannerService {
   private getTodayStart(): Date {
     const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
     return new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00+08:00`);
+  }
+
+  private addCalendarDays(date: Date, days: number): Date {
+    const next = new Date(date);
+    next.setDate(next.getDate() + days);
+    return next;
+  }
+
+  private getNextBusinessDate(date: Date): Date {
+    const next = new Date(date);
+    do {
+      next.setDate(next.getDate() + 1);
+    } while (this.isWeekend(next));
+    return next;
+  }
+
+  private isWeekend(date: Date): boolean {
+    const weekday = date.getDay();
+    return weekday === 0 || weekday === 6;
   }
 
   private buildTaskNo(shelfCode: string, plannedDate: Date): string {

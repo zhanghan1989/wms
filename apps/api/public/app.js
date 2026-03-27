@@ -499,6 +499,14 @@ function formatDateOnly(value) {
   return `${year}/${month}/${day}`;
 }
 
+function formatDateOnlyWithWeekday(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+  return `${formatDateOnly(value)}(${weekdays[date.getDay()] || "-"})`;
+}
+
 function addDays(date, days) {
   const next = new Date(date);
   next.setDate(next.getDate() + days);
@@ -2503,7 +2511,7 @@ function renderStocktakePlanner() {
   if (!body || !summary) return;
 
   const tasks = [...(Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : [])].sort((a, b) =>
-    String(a?.plannedDate || "").localeCompare(String(b?.plannedDate || ""), "en", { numeric: true }),
+    String(b?.plannedDate || "").localeCompare(String(a?.plannedDate || ""), "en", { numeric: true }),
   );
 
   if (!tasks.length) {
@@ -2512,14 +2520,14 @@ function renderStocktakePlanner() {
     return;
   }
 
-  const firstDate = formatDateOnly(tasks[0]?.plannedDate);
-  const lastDate = formatDateOnly(tasks[tasks.length - 1]?.plannedDate);
-  summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${firstDate} - ${lastDate}。`;
+  const latestDate = formatDateOnly(tasks[0]?.plannedDate);
+  const earliestDate = formatDateOnly(tasks[tasks.length - 1]?.plannedDate);
+  summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${earliestDate} - ${latestDate}。`;
   body.innerHTML = tasks
     .map(
       (task) => `
         <tr>
-          <td>${escapeHtml(formatDateOnly(task?.plannedDate))}</td>
+          <td>${escapeHtml(formatDateOnlyWithWeekday(task?.plannedDate))}</td>
           <td>${escapeHtml(displayText(task?.taskNo))}</td>
           <td>${escapeHtml(displayText(task?.shelfCode))}</td>
           <td>${escapeHtml(buildStocktakeTaskStatusText(task))}</td>
@@ -5990,19 +5998,9 @@ function bindForms() {
     const button = event.currentTarget;
     try {
       await withBusyButton(button, "生成中...", async () => {
-        await loadShelves();
-        const hasExistingTasks = Array.isArray(state.stocktakeTasks) && state.stocktakeTasks.length > 0;
-        if (hasExistingTasks) {
-          const ok = await openActionConfirmModal(
-            "将重新生成库存盘点任务，并覆盖当前任务列表，是否继续？",
-            "确认操作",
-            "继续生成",
-          );
-          if (!ok) return;
-        }
         await generateStocktakeTasks();
         renderStocktakePlanner();
-        showToast("库存盘点任务已生成");
+        showToast("已追加 5 条库存盘点任务");
       });
     } catch (error) {
       showToast(error.message, true);
