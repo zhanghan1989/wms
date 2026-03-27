@@ -30,8 +30,8 @@ export class StocktakePlannerService {
         },
       },
       orderBy: [
-        { plannedDate: 'desc' },
-        { shelf: { shelfCode: 'asc' } },
+        { createdAt: 'desc' },
+        { id: 'desc' },
       ],
     });
     return rows.map((item) => this.toTaskDto(item));
@@ -123,8 +123,8 @@ export class StocktakePlannerService {
         },
       },
       orderBy: [
-        { plannedDate: 'desc' },
-        { shelf: { shelfCode: 'asc' } },
+        { createdAt: 'desc' },
+        { id: 'desc' },
       ],
     });
     return latest.map((item) => this.toTaskDto(item));
@@ -187,6 +187,77 @@ export class StocktakePlannerService {
         entityId: next.id,
         action: AuditAction.update,
         eventType: AuditEventType.STOCKTAKE_TASK_FINISHED,
+        beforeData: current as unknown as Record<string, unknown>,
+        afterData: next as unknown as Record<string, unknown>,
+        operatorId,
+        requestId,
+      });
+      return next;
+    });
+
+    return this.toTaskDto(updated);
+  }
+
+  async cancel(idParam: string, operatorId: bigint, requestId?: string): Promise<unknown> {
+    const id = parseId(idParam, 'stocktakePlannerTaskId');
+    const current = await this.prisma.stocktakePlannerTask.findUnique({
+      where: { id },
+      include: {
+        shelf: {
+          select: {
+            id: true,
+            shelfCode: true,
+            name: true,
+          },
+        },
+        confirmer: {
+          select: {
+            id: true,
+            username: true,
+          },
+        },
+      },
+    });
+    if (!current) {
+      throw new NotFoundException('盘点任务不存在');
+    }
+    if (current.status === StocktakePlannerTaskStatus.canceled) {
+      return this.toTaskDto(current);
+    }
+    if (current.status === StocktakePlannerTaskStatus.confirmed) {
+      throw new BadRequestException('已确认的盘点任务不可删除');
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.stocktakePlannerTask.update({
+        where: { id },
+        data: {
+          status: StocktakePlannerTaskStatus.canceled,
+          confirmedAt: null,
+          confirmedBy: null,
+        },
+        include: {
+          shelf: {
+            select: {
+              id: true,
+              shelfCode: true,
+              name: true,
+            },
+          },
+          confirmer: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
+        },
+      });
+      await this.auditService.create({
+        db: tx,
+        entityType: 'stocktake_task',
+        entityId: next.id,
+        action: AuditAction.update,
+        eventType: AuditEventType.STOCKTAKE_TASK_VOIDED,
         beforeData: current as unknown as Record<string, unknown>,
         afterData: next as unknown as Record<string, unknown>,
         operatorId,

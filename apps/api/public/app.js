@@ -2482,7 +2482,9 @@ async function loadStocktakeTasks() {
 }
 
 function buildStocktakeTaskStatusText(task) {
-  return task?.status === "confirmed" ? "已确认" : "待确认";
+  if (task?.status === "confirmed") return "已确认";
+  if (task?.status === "canceled") return "已取消";
+  return "待确认";
 }
 
 async function generateStocktakeTasks() {
@@ -2508,24 +2510,42 @@ async function confirmStocktakeTask(taskId) {
   return updated;
 }
 
+async function cancelStocktakeTask(taskId) {
+  const updated = await request(`/stocktake-planner/tasks/${encodeURIComponent(taskId)}/cancel`, {
+    method: "POST",
+    body: "{}",
+  });
+  const items = Array.isArray(state.stocktakeTasks) ? [...state.stocktakeTasks] : [];
+  const index = items.findIndex((item) => String(item?.id || "") === String(taskId || ""));
+  if (index >= 0) {
+    items[index] = updated;
+  }
+  state.stocktakeTasks = items;
+  return updated;
+}
+
 function renderStocktakePlanner() {
   const body = $("stocktakePlannerBody");
   const summary = $("stocktakePlannerSummary");
   if (!body || !summary) return;
 
   const tasks = [...(Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : [])].sort((a, b) =>
-    String(b?.plannedDate || "").localeCompare(String(a?.plannedDate || ""), "en", { numeric: true }),
+    String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""), "en", { numeric: true }),
   );
   const visibleTasks = tasks.slice(0, Math.max(state.stocktakeVisibleCount || 0, 30));
 
   if (!tasks.length) {
-    summary.textContent = "点击“生成库存盘点任务”后，会按日期和货架顺序生成盘点任务。";
+    summary.textContent = "点击“生成库存盘点任务”后，会按当前系统日期生成盘点任务。";
     body.innerHTML = '<tr><td colspan="7" class="muted">暂无库存盘点任务。</td></tr>';
     return;
   }
 
-  const latestDate = formatDateOnly(tasks[0]?.plannedDate);
-  const earliestDate = formatDateOnly(tasks[tasks.length - 1]?.plannedDate);
+  const plannedDates = tasks
+    .map((task) => String(task?.plannedDate || ""))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+  const latestDate = formatDateOnly(plannedDates[plannedDates.length - 1] || "");
+  const earliestDate = formatDateOnly(plannedDates[0] || "");
   summary.textContent = `已生成 ${tasks.length} 条库存盘点任务，日期范围 ${earliestDate} - ${latestDate}。`;
   body.innerHTML = visibleTasks
     .map(
@@ -2539,9 +2559,9 @@ function renderStocktakePlanner() {
           <td>${escapeHtml(displayText(task?.confirmedByName) || "-")}</td>
           <td>
             <div class="action-row">
-              <button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">??</button>
-              ${task?.status === "canceled" ? "" : `<button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">??</button>`}
-              ${task?.status === "pending" ? `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">??</button>` : ""}
+              <button type="button" class="tiny-btn secondary" data-action="openStocktakeTaskDetail" data-id="${escapeHtml(displayText(task?.id))}">查看</button>
+              ${task?.status === "pending" ? `<button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">删除</button>` : ""}
+              ${task?.status === "pending" ? `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>` : ""}
             </div>
           </td>
         </tr>
@@ -6017,6 +6037,7 @@ function bindForms() {
     }
   });
 
+
   $("printStocktakeTaskDetailBtn").addEventListener("click", () => {
     try {
       openStocktakePrintWindow(state.selectedStocktakeTask, state.selectedStocktakeTaskRows);
@@ -6541,19 +6562,20 @@ function bindDelegates() {
         return;
       }
       if (button.dataset.action === "confirmStocktakeTask") {
-        const ok = await openActionConfirmModal("?????????????????", "????", "??");
+        const ok = await openActionConfirmModal("确认将该盘点任务标记为已确认？", "确认操作", "确认");
         if (!ok) return;
         await confirmStocktakeTask(button.dataset.id || "");
         renderStocktakePlanner();
-        showToast("???????");
+        showToast("盘点任务已确认");
         return;
       }
       if (button.dataset.action === "cancelStocktakeTask") {
-        const ok = await openActionConfirmModal("???????????????", "????", "??");
+        const ok = await openActionConfirmModal("确认删除该盘点任务？删除后状态将变为已取消。", "确认操作", "确认删除");
         if (!ok) return;
         await cancelStocktakeTask(button.dataset.id || "");
         renderStocktakePlanner();
-        showToast("???????");
+        showToast("盘点任务已取消");
+        return;
       }
     } catch (error) {
       showToast(error.message, true);

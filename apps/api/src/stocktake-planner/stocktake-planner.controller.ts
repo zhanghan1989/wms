@@ -31,4 +31,13 @@ export class StocktakePlannerController {
   ): Promise<unknown> {
     return this.stocktakePlannerService.confirm(id, user.id, req.requestId);
   }
+
+  @Post('tasks/:id/cancel')
+  async cancel(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.stocktakePlannerService.cancel(id, user.id, req.requestId);
+  }
 }
