@@ -15,6 +15,7 @@
 *.html text eol=lf
 *.sql text eol=lf
 *.sh text eol=lf
+*.ps1 text eol=lf
 
 apps/api/public/*.html text eol=lf
 apps/api/public/*.js text eol=lf

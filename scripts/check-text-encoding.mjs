@@ -1,6 +1,6 @@
-import { execSync } from "node:child_process";
-import { extname } from "node:path";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { extname, join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
 
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -17,6 +17,7 @@ const textExtensions = new Set([
   ".css",
   ".html",
   ".sql",
+  ".prisma",
   ".txt",
   ".env",
   ".sh",
@@ -24,6 +25,7 @@ const textExtensions = new Set([
 ]);
 
 const fixedTextFiles = new Set([".editorconfig", ".gitattributes"]);
+const fallbackIgnoreDirs = new Set([".git", "node_modules", "dist", "coverage"]);
 
 const requiredTokens = {
   "apps/api/public/index.html": [
@@ -38,17 +40,69 @@ const requiredTokens = {
 const mojibakeRegex = /[｡-ﾟ]/g;
 
 function isTextFile(file) {
-  if (fixedTextFiles.has(file)) return true;
-  return textExtensions.has(extname(file).toLowerCase());
+  const normalizedFile = String(file).replace(/^\.\//, "");
+  const fileName = normalizedFile.split("/").pop() || normalizedFile;
+  if (fixedTextFiles.has(normalizedFile) || fixedTextFiles.has(fileName)) return true;
+  if (fileName.startsWith(".env")) return true;
+  return textExtensions.has(extname(normalizedFile).toLowerCase());
 }
 
 function listTrackedFiles() {
-  const output = execSync("git ls-files", { encoding: "utf8" });
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter(isTextFile);
+  try {
+    const result = spawnSync("git", ["-c", "core.quotepath=false", "ls-files", "-z"], {
+      encoding: "buffer",
+    });
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      const stderr = decoder.decode(result.stderr ?? new Uint8Array());
+      throw new Error(`git ls-files failed: ${stderr.trim() || `exit code ${result.status}`}`);
+    }
+
+    const output = decoder.decode(result.stdout ?? new Uint8Array());
+    return output
+      .split("\u0000")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter(isTextFile);
+  } catch (error) {
+    if (!isGitSpawnBlocked(error)) {
+      throw error;
+    }
+    return listTextFilesFromFilesystem(".");
+  }
+}
+
+function isGitSpawnBlocked(error) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String(error.code || "") : "";
+  const syscall = "syscall" in error ? String(error.syscall || "") : "";
+  return code === "EPERM" && syscall.includes("spawnSync");
+}
+
+function listTextFilesFromFilesystem(rootDir) {
+  const files = [];
+  walkTextFiles(rootDir, files);
+  return files;
+}
+
+function walkTextFiles(currentDir, files) {
+  const entries = readdirSync(currentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      if (fallbackIgnoreDirs.has(entry.name)) {
+        continue;
+      }
+      walkTextFiles(join(currentDir, entry.name), files);
+      continue;
+    }
+
+    const relativePath = join(currentDir, entry.name).replaceAll("\\", "/").replace(/^\.\//, "");
+    if (isTextFile(relativePath)) {
+      files.push(relativePath);
+    }
+  }
 }
 
 const issues = [];

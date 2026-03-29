@@ -10,6 +10,7 @@
 
 ## 设计与规范
 - `AI_DEV_SPEC.md`
+- `UTF8_TEXT_COMMANDS.md`
 
 ## 模板文件
 - `批量上传产品.xlsx`
