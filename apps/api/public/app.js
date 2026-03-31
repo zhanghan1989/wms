@@ -5639,7 +5639,8 @@ function bindForms() {
 
   $("importOrdersForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const submitButton = getSubmitButton(event.currentTarget, event);
+    const form = event.currentTarget;
+    const submitButton = getSubmitButton(form, event);
     try {
       await withBusyButton(submitButton, "导入中...", async () => {
         const file = $("ordersImportFile").files?.[0];
@@ -5648,7 +5649,7 @@ function bindForms() {
         }
         const result = await importOrdersFile(file);
         await loadOrders();
-        event.currentTarget.reset();
+        form.reset();
         showToast(
           `订单导入完成：新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条（文件 ${result.sourceFileName}）`,
           false,
