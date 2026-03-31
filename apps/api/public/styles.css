@@ -390,6 +390,26 @@ button.ghost {
   margin: 0;
 }
 
+.order-import-head {
+  align-items: flex-start;
+}
+
+.order-import-note {
+  margin: 4px 0 0;
+  max-width: 720px;
+  line-height: 1.5;
+}
+
+.order-import-form {
+  grid-template-columns: minmax(280px, 540px) auto;
+  align-items: end;
+  margin-bottom: 0;
+}
+
+.order-import-actions {
+  justify-self: end;
+}
+
 .inventory-toolbar {
   margin-bottom: 14px;
 }

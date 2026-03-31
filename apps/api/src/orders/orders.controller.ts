@@ -1,0 +1,49 @@
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Res,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import type { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { OrdersService } from './orders.service';
+import { ThirdPartyApiKeyGuard } from './third-party-api-key.guard';
+
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly ordersService: OrdersService) {}
+
+  @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async list(@Query('limit') limit?: string): Promise<unknown[]> {
+    return this.ordersService.list(limit);
+  }
+
+  @Post('import-csv')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseInterceptors(FileInterceptor('file'))
+  async importCsv(
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+  ): Promise<unknown> {
+    if (!file?.buffer) {
+      throw new BadRequestException('请上传订单CSV文件');
+    }
+    return this.ordersService.importUploadedCsv(file.buffer, file.originalname);
+  }
+
+  @Get('export')
+  @UseGuards(ThirdPartyApiKeyGuard)
+  async export(@Res() res: Response): Promise<void> {
+    const payload = await this.ordersService.exportForThirdParty();
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json(payload);
+  }
+}

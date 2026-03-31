@@ -82,6 +82,11 @@ enum MovementType {
   adjust
 }
 
+enum OrderSendStatus {
+  unsent
+  sent
+}
+
 enum AuditAction {
   create
   update
@@ -563,6 +568,51 @@ model BackupRecord {
   @@index([createdAt])
   @@index([hasFile, createdAt])
   @@map("backup_records")
+}
+
+model OrderRecord {
+  id                  BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  rowHash             String   @unique @map("row_hash") @db.Char(40)
+  orderId             String?  @map("order_id") @db.VarChar(64)
+  itemDetailStatus    String?  @map("item_detail_status") @db.VarChar(64)
+  skuCode             String?  @map("sku_code") @db.VarChar(128)
+  setComponentSkuCode String?  @map("set_component_sku_code") @db.VarChar(128)
+  orderQuantity       Int?     @map("order_quantity")
+  productName         String?  @map("product_name") @db.Text
+  mallName            String?  @map("mall_name") @db.VarChar(128)
+  shopName            String?  @map("shop_name") @db.VarChar(128)
+  mallOrderNo         String?  @map("mall_order_no") @db.VarChar(128)
+  orderStatusText     String?  @map("order_status_text") @db.VarChar(64)
+  orderImportedAtRaw  String?  @map("order_imported_at_raw") @db.VarChar(32)
+  orderRemark         String?  @map("order_remark") @db.Text
+  shippingName        String?  @map("shipping_name") @db.VarChar(128)
+  shippingPostalCode  String?  @map("shipping_postal_code") @db.VarChar(32)
+  shippingPrefecture  String?  @map("shipping_prefecture") @db.VarChar(64)
+  shippingCity        String?  @map("shipping_city") @db.VarChar(128)
+  shippingAddress     String?  @map("shipping_address") @db.Text
+  shippingPhone       String?  @map("shipping_phone") @db.VarChar(64)
+  shipmentCompany     String?  @map("shipment_company") @db.VarChar(128)
+  shipmentNo          String?  @map("shipment_no") @db.VarChar(128)
+  shipmentNoRegisteredAt DateTime? @map("shipment_no_registered_at")
+  sendStatus          OrderSendStatus @default(unsent) @map("send_status")
+  deliveryMethod      String?  @map("delivery_method") @db.VarChar(128)
+  deliveryDateRaw     String?  @map("delivery_date_raw") @db.VarChar(32)
+  deliveryTimeSlot    String?  @map("delivery_time_slot") @db.VarChar(64)
+  shipmentRequestNo   String?  @map("shipment_request_no") @db.VarChar(128)
+  productNameExtra    String?  @map("product_name_extra") @db.Text
+  sourceFileName      String?  @map("source_file_name") @db.VarChar(255)
+  sourceFilePath      String?  @map("source_file_path") @db.VarChar(512)
+  rawPayload          Json?    @map("raw_payload")
+  csvImportedAt       DateTime @default(now()) @map("csv_imported_at")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([orderId])
+  @@index([mallOrderNo])
+  @@index([skuCode])
+  @@index([csvImportedAt])
+  @@index([createdAt])
+  @@map("order_records")
 }
 
 model OperationAuditLog {

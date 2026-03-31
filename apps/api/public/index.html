@@ -46,6 +46,7 @@
           产品管理
           <span id="productEditPendingBadge" class="quick-badge hidden">0</span>
         </button>
+        <button type="button" id="openOrderProcessingPanel">订单处理</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -239,6 +240,55 @@
             </thead>
             <tbody id="productEditRequestBody"></tbody>
           </table>
+        </article>
+      </section>
+
+      <section class="panel" id="orderProcessing">
+        <div class="panel-head">
+          <h2>订单处理</h2>
+          <button id="refreshOrders" class="ghost">刷新</button>
+        </div>
+
+        <article class="card">
+          <div class="card-head order-import-head">
+            <div>
+              <h3>批量导入订单</h3>
+              <p class="muted order-import-note">支持从当前电脑手动上传订单 CSV，导入到独立订单表；暂不关联既有入库、库存或 FBA 流程。</p>
+            </div>
+          </div>
+          <form id="importOrdersForm" class="form-grid order-import-form">
+            <label>
+              订单 CSV 文件
+              <input id="ordersImportFile" type="file" accept=".csv,text/csv" required />
+            </label>
+            <div class="actions order-import-actions">
+              <button type="submit" id="uploadOrdersBtn">上传并导入</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="card">
+          <h3>订单列表</h3>
+          <div class="overview-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>CSV導入日時</th>
+                  <th>注文ID</th>
+                  <th>SKUコード</th>
+                  <th>注文個数</th>
+                  <th>モール名</th>
+                  <th>ショップ名</th>
+                  <th>モール注文番号</th>
+                  <th>送付先氏名</th>
+                  <th>発送会社</th>
+                  <th>発送番号</th>
+                  <th>発送番号登録日時</th>
+                </tr>
+              </thead>
+              <tbody id="ordersBody"></tbody>
+            </table>
+          </div>
         </article>
       </section>
 

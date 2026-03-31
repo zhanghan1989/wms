@@ -37,6 +37,7 @@ const state = {
   batchInboundVisibleCount: 0,
   selectedBatchInboundOrderId: "",
   selectedBatchInboundOrderDetail: null,
+  orders: [],
   fbaReplenishments: [],
   fbaReplenishmentsVisibleCount: 0,
   skuEditRequestsVisibleCount: 0,
@@ -1459,6 +1460,10 @@ function switchPanel(targetId) {
   }
   if (targetId === "audit" && hasAdminAccess(state.me?.role) && !state.auditLogs.length) {
     loadAudit().catch((error) => showToast(error.message, true));
+    return;
+  }
+  if (targetId === "orderProcessing" && state.token && !state.orders.length) {
+    loadOrders().catch((error) => showToast(error.message, true));
     return;
   }
   if (targetId === "overview" && !state.overviewDashboard) {
@@ -4921,6 +4926,57 @@ async function loadProductEditPendingSummary() {
   renderProductEditPendingBadge();
 }
 
+function renderOrdersTable() {
+  const tbody = $("ordersBody");
+  if (!tbody) return;
+
+  if (!state.orders.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">暂无订单数据</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = state.orders
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
+        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td>${escapeHtml(displayText(item.skuCode))}</td>
+        <td>${escapeHtml(displayText(item.orderQuantity))}</td>
+        <td>${escapeHtml(displayText(item.mallName))}</td>
+        <td>${escapeHtml(displayText(item.shopName))}</td>
+        <td>${escapeHtml(displayText(item.mallOrderNo))}</td>
+        <td>${escapeHtml(displayText(item.shippingName))}</td>
+        <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
+        <td>${escapeHtml(displayText(item.shipmentNo))}</td>
+        <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
+      </tr>
+    `,
+    )
+    .join("");
+}
+
+async function loadOrders() {
+  if (!state.token) {
+    state.orders = [];
+    renderOrdersTable();
+    return;
+  }
+
+  const list = await request("/orders");
+  state.orders = Array.isArray(list) ? list : [];
+  renderOrdersTable();
+}
+
+async function importOrdersFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request("/orders/import-csv", {
+    method: "POST",
+    body: formData,
+  });
+}
+
 function renderFbaReplenishmentList() {
   const tbody = $("fbaReplenishmentBody");
   if (!tbody) return;
@@ -5464,6 +5520,7 @@ async function reloadAll() {
     state.skuEditRequests = [];
     state.inventorySkus = [];
     state.emptyBoxes = [];
+    state.orders = [];
     state.inventorySortedSkus = [];
     state.inventoryLocations = new Map();
     state.inventoryTotalsBySku = {};
@@ -5500,6 +5557,7 @@ async function reloadAll() {
     renderProductEditPendingBadge();
     renderEmptyBoxManageBadge();
     renderEmptyBoxManageTable();
+    renderOrdersTable();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
     resetInventorySearchState();
@@ -5578,6 +5636,28 @@ function bindForms() {
 
   $("logoutBtn")?.addEventListener("click", handleLogout);
   $("topLogoutBtn")?.addEventListener("click", handleLogout);
+
+  $("importOrdersForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "导入中...", async () => {
+        const file = $("ordersImportFile").files?.[0];
+        if (!file) {
+          throw new Error("请选择订单CSV文件");
+        }
+        const result = await importOrdersFile(file);
+        await loadOrders();
+        event.currentTarget.reset();
+        showToast(
+          `订单导入完成：新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条（文件 ${result.sourceFileName}）`,
+          false,
+        );
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
 
   $("openCreateUserModal")?.addEventListener("click", async () => {
     try {
@@ -6017,6 +6097,15 @@ function bindForms() {
         loadProductEditRequests(),
         loadProductEditPendingSummary(),
       ]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openOrderProcessingPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("orderProcessing");
+      await loadOrders();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -8059,6 +8148,9 @@ function bindRefresh() {
   $("refreshBoxes").addEventListener("click", () => loadBoxes().catch((error) => showToast(error.message, true)));
   $("refreshBatchInbound").addEventListener("click", () =>
     loadBatchInboundOrders().catch((error) => showToast(error.message, true)),
+  );
+  $("refreshOrders").addEventListener("click", () =>
+    loadOrders().catch((error) => showToast(error.message, true)),
   );
   $("refreshFbaReplenishment").addEventListener("click", () =>
     Promise.all([loadFbaReplenishments(), loadFbaPendingSummary()]).catch((error) =>
