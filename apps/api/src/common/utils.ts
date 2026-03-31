@@ -58,3 +58,9 @@ export function generateOrderNo(prefix: string): string {
   const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `${prefix}-${stamp}-${rand}`;
 }
+
+export function normalizeNullableText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}

@@ -654,7 +654,7 @@ async function downloadInventorySkuSummaryCsv() {
   }
 
   const rows = [
-    ["型号", "品牌", "类型", "颜色", "店铺", "备注", "SKU", "ASIN", "FNSKU", "FBMSKU", "rbSKU", "库存总数"],
+    ["产品ID", "型号", "品牌", "类型", "颜色", "店铺", "备注", "SKU", "ASIN", "FNSKU", "FBMSKU", "rbSKU", "库存总数"],
   ];
   const list =
     Array.isArray(state.inventorySortedSkus) && state.inventorySortedSkus.length
@@ -665,6 +665,7 @@ async function downloadInventorySkuSummaryCsv() {
 
   list.forEach((sku) => {
     rows.push([
+      displayText(sku?.productId),
       displayText(sku?.model),
       displayText(sku?.brand),
       displayText(sku?.type),
@@ -957,6 +958,7 @@ function isUserOptionEnabled(options, code) {
 
 function normalizeProductEditChangedFields(changedFields) {
   const allowed = new Set([
+    "productId",
     "sku",
     "rbSku",
     "asin",
@@ -3037,6 +3039,7 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
       const totalQty = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
       const pendingQty = getFbaPendingQtyBySku(sku.id);
       const leftRows = [
+        ["产品ID", displayText(sku.productId)],
         ["型号", displayText(sku.model)],
         ["品牌", displayText(sku.brand)],
         ["类型", displayText(sku.type)],
@@ -3221,6 +3224,7 @@ async function openEditSkuModal(skuId) {
   await Promise.all([loadBrands(), loadSkuTypes(), loadShops()]);
 
   $("editSkuId").value = String(sku.id);
+  $("editProductId").value = sku.productId || "";
   $("editModel").value = sku.model || "";
   renderBrandOptionsForSelect("editBrand", "请选择品牌", sku.brand || "");
   renderSkuTypeOptionsForSelect("editType", "请选择类型", sku.type || "");
@@ -3249,6 +3253,7 @@ async function submitEditSkuForm() {
   const payload = {
     skuId,
     // SKU is read-only and not submitted for editing.
+    productId: toNullableValue("editProductId"),
     model: toNullableValue("editModel"),
     brand: toNullableValue("editBrand"),
     type: toNullableValue("editType"),
@@ -3852,6 +3857,7 @@ function renderProductEditRequestDetail(item) {
   `;
 
   const fieldDefs = [
+    ["productId", "产品ID"],
     ["model", "型号"],
     ["brand", "品牌"],
     ["type", "类型"],
@@ -5294,6 +5300,7 @@ async function submitAdjustForm() {
 }
 
 async function createSkuFromModal() {
+  const productId = $("modalNewProductId").value.trim() || undefined;
   const model = $("modalNewModel").value.trim() || undefined;
   const brand = $("modalNewBrand").value.trim() || undefined;
   const type = $("modalNewType").value.trim() || undefined;
@@ -5322,7 +5329,20 @@ async function createSkuFromModal() {
 
   const createdSku = await request("/skus", {
     method: "POST",
-    body: JSON.stringify({ model, brand, type, color, shop, remark, sku, rbSku, asin, fnsku, fbmSku }),
+    body: JSON.stringify({
+      productId,
+      model,
+      brand,
+      type,
+      color,
+      shop,
+      remark,
+      sku,
+      rbSku,
+      asin,
+      fnsku,
+      fbmSku,
+    }),
   });
 
   await request("/inventory/manual-adjust", {

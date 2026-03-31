@@ -229,6 +229,7 @@ model BatchInboundItem {
 
 model Sku {
   id                BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  productId         String?                    @unique @map("product_id") @db.VarChar(128)
   sku               String                     @unique @db.VarChar(128)
   rbSku            String?                    @map("erp_sku") @db.VarChar(128)
   asin              String?                    @db.VarChar(32)

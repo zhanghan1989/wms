@@ -9,6 +9,11 @@ export class CreateSkuEditRequestDto {
 
   @IsOptional()
   @IsString()
+  @Length(1, 128)
+  productId?: string;
+
+  @IsOptional()
+  @IsString()
   @Length(1, 255)
   model?: string;
 

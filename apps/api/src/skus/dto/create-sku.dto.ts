@@ -1,6 +1,11 @@
 import { IsOptional, IsString, Length, Max, Min } from 'class-validator';
 
 export class CreateSkuDto {
+  @IsOptional()
+  @IsString()
+  @Length(1, 128)
+  productId?: string;
+
   @IsString()
   @Length(1, 128)
   sku!: string;

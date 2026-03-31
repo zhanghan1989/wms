@@ -66,6 +66,20 @@ export class InventoryService {
     const safePageSize = Math.min(50, safePageSizeRaw);
     const offset = (safePage - 1) * safePageSize;
 
+    const productIdExactWhere: Prisma.SkuWhereInput = { productId: { equals: key } };
+    const productIdExactExists = await this.prisma.sku.findFirst({
+      where: productIdExactWhere,
+      select: { id: true },
+    });
+    if (productIdExactExists) {
+      return await this.prisma.sku.findMany({
+        where: productIdExactWhere,
+        skip: offset,
+        take: safePageSize,
+        orderBy: { id: 'desc' },
+      });
+    }
+
     const skuExactWhere: Prisma.SkuWhereInput = { sku: { equals: key } };
     const skuExactExists = await this.prisma.sku.findFirst({
       where: skuExactWhere,

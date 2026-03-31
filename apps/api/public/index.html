@@ -75,7 +75,7 @@
 
         <div class="inventory-toolbar">
           <form id="inventorySearchForm" class="form-grid inventory-search-form">
-            <label><input id="inventoryKeyword" placeholder="输入任意 型号 / SKU / ASIN / FNSKU / FBMSKU / RBSKU" /></label>
+            <label><input id="inventoryKeyword" placeholder="输入任意 产品ID / 型号 / SKU / ASIN / FNSKU / FBMSKU / RBSKU" /></label>
             <button type="submit">检索</button>
           </form>
 
@@ -672,6 +672,8 @@
         <button type="button" class="ghost" data-action="closeCreateSkuModal">关闭</button>
       </div>
       <form id="createSkuModalForm" class="form-grid modal-grid">
+        <label class="create-sku-left-col">产品ID<input id="modalNewProductId" /></label>
+        <label class="create-sku-right-col" aria-hidden="true"></label>
         <label class="create-sku-left-col">型号<input id="modalNewModel" /></label>
         <label class="create-sku-right-col">SKU<input id="modalNewSku" required /></label>
         <label class="create-sku-left-col">颜色<input id="modalNewColor" /></label>
@@ -763,6 +765,8 @@
       </div>
       <form id="editSkuForm" class="form-grid modal-grid">
         <input id="editSkuId" type="hidden" />
+        <label class="create-sku-left-col">产品ID<input id="editProductId" /></label>
+        <label class="create-sku-right-col" aria-hidden="true"></label>
         <label class="create-sku-left-col">型号<input id="editModel" /></label>
         <label class="create-sku-right-col">SKU<input id="editSku" readonly /></label>
         <label class="create-sku-left-col">颜色<input id="editColor" /></label>

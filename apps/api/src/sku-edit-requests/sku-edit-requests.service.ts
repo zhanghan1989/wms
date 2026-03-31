@@ -1,12 +1,13 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
-import { parseId } from '../common/utils';
+import { normalizeNullableText, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSkuEditRequestDto } from './dto/create-sku-edit-request.dto';
 
 type ProductSnapshot = {
+  productId: string | null;
   sku: string | null;
   rbSku: string | null;
   asin: string | null;
@@ -22,6 +23,7 @@ type ProductSnapshot = {
 type EditableProductField = Exclude<keyof ProductSnapshot, 'sku'>;
 
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
+  'productId',
   'sku',
   'rbSku',
   'asin',
@@ -37,26 +39,21 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
 
 const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = '仅启用的佛山工厂管理者可确认编辑申请';
 
-function normalizeNullableString(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  return text.length > 0 ? text : null;
-}
-
 function ensureSnapshot(value: unknown): ProductSnapshot {
   const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
   return {
-    sku: normalizeNullableString(source.sku),
-    rbSku: normalizeNullableString(source.rbSku),
-    asin: normalizeNullableString(source.asin),
-    fnsku: normalizeNullableString(source.fnsku),
-    fbmSku: normalizeNullableString(source.fbmSku),
-    model: normalizeNullableString(source.model),
-    brand: normalizeNullableString(source.brand),
-    type: normalizeNullableString(source.type),
-    color: normalizeNullableString(source.color),
-    shop: normalizeNullableString(source.shop),
-    remark: normalizeNullableString(source.remark),
+    productId: normalizeNullableText(source.productId),
+    sku: normalizeNullableText(source.sku),
+    rbSku: normalizeNullableText(source.rbSku),
+    asin: normalizeNullableText(source.asin),
+    fnsku: normalizeNullableText(source.fnsku),
+    fbmSku: normalizeNullableText(source.fbmSku),
+    model: normalizeNullableText(source.model),
+    brand: normalizeNullableText(source.brand),
+    type: normalizeNullableText(source.type),
+    color: normalizeNullableText(source.color),
+    shop: normalizeNullableText(source.shop),
+    remark: normalizeNullableText(source.remark),
   };
 }
 
@@ -133,17 +130,18 @@ export class SkuEditRequestsService {
     }
 
     const beforeData: ProductSnapshot = {
-      sku: normalizeNullableString(sku.sku),
-      rbSku: normalizeNullableString(sku.rbSku),
-      asin: normalizeNullableString(sku.asin),
-      fnsku: normalizeNullableString(sku.fnsku),
-      fbmSku: normalizeNullableString(sku.fbmSku),
-      model: normalizeNullableString(sku.model),
-      brand: normalizeNullableString(sku.brand),
-      type: normalizeNullableString(sku.type),
-      color: normalizeNullableString(sku.color),
-      shop: normalizeNullableString(sku.shop),
-      remark: normalizeNullableString(sku.remark),
+      productId: normalizeNullableText(sku.productId),
+      sku: normalizeNullableText(sku.sku),
+      rbSku: normalizeNullableText(sku.rbSku),
+      asin: normalizeNullableText(sku.asin),
+      fnsku: normalizeNullableText(sku.fnsku),
+      fbmSku: normalizeNullableText(sku.fbmSku),
+      model: normalizeNullableText(sku.model),
+      brand: normalizeNullableText(sku.brand),
+      type: normalizeNullableText(sku.type),
+      color: normalizeNullableText(sku.color),
+      shop: normalizeNullableText(sku.shop),
+      remark: normalizeNullableText(sku.remark),
     };
 
     const resolveEditableField = (
@@ -152,12 +150,13 @@ export class SkuEditRequestsService {
     ): string | null => {
       const rawPayload = payload as unknown as Record<string, unknown>;
       if (Object.prototype.hasOwnProperty.call(rawPayload, field)) {
-        return normalizeNullableString(rawPayload[field]);
+        return normalizeNullableText(rawPayload[field]);
       }
       return fallback;
     };
 
     const afterData: ProductSnapshot = {
+      productId: resolveEditableField('productId', beforeData.productId),
       // SKU cannot be edited in product edit requests.
       sku: beforeData.sku,
       rbSku: resolveEditableField('rbSku', beforeData.rbSku),
@@ -211,6 +210,7 @@ export class SkuEditRequestsService {
       throw new BadRequestException('SKU不能为空');
     }
     const targetSkuCode = afterSnapshot.sku;
+    const targetProductId = afterSnapshot.productId;
 
     if (targetSkuCode !== request.sku.sku) {
       const duplicated = await this.prisma.sku.findFirst({
@@ -224,9 +224,22 @@ export class SkuEditRequestsService {
         throw new BadRequestException('SKU已存在');
       }
     }
+    if (targetProductId && targetProductId !== beforeSnapshot.productId) {
+      const duplicatedProductId = await this.prisma.sku.findFirst({
+        where: {
+          productId: targetProductId,
+          id: { not: request.skuId },
+        },
+        select: { id: true },
+      });
+      if (duplicatedProductId) {
+        throw new BadRequestException('产品ID已存在');
+      }
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const skuUpdateData: Prisma.SkuUpdateInput = {
+        productId: afterSnapshot.productId,
         sku: targetSkuCode,
         rbSku: afterSnapshot.rbSku,
         asin: afterSnapshot.asin,

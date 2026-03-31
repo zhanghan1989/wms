@@ -9,13 +9,14 @@ import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
-import { parseId } from '../common/utils';
+import { normalizeNullableText, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSkuDto } from './dto/create-sku.dto';
 import { UpdateSkuDto } from './dto/update-sku.dto';
 
 type ImportSkuRow = {
+  productId: string | null;
   sku: string;
   rbSku: string | null;
   asin: string | null;
@@ -30,6 +31,7 @@ type ImportSkuRow = {
 };
 
 type ProductSnapshot = {
+  productId: string | null;
   sku: string | null;
   rbSku: string | null;
   asin: string | null;
@@ -44,6 +46,7 @@ type ProductSnapshot = {
 };
 
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
+  'productId',
   'sku',
   'rbSku',
   'asin',
@@ -69,6 +72,7 @@ export class SkusService {
     const where: Prisma.SkuWhereInput = {};
     if (q) {
       where.OR = [
+        { productId: { contains: q } },
         { sku: { contains: q } },
         { rbSku: { contains: q } },
         { asin: { contains: q } },
@@ -165,6 +169,7 @@ export class SkusService {
     if (exists) {
       throw new BadRequestException('SKU已存在');
     }
+    await this.ensureProductIdAvailable(this.prisma, payload.productId ?? null);
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.sku.create({
         data: payload,
@@ -259,6 +264,7 @@ export class SkusService {
       }
 
       result.push({
+        productId: this.pickField(normalized, ['productId', '产品ID', '产品id', '商品ID', '商品id']),
         sku,
         rbSku: this.pickField(normalized, [
           'rbSku',
@@ -306,6 +312,7 @@ export class SkusService {
   }
 
   private buildSnapshotFromSku(sku: {
+    productId: string | null;
     sku: string;
     rbSku: string | null;
     asin: string | null;
@@ -319,6 +326,7 @@ export class SkusService {
     remark: string | null;
   }): ProductSnapshot {
     return {
+      productId: this.normalizeNullableString(sku.productId),
       sku: this.normalizeNullableString(sku.sku),
       rbSku: this.normalizeNullableString(sku.rbSku),
       asin: this.normalizeNullableString(sku.asin),
@@ -335,6 +343,7 @@ export class SkusService {
 
   private buildAfterSnapshot(beforeData: ProductSnapshot, row: ImportSkuRow): ProductSnapshot {
     return {
+      productId: this.normalizeNullableString(row.productId) ?? beforeData.productId,
       sku: this.normalizeNullableString(row.sku) ?? beforeData.sku,
       rbSku: this.normalizeNullableString(row.rbSku) ?? beforeData.rbSku,
       asin: this.normalizeNullableString(row.asin) ?? beforeData.asin,
@@ -375,9 +384,24 @@ export class SkusService {
   }
 
   private normalizeNullableString(value: unknown): string | null {
-    if (value === null || value === undefined) return null;
-    const text = String(value).trim();
-    return text.length > 0 ? text : null;
+    return normalizeNullableText(value);
+  }
+
+  private async ensureProductIdAvailable(
+    db: Prisma.TransactionClient | PrismaService,
+    productIdRaw: string | null,
+  ): Promise<void> {
+    const productId = this.normalizeNullableString(productIdRaw);
+    if (!productId) {
+      return;
+    }
+    const exists = await db.sku.findFirst({
+      where: { productId },
+      select: { id: true },
+    });
+    if (exists) {
+      throw new BadRequestException('产品ID已存在');
+    }
   }
 
   private async createSkuInTransaction(
@@ -386,8 +410,10 @@ export class SkusService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<void> {
+    await this.ensureProductIdAvailable(tx, row.productId);
     const created = await tx.sku.create({
       data: {
+        productId: row.productId ?? undefined,
         sku: row.sku,
         rbSku: row.rbSku ?? undefined,
         asin: row.asin ?? undefined,
