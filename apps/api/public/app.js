@@ -32,6 +32,7 @@ const state = {
   inventoryHomePage: 1,
   inventoryHomePageSize: 30,
   inventoryHomeHasMore: false,
+  inventoryHomeLoading: false,
   inventoryHomeKeyword: "",
   inventoryHomeSelectedDetail: null,
   inventorySearchMode: false,
@@ -3062,7 +3063,7 @@ function renderInventoryTable() {
       .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
 
   if (loadMoreBtn) {
-    loadMoreBtn.classList.toggle("hidden", !state.inventoryHomeHasMore);
+    loadMoreBtn.classList.add("hidden");
   }
 }
 
@@ -3246,6 +3247,7 @@ function renderInventoryHomeDetail(detail) {
 }
 
 async function loadInventoryHomeProducts({ reset = false } = {}) {
+  if (state.inventoryHomeLoading) return;
   const page = reset ? 1 : state.inventoryHomePage + 1;
   const keyword = String(state.inventoryHomeKeyword || "").trim();
   const params = new URLSearchParams({
@@ -3255,12 +3257,17 @@ async function loadInventoryHomeProducts({ reset = false } = {}) {
   if (keyword) {
     params.set("keyword", keyword);
   }
-  const result = await request(`/master-products?${params.toString()}`);
-  const items = Array.isArray(result?.items) ? result.items : [];
-  state.inventoryHomeProducts = reset ? items : [...state.inventoryHomeProducts, ...items];
-  state.inventoryHomePage = Number(result?.page || page);
-  state.inventoryHomeHasMore = Boolean(result?.hasMore);
-  renderInventoryTable();
+  state.inventoryHomeLoading = true;
+  try {
+    const result = await request(`/master-products?${params.toString()}`);
+    const items = Array.isArray(result?.items) ? result.items : [];
+    state.inventoryHomeProducts = reset ? items : [...state.inventoryHomeProducts, ...items];
+    state.inventoryHomePage = Number(result?.page || page);
+    state.inventoryHomeHasMore = Boolean(result?.hasMore);
+    renderInventoryTable();
+  } finally {
+    state.inventoryHomeLoading = false;
+  }
 }
 
 async function loadInventoryHomeProductDetail(productId) {
@@ -3275,6 +3282,7 @@ function loadMoreInventoryIfNeeded() {
   if (!state.token) return;
   const inventoryPanel = $("inventory");
   if (!inventoryPanel || !inventoryPanel.classList.contains("active")) return;
+  if (state.inventoryHomeLoading) return;
   if (!state.inventoryHomeHasMore) return;
   loadInventoryHomeProducts({ reset: false }).catch((error) => {
     showToast(error.message, true);

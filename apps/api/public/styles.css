@@ -905,6 +905,10 @@ td {
   min-width: 1600px;
 }
 
+.inventory-home-table {
+  min-width: 100%;
+}
+
 .master-product-sku-table {
   min-width: 720px;
 }
