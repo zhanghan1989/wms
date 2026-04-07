@@ -300,34 +300,29 @@ h3 {
   grid-row: 1;
 }
 
-#createSkuModalForm label:has(#modalNewProductName) {
+#createSkuModalForm label:has(#modalNewRemark) {
   grid-column: 1 / 2;
   grid-row: 2;
 }
 
-#createSkuModalForm label:has(#modalNewRemark) {
+#createSkuModalForm label:has(#modalNewShop) {
   grid-column: 1 / 2;
   grid-row: 3;
 }
 
-#createSkuModalForm label:has(#modalNewShop) {
+#createSkuModalForm label:has(#modalNewSkuBoxCode) {
   grid-column: 1 / 2;
   grid-row: 4;
 }
 
-#createSkuModalForm label:has(#modalNewSkuBoxCode) {
+#createSkuModalForm .create-sku-box-action {
   grid-column: 1 / 2;
   grid-row: 5;
 }
 
-#createSkuModalForm .create-sku-box-action {
-  grid-column: 1 / 2;
-  grid-row: 6;
-}
-
 #createSkuModalForm label:has(#modalNewSkuQty) {
   grid-column: 1 / 2;
-  grid-row: 7;
+  grid-row: 6;
 }
 
 #createSkuModalForm label:has(#modalNewSku) {
@@ -357,7 +352,7 @@ h3 {
 
 #createSkuModalForm .modal-actions {
   grid-column: 2 / 3;
-  grid-row: 7;
+  grid-row: 6;
   align-self: end;
   justify-content: flex-end;
 }

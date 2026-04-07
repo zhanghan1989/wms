@@ -235,8 +235,8 @@
           <h3>基础操作</h3>
           <div class="action-row product-actions">
             <div class="product-actions-left">
-              <button type="button" id="openCreateSkuModal">新增产品</button>
-              <button type="button" id="openBulkSkuUploadModal">批量上传产品</button>
+              <button type="button" id="openCreateSkuModal">新增SKU</button>
+              <button type="button" id="openBulkSkuUploadModal">批量上传SKU</button>
             </div>
             <div class="product-actions-right">
               <button type="button" id="openBrandManageModal">品牌管理</button>
@@ -249,7 +249,7 @@
 
         <article class="card">
           <div class="card-head">
-            <h3>编辑产品申请一览表</h3>
+            <h3>编辑SKU申请一览表</h3>
             <button type="button" id="batchConfirmProductEditRequestBtn">批量确认</button>
           </div>
           <table>
@@ -954,29 +954,18 @@
   <div id="createSkuModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>新增产品</h3>
+        <h3>新增SKU</h3>
         <button type="button" class="ghost" data-action="closeCreateSkuModal">关闭</button>
       </div>
       <form id="createSkuModalForm" class="form-grid modal-grid">
         <label class="create-sku-left-col">产品ID<input id="modalNewProductId" /></label>
-        <label class="create-sku-right-col" aria-hidden="true"></label>
-        <label class="create-sku-left-col">型号<input id="modalNewModel" /></label>
         <label class="create-sku-right-col">SKU<input id="modalNewSku" required /></label>
-        <label class="create-sku-left-col">颜色<input id="modalNewColor" /></label>
-        <label class="create-sku-right-col">ASIN<input id="modalNewAsin" /></label>
-        <label class="create-sku-left-col">类型
-          <select id="modalNewType"></select>
-        </label>
-        <label class="create-sku-right-col">FNSKU<input id="modalNewFnsku" /></label>
-        <label class="create-sku-left-col">品牌
-          <select id="modalNewBrand"></select>
-        </label>
-        <label class="create-sku-right-col">FBMSKU<input id="modalNewFbmSku" /></label>
         <label class="create-sku-left-col">备注<input id="modalNewRemark" /></label>
-        <label class="create-sku-right-col">rbSKU<input id="modalNewErpSku" /></label>
+        <label class="create-sku-right-col">ASIN<input id="modalNewAsin" /></label>
         <label class="create-sku-left-col">所属亚马逊店铺
           <select id="modalNewShop"></select>
         </label>
+        <label class="create-sku-right-col">FNSKU<input id="modalNewFnsku" /></label>
         <label class="create-sku-left-col">箱号
           <input
             id="modalNewSkuBoxCode"
@@ -987,9 +976,11 @@
           />
           <datalist id="modalNewSkuBoxCodeList"></datalist>
         </label>
-        <div class="create-sku-box-action create-sku-right-col">
+        <label class="create-sku-right-col">FBMSKU<input id="modalNewFbmSku" /></label>
+        <div class="create-sku-box-action create-sku-left-col">
           <button type="button" id="openCreateBoxFromSkuModal" class="small-btn">新增箱号</button>
         </div>
+        <label class="create-sku-right-col">rbSKU<input id="modalNewErpSku" /></label>
         <label class="create-sku-left-col">入库数<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
         <div class="modal-actions">
           <button type="submit">确认新增</button>
@@ -1002,7 +993,7 @@
   <div id="bulkSkuUploadModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>批量上传产品</h3>
+        <h3>批量上传SKU</h3>
         <button type="button" class="ghost" data-action="closeBulkSkuUploadModal">关闭</button>
       </div>
       <form id="bulkSkuUploadForm" class="form-grid modal-grid">
@@ -1046,31 +1037,21 @@
   <div id="editSkuModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>编辑产品</h3>
+        <h3>编辑SKU</h3>
         <button type="button" class="ghost" data-action="closeEditSkuModal">关闭</button>
       </div>
       <form id="editSkuForm" class="form-grid modal-grid">
         <input id="editSkuId" type="hidden" />
         <label class="create-sku-left-col">产品ID<input id="editProductId" /></label>
-        <label class="create-sku-right-col" aria-hidden="true"></label>
-        <label class="create-sku-left-col">型号<input id="editModel" /></label>
         <label class="create-sku-right-col">SKU<input id="editSku" readonly /></label>
-        <label class="create-sku-left-col">颜色<input id="editColor" /></label>
-        <label class="create-sku-right-col">ASIN<input id="editAsin" /></label>
-        <label class="create-sku-left-col">类型
-          <select id="editType"></select>
-        </label>
-        <label class="create-sku-right-col">FNSKU<input id="editFnsku" /></label>
-        <label class="create-sku-left-col">品牌
-          <select id="editBrand"></select>
-        </label>
-        <label class="create-sku-right-col">FBMSKU<input id="editFbmSku" /></label>
         <label class="create-sku-left-col">备注<input id="editRemark" /></label>
-        <label class="create-sku-right-col">rbSKU<input id="editErpSku" /></label>
+        <label class="create-sku-right-col">ASIN<input id="editAsin" /></label>
         <label class="create-sku-left-col">所属亚马逊店铺
           <select id="editShop"></select>
         </label>
-        <label class="create-sku-right-col" aria-hidden="true"></label>
+        <label class="create-sku-right-col">FNSKU<input id="editFnsku" /></label>
+        <label class="create-sku-right-col">FBMSKU<input id="editFbmSku" /></label>
+        <label class="create-sku-right-col">rbSKU<input id="editErpSku" /></label>
         <div class="modal-actions">
           <button type="submit">保存</button>
           <button type="button" class="ghost" data-action="closeEditSkuModal">取消</button>

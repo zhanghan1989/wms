@@ -125,10 +125,10 @@ const AUDIT_EVENT_TEXT_MAP = {
   box_deleted: "删除箱号",
   box_stock_increased: "箱内库存增加",
   box_stock_outbound: "箱内库存出库",
-  sku_created: "新增产品",
-  sku_field_updated: "产品信息更新",
-  sku_disabled: "禁用产品",
-  sku_deleted: "删除产品",
+  sku_created: "新增SKU",
+  sku_field_updated: "SKU信息更新",
+  sku_disabled: "禁用SKU",
+  sku_deleted: "删除SKU",
   shelf_created: "新增货架",
   shelf_field_updated: "货架信息更新",
   shelf_disabled: "禁用货架",
@@ -837,7 +837,7 @@ async function downloadSkuUploadTemplate() {
   const disposition = response.headers.get("content-disposition") || "";
   const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
   const plainNameMatch = disposition.match(/filename="?([^";]+)"?/i);
-  let fileName = "批量上传产品.xlsx";
+  let fileName = "批量上传SKU.xlsx";
   if (utf8NameMatch?.[1]) {
     try {
       fileName = decodeURIComponent(utf8NameMatch[1]);
@@ -3203,10 +3203,7 @@ function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
       const pendingQty = getFbaPendingQtyBySku(sku.id);
       const leftRows = [
         ["产品ID", displayText(sku.productId)],
-        ["型号", displayText(sku.model)],
-        ["品牌", displayText(sku.brand)],
-        ["类型", displayText(sku.type)],
-        ["颜色", displayText(sku.color)],
+        ["产品名称", displayText(sku.productName)],
         ["备注", displayText(sku.remark)],
         ["店铺", displayText(sku.shop)],
       ];
@@ -3382,16 +3379,12 @@ function ensureSkuReadyForFbaReplenishment(skuId) {
 async function openEditSkuModal(skuId) {
   const sku = findSkuById(skuId);
   if (!sku) {
-    throw new Error("未找到产品");
+    throw new Error("未找到SKU");
   }
-  await Promise.all([loadBrands(), loadSkuTypes(), loadShops()]);
+  await loadShops();
 
   $("editSkuId").value = String(sku.id);
   $("editProductId").value = sku.productId || "";
-  $("editModel").value = sku.model || "";
-  renderBrandOptionsForSelect("editBrand", "请选择品牌", sku.brand || "");
-  renderSkuTypeOptionsForSelect("editType", "请选择类型", sku.type || "");
-  $("editColor").value = sku.color || "";
   renderShopOptionsForSelect("editShop", "请选择店铺", sku.shop || "");
   $("editRemark").value = sku.remark || "";
   $("editSku").value = sku.sku || "";
@@ -3405,7 +3398,7 @@ async function openEditSkuModal(skuId) {
 async function submitEditSkuForm() {
   const skuId = Number($("editSkuId").value);
   if (!Number.isInteger(skuId) || skuId <= 0) {
-    throw new Error("请选择产品");
+    throw new Error("请选择SKU");
   }
 
   const toNullableValue = (id) => {
@@ -3417,10 +3410,6 @@ async function submitEditSkuForm() {
     skuId,
     // SKU is read-only and not submitted for editing.
     productId: toNullableValue("editProductId"),
-    model: toNullableValue("editModel"),
-    brand: toNullableValue("editBrand"),
-    type: toNullableValue("editType"),
-    color: toNullableValue("editColor"),
     shop: toNullableValue("editShop"),
     remark: toNullableValue("editRemark"),
     rbSku: toNullableValue("editErpSku"),
@@ -4021,10 +4010,6 @@ function renderProductEditRequestDetail(item) {
 
   const fieldDefs = [
     ["productId", "产品ID"],
-    ["model", "型号"],
-    ["brand", "品牌"],
-    ["type", "类型"],
-    ["color", "颜色"],
     ["shop", "所属亚马逊店铺"],
     ["remark", "备注"],
     ["sku", "SKU"],
@@ -5827,10 +5812,6 @@ async function submitAdjustForm() {
 
 async function createSkuFromModal() {
   const productId = $("modalNewProductId").value.trim() || undefined;
-  const model = $("modalNewModel").value.trim() || undefined;
-  const brand = $("modalNewBrand").value.trim() || undefined;
-  const type = $("modalNewType").value.trim() || undefined;
-  const color = $("modalNewColor").value.trim() || undefined;
   const shop = $("modalNewShop").value.trim() || undefined;
   const remark = $("modalNewRemark").value.trim() || undefined;
   const sku = $("modalNewSku").value.trim();
@@ -5841,7 +5822,7 @@ async function createSkuFromModal() {
   const rawBoxCode = $("modalNewSkuBoxCode").value;
   const boxCode = resolveEnabledBoxCode(rawBoxCode);
   const qty = Math.abs(Number($("modalNewSkuQty").value));
-  const reason = "新建产品初始入库";
+  const reason = "新建SKU初始入库";
 
   if (!sku) throw new Error("SKU 不能为空");
   if (!boxCode) throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
@@ -5857,10 +5838,6 @@ async function createSkuFromModal() {
     method: "POST",
     body: JSON.stringify({
       productId,
-      model,
-      brand,
-      type,
-      color,
       shop,
       remark,
       sku,
@@ -7100,12 +7077,10 @@ function bindForms() {
   });
 
   $("openCreateSkuModal").addEventListener("click", async () => {
-    await Promise.all([loadShelves(), loadBoxes(), loadBrands(), loadSkuTypes(), loadShops()]).catch((error) =>
+    await Promise.all([loadShelves(), loadBoxes(), loadShops()]).catch((error) =>
       showToast(error.message, true),
     );
     $("createSkuModalForm").reset();
-    renderBrandOptionsForSelect("modalNewBrand", "请选择品牌");
-    renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
     renderShopOptionsForSelect("modalNewShop", "请选择店铺");
     $("modalNewSkuQty").value = "1";
     openModal("createSkuModal");
@@ -8483,8 +8458,8 @@ function bindDelegates() {
       }
 
       const ok = await openActionConfirmModal(
-        `确认批量确认 ${ids.length} 条编辑产品申请？`,
-        "批量确认编辑产品申请",
+        `确认批量确认 ${ids.length} 条编辑SKU申请？`,
+        "批量确认编辑SKU申请",
         "批量确认",
       );
       if (!ok) return;
@@ -9046,15 +9021,6 @@ updateFbaOutboundButtonState();
 updateFbaSelectAll();
 switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));
-
-
-
-
-
-
-
-
-
 
 
 
