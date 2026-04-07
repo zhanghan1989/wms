@@ -3168,31 +3168,65 @@ function buildInventoryDetailBoxActionButtons(box) {
   `;
 }
 
-function buildMasterProductRelatedItems(items) {
-  const rows = Array.isArray(items) ? items : [];
-  if (!rows.length) {
-    return '<span class="muted">-</span>';
-  }
-  return `
-    <div class="master-product-related-list">
-      ${rows
-        .map(
-          (item) => `
-            <div class="master-product-related-item${item?.isCurrentProduct ? " master-product-current-cell" : ""}">
-              <span>${escapeHtml(displayText(item?.productId))}${item?.productName ? ` / ${escapeHtml(displayText(item?.productName))}` : ""}</span>
-              <span>${escapeHtml(displayText(item?.qty ?? 0))}</span>
-            </div>
-          `,
-        )
-        .join("")}
-    </div>
-  `;
+function buildInventoryDetailBoxRows(detail) {
+  const boxes = Array.isArray(detail?.boxes) ? detail.boxes : [];
+  const currentProductId = String(detail?.product?.productId || "").trim();
+  const currentProductName = String(detail?.product?.productName || "").trim();
+  const rows = [];
+
+  boxes.forEach((box) => {
+    const boxCode = String(box?.boxCode || "").trim();
+    const shelfCode = String(box?.shelfCode || "").trim();
+    const items = Array.isArray(box?.items) && box.items.length
+      ? [...box.items]
+      : [{
+          productId: currentProductId,
+          productName: currentProductName || null,
+          qty: Number(box?.qty ?? 0),
+          isCurrentProduct: true,
+        }];
+
+    items
+      .sort((a, b) => {
+        const currentDelta = Number(Boolean(b?.isCurrentProduct)) - Number(Boolean(a?.isCurrentProduct));
+        if (currentDelta !== 0) return currentDelta;
+        return String(a?.productId || "").localeCompare(String(b?.productId || ""), "en", {
+          numeric: true,
+        });
+      })
+      .forEach((item) => {
+        const isCurrentProduct = Boolean(item?.isCurrentProduct);
+        rows.push(`
+          <tr${isCurrentProduct ? ' class="master-product-current-row"' : ""}>
+            <td>${escapeHtml(displayText(boxCode))}</td>
+            <td>${escapeHtml(displayText(shelfCode))}</td>
+            <td>${escapeHtml(displayText(item?.productName))}</td>
+            <td>${escapeHtml(displayText(item?.productId))}</td>
+            <td class="${isCurrentProduct ? "master-product-current-cell" : ""}">${escapeHtml(displayText(item?.qty ?? 0))}</td>
+            <td>${
+              isCurrentProduct
+                ? buildInventoryDetailBoxActionButtons({
+                    boxCode,
+                    qty: item?.qty ?? 0,
+                  })
+                : '<span class="muted">-</span>'
+            }</td>
+          </tr>
+        `);
+      });
+  });
+
+  return rows.join("");
 }
 
 function renderProductBoxTable(detail, { bodyId, actionPrefix = "", actionRenderer = null } = {}) {
   const body = $(bodyId);
   if (!body) return;
   const rows = Array.isArray(detail?.boxes) ? detail.boxes : [];
+  if (bodyId === "inventoryDetailBoxBody") {
+    body.innerHTML = buildInventoryDetailBoxRows(detail) || '<tr><td colspan="6" class="muted">-</td></tr>';
+    return;
+  }
   const hasActionColumn = Boolean(actionPrefix) || typeof actionRenderer === "function";
   body.innerHTML =
     rows
@@ -4730,6 +4764,10 @@ function getSelectedInventoryDetailProductId() {
 }
 
 function renderInventoryDetailInboundBoxSuggestions(keyword = "") {
+  const input = $("inventoryDetailInboundBoxCode");
+  if (input?.readOnly) {
+    return;
+  }
   renderBoxOptionsForInput(
     "inventoryDetailInboundBoxCode",
     "inventoryDetailInboundBoxCodeList",
@@ -4750,6 +4788,9 @@ async function validateInventoryDetailInboundBoxInput(raw, { normalizeInput = fa
   const input = $("inventoryDetailInboundBoxCode");
   const hint = $("inventoryDetailInboundBoxHint");
   if (!input) return "";
+  if (input.readOnly) {
+    return normalizeBoxCodeInput(input.value);
+  }
 
   const token = ++inventoryDetailInboundBoxValidationToken;
   const normalized = normalizeBoxCodeInput(raw);
@@ -4786,18 +4827,39 @@ function resetInventoryDetailInboundForm() {
   }
   $("inventoryDetailInboundBoxHint")?.classList.add("hidden");
   renderInventoryDetailInboundBoxSuggestions("");
+  setInventoryDetailInboundBoxMode();
 }
 
-function openInventoryDetailInboundModal(prefillBoxCode = "") {
+function setInventoryDetailInboundBoxMode(prefillBoxCode = "", locked = false) {
+  const input = $("inventoryDetailInboundBoxCode");
+  const createButton = $("openCreateBoxFromInventoryDetailInbound");
+  const datalist = $("inventoryDetailInboundBoxCodeList");
+  const hint = $("inventoryDetailInboundBoxHint");
+  if (!input) return;
+
+  input.readOnly = locked;
+  input.value = String(prefillBoxCode || "").trim();
+  input.dataset.locked = locked ? "1" : "";
+  if (locked) {
+    hint?.classList.add("hidden");
+    if (datalist) {
+      datalist.innerHTML = "";
+    }
+  } else {
+    renderInventoryDetailInboundBoxSuggestions(input.value);
+  }
+  if (createButton) {
+    createButton.classList.toggle("hidden", locked);
+  }
+}
+
+function openInventoryDetailInboundModal(prefillBoxCode = "", { lockBoxCode = false } = {}) {
   const productId = getSelectedInventoryDetailProductId();
   if (!productId) {
     throw new Error("请先选择主商品");
   }
   resetInventoryDetailInboundForm();
-  if (prefillBoxCode) {
-    $("inventoryDetailInboundBoxCode").value = String(prefillBoxCode || "").trim();
-    renderInventoryDetailInboundBoxSuggestions(prefillBoxCode);
-  }
+  setInventoryDetailInboundBoxMode(prefillBoxCode, lockBoxCode);
   openModal("inventoryDetailInboundModal");
 }
 
@@ -7491,6 +7553,7 @@ function bindForms() {
     }
   });
   $("inventoryDetailInboundBoxCode").addEventListener("input", (event) => {
+    if (event.target.readOnly) return;
     renderInventoryDetailInboundBoxSuggestions(event.target.value);
     clearTimeout(inventoryDetailInboundBoxValidationTimer);
     inventoryDetailInboundBoxValidationTimer = setTimeout(() => {
@@ -7498,9 +7561,11 @@ function bindForms() {
     }, 250);
   });
   $("inventoryDetailInboundBoxCode").addEventListener("focus", (event) => {
+    if (event.target.readOnly) return;
     renderInventoryDetailInboundBoxSuggestions(event.target.value);
   });
   $("inventoryDetailInboundBoxCode").addEventListener("blur", (event) => {
+    if (event.target.readOnly) return;
     clearTimeout(inventoryDetailInboundBoxValidationTimer);
     validateInventoryDetailInboundBoxInput(event.target.value, { normalizeInput: true }).catch(() => {});
   });
@@ -7602,9 +7667,12 @@ function bindForms() {
         }
         const inventoryDetailInboundModal = $("inventoryDetailInboundModal");
         if (inventoryDetailInboundModal && !inventoryDetailInboundModal.classList.contains("hidden")) {
-          $("inventoryDetailInboundBoxCode").value = createdBoxCode;
-          renderInventoryDetailInboundBoxSuggestions(createdBoxCode);
-          $("inventoryDetailInboundBoxHint")?.classList.add("hidden");
+          const input = $("inventoryDetailInboundBoxCode");
+          if (input && !input.readOnly) {
+            input.value = createdBoxCode;
+            renderInventoryDetailInboundBoxSuggestions(createdBoxCode);
+            $("inventoryDetailInboundBoxHint")?.classList.add("hidden");
+          }
         }
         await loadAudit();
       });
@@ -8671,7 +8739,7 @@ function bindDelegates() {
     if (button.dataset.action === "openInventoryDetailInboundBox") {
       loadBoxes()
         .then(() => {
-          openInventoryDetailInboundModal(boxCode);
+          openInventoryDetailInboundModal(boxCode, { lockBoxCode: true });
         })
         .catch((error) => {
           showToast(error.message, true);

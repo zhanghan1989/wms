@@ -589,6 +589,10 @@ button.ghost {
   gap: 8px;
 }
 
+.master-product-current-row td {
+  font-weight: 700;
+}
+
 .master-product-status-chip {
   display: inline-flex;
   align-items: center;
