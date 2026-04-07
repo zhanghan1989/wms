@@ -27,6 +27,8 @@ const state = {
   inventorySortedSkus: [],
   inventoryVisibleCount: 0,
   inventoryListPageSize: 20,
+  skuManagementKeyword: "",
+  skuManagementVisibleCount: 0,
   inventoryPageSize: 30,
   inventoryHomeProducts: [],
   inventoryHomePage: 1,
@@ -3067,6 +3069,72 @@ function renderInventoryTable() {
   }
 }
 
+function getSkuManagementFilteredRows() {
+  const rows = Array.isArray(state.inventorySortedSkus) ? state.inventorySortedSkus : [];
+  const keyword = String(state.skuManagementKeyword || "").trim().toLowerCase();
+  if (!keyword) {
+    return rows;
+  }
+
+  return rows.filter((item) =>
+    [
+      item?.productId,
+      item?.productName,
+      item?.sku,
+      item?.asin,
+      item?.fnsku,
+      item?.fbmSku,
+      item?.rbSku,
+      item?.shop,
+      item?.remark,
+    ].some((value) => String(value || "").toLowerCase().includes(keyword)),
+  );
+}
+
+function renderSkuManagementTable() {
+  const body = $("skuManagementBody");
+  const summary = $("skuManagementSummary");
+  if (!body) return;
+
+  const filteredRows = getSkuManagementFilteredRows();
+  const visibleCount = Math.max(
+    state.inventoryListPageSize,
+    Number(state.skuManagementVisibleCount || 0),
+  );
+  const rows = filteredRows.slice(0, visibleCount);
+
+  body.innerHTML =
+    rows
+      .map((item) => {
+        const skuId = Number(item?.id || 0);
+        const totalQty = Number(state.inventoryTotalsBySku?.[String(skuId)] ?? 0);
+        const pendingQty = getFbaPendingQtyBySku(skuId);
+        return `
+          <tr>
+            <td>${escapeHtml(displayText(item?.productId))}</td>
+            <td>${escapeHtml(displayText(item?.productName))}</td>
+            <td>${escapeHtml(displayText(item?.sku))}</td>
+            <td>${escapeHtml(displayText(item?.asin))}</td>
+            <td>${escapeHtml(displayText(item?.fnsku))}</td>
+            <td>${escapeHtml(displayText(item?.fbmSku))}</td>
+            <td>${escapeHtml(displayText(item?.rbSku))}</td>
+            <td>${escapeHtml(displayText(item?.shop))}</td>
+            <td>${escapeHtml(displayText(item?.remark))}</td>
+            <td>${renderQtyWithPending(totalQty, pendingQty)}</td>
+            <td>${renderEditButton(skuId)}</td>
+          </tr>
+        `;
+      })
+      .join("") || '<tr><td colspan="11" class="muted">-</td></tr>';
+
+  if (summary) {
+    const keyword = String(state.skuManagementKeyword || "").trim();
+    summary.textContent = keyword
+      ? `检索到 ${filteredRows.length} 条SKU`
+      : `共 ${filteredRows.length} 条SKU`;
+  }
+}
+
 function renderProductSummaryMeta(containerId, product) {
   const meta = $(containerId);
   if (!meta) return;
@@ -3345,6 +3413,11 @@ async function loadInventory({ preserveSearch = false } = {}) {
     return qtyB - qtyA;
   });
   state.inventoryVisibleCount = state.inventoryListPageSize;
+  if (!preserveSearch) {
+    state.skuManagementKeyword = "";
+  }
+  state.skuManagementVisibleCount = state.inventoryListPageSize;
+  renderSkuManagementTable();
   if (!preserveSearch) {
     resetInventorySearchState();
     setInventoryDisplayMode(false);
@@ -4188,6 +4261,15 @@ function loadMoreProductEditRequestsIfNeeded() {
   if (state.skuEditRequestsVisibleCount >= state.skuEditRequests.length) return;
   state.skuEditRequestsVisibleCount += state.inventoryPageSize;
   renderProductEditRequestTable();
+}
+
+function loadMoreSkuManagementIfNeeded() {
+  const panel = $("skuManagement");
+  if (!panel || !panel.classList.contains("active")) return;
+  const total = getSkuManagementFilteredRows().length;
+  if (state.skuManagementVisibleCount >= total) return;
+  state.skuManagementVisibleCount += state.inventoryListPageSize;
+  renderSkuManagementTable();
 }
 
 function renderProductEditRequestDetail(item) {
@@ -6297,14 +6379,16 @@ async function reloadAll() {
     if ($("inventoryDetailMeta")) $("inventoryDetailMeta").innerHTML = "";
     if ($("inventoryDetailSkuBody")) $("inventoryDetailSkuBody").innerHTML = "";
     if ($("inventoryDetailBoxBody")) $("inventoryDetailBoxBody").innerHTML = "";
-    $("brandsBody").innerHTML = "";
-    $("skuTypesBody").innerHTML = "";
+    if ($("brandsBody")) $("brandsBody").innerHTML = "";
+    if ($("skuTypesBody")) $("skuTypesBody").innerHTML = "";
     $("shopsBody").innerHTML = "";
     $("shelfManageBody").innerHTML = "";
     $("boxManageBody").innerHTML = "";
     if ($("emptyBoxManageBody")) $("emptyBoxManageBody").innerHTML = "";
     $("dataBackupBody").innerHTML = "";
     $("productEditRequestBody").innerHTML = "";
+    if ($("skuManagementBody")) $("skuManagementBody").innerHTML = "";
+    if ($("skuManagementSummary")) $("skuManagementSummary").textContent = "共 0 条SKU";
     if ($("masterProductBody")) $("masterProductBody").innerHTML = "";
     if ($("masterProductSkuBody")) $("masterProductSkuBody").innerHTML = "";
     if ($("masterProductBoxBody")) $("masterProductBoxBody").innerHTML = "";
@@ -6346,6 +6430,8 @@ async function reloadAll() {
     state.inventorySortedSkus = [];
     state.inventoryLocations = new Map();
     state.inventoryTotalsBySku = {};
+    state.skuManagementKeyword = "";
+    state.skuManagementVisibleCount = 0;
     state.dataBackups = [];
     state.inventoryVisibleCount = 0;
     state.usersVisibleCount = 0;
@@ -6978,6 +7064,20 @@ function bindForms() {
     }
   });
 
+  $("skuManagementSearchForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    state.skuManagementKeyword = String($("skuManagementKeyword").value || "").trim();
+    state.skuManagementVisibleCount = state.inventoryListPageSize;
+    renderSkuManagementTable();
+  });
+
+  $("resetSkuManagementKeywordBtn").addEventListener("click", () => {
+    $("skuManagementKeyword").value = "";
+    state.skuManagementKeyword = "";
+    state.skuManagementVisibleCount = state.inventoryListPageSize;
+    renderSkuManagementTable();
+  });
+
   $("backToInventoryListBtn").addEventListener("click", () => {
     state.inventoryHomeSelectedDetail = null;
     setInventoryDisplayMode(false);
@@ -7183,12 +7283,6 @@ function bindForms() {
     try {
       switchPanel("productManagement");
       await Promise.all([
-        loadShelves(),
-        loadBoxes(),
-        loadInventory(),
-        loadBrands(),
-        loadSkuTypes(),
-        loadShops(),
         loadProductEditRequests(),
         loadProductEditPendingSummary(),
       ]);
@@ -7212,30 +7306,24 @@ function bindForms() {
     }
   });
 
+  $("openSkuManagementPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("skuManagement");
+      await loadInventory({ preserveSearch: true });
+      renderSkuManagementTable();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("backToProductManagementFromSku").addEventListener("click", () => {
+    switchPanel("productManagement");
+  });
+
   $("openOrderProcessingPanel").addEventListener("click", async () => {
     try {
       switchPanel("orderProcessing");
       await loadOrders();
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("openBrandManageModal").addEventListener("click", async () => {
-    try {
-      state.brandEditingIds = new Set();
-      await loadBrands();
-      openModal("brandManageModal");
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("openSkuTypeManageModal").addEventListener("click", async () => {
-    try {
-      state.skuTypeEditingIds = new Set();
-      await loadSkuTypes();
-      openModal("skuTypeManageModal");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -7852,7 +7940,7 @@ function bindDelegates() {
       showToast(error.message, true);
     }
   });
-  $("brandsBody").addEventListener("click", async (event) => {
+  $("brandsBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const action = button.dataset.action;
@@ -7909,7 +7997,7 @@ function bindDelegates() {
     }
   });
 
-  $("skuTypesBody").addEventListener("click", async (event) => {
+  $("skuTypesBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     const action = button.dataset.action;
@@ -8018,7 +8106,7 @@ function bindDelegates() {
     }
   });
 
-  $("brandForm").addEventListener("submit", async (event) => {
+  $("brandForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
       const name = String($("brandNameInput").value || "").trim();
@@ -8037,7 +8125,7 @@ function bindDelegates() {
     }
   });
 
-  $("skuTypeForm").addEventListener("submit", async (event) => {
+  $("skuTypeForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
       const name = String($("skuTypeNameInput").value || "").trim();
@@ -9275,6 +9363,7 @@ function bindScrollLoad() {
     if (!nearBottom) return;
     loadMoreInventoryIfNeeded();
     loadMoreInventorySearchIfNeeded();
+    loadMoreSkuManagementIfNeeded();
     loadMoreProductEditRequestsIfNeeded();
     loadMoreBatchInboundOrdersIfNeeded();
     loadMoreFbaReplenishmentsIfNeeded();
@@ -9340,17 +9429,14 @@ function bindRefresh() {
   );
   $("refreshProductManagement").addEventListener("click", () =>
     Promise.all([
-      loadShelves(),
-      loadBoxes(),
-      loadInventory(),
-      loadBrands(),
-      loadSkuTypes(),
-      loadShops(),
       loadProductEditRequests(),
       loadProductEditPendingSummary(),
     ]).catch((error) =>
       showToast(error.message, true),
     ),
+  );
+  $("refreshSkuManagement").addEventListener("click", () =>
+    loadInventory({ preserveSearch: true }).catch((error) => showToast(error.message, true)),
   );
   $("refreshMasterProductBtn").addEventListener("click", () =>
     refreshMasterProductPanel().catch((error) => showToast(error.message, true)),

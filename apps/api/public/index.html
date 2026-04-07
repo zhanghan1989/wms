@@ -265,15 +265,10 @@
         <article class="card">
           <h3>基础操作</h3>
           <div class="action-row product-actions">
-            <div class="product-actions-left">
-              <button type="button" id="openCreateSkuModal">新增SKU</button>
-              <button type="button" id="openBulkSkuUploadModal">批量上传SKU</button>
-            </div>
             <div class="product-actions-right">
-              <button type="button" id="openBrandManageModal">品牌管理</button>
-              <button type="button" id="openSkuTypeManageModal">类型管理</button>
               <button type="button" id="openShopManageModal">店铺管理</button>
-              <button type="button" id="openMasterProductManagementPanel">主商品管理</button>
+              <button type="button" id="openSkuManagementPanel">SKU管理</button>
+              <button type="button" id="openMasterProductManagementPanel">主表产品管理</button>
             </div>
           </div>
         </article>
@@ -299,11 +294,65 @@
         </article>
       </section>
 
+      <section class="panel" id="skuManagement">
+        <div class="panel-head">
+          <h2>SKU管理</h2>
+          <button id="refreshSkuManagement" class="ghost">刷新</button>
+        </div>
+
+        <article class="card">
+          <h3>基础操作</h3>
+          <div class="action-row product-actions">
+            <div class="product-actions-left">
+              <button type="button" id="openCreateSkuModal">新增SKU</button>
+              <button type="button" id="openBulkSkuUploadModal">批量上传SKU</button>
+            </div>
+            <div class="product-actions-right">
+              <button type="button" id="backToProductManagementFromSku" class="ghost">返回产品管理</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>SKU检索与一览</h3>
+              <p id="skuManagementSummary" class="muted">共 0 条SKU</p>
+            </div>
+          </div>
+          <form id="skuManagementSearchForm" class="form-grid inventory-search-form">
+            <label><input id="skuManagementKeyword" placeholder="输入产品ID / 产品名称 / SKU / ASIN / FNSKU / FBMSKU / RBSKU / 店铺" /></label>
+            <button type="submit">检索</button>
+            <button type="button" id="resetSkuManagementKeywordBtn" class="ghost">重置</button>
+          </form>
+          <div class="master-product-table-wrap">
+            <table class="master-product-sku-management-table">
+              <thead>
+                <tr>
+                  <th>产品ID</th>
+                  <th>产品名称</th>
+                  <th>SKU</th>
+                  <th>ASIN</th>
+                  <th>FNSKU</th>
+                  <th>FBMSKU</th>
+                  <th>RBSKU</th>
+                  <th>所属店铺</th>
+                  <th>备注</th>
+                  <th>在库数</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="skuManagementBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
       <section class="panel" id="masterProductManagement">
         <article class="card">
           <div class="card-head">
             <div>
-              <h3>主商品管理</h3>
+              <h3>主表产品管理</h3>
               <p class="muted">主商品检索仅在首页进行；此处用于同步主商品、批量更新 Excel，以及查看同步记录。</p>
             </div>
             <button type="button" id="refreshMasterProductBtn" class="ghost">刷新主商品</button>
@@ -1294,40 +1343,6 @@
           <button type="button" class="ghost" data-action="closeCreateShelfFromInventoryModal">取消</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <div id="brandManageModal" class="modal hidden">
-    <div class="modal-card modal-wide modal-manage">
-      <div class="modal-head">
-        <h3>品牌管理</h3>
-        <button type="button" class="ghost" data-action="closeBrandManageModal">关闭</button>
-      </div>
-      <form id="brandForm" class="manage-inline-form">
-        <input id="brandNameInput" maxlength="128" placeholder="请输入品牌名称" required />
-        <button type="submit" class="small-btn manage-create-btn">新增品牌</button>
-      </form>
-      <table>
-        <thead><tr><th>品牌</th><th>操作</th></tr></thead>
-        <tbody id="brandsBody"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div id="skuTypeManageModal" class="modal hidden">
-    <div class="modal-card modal-wide modal-manage">
-      <div class="modal-head">
-        <h3>类型管理</h3>
-        <button type="button" class="ghost" data-action="closeSkuTypeManageModal">关闭</button>
-      </div>
-      <form id="skuTypeForm" class="manage-inline-form">
-        <input id="skuTypeNameInput" maxlength="128" placeholder="请输入类型名称" required />
-        <button type="submit" class="small-btn manage-create-btn">新增类型</button>
-      </form>
-      <table>
-        <thead><tr><th>类型</th><th>操作</th></tr></thead>
-        <tbody id="skuTypesBody"></tbody>
-      </table>
     </div>
   </div>
 
