@@ -17,6 +17,13 @@ type ProductSnapshot = {
   remark: string | null;
 };
 
+type SkuEditRequestListResult = {
+  items: unknown[];
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+};
+
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'productId',
   'sku',
@@ -59,9 +66,14 @@ export class SkuEditRequestsService {
     return { pendingCount };
   }
 
-  async list(): Promise<unknown[]> {
+  async list(pageRaw?: string | number, pageSizeRaw?: string | number): Promise<SkuEditRequestListResult> {
+    const page = this.normalizePositiveInt(pageRaw, 1);
+    const pageSize = Math.min(this.normalizePositiveInt(pageSizeRaw, 30), 100);
+    const skip = (page - 1) * pageSize;
     const requests = await this.prisma.productEditRequest.findMany({
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip,
+      take: pageSize + 1,
       include: {
         sku: {
           select: {
@@ -77,7 +89,12 @@ export class SkuEditRequestsService {
         },
       },
     });
-    return (await this.attachProductNames(requests)) as unknown[];
+    return {
+      items: requests.slice(0, pageSize) as unknown[],
+      page,
+      pageSize,
+      hasMore: requests.length > pageSize,
+    };
   }
 
   async detail(idParam: string): Promise<unknown> {
@@ -452,6 +469,14 @@ export class SkuEditRequestsService {
         },
       },
     });
+  }
+
+  private normalizePositiveInt(value: string | number | undefined, fallback: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return fallback;
+    }
+    return Math.floor(parsed);
   }
 }
 

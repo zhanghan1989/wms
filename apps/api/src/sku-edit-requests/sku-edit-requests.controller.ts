@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -17,8 +17,11 @@ export class SkuEditRequestsController {
   }
 
   @Get()
-  async list(): Promise<unknown[]> {
-    return this.skuEditRequestsService.list();
+  async list(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<unknown> {
+    return this.skuEditRequestsService.list(page, pageSize);
   }
 
   @Get(':id')

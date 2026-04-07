@@ -9,6 +9,10 @@ const state = {
   skuTypes: [],
   shops: [],
   skuEditRequests: [],
+  skuEditRequestsPage: 1,
+  skuEditRequestsPageSize: 30,
+  skuEditRequestsHasMore: false,
+  skuEditRequestsLoading: false,
   masterProducts: [],
   masterProductsPage: 1,
   masterProductsPageSize: 30,
@@ -62,7 +66,6 @@ const state = {
   orders: [],
   fbaReplenishments: [],
   fbaReplenishmentsVisibleCount: 0,
-  skuEditRequestsVisibleCount: 0,
   fbaPendingCount: 0,
   productEditPendingCount: 0,
   fbaPendingBySku: {},
@@ -4326,7 +4329,7 @@ function syncSelectedProductEditRequestIds() {
 function updateProductEditRequestSelectAll() {
   const selectAll = $("productEditSelectAll");
   if (!selectAll) return;
-  const visibleRows = state.skuEditRequests.slice(0, state.skuEditRequestsVisibleCount);
+  const visibleRows = state.skuEditRequests;
   const selectableRows = visibleRows.filter((item) => canSelectProductEditRequestForBatchConfirm(item));
 
   if (!selectableRows.length) {
@@ -4346,7 +4349,7 @@ function updateProductEditRequestSelectAll() {
 function renderProductEditRequestTable() {
   const body = $("productEditRequestBody");
   if (!body) return;
-  const rows = state.skuEditRequests.slice(0, state.skuEditRequestsVisibleCount);
+  const rows = state.skuEditRequests;
 
   body.innerHTML =
     rows
@@ -4385,9 +4388,8 @@ function renderProductEditRequestTable() {
 function loadMoreProductEditRequestsIfNeeded() {
   const panel = $("productManagement");
   if (!panel || !panel.classList.contains("active")) return;
-  if (state.skuEditRequestsVisibleCount >= state.skuEditRequests.length) return;
-  state.skuEditRequestsVisibleCount += state.inventoryPageSize;
-  renderProductEditRequestTable();
+  if (state.skuEditRequestsLoading || !state.skuEditRequestsHasMore) return;
+  loadProductEditRequests({ reset: false }).catch((error) => showToast(error.message, true));
 }
 
 function setupProductEditRequestLoadObserver() {
@@ -4759,12 +4761,23 @@ function filterAdjustBoxes(keyword) {
   return boxes.filter((box) => String(box.boxCode).toUpperCase().includes(raw));
 }
 
-async function loadProductEditRequests() {
-  const rows = await request("/sku-edit-requests");
-  state.skuEditRequests = Array.isArray(rows) ? rows : [];
-  state.skuEditRequestsVisibleCount = state.inventoryPageSize;
-  syncSelectedProductEditRequestIds();
-  renderProductEditRequestTable();
+async function loadProductEditRequests({ reset = true } = {}) {
+  if (state.skuEditRequestsLoading) return;
+  state.skuEditRequestsLoading = true;
+  const targetPage = reset ? 1 : state.skuEditRequestsPage;
+  try {
+    const result = await request(
+      `/sku-edit-requests?page=${targetPage}&pageSize=${state.skuEditRequestsPageSize}`,
+    );
+    const items = Array.isArray(result?.items) ? result.items : [];
+    state.skuEditRequests = reset ? items : state.skuEditRequests.concat(items);
+    state.skuEditRequestsHasMore = Boolean(result?.hasMore);
+    state.skuEditRequestsPage = targetPage + 1;
+    syncSelectedProductEditRequestIds();
+    renderProductEditRequestTable();
+  } finally {
+    state.skuEditRequestsLoading = false;
+  }
 }
 
 function getMasterProductSyncOperationText(value) {
@@ -6589,7 +6602,9 @@ async function reloadAll() {
     state.usersVisibleCount = 0;
     state.auditVisibleCount = 0;
     state.myAuditVisibleCount = 0;
-    state.skuEditRequestsVisibleCount = 0;
+    state.skuEditRequestsPage = 1;
+    state.skuEditRequestsHasMore = false;
+    state.skuEditRequestsLoading = false;
     state.batchInboundVisibleCount = 0;
     state.fbaReplenishmentsVisibleCount = 0;
     state.fbaPendingCount = 0;
@@ -7434,7 +7449,7 @@ function bindForms() {
     try {
       switchPanel("productManagement");
       await Promise.all([
-        loadProductEditRequests(),
+        loadProductEditRequests({ reset: true }),
         loadProductEditPendingSummary(),
       ]);
     } catch (error) {
@@ -7861,7 +7876,7 @@ function bindForms() {
         );
         await Promise.all([
           loadInventory(),
-          loadProductEditRequests(),
+          loadProductEditRequests({ reset: true }),
           loadProductEditPendingSummary(),
           loadAudit(),
         ]);
@@ -7988,7 +8003,7 @@ function bindForms() {
         await submitEditSkuForm();
         closeModal("editSkuModal");
         showToast("编辑申请已提交");
-        await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
+        await Promise.all([loadProductEditRequests({ reset: true }), loadProductEditPendingSummary()]);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -8941,7 +8956,7 @@ function bindDelegates() {
         if (!ok) return;
         await deleteProductEditRequest(requestId);
         showToast("编辑申请已删除");
-        await Promise.all([loadProductEditRequests(), loadProductEditPendingSummary()]);
+        await Promise.all([loadProductEditRequests({ reset: true }), loadProductEditPendingSummary()]);
       }
     } catch (error) {
       showToast(error.message, true);
@@ -9029,7 +9044,6 @@ function bindDelegates() {
   $("productEditSelectAll").addEventListener("change", (event) => {
     const checked = Boolean(event.target.checked);
     const visibleRows = state.skuEditRequests
-      .slice(0, state.skuEditRequestsVisibleCount)
       .filter((item) => canSelectProductEditRequestForBatchConfirm(item))
       .map((item) => String(item.id));
     if (checked) {
@@ -9070,7 +9084,7 @@ function bindDelegates() {
 
       state.selectedProductEditRequestIds = new Set();
       await Promise.all([
-        loadProductEditRequests(),
+        loadProductEditRequests({ reset: true }),
         loadProductEditPendingSummary(),
         loadInventory(),
         loadAudit(),
@@ -9122,7 +9136,7 @@ function bindDelegates() {
       const detail = await loadProductEditRequestDetail(id);
       renderProductEditRequestDetail(detail);
       await Promise.all([
-        loadProductEditRequests(),
+        loadProductEditRequests({ reset: true }),
         loadProductEditPendingSummary(),
         loadInventory(),
         loadAudit(),
@@ -9601,7 +9615,7 @@ function bindRefresh() {
   );
   $("refreshProductManagement").addEventListener("click", () =>
     Promise.all([
-      loadProductEditRequests(),
+      loadProductEditRequests({ reset: true }),
       loadProductEditPendingSummary(),
     ]).catch((error) =>
       showToast(error.message, true),
