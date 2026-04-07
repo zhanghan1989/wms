@@ -49,6 +49,28 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
 ];
 const SKU_UPLOAD_TEMPLATE_FILE = '批量上传SKU.xlsx';
 
+const IMPORT_FIELD_LIMITS: Record<keyof ImportSkuRow, number> = {
+  productId: 128,
+  sku: 128,
+  rbSku: 128,
+  asin: 32,
+  fnsku: 32,
+  fbmSku: 128,
+  shop: 128,
+  remark: 255,
+};
+
+const IMPORT_FIELD_LABELS: Record<keyof ImportSkuRow, string> = {
+  productId: '产品ID',
+  sku: 'SKU',
+  rbSku: 'rbSKU',
+  asin: 'ASIN',
+  fnsku: 'FNSKU',
+  fbmSku: 'FBMSKU',
+  shop: '店铺',
+  remark: '备注',
+};
+
 @Injectable()
 export class SkusService {
   constructor(
@@ -151,7 +173,7 @@ export class SkusService {
       }
     }
 
-    throw new NotFoundException(`模板文件不存在：${SKU_UPLOAD_TEMPLATE_FILE}`);
+    throw new NotFoundException(`找不到模板文件：${SKU_UPLOAD_TEMPLATE_FILE}`);
   }
 
   async importExcel(
@@ -166,39 +188,55 @@ export class SkusService {
     fileName: string | null;
   }> {
     const rows = this.parseImportRows(fileBuffer);
+    let summary: {
+      totalRows: number;
+      createdCount: number;
+      editRequestCount: number;
+    };
 
-    const summary = await this.prisma.$transaction(async (tx) => {
-      let createdCount = 0;
-      let editRequestCount = 0;
+    try {
+      summary = await this.prisma.$transaction(async (tx) => {
+        let createdCount = 0;
+        let editRequestCount = 0;
 
-      for (const row of rows) {
-        const existing = await tx.sku.findUnique({ where: { sku: row.sku } });
-        if (!existing) {
-          await this.createSkuInTransaction(tx, row, operatorId, requestId);
-          createdCount += 1;
-          continue;
+        for (const row of rows) {
+          const existing = await tx.sku.findUnique({ where: { sku: row.sku } });
+          if (!existing) {
+            await this.createSkuInTransaction(tx, row, operatorId, requestId);
+            createdCount += 1;
+            continue;
+          }
+
+          const beforeData = this.buildSnapshotFromSku(existing);
+          const afterData = this.buildAfterSnapshot(beforeData, row);
+          const changedFields = SNAPSHOT_FIELDS.filter(
+            (field) => beforeData[field] !== afterData[field],
+          );
+          if (!changedFields.length) {
+            continue;
+          }
+
+          editRequestCount += await this.createPendingEditRequests(tx, {
+            skuId: existing.id,
+            beforeData,
+            afterData,
+            changedFields,
+            createdBy: operatorId,
+          });
         }
 
-        const beforeData = this.buildSnapshotFromSku(existing);
-        const afterData = this.buildAfterSnapshot(beforeData, row);
-        const changedFields = SNAPSHOT_FIELDS.filter(
-          (field) => beforeData[field] !== afterData[field],
-        );
-        editRequestCount += await this.createPendingEditRequests(tx, {
-          skuId: existing.id,
-          beforeData,
-          afterData,
-          changedFields,
-          createdBy: operatorId,
-        });
+        return {
+          totalRows: rows.length,
+          createdCount,
+          editRequestCount,
+        };
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        throw this.buildImportDatabaseError(error);
       }
-
-      return {
-        totalRows: rows.length,
-        createdCount,
-        editRequestCount,
-      };
-    });
+      throw error;
+    }
 
     return {
       ...summary,
@@ -245,13 +283,21 @@ export class SkusService {
     void payload;
     void operatorId;
     void requestId;
-    throw new BadRequestException('Direct SKU update is disabled. Submit a product edit request instead.');
+    throw new BadRequestException(
+      'Direct SKU update is disabled. Submit a product edit request instead.',
+    );
   }
 
-  async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
+  async remove(
+    idParam: string,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'skuId');
     const sku = await this.prisma.sku.findUnique({ where: { id } });
-    if (!sku) throw new NotFoundException('SKU not found');
+    if (!sku) {
+      throw new NotFoundException('SKU not found');
+    }
     await this.prisma.$transaction(async (tx) => {
       await tx.sku.delete({ where: { id } });
       await this.auditService.create({
@@ -289,6 +335,7 @@ export class SkusService {
 
     const errors: string[] = [];
     const result: ImportSkuRow[] = [];
+    const seenSkuRows = new Map<string, number>();
 
     rows.forEach((rawRow, idx) => {
       const rowNo = idx + 2;
@@ -300,8 +347,6 @@ export class SkusService {
       const sku = this.pickField(normalized, [
         'sku',
         'skufba',
-        'SKU(fba编码)',
-        'SKU（fba编码）',
         'sku(fba编码)',
         'sku（fba编码）',
         'fba编码',
@@ -310,32 +355,26 @@ export class SkusService {
         errors.push(`Row ${rowNo} is missing SKU`);
         return;
       }
+      if (seenSkuRows.has(sku)) {
+        errors.push(
+          `Row ${rowNo} duplicated SKU: ${sku} (first seen at row ${seenSkuRows.get(sku)})`,
+        );
+        return;
+      }
+      seenSkuRows.set(sku, rowNo);
 
-      result.push({
-        productId: this.pickField(normalized, ['productId', 'productid', '产品ID', '产品id']),
+      const importRow: ImportSkuRow = {
+        productId: this.pickField(normalized, ['productId', 'productid', '产品ID', '产品Id']),
         sku,
-        rbSku: this.pickField(normalized, [
-          'rbSku',
-          'rbsku',
-          'rb sku',
-          'rb_sku',
-          'rbcode',
-          'rb',
-          'rb编码',
-        ]),
+        rbSku: this.pickField(normalized, ['rbSku', 'rbsku', 'rb sku', 'rb_sku', 'rbcode', 'rb']),
         asin: this.pickField(normalized, ['asin']),
         fnsku: this.pickField(normalized, ['fnsku']),
-        fbmSku: this.pickField(normalized, [
-          'fbmsku',
-          'fbm sku',
-          'fbm_sku',
-          'fbm',
-          'fbmcode',
-          'fbm编码',
-        ]),
+        fbmSku: this.pickField(normalized, ['fbmsku', 'fbm sku', 'fbm_sku', 'fbm', 'fbmcode']),
         shop: this.pickField(normalized, ['shop', '店铺']),
         remark: this.pickField(normalized, ['remark', '备注']),
-      });
+      };
+      this.validateImportRow(importRow, rowNo, errors);
+      result.push(importRow);
     });
 
     if (errors.length > 0) {
@@ -347,7 +386,7 @@ export class SkusService {
 
   private normalizeHeader(header: string): string {
     return String(header || '')
-      .replace(/[\s_\-()\[\]{}]/g, '')
+      .replace(/[\s_\-()\[\]{}（）]/g, '')
       .toLowerCase();
   }
 
@@ -360,6 +399,36 @@ export class SkusService {
       }
     }
     return null;
+  }
+
+  private validateImportRow(row: ImportSkuRow, rowNo: number, errors: string[]): void {
+    (Object.entries(IMPORT_FIELD_LIMITS) as Array<[keyof ImportSkuRow, number]>).forEach(
+      ([field, maxLength]) => {
+        const value = this.normalizeNullableString(row[field]);
+        if (value && value.length > maxLength) {
+          errors.push(
+            `Row ${rowNo} ${IMPORT_FIELD_LABELS[field]} length exceeds ${maxLength} characters`,
+          );
+        }
+      },
+    );
+  }
+
+  private buildImportDatabaseError(
+    error: Prisma.PrismaClientKnownRequestError,
+  ): BadRequestException {
+    if (error.code === 'P2000') {
+      return new BadRequestException(
+        'Excel 中存在超长字段，请检查产品ID、SKU、rbSKU、ASIN、FNSKU、FBMSKU、店铺、备注长度',
+      );
+    }
+    if (error.code === 'P2002') {
+      return new BadRequestException('Excel 中存在重复 SKU，或数据库里已有相同唯一值');
+    }
+    if (error.code === 'P2003') {
+      return new BadRequestException('存在无效关联数据，请检查产品ID是否已存在于主商品表');
+    }
+    return new BadRequestException('SKU 导入失败，请检查 Excel 数据后重试');
   }
 
   private buildSnapshotFromSku(sku: {
@@ -408,6 +477,9 @@ export class SkusService {
     },
   ): Promise<number> {
     const changedFields = Array.from(new Set(payload.changedFields));
+    if (!changedFields.length) {
+      return 0;
+    }
 
     await tx.productEditRequest.create({
       data: {
@@ -439,7 +511,7 @@ export class SkusService {
       select: { id: true },
     });
     if (!masterProduct) {
-      throw new BadRequestException('所属产品ID不存在');
+      throw new BadRequestException('主商品ID不存在');
     }
   }
 
@@ -477,4 +549,3 @@ export class SkusService {
     });
   }
 }
-
