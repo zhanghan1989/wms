@@ -190,6 +190,22 @@ function validateBulkInventoryImportRows(
 function buildBulkInventoryImportDatabaseError(
   error: Prisma.PrismaClientKnownRequestError,
 ): BadRequestException {
+  const targetText = getPrismaInventoryImportTargetText(error);
+
+  if (error.code === 'P2021' || error.code === 'P2022') {
+    if (
+      targetText.includes('master_product_box_inventory') ||
+      targetText.includes('master_products') ||
+      targetText.includes('stock_qty')
+    ) {
+      return new BadRequestException(
+        '数据库结构未更新到主商品库存模型，请先执行 prisma migrate deploy，同步 master_products、master_product_box_inventory 和 stock_qty 相关迁移',
+      );
+    }
+
+    return new BadRequestException('数据库结构未更新，请先执行 prisma migrate deploy');
+  }
+
   if (error.code === 'P2000') {
     return new BadRequestException('Excel 中存在超长字段，请检查箱号、产品ID、备注等字段长度');
   }
@@ -203,6 +219,32 @@ function buildBulkInventoryImportDatabaseError(
   }
 
   return new BadRequestException('批量更新库存失败，请检查 Excel 数据后重试');
+}
+
+function getPrismaInventoryImportTargetText(
+  error: Prisma.PrismaClientKnownRequestError,
+): string {
+  const parts: string[] = [];
+  const target = error.meta?.target;
+  const table = error.meta?.table;
+  const column = error.meta?.column;
+
+  if (Array.isArray(target)) {
+    parts.push(...target.map((item) => String(item)));
+  } else if (target !== undefined && target !== null) {
+    parts.push(String(target));
+  }
+
+  if (table !== undefined && table !== null) {
+    parts.push(String(table));
+  }
+
+  if (column !== undefined && column !== null) {
+    parts.push(String(column));
+  }
+
+  parts.push(String(error.message ?? ''));
+  return parts.join(',').toLowerCase();
 }
 
 @Injectable()
