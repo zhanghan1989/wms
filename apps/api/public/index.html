@@ -360,33 +360,19 @@
             <button type="button" id="refreshMasterProductBtn" class="ghost">刷新主商品</button>
           </div>
 
-          <div class="action-row master-product-entry-actions">
-            <div class="master-product-entry-actions-left">
-              <button type="button" id="triggerMasterProductSyncBtn">手动同步汐雅系统产品</button>
-              <button type="button" id="downloadMasterProductTemplateBtn">下载模板</button>
-            </div>
-            <div class="master-product-entry-actions-right">
-              <button type="button" id="toggleMasterProductImportBtn">批量上传Excel更新主商品</button>
-              <button type="button" id="toggleMasterProductExportBtn" class="master-product-export-trigger">分类下载</button>
-            </div>
-          </div>
-
-          <form id="masterProductImportForm" class="form-grid master-product-import-form hidden">
-            <label>
-              主商品更新 Excel 文件
-              <input id="masterProductImportFile" type="file" accept=".xlsx,.xls" />
-            </label>
-            <div class="actions master-product-import-actions">
-              <span class="muted">模板文件：产品列表.xlsx</span>
-              <div class="actions">
-                <button type="submit" id="submitMasterProductImportBtn">上传并更新</button>
+            <div class="action-row master-product-entry-actions">
+              <div class="master-product-entry-actions-left">
+                <button type="button" id="triggerMasterProductSyncBtn">手动同步汐雅系统产品</button>
+              </div>
+              <div class="master-product-entry-actions-right">
+                <button type="button" id="toggleMasterProductImportBtn">批量上传Excel更新主商品</button>
+                <button type="button" id="toggleMasterProductExportBtn" class="master-product-export-trigger">分类下载</button>
               </div>
             </div>
-          </form>
 
-          <form id="masterProductExportForm" class="form-grid master-product-export-form hidden">
-            <label>
-              关键词
+            <form id="masterProductExportForm" class="form-grid master-product-export-form hidden">
+              <label>
+                关键词
               <input id="masterProductExport_keyword" placeholder="产品ID / 产品名称 / 属性" />
             </label>
             <label>
@@ -1069,6 +1055,28 @@
           <div class="actions">
             <button type="submit">上传并处理</button>
             <button type="button" class="ghost" data-action="closeBulkInventoryUpdateModal">取消</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="masterProductImportModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>批量上传Excel更新主商品</h3>
+        <button type="button" class="ghost" data-action="closeMasterProductImportModal">关闭</button>
+      </div>
+      <form id="masterProductImportForm" class="form-grid modal-grid">
+        <label class="create-sku-full-row">
+          主商品更新 Excel 文件
+          <input id="masterProductImportFile" type="file" accept=".xlsx,.xls" required />
+        </label>
+        <div class="modal-actions modal-actions-split">
+          <button id="downloadMasterProductTemplateBtn" type="button" class="ghost">下载模板</button>
+          <div class="actions">
+            <button type="submit" id="submitMasterProductImportBtn">上传并更新</button>
+            <button type="button" class="ghost" data-action="closeMasterProductImportModal">取消</button>
           </div>
         </div>
       </form>

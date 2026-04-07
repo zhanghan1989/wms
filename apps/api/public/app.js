@@ -7131,7 +7131,8 @@ function bindForms() {
   });
 
   $("toggleMasterProductImportBtn").addEventListener("click", () => {
-    $("masterProductImportForm")?.classList.toggle("hidden");
+    $("masterProductImportForm")?.reset();
+    openModal("masterProductImportModal");
   });
 
   $("toggleMasterProductExportBtn").addEventListener("click", async () => {
@@ -7206,6 +7207,7 @@ function bindForms() {
           `主商品更新完成：共 ${result?.importedCount || 0} 行，新增 ${result?.createdCount || 0} 行，更新 ${result?.updatedCount || 0} 行`,
         );
         $("masterProductImportForm").reset();
+        closeModal("masterProductImportModal");
         setMasterProductView("syncRecords");
         await loadMasterProductSyncRecords({ reset: true });
       });
@@ -9325,6 +9327,13 @@ function bindDelegates() {
     );
     if (bulkInventoryUpdateClose) {
       closeModal("bulkInventoryUpdateModal");
+      return;
+    }
+    const masterProductImportClose = event.target.closest(
+      "button[data-action='closeMasterProductImportModal']",
+    );
+    if (masterProductImportClose) {
+      closeModal("masterProductImportModal");
       return;
     }
     const boxClose = event.target.closest("button[data-action='closeCreateBoxFromSkuModal']");
