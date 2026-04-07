@@ -102,6 +102,9 @@ let adjustBoxValidationToken = 0;
 let inventoryDetailInboundBoxValidationTimer = null;
 let inventoryDetailInboundBoxValidationToken = 0;
 let modalZIndexSeed = 20;
+let errorModalAutoActionTimer = null;
+let errorModalCountdownTimer = null;
+let errorModalAutoAction = null;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 const $ = (id) => document.getElementById(id);
@@ -190,6 +193,20 @@ function showToast(message, isError = false, options = {}) {
   showErrorModal(message, isError, options);
 }
 
+function clearErrorModalAutoState({ keepAction = false } = {}) {
+  if (errorModalAutoActionTimer) {
+    clearTimeout(errorModalAutoActionTimer);
+    errorModalAutoActionTimer = null;
+  }
+  if (errorModalCountdownTimer) {
+    clearInterval(errorModalCountdownTimer);
+    errorModalCountdownTimer = null;
+  }
+  if (!keepAction) {
+    errorModalAutoAction = null;
+  }
+}
+
 function showErrorModal(message, isError = true, options = {}) {
   const text = String(message || "发生未知错误");
   const modalCard = document.querySelector("#errorModal .modal-card");
@@ -198,8 +215,12 @@ function showErrorModal(message, isError = true, options = {}) {
   const messageEl = $("errorModalMessage");
   const closeBtn = $("errorModalCloseBtn");
   const printLabelBtn = $("errorModalPrintLabelBtn");
+  const countdownSeconds = Number(options?.countdownSeconds ?? 0);
+  const hideCloseButton = Boolean(options?.hideCloseButton);
+  const autoNavigateHome = Boolean(options?.autoNavigateHome);
   const labelData = !isError && options && typeof options === "object" ? options.labelData || null : null;
   state.pendingPrintLabel = labelData;
+  clearErrorModalAutoState();
   if (modalCard) {
     modalCard.classList.toggle("is-info", !isError);
   }
@@ -215,14 +236,43 @@ function showErrorModal(message, isError = true, options = {}) {
     messageEl.textContent = text;
   }
   if (closeBtn) {
-  closeBtn.textContent = isError ? "我知道了" : "关闭";
-  closeBtn.classList.toggle("danger-solid", isError);
-}
-if (printLabelBtn) {
-  const shouldShowPrint = Boolean(labelData && String(labelData.fnsku || "").trim());
-  printLabelBtn.classList.toggle("hidden", !shouldShowPrint);
-}
-openModal("errorModal");
+    closeBtn.textContent = isError ? "我知道了" : "关闭";
+    closeBtn.classList.toggle("danger-solid", isError);
+    closeBtn.classList.toggle("hidden", hideCloseButton);
+  }
+  if (printLabelBtn) {
+    const shouldShowPrint = Boolean(labelData && String(labelData.fnsku || "").trim());
+    printLabelBtn.classList.toggle("hidden", !shouldShowPrint);
+  }
+  if (countdownSeconds > 0 && messageEl) {
+    let remaining = Math.max(1, Math.floor(countdownSeconds));
+    const renderCountdownMessage = () => {
+      messageEl.textContent = `${text}（${remaining}秒后自动跳转到首页）`;
+    };
+    renderCountdownMessage();
+    errorModalCountdownTimer = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearErrorModalAutoState({ keepAction: true });
+        return;
+      }
+      renderCountdownMessage();
+    }, 1000);
+    if (autoNavigateHome) {
+      errorModalAutoAction = async () => {
+        await openInventoryHomeDefault();
+      };
+    }
+    errorModalAutoActionTimer = setTimeout(async () => {
+      const callback = errorModalAutoAction;
+      clearErrorModalAutoState();
+      closeModal("errorModal");
+      if (typeof callback === "function") {
+        await callback();
+      }
+    }, remaining * 1000);
+  }
+  openModal("errorModal");
 }
 
 function closeErrorModal() {
@@ -231,6 +281,11 @@ function closeErrorModal() {
   if (printLabelBtn) {
     printLabelBtn.classList.add("hidden");
   }
+  const closeBtn = $("errorModalCloseBtn");
+  if (closeBtn) {
+    closeBtn.classList.remove("hidden");
+  }
+  clearErrorModalAutoState();
   closeModal("errorModal");
 }
 
@@ -6532,9 +6587,12 @@ function bindForms() {
         });
         state.token = data.accessToken;
         localStorage.setItem("wms_token", state.token);
-        showToast("登录成功");
         await reloadAll();
-        await openInventoryHomeDefault();
+        showToast("登录成功", false, {
+          hideCloseButton: true,
+          countdownSeconds: 3,
+          autoNavigateHome: true,
+        });
       });
     } catch (error) {
       showToast(error.message, true);
