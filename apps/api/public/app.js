@@ -3354,7 +3354,7 @@ function buildInventoryDetailBoxRows(detail) {
   const rows = [];
 
   boxes.sort((a, b) => {
-    const qtyDiff = Number(b?.qty ?? 0) - Number(a?.qty ?? 0);
+    const qtyDiff = Number(a?.qty ?? 0) - Number(b?.qty ?? 0);
     if (qtyDiff !== 0) return qtyDiff;
     return String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", {
       numeric: true,
