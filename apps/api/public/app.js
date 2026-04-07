@@ -1489,8 +1489,10 @@ function setInventoryDisplayMode(searchMode) {
   state.inventorySearchMode = searchMode;
   const listSection = $("inventoryListSection");
   const searchSection = $("inventorySearchSection");
+  const backBtn = $("backToInventoryListBtn");
   if (listSection) listSection.classList.toggle("hidden", searchMode);
   if (searchSection) searchSection.classList.toggle("hidden", !searchMode);
+  if (backBtn) backBtn.classList.toggle("hidden", !searchMode);
 }
 
 function resetInventorySearchState() {
@@ -3482,12 +3484,8 @@ function renderProductBoxTable(detail, { bodyId, actionPrefix = "", actionRender
 
 function renderInventoryHomeDetail(detail) {
   state.inventoryHomeSelectedDetail = detail || null;
-  $("inventoryDetailTitle").textContent = detail?.product?.productName
-    ? `产品主表详情：${detail.product.productName}`
-    : "产品主表详情";
-  $("inventoryDetailSubtitle").textContent = detail?.product?.productId
-    ? `产品ID：${detail.product.productId}`
-    : "-";
+  $("inventoryDetailTitle").textContent = "";
+  $("inventoryDetailSubtitle").textContent = "";
   renderProductSummaryMeta("inventoryDetailMeta", detail?.product);
   renderProductSkuTable(detail, { bodyId: "inventoryDetailSkuBody", selectId: "inventoryDetailFbaSkuId" });
   renderProductBoxTable(detail, {
@@ -3497,7 +3495,7 @@ function renderInventoryHomeDetail(detail) {
   const skuSummary = $("inventoryDetailSkuSummary");
   if (skuSummary) {
     const skuCount = Array.isArray(detail?.skus) ? detail.skus.length : 0;
-    skuSummary.textContent = `共 ${skuCount} 套关联 SKU`;
+    skuSummary.textContent = `共 ${skuCount} 条关联 SKU`;
   }
   const boxSummary = $("inventoryDetailBoxSummary");
   if (boxSummary) {

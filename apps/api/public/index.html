@@ -70,7 +70,7 @@
       <section class="panel active" id="inventory">
         <div class="panel-head">
           <h2>产品主表</h2>
-          <button id="refreshInventory" class="ghost">刷新</button>
+          <button type="button" id="backToInventoryListBtn" class="ghost hidden">返回列表</button>
         </div>
 
         <div class="inventory-toolbar">
@@ -84,15 +84,14 @@
           <div id="inventorySearchSection" class="card inventory-search-card hidden">
             <div class="card-head">
               <div>
-                <h3 id="inventoryDetailTitle">产品主表详情</h3>
-                <p id="inventoryDetailSubtitle" class="muted">-</p>
+                <div id="inventoryDetailTitle" class="hidden"></div>
+                <div id="inventoryDetailSubtitle" class="hidden"></div>
               </div>
-              <button type="button" id="backToInventoryListBtn" class="ghost">返回列表</button>
             </div>
             <div id="inventoryDetailMeta" class="master-product-summary-grid"></div>
             <article class="card inventory-detail-card">
               <div class="card-head">
-                <h4>关联 SKU 套装</h4>
+                <h4>关联 SKU</h4>
                 <p id="inventoryDetailSkuSummary" class="muted">共 0 套关联 SKU</p>
               </div>
               <div class="master-product-table-wrap">
