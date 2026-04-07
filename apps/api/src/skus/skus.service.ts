@@ -423,12 +423,29 @@ export class SkusService {
       );
     }
     if (error.code === 'P2002') {
+      const targetText = this.getPrismaErrorTargetText(error);
+      if (
+        targetText.includes('product_id') ||
+        targetText.includes('skus_product_id_key')
+      ) {
+        return new BadRequestException(
+          '当前数据库仍将 skus.product_id 设为唯一值，但现在业务已支持一个主商品关联多个 SKU。请先删除唯一索引 skus_product_id_key 后再重试导入',
+        );
+      }
       return new BadRequestException('Excel 中存在重复 SKU，或数据库里已有相同唯一值');
     }
     if (error.code === 'P2003') {
       return new BadRequestException('存在无效关联数据，请检查产品ID是否已存在于主商品表');
     }
     return new BadRequestException('SKU 导入失败，请检查 Excel 数据后重试');
+  }
+
+  private getPrismaErrorTargetText(error: Prisma.PrismaClientKnownRequestError): string {
+    const target = error.meta?.target;
+    if (Array.isArray(target)) {
+      return target.map((item) => String(item)).join(',').toLowerCase();
+    }
+    return String(target ?? error.message ?? '').toLowerCase();
   }
 
   private buildSnapshotFromSku(sku: {
