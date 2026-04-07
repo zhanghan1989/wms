@@ -92,9 +92,9 @@ const DEFAULT_DEPARTMENT_OPTIONS = [
 ];
 
 const DEFAULT_ROLE_OPTIONS = [
-  { code: "employee", name: "\u5458\u5de5", status: 1, sort: 10 },
-  { code: "admin", name: "\u7ba1\u7406\u8005", status: 1, sort: 20 },
-  { code: "system_admin", name: "\u7cfb\u7edf\u7ba1\u7406\u5458", status: 1, sort: 30 },
+  { code: "employee", name: "员工", status: 1, sort: 10 },
+  { code: "admin", name: "管理者", status: 1, sort: 20 },
+  { code: "system_admin", name: "系统管理员", status: 1, sort: 30 },
 ];
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = "正在编辑产品申请中，请管理员确认后再执行相关操作。";
 
@@ -191,14 +191,14 @@ function showErrorModal(message, isError = true, options = {}) {
     messageEl.textContent = text;
   }
   if (closeBtn) {
-    closeBtn.textContent = isError ? "我知道了" : "关闭";
-    closeBtn.classList.toggle("danger-solid", isError);
-  }
-  if (printLabelBtn) {
-    const shouldShowPrint = Boolean(labelData && String(labelData.fnsku || "").trim());
-    printLabelBtn.classList.toggle("hidden", !shouldShowPrint);
-  }
-  openModal("errorModal");
+  closeBtn.textContent = isError ? "我知道了" : "关闭";
+  closeBtn.classList.toggle("danger-solid", isError);
+}
+if (printLabelBtn) {
+  const shouldShowPrint = Boolean(labelData && String(labelData.fnsku || "").trim());
+  printLabelBtn.classList.toggle("hidden", !shouldShowPrint);
+}
+openModal("errorModal");
 }
 
 function closeErrorModal() {
@@ -1939,8 +1939,8 @@ function renderRoleOptionsTable() {
               class="tiny-input user-option-input"
               data-field="name"
               maxlength="64"
-              value="${escapeHtml(item.name || "")}"
-              data-original-name="${escapeHtml(item.name || "")}"
+              value="${escapeHtml(item.name || "")}
+              " data-original-name="${escapeHtml(item.name || "")}"
               ${editing ? "" : "readonly"}
             />
           </td>
@@ -8195,3 +8195,16 @@ updateFbaOutboundButtonState();
 updateFbaSelectAll();
 switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));
+
+
+
+
+
+
+
+
+
+
+
+
+

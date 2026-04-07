@@ -23,7 +23,7 @@ import {
 
 interface InboundLine {
   boxCode: string;
-  sku: string;
+  productId: string;
   qty: number;
   sourceRowNo: number;
 }
@@ -48,7 +48,14 @@ export class InboundService {
         items: {
           include: {
             box: { select: { id: true, boxCode: true } },
-            sku: { select: { id: true, sku: true } },
+            product: {
+              select: {
+                id: true,
+                productId: true,
+                productName: true,
+                stockQty: true,
+              },
+            },
           },
           orderBy: { id: 'asc' },
         },
@@ -66,6 +73,7 @@ export class InboundService {
     const parsedLines = this.parseExcelLines(fileBuffer);
     const mergedLines = this.mergeLines(parsedLines);
     await this.ensureBoxesAreNew(mergedLines);
+    await this.ensureProductsExist(mergedLines);
     const remark = originalName ? `import:${originalName}` : 'import-excel';
     return this.createPendingBatchOrder(mergedLines, remark, operatorId, requestId);
   }
@@ -78,6 +86,7 @@ export class InboundService {
     const normalized = payload.items.map((item) => this.normalizeItem(item));
     const mergedLines = this.mergeLines(normalized);
     await this.ensureBoxesAreNew(mergedLines);
+    await this.ensureProductsExist(mergedLines);
     return this.createPendingBatchOrder(
       mergedLines,
       payload.remark ?? 'manual-create',
@@ -114,7 +123,7 @@ export class InboundService {
         };
       }
       if (locked[0].status === OrderStatus.void) {
-        throw new UnprocessableEntityException('已作废入库单不能确认');
+        throw new UnprocessableEntityException('已作废的入库单不能再确认');
       }
 
       const order = await tx.inboundOrder.findUnique({
@@ -123,67 +132,65 @@ export class InboundService {
       });
       if (!order) throw new NotFoundException('入库单不存在');
       if (order.items.length === 0) {
-        throw new UnprocessableEntityException('入库单没有明细');
+        throw new UnprocessableEntityException('入库单没有明细，不能确认');
       }
 
-      const currentInventoryRows = await tx.inventoryBoxSku.findMany({
-        where: {
-          OR: order.items.map((item) => ({
-            boxId: item.boxId,
-            skuId: item.skuId,
-          })),
-        },
-      });
+      const productIds = Array.from(new Set(order.items.map((item) => item.productId)));
+      const boxIds = Array.from(new Set(order.items.map((item) => item.boxId)));
+
+      const [products, currentInventoryRows] = await Promise.all([
+        tx.masterProduct.findMany({
+          where: { productId: { in: productIds } },
+          select: {
+            id: true,
+            productId: true,
+            stockQty: true,
+          },
+        }),
+        tx.masterProductBoxInventory.findMany({
+          where: {
+            OR: order.items.map((item) => ({
+              boxId: item.boxId,
+              productId: item.productId,
+            })),
+          },
+        }),
+      ]);
+
+      const productById = new Map(products.map((item) => [item.productId, item]));
       const currentQtyMap = new Map<string, number>();
-      const existingInventoryKeys = new Set<string>();
       currentInventoryRows.forEach((row) => {
-        const key = this.inventoryKey(row.boxId, row.skuId);
-        currentQtyMap.set(key, row.qty);
-        existingInventoryKeys.add(key);
+        currentQtyMap.set(this.inventoryKey(row.boxId, row.productId), Number(row.qty ?? 0));
       });
 
       for (const item of order.items) {
-        const key = this.inventoryKey(item.boxId, item.skuId);
+        const product = productById.get(item.productId);
+        if (!product) {
+          throw new UnprocessableEntityException(`产品ID不存在：${item.productId}`);
+        }
+
+        const key = this.inventoryKey(item.boxId, item.productId);
         const beforeQty = currentQtyMap.get(key) ?? 0;
         const afterQty = beforeQty + item.qty;
 
-        if (existingInventoryKeys.has(key)) {
-          await tx.inventoryBoxSku.update({
-            where: {
-              boxId_skuId: {
-                boxId: item.boxId,
-                skuId: item.skuId,
-              },
-            },
-            data: {
-              qty: {
-                increment: item.qty,
-              },
-            },
-          });
-        } else {
-          await tx.inventoryBoxSku.create({
-            data: {
+        await tx.masterProductBoxInventory.upsert({
+          where: {
+            boxId_productId: {
               boxId: item.boxId,
-              skuId: item.skuId,
-              qty: item.qty,
+              productId: item.productId,
             },
-          });
-          existingInventoryKeys.add(key);
-        }
-        currentQtyMap.set(key, afterQty);
-
-        await tx.stockMovement.create({
-          data: {
-            movementType: 'inbound',
-            refType: 'inbound_order',
-            refId: order.id,
+          },
+          update: {
+            qty: afterQty,
+          },
+          create: {
             boxId: item.boxId,
-            skuId: item.skuId,
-            qtyDelta: item.qty,
-            operatorId,
+            productId: item.productId,
+            qty: item.qty,
           },
         });
+
+        currentQtyMap.set(key, afterQty);
 
         await this.auditService.create({
           db: tx,
@@ -192,14 +199,64 @@ export class InboundService {
           action: AuditAction.update,
           eventType: AuditEventType.BOX_STOCK_INCREASED,
           beforeData: {
-            boxId: item.boxId,
-            skuId: item.skuId,
+            scope: 'master_product',
+            boxId: item.boxId.toString(),
+            productId: item.productId,
             qty: beforeQty,
           },
           afterData: {
-            boxId: item.boxId,
-            skuId: item.skuId,
+            scope: 'master_product',
+            boxId: item.boxId.toString(),
+            productId: item.productId,
             qty: afterQty,
+            qtyDelta: item.qty,
+          },
+          operatorId,
+          requestId,
+          remark: `inbound order ${order.orderNo}`,
+        });
+      }
+
+      const totalQtyMap = new Map<string, number>();
+      if (productIds.length > 0) {
+        const totals = await tx.masterProductBoxInventory.groupBy({
+          by: ['productId'],
+          where: {
+            productId: { in: productIds },
+            qty: { gt: 0 },
+          },
+          _sum: { qty: true },
+        });
+        totals.forEach((row) => {
+          totalQtyMap.set(row.productId, Number(row._sum.qty ?? 0));
+        });
+      }
+
+      for (const productId of productIds) {
+        const product = productById.get(productId);
+        if (!product) continue;
+
+        const totalQty = totalQtyMap.get(productId) ?? 0;
+        await tx.masterProduct.update({
+          where: { productId },
+          data: { stockQty: totalQty },
+        });
+
+        await this.auditService.create({
+          db: tx,
+          entityType: 'master_product',
+          entityId: product.id,
+          action: AuditAction.update,
+          eventType: AuditEventType.INVENTORY_ADJUST_CONFIRMED,
+          beforeData: {
+            productId,
+            stockQty: Number(product.stockQty ?? 0),
+            boxIds: boxIds.map((id) => id.toString()),
+          },
+          afterData: {
+            productId,
+            stockQty: totalQty,
+            boxIds: boxIds.map((id) => id.toString()),
           },
           operatorId,
           requestId,
@@ -250,7 +307,7 @@ export class InboundService {
       if (locked.length === 0) throw new NotFoundException('入库单不存在');
 
       if (locked[0].status === OrderStatus.confirmed) {
-        throw new UnprocessableEntityException('已确认入库单不能作废');
+        throw new UnprocessableEntityException('已确认的入库单不能作废');
       }
       if (locked[0].status === OrderStatus.void) {
         return {
@@ -290,13 +347,13 @@ export class InboundService {
 
   private normalizeItem(item: CreateInboundOrderItemDto): InboundLine {
     const boxCode = normalizeBoxCode(item.boxCode);
-    const sku = item.sku.trim();
-    if (!boxCode || !sku) {
-      throw new BadRequestException('箱号和SKU为必填项');
+    const productId = item.productId.trim();
+    if (!boxCode || !productId) {
+      throw new BadRequestException('箱号和产品ID为必填');
     }
     return {
       boxCode,
-      sku,
+      productId,
       qty: item.qty,
       sourceRowNo: item.sourceRowNo ?? 0,
     };
@@ -307,16 +364,16 @@ export class InboundService {
     try {
       workbook = XLSX.read(fileBuffer, { type: 'buffer' });
     } catch {
-      throw new BadRequestException('无效的Excel文件');
+      throw new BadRequestException('无法解析 Excel 文件');
     }
     const firstSheet = workbook.SheetNames[0];
     if (!firstSheet) {
-      throw new BadRequestException('Excel中没有工作表');
+      throw new BadRequestException('Excel 中没有可读取的工作表');
     }
     const sheet = workbook.Sheets[firstSheet];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
     if (rows.length === 0) {
-      throw new BadRequestException('Excel中没有数据行');
+      throw new BadRequestException('Excel 中没有数据');
     }
 
     const errors: string[] = [];
@@ -330,30 +387,30 @@ export class InboundService {
       });
 
       const boxCode = normalizeBoxCode(this.pickField(normalized, ['箱号', 'box', 'boxcode']));
-      const sku = this.pickField(normalized, ['sku', '商品编码']);
-      const qtyRaw = this.pickField(normalized, ['数量', 'qty', 'count']);
+      const productId = this.pickField(normalized, ['产品ID', '产品id', 'productId', 'productid']);
+      const qtyRaw = this.pickField(normalized, ['数量', 'qty', 'count', 'quantity']);
 
-      if (!boxCode || !sku || !qtyRaw) {
-        errors.push(`第${rowNo}行：箱号/SKU/数量为必填`);
+      if (!boxCode || !productId || !qtyRaw) {
+        errors.push(`第${rowNo}行：箱号/产品ID/数量为必填`);
         return;
       }
 
       const qtyNumber = Number(qtyRaw);
       if (!Number.isInteger(qtyNumber) || qtyNumber <= 0) {
-        errors.push(`第${rowNo}行：数量必须是正整数`);
+        errors.push(`第${rowNo}行：数量必须是大于 0 的整数`);
         return;
       }
 
       result.push({
         boxCode,
-        sku,
+        productId: productId.trim(),
         qty: qtyNumber,
         sourceRowNo: rowNo,
       });
     });
 
     if (errors.length > 0) {
-      throw new UnprocessableEntityException(`Excel校验失败：${errors.join(' | ')}`);
+      throw new UnprocessableEntityException(`Excel 校验失败：${errors.join(' | ')}`);
     }
 
     return result;
@@ -375,7 +432,7 @@ export class InboundService {
   private mergeLines(lines: InboundLine[]): InboundLine[] {
     const map = new Map<string, InboundLine>();
     lines.forEach((line) => {
-      const key = `${line.boxCode}||${line.sku}`;
+      const key = `${line.boxCode}||${line.productId}`;
       const existing = map.get(key);
       if (!existing) {
         map.set(key, { ...line });
@@ -385,6 +442,19 @@ export class InboundService {
       existing.sourceRowNo = existing.sourceRowNo || line.sourceRowNo;
     });
     return Array.from(map.values());
+  }
+
+  private async ensureProductsExist(lines: InboundLine[]): Promise<void> {
+    const productIds = Array.from(new Set(lines.map((line) => line.productId)));
+    const existingProducts = await this.prisma.masterProduct.findMany({
+      where: { productId: { in: productIds } },
+      select: { productId: true },
+    });
+    const existingProductIdSet = new Set(existingProducts.map((item) => item.productId));
+    const missingProductIds = productIds.filter((productId) => !existingProductIdSet.has(productId));
+    if (missingProductIds.length > 0) {
+      throw new UnprocessableEntityException(`以下产品ID在系统中不存在：${missingProductIds.join(', ')}`);
+    }
   }
 
   private async ensureBoxesAreNew(lines: InboundLine[]): Promise<void> {
@@ -414,7 +484,7 @@ export class InboundService {
         orderBy: { id: 'asc' },
       });
       if (!shelf) {
-        throw new UnprocessableEntityException('请先创建至少一个启用状态货架');
+        throw new UnprocessableEntityException('没有可用货架，无法创建入库单');
       }
 
       const order = await tx.inboundOrder.create({
@@ -443,38 +513,6 @@ export class InboundService {
         operatorId,
         requestId,
       });
-
-      const skuCodes = Array.from(new Set(lines.map((line) => line.sku)));
-      const skuMap = new Map<string, bigint>();
-      const existingSkus = await tx.sku.findMany({
-        where: { sku: { in: skuCodes } },
-        select: { id: true, sku: true },
-      });
-      existingSkus.forEach((sku) => skuMap.set(sku.sku, sku.id));
-
-      for (const skuCode of skuCodes) {
-        if (skuMap.has(skuCode)) continue;
-        const createdSku = await tx.sku.create({
-          data: {
-            sku: skuCode,
-            status: 1,
-          },
-        });
-        skuMap.set(createdSku.sku, createdSku.id);
-
-        await this.auditService.create({
-          db: tx,
-          entityType: 'sku',
-          entityId: createdSku.id,
-          action: AuditAction.create,
-          eventType: AuditEventType.SKU_CREATED,
-          beforeData: null,
-          afterData: createdSku as unknown as Record<string, unknown>,
-          operatorId,
-          requestId,
-          remark: `auto created from inbound ${order.orderNo}`,
-        });
-      }
 
       const boxCodes = Array.from(new Set(lines.map((line) => line.boxCode)));
       const boxMap = new Map<string, bigint>();
@@ -506,7 +544,7 @@ export class InboundService {
         data: lines.map((line) => ({
           orderId: order.id,
           boxId: boxMap.get(line.boxCode) as bigint,
-          skuId: skuMap.get(line.sku) as bigint,
+          productId: line.productId,
           qty: line.qty,
           sourceRowNo: line.sourceRowNo > 0 ? line.sourceRowNo : null,
         })),
@@ -524,7 +562,14 @@ export class InboundService {
           items: {
             include: {
               box: { select: { id: true, boxCode: true } },
-              sku: { select: { id: true, sku: true } },
+              product: {
+                select: {
+                  id: true,
+                  productId: true,
+                  productName: true,
+                  stockQty: true,
+                },
+              },
             },
             orderBy: { id: 'asc' },
           },
@@ -533,7 +578,7 @@ export class InboundService {
     });
   }
 
-  private inventoryKey(boxId: bigint, skuId: bigint): string {
-    return `${boxId.toString()}-${skuId.toString()}`;
+  private inventoryKey(boxId: bigint, productId: string): string {
+    return `${boxId.toString()}-${productId}`;
   }
 }

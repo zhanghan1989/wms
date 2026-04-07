@@ -10,6 +10,11 @@ import {
 
 export class ManualAdjustDto {
   @IsOptional()
+  @IsString()
+  @Length(1, 128)
+  productId?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)

@@ -74,14 +74,7 @@ export class BrandsService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      let affectedSkuCount = 0;
-      if (name && name !== brand.name) {
-        const renameResult = await tx.sku.updateMany({
-          where: { brand: brand.name },
-          data: { brand: name },
-        });
-        affectedSkuCount = renameResult.count;
-      }
+      const affectedSkuCount = 0;
 
       const updated = await tx.brand.update({
         where: { id },

@@ -29,6 +29,13 @@ export class ProductBoxesQueryDto {
   skuId!: number;
 }
 
+export class MasterProductBoxesQueryDto {
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Length(1, 128)
+  productId!: string;
+}
+
 export class BoxSkusQueryDto {
   @Type(() => Number)
   @IsInt()

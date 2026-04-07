@@ -13,14 +13,9 @@ type ProductSnapshot = {
   asin: string | null;
   fnsku: string | null;
   fbmSku: string | null;
-  model: string | null;
-  brand: string | null;
-  type: string | null;
-  color: string | null;
   shop: string | null;
   remark: string | null;
 };
-type EditableProductField = Exclude<keyof ProductSnapshot, 'sku'>;
 
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'productId',
@@ -29,15 +24,12 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'asin',
   'fnsku',
   'fbmSku',
-  'model',
-  'brand',
-  'type',
-  'color',
   'shop',
   'remark',
 ];
 
-const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY = '仅启用的佛山工厂管理者可确认编辑申请';
+const PRODUCT_EDIT_CONFIRM_PERMISSION_MESSAGE_FACTORY =
+  '只有工厂部门管理员或系统管理员可以确认产品编辑申请';
 
 function ensureSnapshot(value: unknown): ProductSnapshot {
   const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -48,10 +40,6 @@ function ensureSnapshot(value: unknown): ProductSnapshot {
     asin: normalizeNullableText(source.asin),
     fnsku: normalizeNullableText(source.fnsku),
     fbmSku: normalizeNullableText(source.fbmSku),
-    model: normalizeNullableText(source.model),
-    brand: normalizeNullableText(source.brand),
-    type: normalizeNullableText(source.type),
-    color: normalizeNullableText(source.color),
     shop: normalizeNullableText(source.shop),
     remark: normalizeNullableText(source.remark),
   };
@@ -72,7 +60,7 @@ export class SkuEditRequestsService {
   }
 
   async list(): Promise<unknown[]> {
-    return this.prisma.productEditRequest.findMany({
+    const requests = await this.prisma.productEditRequest.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
         sku: {
@@ -89,6 +77,7 @@ export class SkuEditRequestsService {
         },
       },
     });
+    return (await this.attachProductNames(requests)) as unknown[];
   }
 
   async detail(idParam: string): Promise<unknown> {
@@ -112,10 +101,10 @@ export class SkuEditRequestsService {
     });
 
     if (!request) {
-      throw new NotFoundException('编辑申请不存在');
+      throw new NotFoundException('产品编辑申请不存在');
     }
 
-    return request;
+    return this.attachProductNames(request);
   }
 
   async create(
@@ -136,16 +125,12 @@ export class SkuEditRequestsService {
       asin: normalizeNullableText(sku.asin),
       fnsku: normalizeNullableText(sku.fnsku),
       fbmSku: normalizeNullableText(sku.fbmSku),
-      model: normalizeNullableText(sku.model),
-      brand: normalizeNullableText(sku.brand),
-      type: normalizeNullableText(sku.type),
-      color: normalizeNullableText(sku.color),
       shop: normalizeNullableText(sku.shop),
       remark: normalizeNullableText(sku.remark),
     };
 
     const resolveEditableField = (
-      field: EditableProductField,
+      field: keyof ProductSnapshot,
       fallback: string | null,
     ): string | null => {
       const rawPayload = payload as unknown as Record<string, unknown>;
@@ -157,24 +142,21 @@ export class SkuEditRequestsService {
 
     const afterData: ProductSnapshot = {
       productId: resolveEditableField('productId', beforeData.productId),
-      // SKU cannot be edited in product edit requests.
-      sku: beforeData.sku,
+      sku: resolveEditableField('sku', beforeData.sku),
       rbSku: resolveEditableField('rbSku', beforeData.rbSku),
       asin: resolveEditableField('asin', beforeData.asin),
       fnsku: resolveEditableField('fnsku', beforeData.fnsku),
       fbmSku: resolveEditableField('fbmSku', beforeData.fbmSku),
-      model: resolveEditableField('model', beforeData.model),
-      brand: resolveEditableField('brand', beforeData.brand),
-      type: resolveEditableField('type', beforeData.type),
-      color: resolveEditableField('color', beforeData.color),
       shop: resolveEditableField('shop', beforeData.shop),
       remark: resolveEditableField('remark', beforeData.remark),
     };
 
     const changedFields = SNAPSHOT_FIELDS.filter((field) => beforeData[field] !== afterData[field]);
     if (!changedFields.length) {
-      throw new BadRequestException('未检测到变更内容');
+      throw new BadRequestException('未检测到任何字段变更');
     }
+
+    await this.ensureSkuCodeAvailable(afterData.sku, skuId, beforeData.sku);
 
     return this.createPendingEditRequest(this.prisma, {
       skuId,
@@ -197,10 +179,10 @@ export class SkuEditRequestsService {
       },
     });
     if (!request) {
-      throw new NotFoundException('编辑申请不存在');
+      throw new NotFoundException('产品编辑申请不存在');
     }
     if (request.status !== ProductEditRequestStatus.pending) {
-      throw new BadRequestException('仅待处理申请可确认');
+      throw new BadRequestException('当前申请已处理完成');
     }
     await this.ensureCanConfirmByOperator(operatorId);
 
@@ -210,8 +192,6 @@ export class SkuEditRequestsService {
       throw new BadRequestException('SKU不能为空');
     }
     const targetSkuCode = afterSnapshot.sku;
-    const targetProductId = afterSnapshot.productId;
-
     if (targetSkuCode !== request.sku.sku) {
       const duplicated = await this.prisma.sku.findFirst({
         where: {
@@ -221,34 +201,18 @@ export class SkuEditRequestsService {
         select: { id: true },
       });
       if (duplicated) {
-        throw new BadRequestException('SKU已存在');
-      }
-    }
-    if (targetProductId && targetProductId !== beforeSnapshot.productId) {
-      const duplicatedProductId = await this.prisma.sku.findFirst({
-        where: {
-          productId: targetProductId,
-          id: { not: request.skuId },
-        },
-        select: { id: true },
-      });
-      if (duplicatedProductId) {
-        throw new BadRequestException('产品ID已存在');
+        throw new BadRequestException('SKU 已存在');
       }
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const skuUpdateData: Prisma.SkuUpdateInput = {
+      const skuUpdateData: Prisma.SkuUncheckedUpdateInput = {
         productId: afterSnapshot.productId,
         sku: targetSkuCode,
         rbSku: afterSnapshot.rbSku,
         asin: afterSnapshot.asin,
         fnsku: afterSnapshot.fnsku,
         fbmSku: afterSnapshot.fbmSku,
-        model: afterSnapshot.model,
-        brand: afterSnapshot.brand,
-        type: afterSnapshot.type,
-        color: afterSnapshot.color,
         shop: afterSnapshot.shop,
         remark: afterSnapshot.remark,
       };
@@ -291,7 +255,7 @@ export class SkuEditRequestsService {
         requestId,
       });
 
-      return updatedRequest;
+      return this.attachProductNames(updatedRequest);
     });
   }
 
@@ -305,7 +269,7 @@ export class SkuEditRequestsService {
       createdBy: bigint;
     },
   ): Promise<unknown> {
-    return db.productEditRequest.create({
+    const created = await db.productEditRequest.create({
       data: {
         skuId: payload.skuId,
         status: ProductEditRequestStatus.pending,
@@ -329,6 +293,84 @@ export class SkuEditRequestsService {
         },
       },
     });
+    return this.attachProductNames(created);
+  }
+
+  private async attachProductNames<T extends { beforeData?: unknown; afterData?: unknown }>(
+    requestOrRequests: T | T[],
+  ): Promise<unknown> {
+    const requests = Array.isArray(requestOrRequests) ? requestOrRequests : [requestOrRequests];
+    const productIds = Array.from(
+      new Set(
+        requests
+          .flatMap((request) => {
+            const beforeSnapshot = ensureSnapshot(request.beforeData);
+            const afterSnapshot = ensureSnapshot(request.afterData);
+            return [beforeSnapshot.productId, afterSnapshot.productId];
+          })
+          .filter((productId): productId is string => Boolean(String(productId || '').trim())),
+      ),
+    );
+
+    const productNameById = new Map<string, string | null>();
+    if (productIds.length > 0) {
+      const products = await this.prisma.masterProduct.findMany({
+        where: {
+          productId: {
+            in: productIds,
+          },
+        },
+        select: {
+          productId: true,
+          productName: true,
+        },
+      });
+      products.forEach((product) => {
+        productNameById.set(product.productId, product.productName ?? null);
+      });
+    }
+
+    const enriched = requests.map((request) => {
+      const beforeSnapshot = ensureSnapshot(request.beforeData);
+      const afterSnapshot = ensureSnapshot(request.afterData);
+      return {
+        ...request,
+        beforeData: {
+          ...beforeSnapshot,
+          productName: beforeSnapshot.productId
+            ? (productNameById.get(beforeSnapshot.productId) ?? null)
+            : null,
+        },
+        afterData: {
+          ...afterSnapshot,
+          productName: afterSnapshot.productId
+            ? (productNameById.get(afterSnapshot.productId) ?? null)
+            : null,
+        },
+      };
+    });
+
+    return Array.isArray(requestOrRequests) ? enriched : enriched[0];
+  }
+
+  private async ensureSkuCodeAvailable(
+    targetSkuCode: string | null,
+    currentSkuId: bigint,
+    currentSkuCode: string | null,
+  ): Promise<void> {
+    if (!targetSkuCode || targetSkuCode === currentSkuCode) {
+      return;
+    }
+    const duplicated = await this.prisma.sku.findFirst({
+      where: {
+        sku: targetSkuCode,
+        id: { not: currentSkuId },
+      },
+      select: { id: true },
+    });
+    if (duplicated) {
+      throw new BadRequestException('SKU 已存在');
+    }
   }
 
   private async ensureCanConfirmByOperator(operatorId: bigint): Promise<void> {
@@ -386,10 +428,10 @@ export class SkuEditRequestsService {
     const id = parseId(idParam, 'productEditRequestId');
     const request = await this.prisma.productEditRequest.findUnique({ where: { id } });
     if (!request) {
-      throw new NotFoundException('编辑申请不存在');
+      throw new NotFoundException('产品编辑申请不存在');
     }
     if (request.status !== ProductEditRequestStatus.pending) {
-      throw new BadRequestException('仅待处理申请可删除');
+      throw new BadRequestException('当前申请不能删除');
     }
 
     return this.prisma.productEditRequest.update({

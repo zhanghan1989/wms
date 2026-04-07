@@ -7,7 +7,74 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateShelfDto } from './dto/create-shelf.dto';
 import { UpdateShelfDto } from './dto/update-shelf.dto';
 
+interface ShelfAuditArgs {
+  auditService: AuditService;
+  tx: Prisma.TransactionClient;
+  entityId: bigint;
+  action: AuditAction;
+  eventType: (typeof AuditEventType)[keyof typeof AuditEventType];
+  beforeData: Record<string, unknown> | null | undefined;
+  afterData: Record<string, unknown> | null | undefined;
+  operatorId: bigint;
+  requestId?: string;
+}
+
+// Archived boxes may still reference historical default shelf codes in old records.
 const ARCHIVED_BOX_FALLBACK_SHELF_CODES = ['00', 'S-00', 'Z-0'];
+
+async function createShelfAudit({
+  auditService,
+  tx,
+  entityId,
+  action,
+  eventType,
+  beforeData,
+  afterData,
+  operatorId,
+  requestId,
+}: ShelfAuditArgs): Promise<void> {
+  await auditService.create({
+    db: tx,
+    entityType: 'shelf',
+    entityId,
+    action,
+    eventType,
+    beforeData,
+    afterData,
+    operatorId,
+    requestId,
+  });
+}
+
+async function reassignArchivedBoxesBeforeShelfDelete(
+  tx: Prisma.TransactionClient,
+  shelfId: bigint,
+): Promise<void> {
+  const archivedBoxCount = await tx.box.count({
+    where: { shelfId, status: 0 },
+  });
+  if (archivedBoxCount <= 0) {
+    return;
+  }
+
+  const fallbackShelf = await tx.shelf.findFirst({
+    where: {
+      id: { not: shelfId },
+      status: 1,
+      shelfCode: { in: ARCHIVED_BOX_FALLBACK_SHELF_CODES },
+    },
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+  if (!fallbackShelf) {
+    throw new BadRequestException('未找到可承接归档箱的兼容货架，无法删除当前货架');
+  }
+
+  await tx.box.updateMany({
+    where: { shelfId, status: 0 },
+    data: { shelfId: fallbackShelf.id },
+  });
+}
 
 @Injectable()
 export class ShelvesService {
@@ -20,10 +87,7 @@ export class ShelvesService {
     return this.prisma.shelf.findMany({
       where: q
         ? {
-            OR: [
-              { shelfCode: { contains: q } },
-              { name: { contains: q } },
-            ],
+            OR: [{ shelfCode: { contains: q } }, { name: { contains: q } }],
           }
         : undefined,
       orderBy: { id: 'desc' },
@@ -32,13 +96,13 @@ export class ShelvesService {
 
   async create(payload: CreateShelfDto, operatorId: bigint, requestId?: string): Promise<unknown> {
     const shelfCode = this.normalizeShelfCode(payload.shelfCode);
-    if (!shelfCode) throw new BadRequestException('货架号格式无效');
+    if (!shelfCode) throw new BadRequestException('货架编码格式错误');
     const exists = await this.prisma.shelf.findFirst({
       where: {
         shelfCode: { in: this.buildEquivalentShelfCodes(shelfCode) },
       },
     });
-    if (exists) throw new BadRequestException('货架号已存在');
+    if (exists) throw new BadRequestException('货架编码已存在');
 
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.shelf.create({
@@ -48,9 +112,9 @@ export class ShelvesService {
           status: payload.status ?? 1,
         },
       });
-      await this.auditService.create({
-        db: tx,
-        entityType: 'shelf',
+      await createShelfAudit({
+        auditService: this.auditService,
+        tx,
         entityId: created.id,
         action: AuditAction.create,
         eventType: AuditEventType.SHELF_CREATED,
@@ -76,7 +140,7 @@ export class ShelvesService {
     if (payload.shelfCode) {
       payload.shelfCode = this.normalizeShelfCode(payload.shelfCode);
       if (!payload.shelfCode) {
-        throw new BadRequestException('货架号格式无效');
+        throw new BadRequestException('货架编码格式错误');
       }
     }
 
@@ -88,7 +152,7 @@ export class ShelvesService {
         },
       });
       if (duplicate) {
-        throw new BadRequestException('货架号已存在');
+        throw new BadRequestException('货架编码已存在');
       }
     }
 
@@ -97,10 +161,11 @@ export class ShelvesService {
         where: { id },
         data: payload,
       });
-      const eventType = updated.status === 0 ? AuditEventType.SHELF_DISABLED : AuditEventType.SHELF_FIELD_UPDATED;
-      await this.auditService.create({
-        db: tx,
-        entityType: 'shelf',
+      const eventType =
+        updated.status === 0 ? AuditEventType.SHELF_DISABLED : AuditEventType.SHELF_FIELD_UPDATED;
+      await createShelfAudit({
+        auditService: this.auditService,
+        tx,
         entityId: updated.id,
         action: AuditAction.update,
         eventType,
@@ -134,8 +199,10 @@ export class ShelvesService {
     const reasons: string[] = [];
     if (boxCount > 0) {
       const sample = sampleBoxes.map((item) => item.boxCode).join('、');
-      const sampleText = sample ? `（如：${sample}${boxCount > sampleBoxes.length ? ' 等' : ''}）` : '';
-      reasons.push(`货架下仍有 ${boxCount} 个箱号${sampleText}`);
+      const sampleText = sample
+        ? `，例如：${sample}${boxCount > sampleBoxes.length ? ' 等' : ''}`
+        : '';
+      reasons.push(`货架下仍有 ${boxCount} 个启用中的箱号${sampleText}`);
     }
 
     return {
@@ -154,32 +221,11 @@ export class ShelvesService {
     }
     try {
       await this.prisma.$transaction(async (tx) => {
-        const archivedBoxes = await tx.box.findMany({
-          where: { shelfId: id, status: 0 },
-          select: { id: true },
-        });
-        if (archivedBoxes.length > 0) {
-          const fallbackShelf = await tx.shelf.findFirst({
-            where: {
-              id: { not: id },
-              status: 1,
-              shelfCode: { in: ARCHIVED_BOX_FALLBACK_SHELF_CODES },
-            },
-            select: { id: true },
-            orderBy: { id: 'asc' },
-          });
-          if (!fallbackShelf) {
-            throw new BadRequestException('货架下仅剩归档箱，但系统中没有可接收归档箱的默认货架，无法删除。');
-          }
-          await tx.box.updateMany({
-            where: { shelfId: id, status: 0 },
-            data: { shelfId: fallbackShelf.id },
-          });
-        }
+        await reassignArchivedBoxesBeforeShelfDelete(tx, id);
         await tx.shelf.delete({ where: { id } });
-        await this.auditService.create({
-          db: tx,
-          entityType: 'shelf',
+        await createShelfAudit({
+          auditService: this.auditService,
+          tx,
           entityId: id,
           action: AuditAction.delete,
           eventType: AuditEventType.SHELF_DELETED,
@@ -191,7 +237,7 @@ export class ShelvesService {
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
-        throw new BadRequestException('货架下仍有关联箱号或历史单据，无法删除。请先迁移箱号，或改为禁用。');
+        throw new BadRequestException('货架仍有关联箱号或历史记录，无法删除');
       }
       throw error;
     }

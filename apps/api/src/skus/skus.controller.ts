@@ -30,7 +30,16 @@ export class SkusController {
   constructor(private readonly skusService: SkusService) {}
 
   @Get()
-  async list(@Query('q') q?: string): Promise<unknown[]> {
+  async list(
+    @Query('q') q?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<unknown> {
+    if (page || pageSize) {
+      const pageNum = Number(page);
+      const pageSizeNum = Number(pageSize);
+      return this.skusService.listPage(q, pageNum, pageSizeNum);
+    }
     return this.skusService.list(q);
   }
 

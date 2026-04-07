@@ -8,7 +8,7 @@ export class CreateInboundOrderItemDto {
 
   @IsString()
   @Length(1, 128)
-  sku!: string;
+  productId!: string;
 
   @Type(() => Number)
   @IsInt()

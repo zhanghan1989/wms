@@ -13,11 +13,24 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateBoxDto } from './dto/create-box.dto';
 import { UpdateBoxDto } from './dto/update-box.dto';
 
+interface BoxAuditArgs {
+  auditService: AuditService;
+  tx: Prisma.TransactionClient;
+  entityId: bigint;
+  action: AuditAction;
+  eventType: AuditEventTypeValue;
+  beforeData: Record<string, unknown> | null | undefined;
+  afterData: Record<string, unknown> | null | undefined;
+  operatorId: bigint;
+  requestId?: string;
+  remark?: string;
+}
+
 @Injectable()
 export class BoxesService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly auditService: AuditService,
+    readonly prisma: PrismaService,
+    readonly auditService: AuditService,
   ) {}
 
   async list(q?: string): Promise<unknown[]> {
@@ -51,6 +64,8 @@ export class BoxesService {
     const [
       inventorySums,
       inventoryCounts,
+      masterInventorySums,
+      masterInventoryCounts,
       itemCodeCounts,
       inboundCounts,
       outboundCounts,
@@ -68,6 +83,16 @@ export class BoxesService {
         _sum: { qty: true },
       }),
       this.prisma.inventoryBoxSku.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _count: { _all: true },
+      }),
+      this.prisma.masterProductBoxInventory.groupBy({
+        by: ['boxId'],
+        where: { boxId: { in: boxIds } },
+        _sum: { qty: true },
+      }),
+      this.prisma.masterProductBoxInventory.groupBy({
         by: ['boxId'],
         where: { boxId: { in: boxIds } },
         _count: { _all: true },
@@ -147,6 +172,12 @@ export class BoxesService {
     const inventoryCountByBoxId = new Map(
       inventoryCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
     );
+    const masterInventorySumByBoxId = new Map(
+      masterInventorySums.map((row) => [row.boxId.toString(), Number(row._sum.qty ?? 0)]),
+    );
+    const masterInventoryCountByBoxId = new Map(
+      masterInventoryCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
+    );
     const itemCodeCountByBoxId = new Map(
       itemCodeCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
     );
@@ -187,8 +218,10 @@ export class BoxesService {
 
     return boxes.map((box) => {
       const boxId = box.id.toString();
-      const totalStock = inventorySumByBoxId.get(boxId) ?? 0;
-      const inventoryRows = inventoryCountByBoxId.get(boxId) ?? 0;
+      const totalStock =
+        (masterInventorySumByBoxId.get(boxId) ?? 0) + (inventorySumByBoxId.get(boxId) ?? 0);
+      const inventoryRows =
+        (masterInventoryCountByBoxId.get(boxId) ?? 0) + (inventoryCountByBoxId.get(boxId) ?? 0);
       const itemCodeRows = itemCodeCountByBoxId.get(boxId) ?? 0;
       const inboundRows = inboundCountByBoxId.get(boxId) ?? 0;
       const outboundRows = outboundCountByBoxId.get(boxId) ?? 0;
@@ -228,7 +261,7 @@ export class BoxesService {
   }
 
   async listEmpty(): Promise<unknown[]> {
-    const [boxes, inventoryRows] = await Promise.all([
+    const [boxes, skuInventoryRows, masterProductInventoryRows] = await Promise.all([
       this.prisma.box.findMany({
         where: {
           status: 1,
@@ -253,11 +286,19 @@ export class BoxesService {
         by: ['boxId'],
         _sum: { qty: true },
       }),
+      this.prisma.masterProductBoxInventory.groupBy({
+        by: ['boxId'],
+        _sum: { qty: true },
+      }),
     ]);
 
     const inventoryByBox = new Map<string, number>();
-    inventoryRows.forEach((row) => {
+    skuInventoryRows.forEach((row) => {
       inventoryByBox.set(row.boxId.toString(), Number(row._sum.qty ?? 0));
+    });
+    masterProductInventoryRows.forEach((row) => {
+      const key = row.boxId.toString();
+      inventoryByBox.set(key, (inventoryByBox.get(key) ?? 0) + Number(row._sum.qty ?? 0));
     });
 
     return boxes
@@ -302,9 +343,9 @@ export class BoxesService {
           status: payload.status ?? 1,
         },
       });
-      await this.auditService.create({
-        db: tx,
-        entityType: 'box',
+      await createBoxAudit({
+        auditService: this.auditService,
+        tx,
         entityId: created.id,
         action: AuditAction.create,
         eventType: AuditEventType.BOX_CREATED,
@@ -374,9 +415,9 @@ export class BoxesService {
       });
 
       const eventType = this.resolveEventType(box.boxCode, updated.boxCode, updated.status);
-      await this.auditService.create({
-        db: tx,
-        entityType: 'box',
+      await createBoxAudit({
+        auditService: this.auditService,
+        tx,
         entityId: updated.id,
         action: AuditAction.update,
         eventType,
@@ -390,66 +431,7 @@ export class BoxesService {
   }
 
   async getDeleteCheck(idParam: string): Promise<{ canDelete: boolean; reasons: string[] }> {
-    const id = parseId(idParam, 'boxId');
-    const box = await this.prisma.box.findUnique({
-      where: { id },
-      select: { id: true, boxCode: true },
-    });
-    if (!box) throw new NotFoundException('箱号不存在');
-
-    const [
-      inventoryRows,
-      itemCodeRows,
-      inboundRows,
-      outboundRows,
-      stocktakeRows,
-      movementRows,
-      adjustRows,
-      fbaRows,
-      pendingBatchInboundRows,
-    ] = await Promise.all([
-      this.prisma.inventoryBoxSku.count({ where: { boxId: id } }),
-      this.prisma.itemCode.count({ where: { boxId: id } }),
-      this.prisma.inboundOrderItem.count({ where: { boxId: id } }),
-      this.prisma.outboundOrderItem.count({ where: { boxId: id } }),
-      this.prisma.stocktakeRecord.count({ where: { boxId: id } }),
-      this.prisma.stockMovement.count({ where: { boxId: id } }),
-      this.prisma.inventoryAdjustOrderItem.count({ where: { boxId: id } }),
-      this.prisma.fbaReplenishment.count({ where: { boxId: id } }),
-      this.prisma.batchInboundItem.count({
-        where: {
-          boxCode: box.boxCode,
-          order: {
-            status: {
-              in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
-            },
-          },
-        },
-      }),
-    ]);
-
-    const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
-    const reasons: string[] = [];
-    if (lockingOrderNo) {
-      reasons.push(`箱号已被批量入库单 ${lockingOrderNo} 锁定，请先确认或删除该单据`);
-    }
-    if (pendingBatchInboundRows > 0) {
-      reasons.push(`存在 ${pendingBatchInboundRows} 条待处理批量入库明细`);
-    }
-    if (inventoryRows > 0) {
-      reasons.push(`存在 ${inventoryRows} 条库存记录`);
-    }
-    if (itemCodeRows > 0) {
-      reasons.push(`存在 ${itemCodeRows} 条条码记录`);
-    }
-    if (inboundRows > 0 || outboundRows > 0 || stocktakeRows > 0 || movementRows > 0 || adjustRows > 0 || fbaRows > 0) {
-      reasons.push('存在历史单据记录');
-    }
-
-    return {
-      canDelete: reasons.length === 0,
-      reasons,
-    };
+    return getDeleteCheckByProduct.call(this, idParam);
   }
 
   async archiveAndRelease(
@@ -457,84 +439,7 @@ export class BoxesService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<{ success: boolean; archivedBoxCode: string; releasedBoxCode: string }> {
-    const id = parseId(idParam, 'boxId');
-    const box = await this.prisma.box.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        boxCode: true,
-        shelfId: true,
-        status: true,
-      },
-    });
-    if (!box) throw new NotFoundException('箱号不存在');
-    if (Number(box.status ?? 0) !== 1) {
-      throw new BadRequestException('该箱号已归档，不能重复释放');
-    }
-
-    const inventorySummary = await this.prisma.inventoryBoxSku.aggregate({
-      where: { boxId: id },
-      _sum: { qty: true },
-    });
-    const totalQty = Number(inventorySummary._sum.qty ?? 0);
-    if (totalQty > 0) {
-      throw new BadRequestException(`箱号暂时无法归档释放：当前库存总数量为 ${totalQty}`);
-    }
-
-    await this.ensureBoxNotUnderActiveFba(id, box.boxCode, '归档释放');
-
-    const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
-    if (lockingOrderNo) {
-      throw new BadRequestException(
-        `箱号暂时无法归档释放：存在批量入库单 ${lockingOrderNo} 正在采集或待入库`,
-      );
-    }
-
-    const pendingBatchInboundRows = await this.prisma.batchInboundItem.count({
-      where: {
-        boxCode: box.boxCode,
-        order: {
-          status: {
-            in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
-          },
-        },
-      },
-    });
-    if (pendingBatchInboundRows > 0) {
-      throw new BadRequestException(
-        `箱号暂时无法归档释放：存在 ${pendingBatchInboundRows} 条批量入库中的箱号记录`,
-      );
-    }
-
-    const archivedBoxCode = await this.buildArchivedBoxCode(box.boxCode);
-    await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.box.update({
-        where: { id },
-        data: {
-          boxCode: archivedBoxCode,
-          status: 0,
-        },
-      });
-
-      await this.auditService.create({
-        db: tx,
-        entityType: 'box',
-        entityId: updated.id,
-        action: AuditAction.update,
-        eventType: AuditEventType.BOX_DISABLED,
-        beforeData: box as unknown as Record<string, unknown>,
-        afterData: updated as unknown as Record<string, unknown>,
-        operatorId,
-        requestId,
-        remark: `archived and released original box code ${box.boxCode}`,
-      });
-    });
-
-    return {
-      success: true,
-      archivedBoxCode,
-      releasedBoxCode: box.boxCode,
-    };
+    return archiveAndReleaseByProduct.call(this, idParam, operatorId, requestId);
   }
 
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
@@ -548,9 +453,9 @@ export class BoxesService {
     try {
       await this.prisma.$transaction(async (tx) => {
         await tx.box.delete({ where: { id } });
-        await this.auditService.create({
-          db: tx,
-          entityType: 'box',
+        await createBoxAudit({
+          auditService: this.auditService,
+          tx,
           entityId: id,
           action: AuditAction.delete,
           eventType: AuditEventType.BOX_DELETED,
@@ -579,7 +484,7 @@ export class BoxesService {
     return AuditEventType.BOX_FIELD_UPDATED;
   }
 
-  private async ensureBoxNotUnderActiveFba(
+  async ensureBoxNotUnderActiveFba(
     boxId: bigint,
     boxCode: string,
     operationName: string,
@@ -613,10 +518,10 @@ export class BoxesService {
     return status;
   }
 
-  private async findLockingBatchInboundOrderNo(boxCode: string): Promise<string | null> {
-    const normalized = normalizeBoxCode(boxCode);
-    if (!normalized) return null;
-    const orders = await this.prisma.batchInboundOrder.findMany({
+  private async loadPendingBatchInboundOrders(): Promise<
+    Array<{ orderNo: string; collectedBoxCodes: Prisma.JsonValue }>
+  > {
+    return this.prisma.batchInboundOrder.findMany({
       where: {
         status: {
           in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
@@ -628,6 +533,12 @@ export class BoxesService {
       },
       orderBy: { id: 'desc' },
     });
+  }
+
+  private async findLockingBatchInboundOrderNo(boxCode: string): Promise<string | null> {
+    const normalized = normalizeBoxCode(boxCode);
+    if (!normalized) return null;
+    const orders = await this.loadPendingBatchInboundOrders();
 
     for (const order of orders) {
       const codes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
@@ -639,22 +550,11 @@ export class BoxesService {
     return null;
   }
 
-  private async findLockingBatchInboundOrderNoExact(boxCode: string): Promise<string | null> {
+  async findLockingBatchInboundOrderNoExact(boxCode: string): Promise<string | null> {
     const target = String(boxCode ?? '').trim().toUpperCase();
     if (!target) return null;
 
-    const orders = await this.prisma.batchInboundOrder.findMany({
-      where: {
-        status: {
-          in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
-        },
-      },
-      select: {
-        orderNo: true,
-        collectedBoxCodes: true,
-      },
-      orderBy: { id: 'desc' },
-    });
+    const orders = await this.loadPendingBatchInboundOrders();
 
     for (const order of orders) {
       const rawCodes = Array.isArray(order.collectedBoxCodes) ? order.collectedBoxCodes : [];
@@ -680,7 +580,7 @@ export class BoxesService {
     );
   }
 
-  private async buildArchivedBoxCode(boxCode: string): Promise<string> {
+  async buildArchivedBoxCode(boxCode: string): Promise<string> {
     const base = `${boxCode}#ARCHIVED`;
     let attempt = 1;
 
@@ -700,4 +600,200 @@ export class BoxesService {
     throw new ConflictException(`无法为箱号 ${boxCode} 生成可用的归档编号`);
   }
 
+  async sumBoxInventoryQty(boxId: bigint): Promise<number> {
+    const [masterProductInventorySummary, skuInventorySummary] = await Promise.all([
+      this.prisma.masterProductBoxInventory.aggregate({
+        where: { boxId },
+        _sum: { qty: true },
+      }),
+      this.prisma.inventoryBoxSku.aggregate({
+        where: { boxId },
+        _sum: { qty: true },
+      }),
+    ]);
+
+    return (
+      Number(masterProductInventorySummary._sum.qty ?? 0) +
+      Number(skuInventorySummary._sum.qty ?? 0)
+    );
+  }
+
+  async countPendingBatchInboundItemsByBoxCode(boxCode: string): Promise<number> {
+    return this.prisma.batchInboundItem.count({
+      where: {
+        boxCode,
+        order: {
+          status: {
+            in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
+          },
+        },
+      },
+    });
+  }
+
 }
+
+async function createBoxAudit({
+  auditService,
+  tx,
+  entityId,
+  action,
+  eventType,
+  beforeData,
+  afterData,
+  operatorId,
+  requestId,
+  remark,
+}: BoxAuditArgs): Promise<void> {
+  await auditService.create({
+    db: tx,
+    entityType: 'box',
+    entityId,
+    action,
+    eventType,
+    beforeData,
+    afterData,
+    operatorId,
+    requestId,
+    remark,
+  });
+}
+
+async function getDeleteCheckByProduct(
+  this: BoxesService,
+  idParam: string,
+): Promise<{ canDelete: boolean; reasons: string[] }> {
+  const id = parseId(idParam, 'boxId');
+  const box = await this.prisma.box.findUnique({
+    where: { id },
+    select: { id: true, boxCode: true },
+  });
+  if (!box) throw new NotFoundException('箱号不存在');
+
+  const [
+    inventoryRows,
+    masterInventoryRows,
+    itemCodeRows,
+    inboundRows,
+    outboundRows,
+    stocktakeRows,
+    movementRows,
+    adjustRows,
+    fbaRows,
+    pendingBatchInboundRows,
+  ] = await Promise.all([
+    this.prisma.inventoryBoxSku.count({ where: { boxId: id } }),
+    this.prisma.masterProductBoxInventory.count({ where: { boxId: id } }),
+    this.prisma.itemCode.count({ where: { boxId: id } }),
+    this.prisma.inboundOrderItem.count({ where: { boxId: id } }),
+    this.prisma.outboundOrderItem.count({ where: { boxId: id } }),
+    this.prisma.stocktakeRecord.count({ where: { boxId: id } }),
+    this.prisma.stockMovement.count({ where: { boxId: id } }),
+    this.prisma.inventoryAdjustOrderItem.count({ where: { boxId: id } }),
+    this.prisma.fbaReplenishment.count({ where: { boxId: id } }),
+    this.countPendingBatchInboundItemsByBoxCode(box.boxCode),
+  ]);
+
+  const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
+  const reasons: string[] = [];
+  const totalInventoryRows = inventoryRows + masterInventoryRows;
+
+  if (lockingOrderNo) {
+    reasons.push(`箱号被批量入库单 ${lockingOrderNo} 占用，请先处理该入库单`);
+  }
+  if (pendingBatchInboundRows > 0) {
+    reasons.push(`存在 ${pendingBatchInboundRows} 条待处理的批量入库明细`);
+  }
+  if (totalInventoryRows > 0) {
+    reasons.push(`存在 ${totalInventoryRows} 条箱内库存记录`);
+  }
+  if (itemCodeRows > 0) {
+    reasons.push(`存在 ${itemCodeRows} 条贴码记录`);
+  }
+  if (
+    inboundRows > 0 ||
+    outboundRows > 0 ||
+    stocktakeRows > 0 ||
+    movementRows > 0 ||
+    adjustRows > 0 ||
+    fbaRows > 0
+  ) {
+    reasons.push('存在历史业务记录');
+  }
+
+  return {
+    canDelete: reasons.length === 0,
+    reasons,
+  };
+};
+
+async function archiveAndReleaseByProduct(
+  this: BoxesService,
+  idParam: string,
+  operatorId: bigint,
+  requestId?: string,
+): Promise<{ success: boolean; archivedBoxCode: string; releasedBoxCode: string }> {
+  const id = parseId(idParam, 'boxId');
+  const box = await this.prisma.box.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      boxCode: true,
+      shelfId: true,
+      status: true,
+    },
+  });
+  if (!box) throw new NotFoundException('箱号不存在');
+  if (Number(box.status ?? 0) !== 1) {
+    throw new BadRequestException('只有启用中的箱号才能执行归档释放');
+  }
+
+  const totalQty = await this.sumBoxInventoryQty(id);
+  if (totalQty > 0) {
+    throw new BadRequestException(`箱号仍有库存，不能归档释放。当前库存数量：${totalQty}`);
+  }
+
+  await this.ensureBoxNotUnderActiveFba(id, box.boxCode, '归档释放');
+
+  const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
+  if (lockingOrderNo) {
+    throw new BadRequestException(`箱号被批量入库单 ${lockingOrderNo} 占用，不能归档释放`);
+  }
+
+  const pendingBatchInboundRows = await this.countPendingBatchInboundItemsByBoxCode(box.boxCode);
+  if (pendingBatchInboundRows > 0) {
+    throw new BadRequestException(
+      `箱号存在 ${pendingBatchInboundRows} 条待处理批量入库明细，不能归档释放`,
+    );
+  }
+
+  const archivedBoxCode = await this.buildArchivedBoxCode(box.boxCode);
+  await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const updated = await tx.box.update({
+      where: { id },
+      data: {
+        boxCode: archivedBoxCode,
+        status: 0,
+      },
+    });
+
+    await createBoxAudit({
+      auditService: this.auditService,
+      tx,
+      entityId: updated.id,
+      action: AuditAction.update,
+      eventType: AuditEventType.BOX_DISABLED,
+      beforeData: box as unknown as Record<string, unknown>,
+      afterData: updated as unknown as Record<string, unknown>,
+      operatorId,
+      requestId,
+      remark: `archived and released original box code ${box.boxCode}`,
+    });
+  });
+
+  return {
+    success: true,
+    archivedBoxCode,
+    releasedBoxCode: box.boxCode,
+  };
+};

@@ -15,26 +15,6 @@ export class CreateSkuEditRequestDto {
   @IsOptional()
   @IsString()
   @Length(1, 255)
-  model?: string;
-
-  @IsOptional()
-  @IsString()
-  @Length(1, 255)
-  brand?: string;
-
-  @IsOptional()
-  @IsString()
-  @Length(1, 255)
-  type?: string;
-
-  @IsOptional()
-  @IsString()
-  @Length(1, 64)
-  color?: string;
-
-  @IsOptional()
-  @IsString()
-  @Length(1, 255)
   remark?: string;
 
   @IsOptional()

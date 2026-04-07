@@ -22,7 +22,7 @@ import { CollectBatchInboundDto } from './dto/collect-batch-inbound.dto';
 
 interface ParsedInboundLine {
   boxCode: string;
-  skuCode: string;
+  productId: string;
   qty: number;
   sourceRowNo: number;
 }
@@ -53,7 +53,7 @@ interface BatchInboundOrderDetail extends BatchInboundOrderSummary {
   items: Array<{
     id: string;
     boxCode: string;
-    skuCode: string;
+    productId: string;
     qty: number;
     sourceRowNo: number | null;
     status: BatchInboundItemStatus;
@@ -71,6 +71,15 @@ interface BatchInboundConfirmResult {
 }
 
 type Tx = Prisma.TransactionClient;
+const BATCH_INBOUND_ITEM_ORDER_BY = [
+  { boxCode: 'asc' },
+  { productId: 'asc' },
+  { id: 'asc' },
+] satisfies Prisma.BatchInboundItemOrderByWithRelationInput[];
+const BATCH_INBOUND_ITEM_PRODUCT_ORDER_BY = [
+  { productId: 'asc' },
+  { id: 'asc' },
+] satisfies Prisma.BatchInboundItemOrderByWithRelationInput[];
 const BATCH_INBOUND_TEMPLATE_FILE = '批量入库.xlsx';
 
 @Injectable()
@@ -81,25 +90,7 @@ export class BatchInboundService {
   ) {}
 
   async getUploadTemplate(): Promise<{ fileName: string; content: Buffer }> {
-    const cwd = process.cwd();
-    const candidates = [
-      join(cwd, 'docs', BATCH_INBOUND_TEMPLATE_FILE),
-      join(cwd, '..', '..', 'docs', BATCH_INBOUND_TEMPLATE_FILE),
-    ];
-
-    for (const templatePath of candidates) {
-      try {
-        const content = await readFile(templatePath);
-        return {
-          fileName: BATCH_INBOUND_TEMPLATE_FILE,
-          content,
-        };
-      } catch {
-        // try next candidate
-      }
-    }
-
-    throw new NotFoundException(`模板文件不存在：${BATCH_INBOUND_TEMPLATE_FILE}`);
+    return getUploadTemplateByOverride.call(this);
   }
 
   async list(): Promise<BatchInboundOrderSummary[]> {
@@ -136,7 +127,7 @@ export class BatchInboundService {
           },
         },
         items: {
-          orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+          orderBy: BATCH_INBOUND_ITEM_ORDER_BY,
         },
       },
     });
@@ -321,6 +312,25 @@ export class BatchInboundService {
         throw new UnprocessableEntityException('已作废的批量入库单不能上传文件');
       }
 
+      const uploadedProductIds = Array.from(new Set(mergedLines.map((line) => line.productId))).sort();
+      const existingProducts = await tx.masterProduct.findMany({
+        where: {
+          productId: {
+            in: uploadedProductIds,
+          },
+        },
+        select: {
+          productId: true,
+        },
+      });
+      const existingProductIdSet = new Set(existingProducts.map((item) => item.productId));
+      const missingProductIds = uploadedProductIds.filter((productId) => !existingProductIdSet.has(productId));
+      if (missingProductIds.length > 0) {
+        throw new UnprocessableEntityException(
+          `以下产品ID在系统中不存在：${missingProductIds.join(', ')}`,
+        );
+      }
+
       const collectedBoxCodes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
       const uploadedBoxCodes = Array.from(new Set(mergedLines.map((line) => line.boxCode))).sort(
         (a, b) => this.boxCodeToNumber(a) - this.boxCodeToNumber(b),
@@ -336,7 +346,7 @@ export class BatchInboundService {
         data: mergedLines.map((line) => ({
           orderId: order.id,
           boxCode: line.boxCode,
-          skuCode: line.skuCode,
+          productId: line.productId,
           qty: line.qty,
           sourceRowNo: line.sourceRowNo,
           status: BatchInboundItemStatus.pending,
@@ -359,7 +369,7 @@ export class BatchInboundService {
             },
           },
           items: {
-            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+            orderBy: BATCH_INBOUND_ITEM_ORDER_BY,
           },
         },
       });
@@ -412,7 +422,7 @@ export class BatchInboundService {
             },
           },
           items: {
-            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+            orderBy: BATCH_INBOUND_ITEM_ORDER_BY,
           },
         },
       });
@@ -435,7 +445,7 @@ export class BatchInboundService {
         data: {
           domesticOrderNo,
           status: nextStatus,
-        } as any,
+        },
         include: {
           creator: {
             select: {
@@ -444,7 +454,7 @@ export class BatchInboundService {
             },
           },
           items: {
-            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+            orderBy: BATCH_INBOUND_ITEM_ORDER_BY,
           },
         },
       });
@@ -495,7 +505,7 @@ export class BatchInboundService {
             },
           },
           items: {
-            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+            orderBy: BATCH_INBOUND_ITEM_ORDER_BY,
           },
         },
       });
@@ -520,7 +530,7 @@ export class BatchInboundService {
         data: {
           seaOrderNo,
           status: BatchInboundOrderStatus.waiting_inbound,
-        } as any,
+        },
         include: {
           creator: {
             select: {
@@ -529,7 +539,7 @@ export class BatchInboundService {
             },
           },
           items: {
-            orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+            orderBy: BATCH_INBOUND_ITEM_ORDER_BY,
           },
         },
       });
@@ -623,7 +633,7 @@ export class BatchInboundService {
           boxCode,
           status: BatchInboundItemStatus.pending,
         },
-        orderBy: [{ skuCode: 'asc' }, { id: 'asc' }],
+        orderBy: BATCH_INBOUND_ITEM_PRODUCT_ORDER_BY,
       });
 
       if (pendingItems.length === 0) {
@@ -668,7 +678,7 @@ export class BatchInboundService {
           orderId: order.id,
           status: BatchInboundItemStatus.pending,
         },
-        orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+        orderBy: BATCH_INBOUND_ITEM_ORDER_BY,
       });
 
       if (pendingItems.length === 0) {
@@ -800,63 +810,65 @@ export class BatchInboundService {
     item: {
       id: bigint;
       boxCode: string;
-      skuCode: string;
+      productId: string;
       qty: number;
       status: BatchInboundItemStatus;
     },
     operatorId: bigint,
     requestId?: string,
   ): Promise<void> {
-    const sku = await this.resolveOrCreateSku(tx, item.skuCode, operatorId, requestId, order.orderNo);
-    const box = await this.resolveOrCreateBox(tx, item.boxCode, operatorId, requestId, order.orderNo);
+    const productId = String(item.productId || '').trim();
+    const [product, box] = await Promise.all([
+      tx.masterProduct.findUnique({
+        where: { productId },
+        select: {
+          id: true,
+          productId: true,
+          stockQty: true,
+        },
+      }),
+      this.resolveOrCreateBox(tx, item.boxCode, operatorId, requestId, order.orderNo),
+    ]);
 
-    const inventory = await tx.inventoryBoxSku.findUnique({
+    if (!product) {
+      throw new UnprocessableEntityException(`产品ID不存在：${productId}`);
+    }
+
+    const inventory = await tx.masterProductBoxInventory.findUnique({
       where: {
-        boxId_skuId: {
+        boxId_productId: {
           boxId: box.id,
-          skuId: sku.id,
+          productId,
         },
       },
     });
 
-    const beforeQty = inventory?.qty ?? 0;
+    const beforeQty = Number(inventory?.qty ?? 0);
     const afterQty = beforeQty + item.qty;
 
     if (inventory) {
-      await tx.inventoryBoxSku.update({
+      await tx.masterProductBoxInventory.update({
         where: {
-          boxId_skuId: {
+          boxId_productId: {
             boxId: box.id,
-            skuId: sku.id,
+            productId,
           },
         },
         data: {
-          qty: {
-            increment: item.qty,
-          },
+          qty: afterQty,
         },
       });
     } else {
-      await tx.inventoryBoxSku.create({
+      await tx.masterProductBoxInventory.create({
         data: {
           boxId: box.id,
-          skuId: sku.id,
+          productId,
           qty: item.qty,
         },
       });
     }
 
-    await tx.stockMovement.create({
-      data: {
-        movementType: 'inbound',
-        refType: 'batch_inbound_order',
-        refId: order.id,
-        boxId: box.id,
-        skuId: sku.id,
-        qtyDelta: item.qty,
-        operatorId,
-      },
-    });
+    const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
 
     await tx.batchInboundItem.update({
       where: { id: item.id },
@@ -873,63 +885,43 @@ export class BatchInboundService {
       action: AuditAction.update,
       eventType: AuditEventType.BOX_STOCK_INCREASED,
       beforeData: {
+        scope: 'master_product',
         boxCode: box.boxCode,
-        skuCode: sku.sku,
+        productId,
         qty: beforeQty,
       },
       afterData: {
+        scope: 'master_product',
         boxCode: box.boxCode,
-        skuCode: sku.sku,
+        productId,
         qty: afterQty,
+        qtyDelta: item.qty,
       },
       operatorId,
       requestId,
       remark: `batch inbound ${order.orderNo}`,
     });
-  }
-
-  private async resolveOrCreateSku(
-    tx: Tx,
-    skuCode: string,
-    operatorId: bigint,
-    requestId: string | undefined,
-    orderNo: string,
-  ): Promise<{ id: bigint; sku: string }> {
-    const existing = await tx.sku.findUnique({
-      where: { sku: skuCode },
-      select: {
-        id: true,
-        sku: true,
-      },
-    });
-    if (existing) {
-      return existing;
-    }
-
-    const created = await tx.sku.create({
-      data: {
-        sku: skuCode,
-        status: 1,
-      },
-    });
 
     await this.auditService.create({
       db: tx,
-      entityType: 'sku',
-      entityId: created.id,
-      action: AuditAction.create,
-      eventType: AuditEventType.SKU_CREATED,
-      beforeData: null,
-      afterData: created as unknown as Record<string, unknown>,
+      entityType: 'master_product',
+      entityId: product.id,
+      action: AuditAction.update,
+      eventType: AuditEventType.INVENTORY_ADJUST_CONFIRMED,
+      beforeData: {
+        productId,
+        stockQty: Number(product.stockQty ?? 0),
+      },
+      afterData: {
+        productId,
+        stockQty: totalQty,
+        boxCode: box.boxCode,
+        qtyDelta: item.qty,
+      },
       operatorId,
       requestId,
-      remark: `auto created from batch inbound ${orderNo}`,
+      remark: `batch inbound ${order.orderNo}`,
     });
-
-    return {
-      id: created.id,
-      sku: created.sku,
-    };
   }
 
   private async resolveOrCreateBox(
@@ -992,81 +984,13 @@ export class BatchInboundService {
   }
 
   private parseExcelLines(fileBuffer: Buffer): ParsedInboundLine[] {
-    let workbook: XLSX.WorkBook;
-    try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-    } catch {
-      throw new BadRequestException('无效的Excel文件');
-    }
-
-    const firstSheet = workbook.SheetNames[0];
-    if (!firstSheet) {
-      throw new BadRequestException('Excel中没有工作表');
-    }
-
-    const sheet = workbook.Sheets[firstSheet];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
-    if (rows.length === 0) {
-      throw new BadRequestException('Excel中没有数据行');
-    }
-
-    const parsed: ParsedInboundLine[] = [];
-    const errors: string[] = [];
-
-    rows.forEach((row, index) => {
-      const rowNo = index + 2;
-      const normalizedRow: Record<string, string> = {};
-      Object.entries(row).forEach(([key, value]) => {
-        normalizedRow[this.normalizeHeader(key)] = String(value ?? '').trim();
-      });
-
-      const rawBoxCode = this.pickField(normalizedRow, [
-        '箱号',
-        '箱碼',
-        'box',
-        'boxcode',
-        'boxno',
-      ]);
-      const skuCode = this.pickField(normalizedRow, ['sku']);
-      const qtyRaw = this.pickField(normalizedRow, [
-        '数量',
-        '數量',
-        'qty',
-        'count',
-        'quantity',
-      ]);
-
-      const boxCode = this.normalizeBoxCode(rawBoxCode);
-      if (!boxCode || !skuCode || !qtyRaw) {
-        errors.push(`第${rowNo}行：箱号/SKU/数量为必填`);
-        return;
-      }
-
-      const qty = Number(qtyRaw);
-      if (!Number.isInteger(qty) || qty <= 0) {
-        errors.push(`第${rowNo}行：数量必须是正整数`);
-        return;
-      }
-
-      parsed.push({
-        boxCode,
-        skuCode: skuCode.trim(),
-        qty,
-        sourceRowNo: rowNo,
-      });
-    });
-
-    if (errors.length > 0) {
-      throw new UnprocessableEntityException(`Excel校验失败：${errors.join(' | ')}`);
-    }
-
-    return parsed;
+    return parseExcelLinesByOverride.call(this, fileBuffer);
   }
 
   private mergeLines(lines: ParsedInboundLine[]): ParsedInboundLine[] {
     const map = new Map<string, ParsedInboundLine>();
     lines.forEach((line) => {
-      const key = `${line.boxCode}||${line.skuCode}`;
+      const key = `${line.boxCode}||${line.productId}`;
       const existing = map.get(key);
       if (existing) {
         existing.qty += line.qty;
@@ -1079,7 +1003,7 @@ export class BatchInboundService {
     return Array.from(map.values()).sort((a, b) => {
       const boxCompare = this.boxCodeToNumber(a.boxCode) - this.boxCodeToNumber(b.boxCode);
       if (boxCompare !== 0) return boxCompare;
-      return a.skuCode.localeCompare(b.skuCode, 'en', { sensitivity: 'base' });
+      return a.productId.localeCompare(b.productId, 'en', { sensitivity: 'base' });
     });
   }
 
@@ -1216,6 +1140,28 @@ export class BatchInboundService {
     return Array.from(new Set(boxCodes)).sort((a, b) => this.boxCodeToNumber(a) - this.boxCodeToNumber(b));
   }
 
+  private async recalculateMasterProductStockQty(tx: Tx, productId: string): Promise<number> {
+    const aggregate = await tx.masterProductBoxInventory.aggregate({
+      where: {
+        productId,
+        qty: { gt: 0 },
+      },
+      _sum: {
+        qty: true,
+      },
+    });
+
+    const totalQty = Number(aggregate._sum.qty ?? 0);
+    await tx.masterProduct.update({
+      where: { productId },
+      data: {
+        stockQty: totalQty,
+      },
+    });
+
+    return totalQty;
+  }
+
   private buildBatchInboundOrderNo(batchNo: string, boxCount: number): string {
     const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
     return `BINB-${parts.year}${parts.month}${parts.day}-${batchNo}-${boxCount}`;
@@ -1232,7 +1178,7 @@ export class BatchInboundService {
           },
         },
         items: {
-          orderBy: [{ boxCode: 'asc' }, { skuCode: 'asc' }, { id: 'asc' }],
+          orderBy: BATCH_INBOUND_ITEM_ORDER_BY,
         },
       },
     });
@@ -1303,7 +1249,7 @@ export class BatchInboundService {
     items: Array<{
       id: bigint;
       boxCode: string;
-      skuCode: string;
+      productId: string;
       qty: number;
       sourceRowNo: number | null;
       status: BatchInboundItemStatus;
@@ -1337,7 +1283,7 @@ export class BatchInboundService {
       items: order.items.map((item) => ({
         id: item.id.toString(),
         boxCode: item.boxCode,
-        skuCode: item.skuCode,
+        productId: item.productId,
         qty: item.qty,
         sourceRowNo: item.sourceRowNo,
         status: item.status,
@@ -1361,3 +1307,89 @@ export class BatchInboundService {
     return normalized || null;
   }
 }
+
+async function getUploadTemplateByOverride(this: BatchInboundService) {
+  const fileName = BATCH_INBOUND_TEMPLATE_FILE;
+  const cwd = process.cwd();
+  const candidates = [
+    join(cwd, 'docs', fileName),
+    join(cwd, '..', '..', 'docs', fileName),
+  ];
+
+  for (const templatePath of candidates) {
+    try {
+      const content = await readFile(templatePath);
+      return {
+        fileName,
+        content,
+      };
+    } catch {
+      // try next candidate
+    }
+  }
+
+  throw new NotFoundException(`模板文件不存在：${fileName}`);
+};
+
+function parseExcelLinesByOverride(
+  this: BatchInboundService,
+  fileBuffer: Buffer,
+): ParsedInboundLine[] {
+  let workbook: XLSX.WorkBook;
+  try {
+    workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+  } catch {
+    throw new BadRequestException('无法解析 Excel 文件');
+  }
+
+  const firstSheet = workbook.SheetNames[0];
+  if (!firstSheet) {
+    throw new BadRequestException('Excel 中没有可读取的工作表');
+  }
+
+  const sheet = workbook.Sheets[firstSheet];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+  if (rows.length === 0) {
+    throw new BadRequestException('Excel 中没有数据');
+  }
+
+  const parsed: ParsedInboundLine[] = [];
+  const errors: string[] = [];
+
+  rows.forEach((row, index) => {
+    const rowNo = index + 2;
+    const normalizedRow: Record<string, string> = {};
+    Object.entries(row).forEach(([key, value]) => {
+      normalizedRow[this['normalizeHeader'](key)] = String(value ?? '').trim();
+    });
+
+    const rawBoxCode = this['pickField'](normalizedRow, ['箱号', '箱号编码', 'box', 'boxcode', 'boxno']);
+    const productId = this['pickField'](normalizedRow, ['产品ID', '产品id', 'productId', 'productid']);
+    const qtyRaw = this['pickField'](normalizedRow, ['数量', '总数', 'qty', 'count', 'quantity']);
+
+    const boxCode = this['normalizeBoxCode'](rawBoxCode);
+    if (!boxCode || !productId || !qtyRaw) {
+      errors.push(`第${rowNo}行：箱号/产品ID/数量为必填`);
+      return;
+    }
+
+    const qty = Number(qtyRaw);
+    if (!Number.isInteger(qty) || qty <= 0) {
+      errors.push(`第${rowNo}行：数量必须是大于 0 的整数`);
+      return;
+    }
+
+    parsed.push({
+      boxCode,
+      productId: productId.trim(),
+      qty,
+      sourceRowNo: rowNo,
+    });
+  });
+
+  if (errors.length > 0) {
+    throw new UnprocessableEntityException(`Excel 校验失败：${errors.join(' | ')}`);
+  }
+
+  return parsed;
+};

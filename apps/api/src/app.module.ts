@@ -9,6 +9,7 @@ import { BrandsModule } from './brands/brands.module';
 import { BoxesModule } from './boxes/boxes.module';
 import { InboundModule } from './inbound/inbound.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { MasterProductsModule } from './master-products/master-products.module';
 import { OrdersModule } from './orders/orders.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ShelvesModule } from './shelves/shelves.module';
@@ -42,6 +43,7 @@ import { UsersModule } from './users/users.module';
     BatchInboundModule,
     InboundModule,
     InventoryModule,
+    MasterProductsModule,
     OrdersModule,
     AuditModule,
   ],

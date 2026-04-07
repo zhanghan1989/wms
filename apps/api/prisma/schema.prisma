@@ -137,6 +137,12 @@ enum AuditEventType {
   inventory_adjust_voided
 }
 
+enum MasterProductSyncStatus {
+  running
+  success
+  failed
+}
+
 model User {
   id                         BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   username                   String                 @unique @db.VarChar(64)
@@ -160,6 +166,7 @@ model User {
   productEditRequests        ProductEditRequest[]   @relation("product_edit_created_by")
   stockMovements             StockMovement[]
   auditLogs                  OperationAuditLog[]
+  masterProductSyncRecords   MasterProductSyncRecord[]
 
   @@map("users")
 }
@@ -213,7 +220,7 @@ model BatchInboundItem {
   id          BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   orderId     BigInt                 @map("order_id") @db.UnsignedBigInt
   boxCode     String                 @map("box_code") @db.VarChar(128)
-  skuCode     String                 @map("sku_code") @db.VarChar(128)
+  productId   String                 @map("product_id") @db.VarChar(128)
   qty         Int
   sourceRowNo Int?                   @map("source_row_no")
   status      BatchInboundItemStatus @default(pending)
@@ -221,7 +228,7 @@ model BatchInboundItem {
   createdAt   DateTime               @default(now()) @map("created_at")
   order       BatchInboundOrder      @relation(fields: [orderId], references: [id])
 
-  @@unique([orderId, boxCode, skuCode], map: "uq_batch_order_box_sku")
+  @@unique([orderId, boxCode, productId], map: "uq_batch_order_box_product")
   @@index([orderId, status])
   @@index([orderId, boxCode])
   @@map("batch_inbound_items")
@@ -229,16 +236,12 @@ model BatchInboundItem {
 
 model Sku {
   id                BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
-  productId         String?                    @unique @map("product_id") @db.VarChar(128)
+  productId         String?                    @map("product_id") @db.VarChar(128)
   sku               String                     @unique @db.VarChar(128)
-  rbSku            String?                    @map("erp_sku") @db.VarChar(128)
+  rbSku            String?                    @db.VarChar(128)
   asin              String?                    @db.VarChar(32)
   fnsku             String?                    @db.VarChar(32)
-  fbmSku            String?                    @map("fbm_sku") @db.VarChar(128)
-  model             String?                    @db.VarChar(255)
-  brand             String?                    @db.VarChar(255)
-  type              String?                    @db.VarChar(255)
-  color             String?                    @db.VarChar(64)
+  fbmSku            String?                    @db.VarChar(128)
   shop              String?                    @db.VarChar(128)
   remark            String?                    @db.VarChar(255)
   status            Int                        @default(1) @db.TinyInt
@@ -246,14 +249,15 @@ model Sku {
   updatedAt         DateTime                   @updatedAt @map("updated_at")
   itemCodes         ItemCode[]
   inventories       InventoryBoxSku[]
-  inboundItems      InboundOrderItem[]
   outboundItems     OutboundOrderItem[]
   stocktakeRecords  StocktakeRecord[]
   stockMovements    StockMovement[]
   adjustItems       InventoryAdjustOrderItem[]
   fbaReplenishments FbaReplenishment[]
+  masterProduct     MasterProduct?             @relation(fields: [productId], references: [productId])
   productEditRequests ProductEditRequest[]
 
+  @@index([productId], map: "idx_skus_product_id")
   @@map("skus")
 }
 
@@ -310,6 +314,7 @@ model Box {
   shelf             Shelf                      @relation(fields: [shelfId], references: [id])
   itemCodes         ItemCode[]
   inventories       InventoryBoxSku[]
+  masterProductInventories MasterProductBoxInventory[]
   inboundItems      InboundOrderItem[]
   outboundItems     OutboundOrderItem[]
   stocktakeRecords  StocktakeRecord[]
@@ -349,6 +354,20 @@ model InventoryBoxSku {
   @@map("inventory_box_sku")
 }
 
+model MasterProductBoxInventory {
+  id        BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  boxId     BigInt        @map("box_id") @db.UnsignedBigInt
+  productId String        @map("product_id") @db.VarChar(128)
+  qty       Int           @default(0)
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  box       Box           @relation(fields: [boxId], references: [id])
+  product   MasterProduct @relation(fields: [productId], references: [productId])
+
+  @@unique([boxId, productId])
+  @@index([productId], map: "idx_master_product_box_inventory_product_id")
+  @@map("master_product_box_inventory")
+}
+
 model InboundOrder {
   id        BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
   orderNo   String             @unique @map("order_no") @db.VarChar(64)
@@ -368,13 +387,13 @@ model InboundOrderItem {
   id          BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
   orderId     BigInt       @map("order_id") @db.UnsignedBigInt
   boxId       BigInt       @map("box_id") @db.UnsignedBigInt
-  skuId       BigInt       @map("sku_id") @db.UnsignedBigInt
+  productId   String       @map("product_id") @db.VarChar(128)
   qty         Int
   sourceRowNo Int?         @map("source_row_no")
   createdAt   DateTime     @default(now()) @map("created_at")
   order       InboundOrder @relation(fields: [orderId], references: [id])
   box         Box          @relation(fields: [boxId], references: [id])
-  sku         Sku          @relation(fields: [skuId], references: [id])
+  product     MasterProduct @relation(fields: [productId], references: [productId])
 
   @@map("inbound_order_items")
 }
@@ -614,6 +633,60 @@ model OrderRecord {
   @@index([csvImportedAt])
   @@index([createdAt])
   @@map("order_records")
+}
+
+model MasterProduct {
+  id              BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  productId       String   @unique @map("product_id") @db.VarChar(128)
+  productName     String?  @map("product_name") @db.VarChar(255)
+  productType     String?  @map("product_type") @db.VarChar(128)
+  bagBrand        String?  @map("bag_brand") @db.VarChar(128)
+  color           String?  @db.VarChar(64)
+  bagName         String?  @map("bag_name") @db.VarChar(128)
+  bagType         String?  @map("bag_type") @db.VarChar(64)
+  zipperStyle     String?  @map("zipper_style") @db.VarChar(64)
+  style           String?  @db.VarChar(128)
+  pattern         String?  @db.VarChar(128)
+  buckleType      String?  @map("buckle_type") @db.VarChar(64)
+  matchingBagType String?  @map("matching_bag_type") @db.VarChar(64)
+  length          String?  @db.VarChar(64)
+  width           String?  @db.VarChar(64)
+  patternType     String?  @map("pattern_type") @db.VarChar(64)
+  size            String?  @db.VarChar(64)
+  stockQty        Int      @default(0) @map("stock_qty")
+  status          Int      @default(1) @db.TinyInt
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  skus            Sku[]
+  boxInventories  MasterProductBoxInventory[]
+  inboundItems    InboundOrderItem[]
+  syncRecords     MasterProductSyncRecord[]
+
+  @@map("master_products")
+}
+
+model MasterProductSyncRecord {
+  id             BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  operationType  String        @map("operation_type") @db.VarChar(32)
+  productId      String?       @map("product_id") @db.VarChar(128)
+  sourceFileName String?       @map("source_file_name") @db.VarChar(255)
+  status         MasterProductSyncStatus @default(running)
+  fetchedCount   Int           @default(0) @map("fetched_count")
+  createdCount   Int           @default(0) @map("created_count")
+  updatedCount   Int           @default(0) @map("updated_count")
+  executedBy     BigInt?       @map("executed_by") @db.UnsignedBigInt
+  operatorName   String?       @map("operator_name") @db.VarChar(64)
+  executedAt     DateTime      @default(now()) @map("executed_at")
+  finishedAt     DateTime?     @map("finished_at")
+  errorMessage   String?       @map("error_message") @db.VarChar(255)
+  operator       User?         @relation(fields: [executedBy], references: [id])
+  product        MasterProduct? @relation(fields: [productId], references: [productId])
+
+  @@index([operationType, executedAt], map: "idx_master_product_sync_records_operation_type_executed_at")
+  @@index([status, executedAt], map: "idx_master_product_sync_records_status_executed_at")
+  @@index([executedBy, executedAt], map: "idx_master_product_sync_records_executed_by_executed_at")
+  @@index([productId, executedAt], map: "idx_master_product_sync_records_product_id_executed_at")
+  @@map("master_product_sync_records")
 }
 
 model OperationAuditLog {

@@ -24,7 +24,12 @@ import { CreateFbaReplenishmentDto } from './dto/create-fba-replenishment.dto';
 import { ManualAdjustDto } from './dto/manual-adjust.dto';
 import { MoveProductBetweenBoxesDto } from './dto/move-product-between-boxes.dto';
 import { OutboundFbaReplenishmentDto } from './dto/outbound-fba-replenishment.dto';
-import { BoxSkusQueryDto, ProductBoxesQueryDto, SearchSkuDto } from './dto/search-sku.dto';
+import {
+  BoxSkusQueryDto,
+  MasterProductBoxesQueryDto,
+  ProductBoxesQueryDto,
+  SearchSkuDto,
+} from './dto/search-sku.dto';
 import { InventoryService } from './inventory.service';
 
 @Controller('inventory')
@@ -40,6 +45,11 @@ export class InventoryController {
   @Get('product-boxes')
   async productBoxes(@Query() query: ProductBoxesQueryDto): Promise<unknown[]> {
     return this.inventoryService.productBoxes(query.skuId);
+  }
+
+  @Get('master-product-boxes')
+  async masterProductBoxes(@Query() query: MasterProductBoxesQueryDto): Promise<unknown[]> {
+    return this.inventoryService.masterProductBoxes(query.productId);
   }
 
   @Get('box-skus')

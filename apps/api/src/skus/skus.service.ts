@@ -22,10 +22,6 @@ type ImportSkuRow = {
   asin: string | null;
   fnsku: string | null;
   fbmSku: string | null;
-  model: string | null;
-  brand: string | null;
-  type: string | null;
-  color: string | null;
   shop: string | null;
   remark: string | null;
 };
@@ -37,10 +33,6 @@ type ProductSnapshot = {
   asin: string | null;
   fnsku: string | null;
   fbmSku: string | null;
-  model: string | null;
-  brand: string | null;
-  type: string | null;
-  color: string | null;
   shop: string | null;
   remark: string | null;
 };
@@ -52,14 +44,10 @@ const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'asin',
   'fnsku',
   'fbmSku',
-  'model',
-  'brand',
-  'type',
-  'color',
   'shop',
   'remark',
 ];
-const SKU_UPLOAD_TEMPLATE_FILE = '批量上传产品.xlsx';
+const SKU_UPLOAD_TEMPLATE_FILE = '批量上传SKU.xlsx';
 
 @Injectable()
 export class SkusService {
@@ -68,7 +56,7 @@ export class SkusService {
     private readonly auditService: AuditService,
   ) {}
 
-  async list(q?: string): Promise<unknown[]> {
+  private buildListWhere(q?: string): Prisma.SkuWhereInput {
     const where: Prisma.SkuWhereInput = {};
     if (q) {
       where.OR = [
@@ -78,12 +66,70 @@ export class SkusService {
         { asin: { contains: q } },
         { fnsku: { contains: q } },
         { fbmSku: { contains: q } },
+        { shop: { contains: q } },
+        { remark: { contains: q } },
+        {
+          masterProduct: {
+            productName: { contains: q },
+          },
+        },
       ];
     }
-    return this.prisma.sku.findMany({
+    return where;
+  }
+
+  async list(q?: string): Promise<unknown[]> {
+    const where = this.buildListWhere(q);
+    const rows = await this.prisma.sku.findMany({
       where,
-      orderBy: { id: 'desc' },
+      include: {
+        masterProduct: {
+          select: {
+            productName: true,
+          },
+        },
+      },
+      orderBy: [{ id: 'desc' }],
     });
+    return rows.map((row) => ({
+      ...row,
+      productName: row.masterProduct?.productName ?? null,
+    }));
+  }
+
+  async listPage(
+    q?: string,
+    page = 1,
+    pageSize = 30,
+  ): Promise<{ items: unknown[]; page: number; pageSize: number; hasMore: boolean }> {
+    const normalizedPage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+    const normalizedPageSize =
+      Number.isFinite(pageSize) && pageSize > 0 ? Math.min(Math.floor(pageSize), 100) : 30;
+    const where = this.buildListWhere(q);
+    const rows = await this.prisma.sku.findMany({
+      where,
+      include: {
+        masterProduct: {
+          select: {
+            productName: true,
+          },
+        },
+      },
+      orderBy: [{ id: 'desc' }],
+      skip: (normalizedPage - 1) * normalizedPageSize,
+      take: normalizedPageSize + 1,
+    });
+    const hasMore = rows.length > normalizedPageSize;
+    const items = rows.slice(0, normalizedPageSize).map((row) => ({
+      ...row,
+      productName: row.masterProduct?.productName ?? null,
+    }));
+    return {
+      items,
+      page: normalizedPage,
+      pageSize: normalizedPageSize,
+      hasMore,
+    };
   }
 
   async getUploadTemplate(): Promise<{ fileName: string; content: Buffer }> {
@@ -167,9 +213,9 @@ export class SkusService {
   ): Promise<unknown> {
     const exists = await this.prisma.sku.findUnique({ where: { sku: payload.sku } });
     if (exists) {
-      throw new BadRequestException('SKU已存在');
+      throw new BadRequestException('SKU already exists');
     }
-    await this.ensureProductIdAvailable(this.prisma, payload.productId ?? null);
+    await this.ensureMasterProductExists(this.prisma, payload.productId ?? null);
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.sku.create({
         data: payload,
@@ -199,13 +245,13 @@ export class SkusService {
     void payload;
     void operatorId;
     void requestId;
-    throw new BadRequestException('请通过产品管理页面提交编辑申请，不能直接修改产品数据');
+    throw new BadRequestException('Direct SKU update is disabled. Submit a product edit request instead.');
   }
 
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'skuId');
     const sku = await this.prisma.sku.findUnique({ where: { id } });
-    if (!sku) throw new NotFoundException('SKU不存在');
+    if (!sku) throw new NotFoundException('SKU not found');
     await this.prisma.$transaction(async (tx) => {
       await tx.sku.delete({ where: { id } });
       await this.auditService.create({
@@ -228,17 +274,17 @@ export class SkusService {
     try {
       workbook = XLSX.read(fileBuffer, { type: 'buffer' });
     } catch {
-      throw new BadRequestException('无法读取Excel文件');
+      throw new BadRequestException('Invalid Excel file');
     }
 
     const firstSheet = workbook.SheetNames[0];
     if (!firstSheet) {
-      throw new BadRequestException('Excel中没有工作表');
+      throw new BadRequestException('No worksheet found in Excel');
     }
     const sheet = workbook.Sheets[firstSheet];
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
     if (rows.length === 0) {
-      throw new BadRequestException('Excel中没有数据');
+      throw new BadRequestException('No data found in Excel');
     }
 
     const errors: string[] = [];
@@ -253,36 +299,41 @@ export class SkusService {
 
       const sku = this.pickField(normalized, [
         'sku',
+        'skufba',
+        'SKU(fba编码)',
+        'SKU（fba编码）',
         'sku(fba编码)',
-        'skufba编码',
-        '产品sku',
-        '商品sku',
+        'sku（fba编码）',
+        'fba编码',
       ]);
       if (!sku) {
-        errors.push(`第${rowNo}行：SKU为必填字段`);
+        errors.push(`Row ${rowNo} is missing SKU`);
         return;
       }
 
       result.push({
-        productId: this.pickField(normalized, ['productId', '产品ID', '产品id', '商品ID', '商品id']),
+        productId: this.pickField(normalized, ['productId', 'productid', '产品ID', '产品id']),
         sku,
         rbSku: this.pickField(normalized, [
           'rbSku',
           'rbsku',
           'rb sku',
           'rb_sku',
-          'rb编码',
           'rbcode',
           'rb',
+          'rb编码',
         ]),
         asin: this.pickField(normalized, ['asin']),
         fnsku: this.pickField(normalized, ['fnsku']),
-        fbmSku: this.pickField(normalized, ['fbmsku', 'fbm sku', 'fbm_sku', 'fbm', 'fbm编码', 'fbmcode']),
-        model: this.pickField(normalized, ['model', '型号']),
-        brand: this.pickField(normalized, ['brand', '品牌', '说明1']),
-        type: this.pickField(normalized, ['type', '类型', '说明2']),
-        color: this.pickField(normalized, ['color', '颜色']),
-        shop: this.pickField(normalized, ['shop', '店铺', '所属亚马逊店铺']),
+        fbmSku: this.pickField(normalized, [
+          'fbmsku',
+          'fbm sku',
+          'fbm_sku',
+          'fbm',
+          'fbmcode',
+          'fbm编码',
+        ]),
+        shop: this.pickField(normalized, ['shop', '店铺']),
         remark: this.pickField(normalized, ['remark', '备注']),
       });
     });
@@ -296,7 +347,7 @@ export class SkusService {
 
   private normalizeHeader(header: string): string {
     return String(header || '')
-      .replace(/[\s_\-()（）\[\]【】]/g, '')
+      .replace(/[\s_\-()\[\]{}]/g, '')
       .toLowerCase();
   }
 
@@ -318,10 +369,6 @@ export class SkusService {
     asin: string | null;
     fnsku: string | null;
     fbmSku: string | null;
-    model: string | null;
-    brand: string | null;
-    type: string | null;
-    color: string | null;
     shop: string | null;
     remark: string | null;
   }): ProductSnapshot {
@@ -332,10 +379,6 @@ export class SkusService {
       asin: this.normalizeNullableString(sku.asin),
       fnsku: this.normalizeNullableString(sku.fnsku),
       fbmSku: this.normalizeNullableString(sku.fbmSku),
-      model: this.normalizeNullableString(sku.model),
-      brand: this.normalizeNullableString(sku.brand),
-      type: this.normalizeNullableString(sku.type),
-      color: this.normalizeNullableString(sku.color),
       shop: this.normalizeNullableString(sku.shop),
       remark: this.normalizeNullableString(sku.remark),
     };
@@ -349,10 +392,6 @@ export class SkusService {
       asin: this.normalizeNullableString(row.asin) ?? beforeData.asin,
       fnsku: this.normalizeNullableString(row.fnsku) ?? beforeData.fnsku,
       fbmSku: this.normalizeNullableString(row.fbmSku) ?? beforeData.fbmSku,
-      model: this.normalizeNullableString(row.model) ?? beforeData.model,
-      brand: this.normalizeNullableString(row.brand) ?? beforeData.brand,
-      type: this.normalizeNullableString(row.type) ?? beforeData.type,
-      color: this.normalizeNullableString(row.color) ?? beforeData.color,
       shop: this.normalizeNullableString(row.shop) ?? beforeData.shop,
       remark: this.normalizeNullableString(row.remark) ?? beforeData.remark,
     };
@@ -387,7 +426,7 @@ export class SkusService {
     return normalizeNullableText(value);
   }
 
-  private async ensureProductIdAvailable(
+  private async ensureMasterProductExists(
     db: Prisma.TransactionClient | PrismaService,
     productIdRaw: string | null,
   ): Promise<void> {
@@ -395,12 +434,12 @@ export class SkusService {
     if (!productId) {
       return;
     }
-    const exists = await db.sku.findFirst({
+    const masterProduct = await db.masterProduct.findUnique({
       where: { productId },
       select: { id: true },
     });
-    if (exists) {
-      throw new BadRequestException('产品ID已存在');
+    if (!masterProduct) {
+      throw new BadRequestException('所属产品ID不存在');
     }
   }
 
@@ -410,7 +449,7 @@ export class SkusService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<void> {
-    await this.ensureProductIdAvailable(tx, row.productId);
+    await this.ensureMasterProductExists(tx, row.productId);
     const created = await tx.sku.create({
       data: {
         productId: row.productId ?? undefined,
@@ -419,10 +458,6 @@ export class SkusService {
         asin: row.asin ?? undefined,
         fnsku: row.fnsku ?? undefined,
         fbmSku: row.fbmSku ?? undefined,
-        model: row.model ?? undefined,
-        brand: row.brand ?? undefined,
-        type: row.type ?? undefined,
-        color: row.color ?? undefined,
         shop: row.shop ?? undefined,
         remark: row.remark ?? undefined,
         status: 1,
