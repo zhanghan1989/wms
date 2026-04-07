@@ -3196,8 +3196,6 @@ function getSkuManagementFilteredRows() {
 
   return rows.filter((item) =>
     [
-      item?.productId,
-      item?.productName,
       item?.sku,
       item?.asin,
       item?.fnsku,
@@ -3225,12 +3223,8 @@ function renderSkuManagementTable() {
     rows
       .map((item) => {
         const skuId = Number(item?.id || 0);
-        const totalQty = Number(state.inventoryTotalsBySku?.[String(skuId)] ?? 0);
-        const pendingQty = getFbaPendingQtyBySku(skuId);
         return `
           <tr>
-            <td>${escapeHtml(displayText(item?.productId))}</td>
-            <td>${escapeHtml(displayText(item?.productName))}</td>
             <td>${escapeHtml(displayText(item?.sku))}</td>
             <td>${escapeHtml(displayText(item?.asin))}</td>
             <td>${escapeHtml(displayText(item?.fnsku))}</td>
@@ -3238,12 +3232,11 @@ function renderSkuManagementTable() {
             <td>${escapeHtml(displayText(item?.rbSku))}</td>
             <td>${escapeHtml(displayText(item?.shop))}</td>
             <td>${escapeHtml(displayText(item?.remark))}</td>
-            <td>${renderQtyWithPending(totalQty, pendingQty)}</td>
             <td>${renderEditButton(skuId)}</td>
           </tr>
         `;
       })
-      .join("") || '<tr><td colspan="11" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="8" class="muted">-</td></tr>';
 
   if (summary) {
     const keyword = String(state.skuManagementKeyword || "").trim();
@@ -3355,10 +3348,18 @@ function buildInventoryDetailBoxActionButtons(box) {
 }
 
 function buildInventoryDetailBoxRows(detail) {
-  const boxes = Array.isArray(detail?.boxes) ? detail.boxes : [];
+  const boxes = Array.isArray(detail?.boxes) ? [...detail.boxes] : [];
   const currentProductId = String(detail?.product?.productId || "").trim();
   const currentProductName = String(detail?.product?.productName || "").trim();
   const rows = [];
+
+  boxes.sort((a, b) => {
+    const qtyDiff = Number(b?.qty ?? 0) - Number(a?.qty ?? 0);
+    if (qtyDiff !== 0) return qtyDiff;
+    return String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", {
+      numeric: true,
+    });
+  });
 
   boxes.forEach((box) => {
     const boxCode = String(box?.boxCode || "").trim();
