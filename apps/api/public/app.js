@@ -9,6 +9,19 @@ const state = {
   skuTypes: [],
   shops: [],
   skuEditRequests: [],
+  masterProducts: [],
+  masterProductsPage: 1,
+  masterProductsPageSize: 30,
+  masterProductsHasMore: false,
+  masterProductKeyword: "",
+  masterProductView: "list",
+  selectedMasterProductId: "",
+  selectedMasterProductDetail: null,
+  masterProductSyncRecords: [],
+  masterProductSyncRecordsPage: 1,
+  masterProductSyncRecordsPageSize: 30,
+  masterProductSyncRecordsHasMore: false,
+  masterProductExportFilterOptions: null,
   inventoryLocations: new Map(),
   inventoryTotalsBySku: {},
   inventorySortedSkus: [],
@@ -1757,6 +1770,67 @@ async function request(path, options = {}) {
   }
 
   return payload.data;
+}
+
+async function fetchAuthorizedResponse(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  const isFormData = options.body instanceof FormData;
+  if (!isFormData && options.body !== undefined && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (state.token) {
+    headers.Authorization = `Bearer ${state.token}`;
+  }
+
+  let response;
+  try {
+    response = await fetch(`/api${path}`, { ...options, headers });
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || `HTTP ${response.status}`;
+    try {
+      const payload = text ? JSON.parse(text) : null;
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {}
+    throw new Error(normalizeErrorMessage(message));
+  }
+
+  return response;
+}
+
+function resolveDownloadFileName(response, fallbackName) {
+  const disposition = response.headers.get("content-disposition") || "";
+  const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainNameMatch = disposition.match(/filename="?([^";]+)"?/i);
+  if (utf8NameMatch?.[1]) {
+    try {
+      return decodeURIComponent(utf8NameMatch[1]);
+    } catch {}
+  }
+  if (plainNameMatch?.[1]) {
+    return plainNameMatch[1];
+  }
+  return fallbackName;
+}
+
+async function downloadAuthorizedFile(path, options = {}, fallbackName = "download.bin") {
+  const response = await fetchAuthorizedResponse(path, options);
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = resolveDownloadFileName(response, fallbackName);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  return link.download;
 }
 
 function buildDeleteBlockedMessage(entityLabel, reasons) {
@@ -4179,6 +4253,369 @@ async function loadProductEditRequests() {
   renderProductEditRequestTable();
 }
 
+function getMasterProductSyncOperationText(value) {
+  const map = {
+    bulk_upload: "批量上传",
+    manual_sync: "手动同步",
+    scheduled_sync: "定时同步",
+  };
+  return map[String(value || "")] || displayText(value);
+}
+
+function getMasterProductSyncStatusText(value) {
+  const map = {
+    running: "执行中",
+    success: "成功",
+    failed: "失败",
+  };
+  return map[String(value || "")] || displayText(value);
+}
+
+function setMasterProductView(view) {
+  state.masterProductView = view;
+  $("masterProductListSection")?.classList.toggle("hidden", view !== "list");
+  $("masterProductDetailSection")?.classList.toggle("hidden", view !== "detail");
+  $("masterProductSyncRecordsSection")?.classList.toggle("hidden", view !== "syncRecords");
+}
+
+function renderMasterProductTable() {
+  const body = $("masterProductBody");
+  const loadMoreBtn = $("loadMoreMasterProductsBtn");
+  if (!body) return;
+
+  const rows = Array.isArray(state.masterProducts) ? state.masterProducts : [];
+  body.innerHTML =
+    rows
+      .map((item) => {
+        const productId = String(item?.productId || "").trim();
+        return `
+          <tr>
+            <td>${escapeHtml(displayText(productId))}</td>
+            <td>${escapeHtml(displayText(item?.productName))}</td>
+            <td>${escapeHtml(displayText(item?.productType))}</td>
+            <td>${escapeHtml(displayText(item?.bagBrand))}</td>
+            <td>${escapeHtml(displayText(item?.color))}</td>
+            <td>${escapeHtml(displayText(item?.bagType))}</td>
+            <td>${escapeHtml(displayText(item?.size))}</td>
+            <td class="master-product-current-cell">${escapeHtml(displayText(item?.stockQty ?? 0))}</td>
+            <td>
+              <button type="button" class="tiny-btn" data-action="openMasterProductDetail" data-product-id="${escapeHtml(productId)}">查看详情</button>
+            </td>
+          </tr>
+        `;
+      })
+      .join("") || '<tr><td colspan="9" class="muted">-</td></tr>';
+
+  if (loadMoreBtn) {
+    loadMoreBtn.classList.toggle("hidden", !state.masterProductsHasMore);
+  }
+}
+
+async function loadMasterProducts({ reset = false } = {}) {
+  const page = reset ? 1 : state.masterProductsPage + 1;
+  const keyword = String(state.masterProductKeyword || "").trim();
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(state.masterProductsPageSize),
+  });
+  if (keyword) {
+    params.set("keyword", keyword);
+  }
+
+  const result = await request(`/master-products?${params.toString()}`);
+  const items = Array.isArray(result?.items) ? result.items : [];
+  state.masterProducts = reset ? items : [...state.masterProducts, ...items];
+  state.masterProductsPage = Number(result?.page || page);
+  state.masterProductsHasMore = Boolean(result?.hasMore);
+  renderMasterProductTable();
+}
+
+function renderMasterProductExportOptions(field, values) {
+  const select = $(`masterProductExport_${field}`);
+  if (!select) return;
+  const prev = select.value;
+  const items = Array.isArray(values) ? values : [];
+  select.innerHTML = `<option value="">全部</option>${items
+    .map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`)
+    .join("")}`;
+  if (prev && items.includes(prev)) {
+    select.value = prev;
+  }
+}
+
+async function loadMasterProductExportFilterOptions(force = false) {
+  if (!force && state.masterProductExportFilterOptions) {
+    return state.masterProductExportFilterOptions;
+  }
+  const result = await request("/master-products/export-filter-options");
+  state.masterProductExportFilterOptions = result || {};
+  [
+    "productType",
+    "bagBrand",
+    "color",
+    "bagType",
+    "patternType",
+    "size",
+  ].forEach((field) => renderMasterProductExportOptions(field, state.masterProductExportFilterOptions?.[field]));
+  return state.masterProductExportFilterOptions;
+}
+
+function renderMasterProductDetailMeta(product) {
+  const meta = $("masterProductDetailMeta");
+  if (!meta) return;
+  if (!product) {
+    meta.innerHTML = "";
+    return;
+  }
+  const fields = [
+    ["产品ID", product.productId],
+    ["产品名称", product.productName],
+    ["产品类型", product.productType],
+    ["包包品牌", product.bagBrand],
+    ["颜色", product.color],
+    ["包名", product.bagName],
+    ["包型", product.bagType],
+    ["拉链款式", product.zipperStyle],
+    ["款式", product.style],
+    ["花纹", product.pattern],
+    ["扣子类型", product.buckleType],
+    ["对应包型", product.matchingBagType],
+    ["长度", product.length],
+    ["宽度", product.width],
+    ["花纹类型", product.patternType],
+    ["尺寸", product.size],
+    ["在库数", product.stockQty],
+  ];
+  meta.innerHTML = fields
+    .map(
+      ([label, value]) => `
+        <div class="summary-item">
+          <span class="summary-label">${escapeHtml(label)}</span>
+          <span class="summary-value">${escapeHtml(displayText(value))}</span>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderMasterProductSkuTable(detail) {
+  const body = $("masterProductSkuBody");
+  const select = $("masterProductFbaSkuId");
+  if (!body || !select) return;
+  const rows = Array.isArray(detail?.skus) ? detail.skus : [];
+  body.innerHTML =
+    rows
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(displayText(item?.sku))}</td>
+            <td>${escapeHtml(displayText(item?.asin))}</td>
+            <td>${escapeHtml(displayText(item?.fnsku))}</td>
+            <td>${escapeHtml(displayText(item?.fbmSku))}</td>
+            <td>${escapeHtml(displayText(item?.rbSku))}</td>
+            <td>${escapeHtml(displayText(item?.shop))}</td>
+          </tr>
+        `,
+      )
+      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
+
+  const prev = select.value;
+  select.innerHTML = `<option value="">请选择SKU</option>${rows
+    .map(
+      (item) =>
+        `<option value="${escapeHtml(displayText(item?.id))}">${escapeHtml(
+          `${displayText(item?.sku)} / ${displayText(item?.shop)}`,
+        )}</option>`,
+    )
+    .join("")}`;
+  if (prev && rows.some((item) => String(item?.id) === prev)) {
+    select.value = prev;
+  }
+}
+
+function buildMasterProductRelatedItems(items) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) {
+    return '<span class="muted">-</span>';
+  }
+  return `
+    <div class="master-product-related-list">
+      ${rows
+        .map(
+          (item) => `
+            <div class="master-product-related-item${item?.isCurrentProduct ? " master-product-current-cell" : ""}">
+              <span>${escapeHtml(displayText(item?.productId))}${item?.productName ? ` / ${escapeHtml(displayText(item?.productName))}` : ""}</span>
+              <span>${escapeHtml(displayText(item?.qty ?? 0))}</span>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderMasterProductBoxTable(detail) {
+  const body = $("masterProductBoxBody");
+  if (!body) return;
+  const rows = Array.isArray(detail?.boxes) ? detail.boxes : [];
+  body.innerHTML =
+    rows
+      .map((box) => {
+        const boxCode = String(box?.boxCode || "").trim();
+        return `
+          <tr>
+            <td>${escapeHtml(displayText(box?.shelfCode))}</td>
+            <td>${escapeHtml(displayText(boxCode))}</td>
+            <td class="master-product-current-cell">${escapeHtml(displayText(box?.qty ?? 0))}</td>
+            <td>${escapeHtml(formatDate(box?.updatedAt))}</td>
+            <td>${buildMasterProductRelatedItems(box?.items)}</td>
+            <td>
+              <div class="master-product-box-actions">
+                <button type="button" class="tiny-btn ghost" data-action="fillMasterProductInboundBox" data-box-code="${escapeHtml(boxCode)}">填入入库</button>
+                <button type="button" class="tiny-btn ghost" data-action="fillMasterProductOutboundBox" data-box-code="${escapeHtml(boxCode)}">填入出库</button>
+                <button type="button" class="tiny-btn ghost" data-action="fillMasterProductFbaBox" data-box-code="${escapeHtml(boxCode)}">填入FBA</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      })
+      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
+}
+
+function renderMasterProductDetail(detail) {
+  state.selectedMasterProductDetail = detail || null;
+  state.selectedMasterProductId = String(detail?.product?.productId || "");
+  $("masterProductDetailTitle").textContent = detail?.product?.productName
+    ? `主商品详情：${detail.product.productName}`
+    : "主商品详情";
+  $("masterProductDetailSubtitle").textContent = detail?.product?.productId
+    ? `产品ID：${detail.product.productId}`
+    : "-";
+  renderMasterProductDetailMeta(detail?.product);
+  renderMasterProductSkuTable(detail);
+  renderMasterProductBoxTable(detail);
+  resetMasterProductDetailForms();
+}
+
+async function loadMasterProductDetail(productId) {
+  const detail = await request(`/master-products/${encodeURIComponent(productId)}/detail`);
+  renderMasterProductDetail(detail);
+  setMasterProductView("detail");
+  return detail;
+}
+
+function renderMasterProductSyncRecords() {
+  const body = $("masterProductSyncRecordBody");
+  const loadMoreBtn = $("loadMoreMasterProductSyncRecordsBtn");
+  if (!body) return;
+  const rows = Array.isArray(state.masterProductSyncRecords) ? state.masterProductSyncRecords : [];
+  body.innerHTML =
+    rows
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(formatDate(item?.executedAt))}</td>
+            <td>${escapeHtml(getMasterProductSyncOperationText(item?.operationType))}</td>
+            <td><span class="master-product-status-chip ${escapeHtml(String(item?.status || ""))}">${escapeHtml(
+              getMasterProductSyncStatusText(item?.status),
+            )}</span></td>
+            <td>${escapeHtml(displayText(item?.operatorName))}</td>
+            <td>${escapeHtml(displayText(item?.fetchedCount ?? 0))}</td>
+            <td>${escapeHtml(displayText(item?.createdCount ?? 0))}</td>
+            <td>${escapeHtml(displayText(item?.updatedCount ?? 0))}</td>
+            <td>${escapeHtml(displayText(item?.errorMessage))}</td>
+          </tr>
+        `,
+      )
+      .join("") || '<tr><td colspan="8" class="muted">-</td></tr>';
+  if (loadMoreBtn) {
+    loadMoreBtn.classList.toggle("hidden", !state.masterProductSyncRecordsHasMore);
+  }
+}
+
+async function loadMasterProductSyncRecords({ reset = false } = {}) {
+  const page = reset ? 1 : state.masterProductSyncRecordsPage + 1;
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(state.masterProductSyncRecordsPageSize),
+  });
+  const result = await request(`/master-products/sync-records?${params.toString()}`);
+  const items = Array.isArray(result?.items) ? result.items : [];
+  state.masterProductSyncRecords = reset ? items : [...state.masterProductSyncRecords, ...items];
+  state.masterProductSyncRecordsPage = Number(result?.page || page);
+  state.masterProductSyncRecordsHasMore = Boolean(result?.hasMore);
+  renderMasterProductSyncRecords();
+}
+
+function buildMasterProductExportPayload() {
+  const payload = {};
+  [
+    "keyword",
+    "productId",
+    "productName",
+    "productType",
+    "bagBrand",
+    "color",
+    "bagType",
+    "patternType",
+    "size",
+  ].forEach((field) => {
+    const value = String($(`masterProductExport_${field}`)?.value || "").trim();
+    if (value) {
+      payload[field] = value;
+    }
+  });
+  ["stockQtyMin", "stockQtyMax"].forEach((field) => {
+    const raw = String($(`masterProductExport_${field}`)?.value || "").trim();
+    if (!raw) return;
+    const value = Number(raw);
+    if (Number.isInteger(value) && value >= 0) {
+      payload[field] = value;
+    }
+  });
+  return payload;
+}
+
+function resetMasterProductExportForm() {
+  $("masterProductExportForm")?.reset();
+  if (state.masterProductExportFilterOptions) {
+    loadMasterProductExportFilterOptions(true).catch(() => {});
+  }
+}
+
+function resetMasterProductDetailForms() {
+  $("masterProductManualAdjustForm")?.reset();
+  $("masterProductOutboundOneForm")?.reset();
+  $("masterProductFbaForm")?.reset();
+}
+
+async function refreshMasterProductPanel() {
+  await loadMasterProductExportFilterOptions();
+  if (state.masterProductView === "detail" && state.selectedMasterProductId) {
+    await loadMasterProductDetail(state.selectedMasterProductId);
+    return;
+  }
+  if (state.masterProductView === "syncRecords") {
+    await loadMasterProductSyncRecords({ reset: true });
+    return;
+  }
+  await loadMasterProducts({ reset: true });
+}
+
+function prefillMasterProductBoxInputs(boxCode, target) {
+  const normalized = String(boxCode || "").trim();
+  if (!normalized) return;
+  if (target === "inbound" || target === "all") {
+    $("masterProductAdjustBoxCode").value = normalized;
+  }
+  if (target === "outbound" || target === "all") {
+    $("masterProductOutboundBoxCode").value = normalized;
+  }
+  if (target === "fba" || target === "all") {
+    $("masterProductFbaBoxCode").value = normalized;
+  }
+}
+
 function hasPendingProductEditRequestBySkuId(skuId) {
   const targetSkuId = Number(skuId);
   if (!Number.isInteger(targetSkuId) || targetSkuId <= 0) {
@@ -5523,6 +5960,10 @@ async function reloadAll() {
     if ($("emptyBoxManageBody")) $("emptyBoxManageBody").innerHTML = "";
     $("dataBackupBody").innerHTML = "";
     $("productEditRequestBody").innerHTML = "";
+    if ($("masterProductBody")) $("masterProductBody").innerHTML = "";
+    if ($("masterProductSkuBody")) $("masterProductSkuBody").innerHTML = "";
+    if ($("masterProductBoxBody")) $("masterProductBoxBody").innerHTML = "";
+    if ($("masterProductSyncRecordBody")) $("masterProductSyncRecordBody").innerHTML = "";
     $("departmentOptionsBody").innerHTML = "";
     if ($("roleOptionsBody")) $("roleOptionsBody").innerHTML = "";
     renderProductEditRequestDetail(null);
@@ -5541,6 +5982,17 @@ async function reloadAll() {
     state.inventorySkus = [];
     state.emptyBoxes = [];
     state.orders = [];
+    state.masterProducts = [];
+    state.masterProductsPage = 1;
+    state.masterProductsHasMore = false;
+    state.masterProductKeyword = "";
+    state.masterProductView = "list";
+    state.selectedMasterProductId = "";
+    state.selectedMasterProductDetail = null;
+    state.masterProductSyncRecords = [];
+    state.masterProductSyncRecordsPage = 1;
+    state.masterProductSyncRecordsHasMore = false;
+    state.masterProductExportFilterOptions = null;
     state.inventorySortedSkus = [];
     state.inventoryLocations = new Map();
     state.inventoryTotalsBySku = {};
@@ -5950,6 +6402,256 @@ function bindForms() {
     }
   });
 
+  $("openMasterProductListBtn").addEventListener("click", async () => {
+    try {
+      setMasterProductView("list");
+      await loadMasterProducts({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openMasterProductSyncRecordsBtn").addEventListener("click", async () => {
+    try {
+      setMasterProductView("syncRecords");
+      await loadMasterProductSyncRecords({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("masterProductBackToListBtn").addEventListener("click", () => {
+    setMasterProductView("list");
+  });
+
+  $("toggleMasterProductImportBtn").addEventListener("click", () => {
+    $("masterProductImportForm")?.classList.toggle("hidden");
+  });
+
+  $("toggleMasterProductExportBtn").addEventListener("click", async () => {
+    try {
+      await loadMasterProductExportFilterOptions();
+      $("masterProductExportForm")?.classList.toggle("hidden");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("downloadMasterProductTemplateBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadAuthorizedFile("/master-products/upload-template", {}, "产品列表.xlsx");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("triggerMasterProductSyncBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      const daysText = window.prompt("输入要同步最近几天更新的主商品数据", "10");
+      if (daysText === null) return;
+      const days = Number(daysText);
+      if (!Number.isInteger(days) || days <= 0) {
+        throw new Error("同步天数必须是大于 0 的整数");
+      }
+      await withBusyButton(button, "同步中...", async () => {
+        const result = await request(`/master-products/sync-xiya?days=${days}`, {
+          method: "POST",
+        });
+        showToast(result?.message || `已启动同步任务，正在拉取最近 ${days} 天数据`);
+        setMasterProductView("syncRecords");
+        await loadMasterProductSyncRecords({ reset: true });
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("masterProductSearchForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "检索中...", async () => {
+        state.masterProductKeyword = String($("masterProductKeyword").value || "").trim();
+        setMasterProductView("list");
+        await loadMasterProducts({ reset: true });
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("resetMasterProductSearchBtn").addEventListener("click", async () => {
+    try {
+      $("masterProductKeyword").value = "";
+      state.masterProductKeyword = "";
+      setMasterProductView("list");
+      await loadMasterProducts({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("loadMoreMasterProductsBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "加载中...", async () => {
+        await loadMasterProducts({ reset: false });
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("loadMoreMasterProductSyncRecordsBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "加载中...", async () => {
+        await loadMasterProductSyncRecords({ reset: false });
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("masterProductImportForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      const file = $("masterProductImportFile").files?.[0];
+      if (!file) {
+        throw new Error("请选择主商品 Excel 文件");
+      }
+      await withBusyButton(submitButton, "导入中...", async () => {
+        const formData = new FormData();
+        formData.append("file", file);
+        const result = await request("/master-products/import-excel", {
+          method: "POST",
+          body: formData,
+        });
+        showToast(`主商品导入完成：共 ${result?.importedCount || 0} 行`);
+        $("masterProductImportForm").reset();
+        setMasterProductView("syncRecords");
+        await Promise.all([loadMasterProducts({ reset: true }), loadMasterProductSyncRecords({ reset: true })]);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("masterProductExportForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "下载中...", async () => {
+        const payload = buildMasterProductExportPayload();
+        await downloadAuthorizedFile(
+          "/master-products/export-excel",
+          {
+            method: "POST",
+            body: JSON.stringify(payload),
+          },
+          "产品主表分类下载.xlsx",
+        );
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("resetMasterProductExportBtn").addEventListener("click", () => {
+    resetMasterProductExportForm();
+  });
+
+  $("masterProductManualAdjustForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      const productId = String(state.selectedMasterProductId || "").trim();
+      if (!productId) {
+        throw new Error("请先选择主商品");
+      }
+      const payload = {
+        boxCode: String($("masterProductAdjustBoxCode").value || "").trim(),
+        qtyDelta: Number($("masterProductAdjustQtyDelta").value || 0),
+        reason: String($("masterProductAdjustReason").value || "").trim() || undefined,
+      };
+      await withBusyButton(submitButton, "提交中...", async () => {
+        await request(`/master-products/${encodeURIComponent(productId)}/box-inventories/manual-adjust`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showToast("主商品入库完成");
+        await Promise.all([loadMasterProductDetail(productId), loadInventory(), loadBoxes()]);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("masterProductOutboundOneForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      const productId = String(state.selectedMasterProductId || "").trim();
+      if (!productId) {
+        throw new Error("请先选择主商品");
+      }
+      const payload = {
+        boxCode: String($("masterProductOutboundBoxCode").value || "").trim(),
+        remark: String($("masterProductOutboundRemark").value || "").trim() || undefined,
+      };
+      await withBusyButton(submitButton, "提交中...", async () => {
+        await request(`/master-products/${encodeURIComponent(productId)}/box-inventories/outbound-one`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showToast("主商品单件出库完成");
+        await Promise.all([loadMasterProductDetail(productId), loadInventory(), loadBoxes()]);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("masterProductFbaForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      const productId = String(state.selectedMasterProductId || "").trim();
+      if (!productId) {
+        throw new Error("请先选择主商品");
+      }
+      const skuId = Number($("masterProductFbaSkuId").value || 0);
+      if (!Number.isInteger(skuId) || skuId <= 0) {
+        throw new Error("请选择关联 SKU");
+      }
+      const payload = {
+        skuId,
+        boxCode: String($("masterProductFbaBoxCode").value || "").trim(),
+        qty: Number($("masterProductFbaQty").value || 0),
+        remark: String($("masterProductFbaRemark").value || "").trim() || undefined,
+      };
+      await withBusyButton(submitButton, "提交中...", async () => {
+        await request(`/master-products/${encodeURIComponent(productId)}/fba-replenishments`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showToast("主商品 FBA 补货申请已创建");
+        await Promise.all([
+          loadMasterProductDetail(productId),
+          loadFbaReplenishments(),
+          loadFbaPendingSummary(),
+        ]);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("inventorySearchForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
@@ -6108,6 +6810,7 @@ function bindForms() {
   $("openProductManagementPanel").addEventListener("click", async () => {
     try {
       switchPanel("productManagement");
+      setMasterProductView("list");
       await Promise.all([
         loadShelves(),
         loadBoxes(),
@@ -6117,6 +6820,8 @@ function bindForms() {
         loadShops(),
         loadProductEditRequests(),
         loadProductEditPendingSummary(),
+        loadMasterProductExportFilterOptions(),
+        loadMasterProducts({ reset: true }),
       ]);
     } catch (error) {
       showToast(error.message, true);
@@ -7616,6 +8321,37 @@ function bindDelegates() {
     }
   });
 
+  $("masterProductBody").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='openMasterProductDetail']");
+    if (!button) return;
+    const productId = String(button.dataset.productId || "").trim();
+    if (!productId) return;
+    try {
+      await loadMasterProductDetail(productId);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("masterProductBoxBody").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const boxCode = String(button.dataset.boxCode || "").trim();
+    if (!boxCode) return;
+
+    if (button.dataset.action === "fillMasterProductInboundBox") {
+      prefillMasterProductBoxInputs(boxCode, "inbound");
+      return;
+    }
+    if (button.dataset.action === "fillMasterProductOutboundBox") {
+      prefillMasterProductBoxInputs(boxCode, "outbound");
+      return;
+    }
+    if (button.dataset.action === "fillMasterProductFbaBox") {
+      prefillMasterProductBoxInputs(boxCode, "fba");
+    }
+  });
+
   $("productEditSelectAll").addEventListener("change", (event) => {
     const checked = Boolean(event.target.checked);
     const visibleRows = state.skuEditRequests
@@ -8158,9 +8894,13 @@ function bindRefresh() {
       loadShops(),
       loadProductEditRequests(),
       loadProductEditPendingSummary(),
+      refreshMasterProductPanel(),
     ]).catch((error) =>
       showToast(error.message, true),
     ),
+  );
+  $("refreshMasterProductBtn").addEventListener("click", () =>
+    refreshMasterProductPanel().catch((error) => showToast(error.message, true)),
   );
   $("refreshUsers").addEventListener("click", () =>
     Promise.all([loadUsers(), loadUserOptions()]).catch((error) => showToast(error.message, true)),

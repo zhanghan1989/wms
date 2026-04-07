@@ -241,6 +241,264 @@
             <tbody id="productEditRequestBody"></tbody>
           </table>
         </article>
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>主商品管理</h3>
+              <p class="muted">按产品ID查看主商品详情、箱内库存、同步记录，并执行主商品相关操作。</p>
+            </div>
+            <button type="button" id="refreshMasterProductBtn" class="ghost">刷新主商品</button>
+          </div>
+
+          <div class="action-row master-product-entry-actions">
+            <div class="master-product-entry-actions-left">
+              <button type="button" id="openMasterProductListBtn">主商品列表</button>
+              <button type="button" id="openMasterProductSyncRecordsBtn">同步记录</button>
+              <button type="button" id="triggerMasterProductSyncBtn">手动同步汐雅系统产品</button>
+              <button type="button" id="downloadMasterProductTemplateBtn">下载模板</button>
+            </div>
+            <div class="master-product-entry-actions-right">
+              <button type="button" id="toggleMasterProductImportBtn">批量上传</button>
+              <button type="button" id="toggleMasterProductExportBtn" class="master-product-export-trigger">分类下载</button>
+            </div>
+          </div>
+
+          <form id="masterProductImportForm" class="form-grid master-product-import-form hidden">
+            <label>
+              主商品 Excel 文件
+              <input id="masterProductImportFile" type="file" accept=".xlsx,.xls" />
+            </label>
+            <div class="actions master-product-import-actions">
+              <span class="muted">模板文件：产品列表.xlsx</span>
+              <div class="actions">
+                <button type="submit" id="submitMasterProductImportBtn">上传并导入</button>
+              </div>
+            </div>
+          </form>
+
+          <form id="masterProductExportForm" class="form-grid master-product-export-form hidden">
+            <label>
+              关键词
+              <input id="masterProductExport_keyword" placeholder="产品ID / 产品名称 / 属性" />
+            </label>
+            <label>
+              产品ID
+              <input id="masterProductExport_productId" placeholder="精确或模糊匹配产品ID" />
+            </label>
+            <label>
+              产品名称
+              <input id="masterProductExport_productName" placeholder="输入产品名称" />
+            </label>
+            <label>
+              产品类型
+              <select id="masterProductExport_productType">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              包包品牌
+              <select id="masterProductExport_bagBrand">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              颜色
+              <select id="masterProductExport_color">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              包型
+              <select id="masterProductExport_bagType">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              花纹类型
+              <select id="masterProductExport_patternType">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              尺寸
+              <select id="masterProductExport_size">
+                <option value="">全部</option>
+              </select>
+            </label>
+            <label>
+              在库数最小值
+              <input id="masterProductExport_stockQtyMin" inputmode="numeric" placeholder="0" />
+            </label>
+            <label>
+              在库数最大值
+              <input id="masterProductExport_stockQtyMax" inputmode="numeric" placeholder="999999999" />
+            </label>
+            <div class="actions master-product-export-actions">
+              <button type="button" id="resetMasterProductExportBtn" class="ghost">重置筛选</button>
+              <button type="submit" id="submitMasterProductExportBtn">下载 Excel</button>
+            </div>
+          </form>
+
+          <div id="masterProductListSection">
+            <form id="masterProductSearchForm" class="form-grid inventory-search-form">
+              <label>
+                <input id="masterProductKeyword" placeholder="输入产品ID / 产品名称 / 属性关键词" />
+              </label>
+              <button type="submit">检索主商品</button>
+              <button type="button" id="resetMasterProductSearchBtn" class="ghost">重置</button>
+            </form>
+
+            <div class="master-product-table-wrap">
+              <table class="master-product-table">
+                <thead>
+                  <tr>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>产品类型</th>
+                    <th>包包品牌</th>
+                    <th>颜色</th>
+                    <th>包型</th>
+                    <th>尺寸</th>
+                    <th>在库数</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="masterProductBody"></tbody>
+              </table>
+            </div>
+            <div class="action-row master-product-list-actions">
+              <button type="button" id="loadMoreMasterProductsBtn" class="ghost hidden">加载更多</button>
+            </div>
+          </div>
+
+          <div id="masterProductDetailSection" class="hidden">
+            <div class="card-head">
+              <div>
+                <h3 id="masterProductDetailTitle">主商品详情</h3>
+                <p id="masterProductDetailSubtitle" class="muted">-</p>
+              </div>
+              <button type="button" id="masterProductBackToListBtn" class="ghost master-product-back-btn">返回列表</button>
+            </div>
+
+            <div id="masterProductDetailMeta" class="master-product-summary-grid"></div>
+
+            <div class="master-product-detail-layout">
+              <article class="card master-product-detail-card">
+                <h4>主商品操作</h4>
+                <form id="masterProductManualAdjustForm" class="form-grid">
+                  <label>
+                    入库箱号
+                    <input id="masterProductAdjustBoxCode" placeholder="输入箱号" required />
+                  </label>
+                  <label>
+                    入库数量
+                    <input id="masterProductAdjustQtyDelta" inputmode="numeric" placeholder="输入正整数" required />
+                  </label>
+                  <label>
+                    备注
+                    <input id="masterProductAdjustReason" maxlength="128" placeholder="可选备注" />
+                  </label>
+                  <button type="submit" id="submitMasterProductAdjustBtn">主商品入库</button>
+                </form>
+
+                <form id="masterProductOutboundOneForm" class="form-grid">
+                  <label>
+                    出库箱号
+                    <input id="masterProductOutboundBoxCode" placeholder="输入箱号" required />
+                  </label>
+                  <label>
+                    备注
+                    <input id="masterProductOutboundRemark" maxlength="10" placeholder="默认：主商品库存出库" />
+                  </label>
+                  <button type="submit" id="submitMasterProductOutboundBtn">单件出库</button>
+                </form>
+
+                <form id="masterProductFbaForm" class="form-grid">
+                  <label>
+                    关联 SKU
+                    <select id="masterProductFbaSkuId" required>
+                      <option value="">请选择SKU</option>
+                    </select>
+                  </label>
+                  <label>
+                    FBA 箱号
+                    <input id="masterProductFbaBoxCode" placeholder="输入箱号" required />
+                  </label>
+                  <label>
+                    申请数量
+                    <input id="masterProductFbaQty" inputmode="numeric" placeholder="输入正整数" required />
+                  </label>
+                  <label>
+                    备注
+                    <input id="masterProductFbaRemark" maxlength="10" placeholder="默认：FBA补货" />
+                  </label>
+                  <button type="submit" id="submitMasterProductFbaBtn">创建 FBA 补货</button>
+                </form>
+              </article>
+
+              <article class="card master-product-detail-card">
+                <h4>关联 SKU</h4>
+                <div class="master-product-table-wrap">
+                  <table class="master-product-sku-table">
+                    <thead>
+                      <tr>
+                        <th>SKU</th>
+                        <th>ASIN</th>
+                        <th>FNSKU</th>
+                        <th>FBMSKU</th>
+                        <th>RBSKU</th>
+                        <th>店铺</th>
+                      </tr>
+                    </thead>
+                    <tbody id="masterProductSkuBody"></tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
+
+            <article class="card">
+              <h4>箱内库存</h4>
+              <div class="master-product-table-wrap">
+                <table class="master-product-sku-management-table">
+                  <thead>
+                    <tr>
+                      <th>货架</th>
+                      <th>箱号</th>
+                      <th>当前产品数量</th>
+                      <th>更新时间</th>
+                      <th>同箱其他主商品</th>
+                      <th>快捷填入</th>
+                    </tr>
+                  </thead>
+                  <tbody id="masterProductBoxBody"></tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+
+          <div id="masterProductSyncRecordsSection" class="hidden">
+            <div class="master-product-table-wrap">
+              <table class="master-product-sync-record-table">
+                <thead>
+                  <tr>
+                    <th>执行时间</th>
+                    <th>操作类型</th>
+                    <th>状态</th>
+                    <th>执行人</th>
+                    <th>拉取数</th>
+                    <th>新增数</th>
+                    <th>更新数</th>
+                    <th>错误信息</th>
+                  </tr>
+                </thead>
+                <tbody id="masterProductSyncRecordBody"></tbody>
+              </table>
+            </div>
+            <div class="action-row master-product-list-actions">
+              <button type="button" id="loadMoreMasterProductSyncRecordsBtn" class="ghost hidden">加载更多记录</button>
+            </div>
+          </div>
+        </article>
       </section>
 
       <section class="panel" id="orderProcessing">

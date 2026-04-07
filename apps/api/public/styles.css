@@ -543,10 +543,107 @@ button.ghost {
   margin-left: 0;
 }
 
+.master-product-list-actions {
+  margin-top: 12px;
+  justify-content: center;
+}
+
 .master-product-back-btn {
   padding: 12px 18px;
   font-size: 16px;
   line-height: 1.2;
+}
+
+.master-product-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px 14px;
+  margin: 12px 0 16px;
+}
+
+.master-product-summary-grid .summary-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fcfa;
+  padding: 10px 12px;
+}
+
+.master-product-summary-grid .summary-label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.master-product-summary-grid .summary-value {
+  display: block;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.master-product-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 16px;
+}
+
+.master-product-detail-card {
+  margin: 0;
+}
+
+.master-product-detail-card h4,
+.master-product-detail-layout h4 {
+  margin-top: 0;
+}
+
+.master-product-box-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.master-product-related-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.master-product-related-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.master-product-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: #eef7f0;
+}
+
+.master-product-status-chip.running {
+  color: #9d6a00;
+  background: #fff5e7;
+  border-color: #f0cf95;
+}
+
+.master-product-status-chip.success {
+  color: #2d7340;
+  background: #eef7f0;
+  border-color: #b7d9bd;
+}
+
+.master-product-status-chip.failed {
+  color: #b23232;
+  background: #fdeeee;
+  border-color: #f1b3b3;
 }
 
 .inventory-toolbar {
@@ -1049,6 +1146,16 @@ td {
 
 .master-product-current-cell {
   font-weight: 700;
+}
+
+@media (max-width: 1100px) {
+  .master-product-summary-grid {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
+  .master-product-detail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .inventory-box-sku-table {
