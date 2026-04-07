@@ -273,33 +273,31 @@
           <div class="card-head">
             <div>
               <h3>主商品管理</h3>
-              <p class="muted">按产品ID查看主商品详情、箱内库存、同步记录，并执行主商品相关操作。</p>
+              <p class="muted">主商品检索仅在首页进行；此处用于同步主商品、批量更新 Excel，以及查看同步记录。</p>
             </div>
             <button type="button" id="refreshMasterProductBtn" class="ghost">刷新主商品</button>
           </div>
 
           <div class="action-row master-product-entry-actions">
             <div class="master-product-entry-actions-left">
-              <button type="button" id="openMasterProductListBtn">主商品列表</button>
-              <button type="button" id="openMasterProductSyncRecordsBtn">同步记录</button>
               <button type="button" id="triggerMasterProductSyncBtn">手动同步汐雅系统产品</button>
               <button type="button" id="downloadMasterProductTemplateBtn">下载模板</button>
             </div>
             <div class="master-product-entry-actions-right">
-              <button type="button" id="toggleMasterProductImportBtn">批量上传</button>
+              <button type="button" id="toggleMasterProductImportBtn">批量上传Excel更新主商品</button>
               <button type="button" id="toggleMasterProductExportBtn" class="master-product-export-trigger">分类下载</button>
             </div>
           </div>
 
           <form id="masterProductImportForm" class="form-grid master-product-import-form hidden">
             <label>
-              主商品 Excel 文件
+              主商品更新 Excel 文件
               <input id="masterProductImportFile" type="file" accept=".xlsx,.xls" />
             </label>
             <div class="actions master-product-import-actions">
               <span class="muted">模板文件：产品列表.xlsx</span>
               <div class="actions">
-                <button type="submit" id="submitMasterProductImportBtn">上传并导入</button>
+                <button type="submit" id="submitMasterProductImportBtn">上传并更新</button>
               </div>
             </div>
           </form>
@@ -367,45 +365,13 @@
             </div>
           </form>
 
-          <div id="masterProductListSection">
-            <form id="masterProductSearchForm" class="form-grid inventory-search-form">
-              <label>
-                <input id="masterProductKeyword" placeholder="输入产品ID / 产品名称 / 属性关键词" />
-              </label>
-              <button type="submit">检索主商品</button>
-              <button type="button" id="resetMasterProductSearchBtn" class="ghost">重置</button>
-            </form>
-
-            <div class="master-product-table-wrap">
-              <table class="master-product-table">
-                <thead>
-                  <tr>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>产品类型</th>
-                    <th>包包品牌</th>
-                    <th>颜色</th>
-                    <th>包型</th>
-                    <th>尺寸</th>
-                    <th>在库数</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody id="masterProductBody"></tbody>
-              </table>
-            </div>
-            <div class="action-row master-product-list-actions">
-              <button type="button" id="loadMoreMasterProductsBtn" class="ghost hidden">加载更多</button>
-            </div>
-          </div>
-
           <div id="masterProductDetailSection" class="hidden">
             <div class="card-head">
               <div>
                 <h3 id="masterProductDetailTitle">主商品详情</h3>
                 <p id="masterProductDetailSubtitle" class="muted">-</p>
               </div>
-              <button type="button" id="masterProductBackToListBtn" class="ghost master-product-back-btn">返回列表</button>
+              <button type="button" id="masterProductBackToListBtn" class="ghost master-product-back-btn">返回同步记录</button>
             </div>
 
             <div id="masterProductDetailMeta" class="master-product-summary-grid"></div>
@@ -504,7 +470,13 @@
             </article>
           </div>
 
-          <div id="masterProductSyncRecordsSection" class="hidden">
+          <div id="masterProductSyncRecordsSection">
+            <div class="card-head">
+              <div>
+                <h4>同步记录一览</h4>
+                <p class="muted">显示最近的主商品同步与 Excel 批量更新记录。</p>
+              </div>
+            </div>
             <div class="master-product-table-wrap">
               <table class="master-product-sync-record-table">
                 <thead>

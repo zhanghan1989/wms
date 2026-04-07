@@ -14,7 +14,7 @@ const state = {
   masterProductsPageSize: 30,
   masterProductsHasMore: false,
   masterProductKeyword: "",
-  masterProductView: "list",
+  masterProductView: "syncRecords",
   selectedMasterProductId: "",
   selectedMasterProductDetail: null,
   masterProductSyncRecords: [],
@@ -4664,16 +4664,13 @@ function resetMasterProductDetailForms() {
 }
 
 async function refreshMasterProductPanel() {
-  await loadMasterProductExportFilterOptions();
   if (state.masterProductView === "detail" && state.selectedMasterProductId) {
     await loadMasterProductDetail(state.selectedMasterProductId);
     return;
   }
-  if (state.masterProductView === "syncRecords") {
-    await loadMasterProductSyncRecords({ reset: true });
-    return;
-  }
-  await loadMasterProducts({ reset: true });
+  state.masterProductView = "syncRecords";
+  setMasterProductView("syncRecords");
+  await loadMasterProductSyncRecords({ reset: true });
 }
 
 function prefillMasterProductBoxInputs(boxCode, target) {
@@ -6058,7 +6055,7 @@ async function reloadAll() {
     state.masterProductsPage = 1;
     state.masterProductsHasMore = false;
     state.masterProductKeyword = "";
-    state.masterProductView = "list";
+    state.masterProductView = "syncRecords";
     state.selectedMasterProductId = "";
     state.selectedMasterProductDetail = null;
     state.masterProductSyncRecords = [];
@@ -6475,26 +6472,8 @@ function bindForms() {
     }
   });
 
-  $("openMasterProductListBtn").addEventListener("click", async () => {
-    try {
-      setMasterProductView("list");
-      await loadMasterProducts({ reset: true });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("openMasterProductSyncRecordsBtn").addEventListener("click", async () => {
-    try {
-      setMasterProductView("syncRecords");
-      await loadMasterProductSyncRecords({ reset: true });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
   $("masterProductBackToListBtn").addEventListener("click", () => {
-    setMasterProductView("list");
+    setMasterProductView("syncRecords");
   });
 
   $("toggleMasterProductImportBtn").addEventListener("click", () => {
@@ -6543,42 +6522,6 @@ function bindForms() {
     }
   });
 
-  $("masterProductSearchForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const submitButton = getSubmitButton(event.currentTarget, event);
-    try {
-      await withBusyButton(submitButton, "检索中...", async () => {
-        state.masterProductKeyword = String($("masterProductKeyword").value || "").trim();
-        setMasterProductView("list");
-        await loadMasterProducts({ reset: true });
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("resetMasterProductSearchBtn").addEventListener("click", async () => {
-    try {
-      $("masterProductKeyword").value = "";
-      state.masterProductKeyword = "";
-      setMasterProductView("list");
-      await loadMasterProducts({ reset: true });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("loadMoreMasterProductsBtn").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      await withBusyButton(button, "加载中...", async () => {
-        await loadMasterProducts({ reset: false });
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
   $("loadMoreMasterProductSyncRecordsBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
@@ -6598,17 +6541,19 @@ function bindForms() {
       if (!file) {
         throw new Error("请选择主商品 Excel 文件");
       }
-      await withBusyButton(submitButton, "导入中...", async () => {
+      await withBusyButton(submitButton, "更新中...", async () => {
         const formData = new FormData();
         formData.append("file", file);
         const result = await request("/master-products/import-excel", {
           method: "POST",
           body: formData,
         });
-        showToast(`主商品导入完成：共 ${result?.importedCount || 0} 行`);
+        showToast(
+          `主商品更新完成：共 ${result?.importedCount || 0} 行，新增 ${result?.createdCount || 0} 行，更新 ${result?.updatedCount || 0} 行`,
+        );
         $("masterProductImportForm").reset();
         setMasterProductView("syncRecords");
-        await Promise.all([loadMasterProducts({ reset: true }), loadMasterProductSyncRecords({ reset: true })]);
+        await loadMasterProductSyncRecords({ reset: true });
       });
     } catch (error) {
       showToast(error.message, true);
@@ -6921,13 +6866,12 @@ function bindForms() {
   $("openMasterProductManagementPanel").addEventListener("click", async () => {
     try {
       switchPanel("masterProductManagement");
-      setMasterProductView("list");
+      setMasterProductView("syncRecords");
       await Promise.all([
         loadShelves(),
         loadBoxes(),
         loadInventory(),
-        loadMasterProductExportFilterOptions(),
-        loadMasterProducts({ reset: true }),
+        loadMasterProductSyncRecords({ reset: true }),
       ]);
     } catch (error) {
       showToast(error.message, true);
@@ -8403,7 +8347,7 @@ function bindDelegates() {
     }
   });
 
-  $("masterProductBody").addEventListener("click", async (event) => {
+  $("masterProductBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action='openMasterProductDetail']");
     if (!button) return;
     const productId = String(button.dataset.productId || "").trim();
@@ -9021,7 +8965,3 @@ updateFbaOutboundButtonState();
 updateFbaSelectAll();
 switchPanel("inventory");
 reloadAll().catch((error) => showToast(error.message, true));
-
-
-
-
