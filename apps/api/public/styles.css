@@ -917,6 +917,10 @@ td {
   min-width: 100%;
 }
 
+.inventory-home-table-wrap {
+  max-height: 70vh;
+}
+
 .master-product-sku-table {
   min-width: 720px;
 }

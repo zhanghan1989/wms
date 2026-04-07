@@ -140,17 +140,19 @@
         </div>
 
         <div id="inventoryListSection">
-          <table class="inventory-table inventory-home-table">
-            <thead>
-              <tr>
-                <th>产品ID</th>
-                <th>产品名称</th>
-                <th>在库数</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody id="inventoryBody"></tbody>
-          </table>
+          <div id="inventoryHomeTableWrap" class="master-product-table-wrap inventory-home-table-wrap">
+            <table class="inventory-table inventory-home-table">
+              <thead>
+                <tr>
+                  <th>产品ID</th>
+                  <th>产品名称</th>
+                  <th>在库数</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="inventoryBody"></tbody>
+            </table>
+          </div>
           <div class="action-row master-product-list-actions">
             <button type="button" id="loadMoreInventoryHomeBtn" class="ghost hidden">加载更多</button>
           </div>

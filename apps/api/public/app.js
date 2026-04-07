@@ -3124,6 +3124,34 @@ function renderInventoryTable() {
   }
 }
 
+function maybeAutoLoadInventoryHome() {
+  if (state.inventorySearchMode) return;
+  if (!state.token) return;
+  const inventoryPanel = $("inventory");
+  if (!inventoryPanel || !inventoryPanel.classList.contains("active")) return;
+  if (state.inventoryHomeLoading || !state.inventoryHomeHasMore) return;
+
+  const threshold = 120;
+  const tableWrap = $("inventoryHomeTableWrap");
+  if (tableWrap && !tableWrap.classList.contains("hidden")) {
+    const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+    if (currentBottom < tableWrap.scrollHeight - threshold) return;
+  } else {
+    const doc = document.documentElement;
+    const body = document.body;
+    const scrollHeight = Math.max(
+      Number(doc?.scrollHeight || 0),
+      Number(body?.scrollHeight || 0),
+    );
+    const currentBottom = window.innerHeight + window.scrollY;
+    if (currentBottom < scrollHeight - threshold) return;
+  }
+
+  loadInventoryHomeProducts({ reset: false }).catch((error) => {
+    showToast(error.message, true);
+  });
+}
+
 function getSkuManagementFilteredRows() {
   const rows = Array.isArray(state.inventorySortedSkus) ? state.inventorySortedSkus : [];
   const keyword = String(state.skuManagementKeyword || "").trim().toLowerCase();
@@ -3431,6 +3459,9 @@ async function loadInventoryHomeProducts({ reset = false } = {}) {
     state.inventoryHomePage = Number(result?.page || page);
     state.inventoryHomeHasMore = Boolean(result?.hasMore);
     renderInventoryTable();
+    requestAnimationFrame(() => {
+      maybeAutoLoadInventoryHome();
+    });
   } finally {
     state.inventoryHomeLoading = false;
   }
@@ -9452,6 +9483,13 @@ function bindScrollLoad() {
     loadMoreAuditIfNeeded();
     loadMoreStocktakeTasksIfNeeded();
   });
+
+  const inventoryHomeTableWrap = $("inventoryHomeTableWrap");
+  if (inventoryHomeTableWrap) {
+    inventoryHomeTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadInventoryHome();
+    });
+  }
 
   const myAuditCard = document.querySelector("#myAuditModal .modal-card");
   if (myAuditCard) {
