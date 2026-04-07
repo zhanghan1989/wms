@@ -6619,11 +6619,7 @@ function bindForms() {
         state.token = data.accessToken;
         localStorage.setItem("wms_token", state.token);
         await reloadAll();
-        showToast("登录成功", false, {
-          hideCloseButton: true,
-          countdownSeconds: 3,
-          autoNavigateHome: true,
-        });
+        await openInventoryHomeDefault();
       });
     } catch (error) {
       showToast(error.message, true);
@@ -6636,7 +6632,7 @@ function bindForms() {
     suppressAuthErrorToastUntil = Date.now() + 3000;
     localStorage.removeItem("wms_token");
     document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden"));
-    showToast("已退出登录");
+    clearErrorModalAutoState();
     await reloadAll();
     switchPanel("overview");
   };
