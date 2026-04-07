@@ -633,6 +633,30 @@ button.ghost {
   margin-bottom: 10px;
 }
 
+.inventory-detail-card {
+  margin-top: 16px;
+}
+
+.inventory-detail-card .card-head {
+  align-items: flex-start;
+}
+
+.inventory-detail-card .card-head .muted {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.inventory-detail-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.inventory-detail-action-form {
+  margin: 0;
+  align-content: start;
+}
+
 .overseas-form {
   align-items: end;
 }
@@ -1127,6 +1151,10 @@ td {
   }
 
   .master-product-detail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inventory-detail-actions-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }

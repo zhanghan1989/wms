@@ -3180,8 +3180,8 @@ function renderProductBoxTable(detail, { bodyId, actionPrefix } = {}) {
         const boxCode = String(box?.boxCode || "").trim();
         return `
           <tr>
-            <td>${escapeHtml(displayText(box?.shelfCode))}</td>
             <td>${escapeHtml(displayText(boxCode))}</td>
+            <td>${escapeHtml(displayText(box?.shelfCode))}</td>
             <td class="master-product-current-cell">${escapeHtml(displayText(box?.qty ?? 0))}</td>
             <td>${escapeHtml(formatDate(box?.updatedAt))}</td>
             <td>${buildMasterProductRelatedItems(box?.items)}</td>
@@ -3209,6 +3209,18 @@ function renderInventoryHomeDetail(detail) {
   renderProductSummaryMeta("inventoryDetailMeta", detail?.product);
   renderProductSkuTable(detail, { bodyId: "inventoryDetailSkuBody", selectId: "inventoryDetailFbaSkuId" });
   renderProductBoxTable(detail, { bodyId: "inventoryDetailBoxBody", actionPrefix: "InventoryDetail" });
+  const skuSummary = $("inventoryDetailSkuSummary");
+  if (skuSummary) {
+    const skuCount = Array.isArray(detail?.skus) ? detail.skus.length : 0;
+    skuSummary.textContent = `共 ${skuCount} 套关联 SKU`;
+  }
+  const boxSummary = $("inventoryDetailBoxSummary");
+  if (boxSummary) {
+    const boxes = Array.isArray(detail?.boxes) ? detail.boxes : [];
+    const boxCount = boxes.length;
+    const totalQty = boxes.reduce((sum, item) => sum + Number(item?.qty ?? 0), 0);
+    boxSummary.textContent = `相关箱子 ${boxCount} 个，当前产品箱内合计 ${totalQty}`;
+  }
   resetInventoryDetailForms();
 }
 
