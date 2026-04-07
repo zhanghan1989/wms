@@ -1069,6 +1069,16 @@ function normalizeProductEditChangedFields(changedFields) {
   );
 }
 
+function getProductEditRequestSkuText(item) {
+  const currentSku = String(item?.sku?.sku || "").trim();
+  if (currentSku) return currentSku;
+  const afterSku = String(item?.afterData?.sku || "").trim();
+  if (afterSku) return afterSku;
+  const beforeSku = String(item?.beforeData?.sku || "").trim();
+  if (beforeSku) return beforeSku;
+  return "-";
+}
+
 function canCurrentUserConfirmFactoryProductEditRequest() {
   const user = state.me;
   if (!user) return false;
@@ -3947,17 +3957,18 @@ async function findMasterProductByProductId(productId) {
     return localMatch;
   }
 
-  const params = new URLSearchParams({
-    page: "1",
-    pageSize: "20",
-    keyword: normalizedId,
-  });
-  const result = await request(`/master-products?${params.toString()}`);
-  const rows = Array.isArray(result?.items) ? result.items : [];
-  const remoteMatch = rows.find(
-    (item) => String(item?.productId || "").trim().toUpperCase() === normalizedId.toUpperCase(),
-  );
-  return remoteMatch || null;
+  try {
+    const detail = await request(`/master-products/${encodeURIComponent(normalizedId)}/detail`);
+    const product = detail?.product;
+    if (String(product?.productId || "").trim().toUpperCase() === normalizedId.toUpperCase()) {
+      return {
+        productId: String(product.productId || "").trim(),
+        productName: String(product.productName || "").trim(),
+      };
+    }
+  } catch {}
+
+  return null;
 }
 
 async function syncSkuProductName(productInputId, productNameInputId, { normalizeProductId = true } = {}) {
@@ -4446,13 +4457,13 @@ function renderProductEditRequestTable() {
   const rows = state.skuEditRequests;
 
   body.innerHTML =
-    rows
-      .map((item) => {
-        const requestId = String(item?.id || "");
-        const skuText = item?.sku?.sku || "-";
-        const statusText = getProductEditRequestStatusText(item?.status);
-        const creatorText = item?.creator?.username || "-";
-        const canDelete = item?.status === "pending";
+      rows
+        .map((item) => {
+          const requestId = String(item?.id || "");
+          const skuText = getProductEditRequestSkuText(item);
+          const statusText = getProductEditRequestStatusText(item?.status);
+          const creatorText = item?.creator?.username || "-";
+          const canDelete = item?.status === "pending";
         const canBatchConfirm = canSelectProductEditRequestForBatchConfirm(item);
         const checkedAttr = canBatchConfirm && state.selectedProductEditRequestIds.has(requestId) ? " checked" : "";
         return `
@@ -4537,8 +4548,9 @@ function renderProductEditRequestDetail(item) {
 
   state.selectedProductEditRequestId = Number(item.id);
   state.selectedProductEditRequestChangedFields = normalizeProductEditChangedFields(item?.changedFields);
+  const skuText = getProductEditRequestSkuText(item);
   meta.innerHTML = `
-    <div><strong>SKU：</strong>${escapeHtml(displayText(item?.sku?.sku))}</div>
+    <div><strong>SKU：</strong>${escapeHtml(displayText(skuText))}</div>
     <div><strong>申请人：</strong>${escapeHtml(displayText(item?.creator?.username))}</div>
     <div><strong>申请时间：</strong>${escapeHtml(formatDate(item?.createdAt))}</div>
     <div><strong>状态：</strong>${escapeHtml(getProductEditRequestStatusText(item?.status))}</div>
