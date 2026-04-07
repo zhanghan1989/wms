@@ -71,6 +71,9 @@ const IMPORT_FIELD_LABELS: Record<keyof ImportSkuRow, string> = {
   remark: '备注',
 };
 
+const BULK_SKU_IMPORT_TRANSACTION_TIMEOUT_MS = 120000;
+const BULK_SKU_IMPORT_TRANSACTION_MAX_WAIT_MS = 10000;
+
 @Injectable()
 export class SkusService {
   constructor(
@@ -195,45 +198,161 @@ export class SkusService {
     };
 
     try {
-      summary = await this.prisma.$transaction(async (tx) => {
-        let createdCount = 0;
-        let editRequestCount = 0;
+      const productIds = Array.from(
+        new Set(rows.map((row) => this.normalizeNullableString(row.productId)).filter(Boolean)),
+      ) as string[];
+      const skuCodes = rows.map((row) => row.sku);
 
-        for (const row of rows) {
-          const existing = await tx.sku.findUnique({ where: { sku: row.sku } });
-          if (!existing) {
-            await this.createSkuInTransaction(tx, row, operatorId, requestId);
-            createdCount += 1;
-            continue;
+      summary = await this.prisma.$transaction(
+        async (tx) => {
+          const [existingSkus, masterProducts] = await Promise.all([
+            tx.sku.findMany({
+              where: {
+                sku: {
+                  in: skuCodes,
+                },
+              },
+              select: {
+                id: true,
+                productId: true,
+                sku: true,
+                rbSku: true,
+                asin: true,
+                fnsku: true,
+                fbmSku: true,
+                shop: true,
+                remark: true,
+              },
+            }),
+            productIds.length
+              ? tx.masterProduct.findMany({
+                  where: {
+                    productId: {
+                      in: productIds,
+                    },
+                  },
+                  select: {
+                    productId: true,
+                  },
+                })
+              : Promise.resolve([]),
+          ]);
+
+          const masterProductIdSet = new Set(masterProducts.map((item) => item.productId));
+          const missingProductIds = productIds.filter((productId) => !masterProductIdSet.has(productId));
+          if (missingProductIds.length > 0) {
+            const preview = missingProductIds.slice(0, 20).join(', ');
+            const suffix = missingProductIds.length > 20 ? ' 等' : '';
+            throw new BadRequestException(`主商品ID不存在：${preview}${suffix}`);
           }
 
-          const beforeData = this.buildSnapshotFromSku(existing);
-          const afterData = this.buildAfterSnapshot(beforeData, row);
-          const changedFields = SNAPSHOT_FIELDS.filter(
-            (field) => beforeData[field] !== afterData[field],
-          );
-          if (!changedFields.length) {
-            continue;
+          const existingSkuByCode = new Map(existingSkus.map((item) => [item.sku, item]));
+          const rowsToCreate = rows.filter((row) => !existingSkuByCode.has(row.sku));
+          const editRequestData: Prisma.ProductEditRequestCreateManyInput[] = [];
+
+          for (const row of rows) {
+            const existing = existingSkuByCode.get(row.sku);
+            if (!existing) {
+              continue;
+            }
+
+            const beforeData = this.buildSnapshotFromSku(existing);
+            const afterData = this.buildAfterSnapshot(beforeData, row);
+            const changedFields = SNAPSHOT_FIELDS.filter(
+              (field) => beforeData[field] !== afterData[field],
+            );
+            if (!changedFields.length) {
+              continue;
+            }
+
+            editRequestData.push({
+              skuId: existing.id,
+              status: ProductEditRequestStatus.pending,
+              beforeData: beforeData as unknown as Prisma.InputJsonValue,
+              afterData: afterData as unknown as Prisma.InputJsonValue,
+              changedFields: changedFields as unknown as Prisma.InputJsonValue,
+              createdBy: operatorId,
+            });
           }
 
-          editRequestCount += await this.createPendingEditRequests(tx, {
-            skuId: existing.id,
-            beforeData,
-            afterData,
-            changedFields,
-            createdBy: operatorId,
-          });
-        }
+          if (rowsToCreate.length > 0) {
+            await tx.sku.createMany({
+              data: rowsToCreate.map((row) => ({
+                productId: row.productId ?? null,
+                sku: row.sku,
+                rbSku: row.rbSku ?? null,
+                asin: row.asin ?? null,
+                fnsku: row.fnsku ?? null,
+                fbmSku: row.fbmSku ?? null,
+                shop: row.shop ?? null,
+                remark: row.remark ?? null,
+                status: 1,
+              })),
+            });
 
-        return {
-          totalRows: rows.length,
-          createdCount,
-          editRequestCount,
-        };
-      });
+            const createdSkus = await tx.sku.findMany({
+              where: {
+                sku: {
+                  in: rowsToCreate.map((row) => row.sku),
+                },
+              },
+              select: {
+                id: true,
+                productId: true,
+                sku: true,
+                rbSku: true,
+                asin: true,
+                fnsku: true,
+                fbmSku: true,
+                shop: true,
+                remark: true,
+                status: true,
+              },
+            });
+
+            await this.auditService.createMany(
+              createdSkus.map((created) => ({
+                db: tx,
+                entityType: 'sku',
+                entityId: created.id,
+                action: AuditAction.create,
+                eventType: AuditEventType.SKU_CREATED,
+                beforeData: null,
+                afterData: created as unknown as Record<string, unknown>,
+                operatorId,
+                requestId,
+              })),
+            );
+          }
+
+          if (editRequestData.length > 0) {
+            await tx.productEditRequest.createMany({
+              data: editRequestData,
+            });
+          }
+
+          return {
+            totalRows: rows.length,
+            createdCount: rowsToCreate.length,
+            editRequestCount: editRequestData.length,
+          };
+        },
+        {
+          maxWait: BULK_SKU_IMPORT_TRANSACTION_MAX_WAIT_MS,
+          timeout: BULK_SKU_IMPORT_TRANSACTION_TIMEOUT_MS,
+        },
+      );
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw this.buildImportDatabaseError(error);
+      }
+      if (
+        error instanceof Prisma.PrismaClientUnknownRequestError ||
+        error instanceof Prisma.PrismaClientValidationError
+      ) {
+        throw new BadRequestException(
+          `SKU 导入失败（${this.extractImportRuntimeErrorMessage(error)}）`,
+        );
       }
       throw error;
     }
@@ -417,6 +536,11 @@ export class SkusService {
   private buildImportDatabaseError(
     error: Prisma.PrismaClientKnownRequestError,
   ): BadRequestException {
+    if (error.code === 'P2028') {
+      return new BadRequestException(
+        'SKU 导入执行超时。当前导入行数较多，已改为批量写入；如果仍失败，请把新提示贴给我继续定位',
+      );
+    }
     if (error.code === 'P2000') {
       return new BadRequestException(
         'Excel 中存在超长字段，请检查产品ID、SKU、rbSKU、ASIN、FNSKU、FBMSKU、店铺、备注长度',
@@ -437,7 +561,7 @@ export class SkusService {
     if (error.code === 'P2003') {
       return new BadRequestException('存在无效关联数据，请检查产品ID是否已存在于主商品表');
     }
-    return new BadRequestException('SKU 导入失败，请检查 Excel 数据后重试');
+    return new BadRequestException(`SKU 导入失败（${this.extractImportRuntimeErrorMessage(error)}）`);
   }
 
   private getPrismaErrorTargetText(error: Prisma.PrismaClientKnownRequestError): string {
@@ -446,6 +570,14 @@ export class SkusService {
       return target.map((item) => String(item)).join(',').toLowerCase();
     }
     return String(target ?? error.message ?? '').toLowerCase();
+  }
+
+  private extractImportRuntimeErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      const summary = error.message.replace(/\s+/g, ' ').trim();
+      return summary.length > 300 ? `${summary.slice(0, 300)}...` : summary;
+    }
+    return String(error);
   }
 
   private buildSnapshotFromSku(sku: {
@@ -483,34 +615,6 @@ export class SkusService {
     };
   }
 
-  private async createPendingEditRequests(
-    tx: Prisma.TransactionClient,
-    payload: {
-      skuId: bigint;
-      beforeData: ProductSnapshot;
-      afterData: ProductSnapshot;
-      changedFields: Array<keyof ProductSnapshot>;
-      createdBy: bigint;
-    },
-  ): Promise<number> {
-    const changedFields = Array.from(new Set(payload.changedFields));
-    if (!changedFields.length) {
-      return 0;
-    }
-
-    await tx.productEditRequest.create({
-      data: {
-        skuId: payload.skuId,
-        status: ProductEditRequestStatus.pending,
-        beforeData: payload.beforeData as unknown as object,
-        afterData: payload.afterData as unknown as object,
-        changedFields,
-        createdBy: payload.createdBy,
-      },
-    });
-    return 1;
-  }
-
   private normalizeNullableString(value: unknown): string | null {
     return normalizeNullableText(value);
   }
@@ -532,37 +636,4 @@ export class SkusService {
     }
   }
 
-  private async createSkuInTransaction(
-    tx: Prisma.TransactionClient,
-    row: ImportSkuRow,
-    operatorId: bigint,
-    requestId?: string,
-  ): Promise<void> {
-    await this.ensureMasterProductExists(tx, row.productId);
-    const created = await tx.sku.create({
-      data: {
-        productId: row.productId ?? undefined,
-        sku: row.sku,
-        rbSku: row.rbSku ?? undefined,
-        asin: row.asin ?? undefined,
-        fnsku: row.fnsku ?? undefined,
-        fbmSku: row.fbmSku ?? undefined,
-        shop: row.shop ?? undefined,
-        remark: row.remark ?? undefined,
-        status: 1,
-      },
-    });
-
-    await this.auditService.create({
-      db: tx,
-      entityType: 'sku',
-      entityId: created.id,
-      action: AuditAction.create,
-      eventType: AuditEventType.SKU_CREATED,
-      beforeData: null,
-      afterData: created as unknown as Record<string, unknown>,
-      operatorId,
-      requestId,
-    });
-  }
 }
