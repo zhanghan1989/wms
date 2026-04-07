@@ -23,45 +23,19 @@ export class AuditService {
 
   async create(payload: AuditLogPayload): Promise<void> {
     const db = payload.db ?? this.prisma;
-    const normalizedBeforeData = payload.beforeData
-      ? (this.normalizeForJson(payload.beforeData) as Record<string, unknown>)
-      : undefined;
-    const normalizedAfterData = payload.afterData
-      ? (this.normalizeForJson(payload.afterData) as Record<string, unknown>)
-      : undefined;
-    const changedFields = this.buildChangedFields(
-      normalizedBeforeData ?? null,
-      normalizedAfterData ?? null,
-    );
-    const beforeData =
-      payload.beforeData === null
-        ? Prisma.JsonNull
-        : normalizedBeforeData
-          ? (normalizedBeforeData as Prisma.InputJsonValue)
-          : undefined;
-    const afterData =
-      payload.afterData === null
-        ? Prisma.JsonNull
-        : normalizedAfterData
-          ? (normalizedAfterData as Prisma.InputJsonValue)
-          : undefined;
-    const changedFieldsData = changedFields.length
-      ? (this.normalizeForJson(changedFields) as Prisma.InputJsonValue)
-      : undefined;
-
     await db.operationAuditLog.create({
-      data: {
-        entityType: payload.entityType,
-        entityId: payload.entityId,
-        action: payload.action,
-        eventType: payload.eventType,
-        beforeData,
-        afterData,
-        changedFields: changedFieldsData,
-        operatorId: payload.operatorId,
-        requestId: payload.requestId ?? null,
-        remark: payload.remark ?? null,
-      },
+      data: this.buildCreateData(payload),
+    });
+  }
+
+  async createMany(payloads: AuditLogPayload[]): Promise<void> {
+    if (payloads.length === 0) {
+      return;
+    }
+
+    const db = payloads[0].db ?? this.prisma;
+    await db.operationAuditLog.createMany({
+      data: payloads.map((payload) => this.buildCreateData(payload)),
     });
   }
 
@@ -170,5 +144,46 @@ export class AuditService {
   private toComparableJson(value: unknown): string {
     const normalized = this.normalizeForJson(value);
     return JSON.stringify(normalized ?? null);
+  }
+
+  private buildCreateData(payload: AuditLogPayload): Prisma.OperationAuditLogCreateManyInput {
+    const normalizedBeforeData = payload.beforeData
+      ? (this.normalizeForJson(payload.beforeData) as Record<string, unknown>)
+      : undefined;
+    const normalizedAfterData = payload.afterData
+      ? (this.normalizeForJson(payload.afterData) as Record<string, unknown>)
+      : undefined;
+    const changedFields = this.buildChangedFields(
+      normalizedBeforeData ?? null,
+      normalizedAfterData ?? null,
+    );
+    const beforeData =
+      payload.beforeData === null
+        ? Prisma.JsonNull
+        : normalizedBeforeData
+          ? (normalizedBeforeData as Prisma.InputJsonValue)
+          : undefined;
+    const afterData =
+      payload.afterData === null
+        ? Prisma.JsonNull
+        : normalizedAfterData
+          ? (normalizedAfterData as Prisma.InputJsonValue)
+          : undefined;
+    const changedFieldsData = changedFields.length
+      ? (this.normalizeForJson(changedFields) as Prisma.InputJsonValue)
+      : undefined;
+
+    return {
+      entityType: payload.entityType,
+      entityId: payload.entityId,
+      action: payload.action,
+      eventType: payload.eventType,
+      beforeData,
+      afterData,
+      changedFields: changedFieldsData,
+      operatorId: payload.operatorId,
+      requestId: payload.requestId ?? null,
+      remark: payload.remark ?? null,
+    };
   }
 }

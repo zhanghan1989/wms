@@ -135,6 +135,8 @@ const BULK_UPDATE_COMPAT_SHELF_CODES = ['S-00', 'Z-0'];
 const BULK_UPDATE_DEFAULT_SHELF_NAME = '默认货架';
 const BULK_UPDATE_MAX_BOX_CODE_LENGTH = 128;
 const BULK_UPDATE_MAX_PRODUCT_ID_LENGTH = 128;
+const BULK_INVENTORY_IMPORT_TRANSACTION_TIMEOUT_MS = 120000;
+const BULK_INVENTORY_IMPORT_TRANSACTION_MAX_WAIT_MS = 10000;
 const MASTER_PRODUCT_BOX_SHELF_SELECT = {
   id: true,
   shelfCode: true,
@@ -217,6 +219,12 @@ function buildBulkInventoryImportDatabaseError(
 
   if (error.code === 'P2003') {
     return new BadRequestException('存在无效关联数据，请检查产品ID是否存在、箱号是否可用');
+  }
+
+  if (error.code === 'P2028') {
+    return new BadRequestException(
+      '批量更新库存执行超时。当前导入行数较多，请重试；如果仍失败，需要继续优化批量更新事务',
+    );
   }
 
   const diagnostic = formatInventoryImportDiagnostic(error.code, targetText);
@@ -1618,6 +1626,45 @@ export class InventoryService {
     });
     return totalQty;
   }
+
+  async recalculateMasterProductStockQtyMap(
+    tx: Prisma.TransactionClient,
+    productIds: string[],
+  ): Promise<Map<string, number>> {
+    const uniqueProductIds = Array.from(new Set(productIds.filter(Boolean)));
+    if (uniqueProductIds.length === 0) {
+      return new Map();
+    }
+
+    const aggregates = await tx.masterProductBoxInventory.groupBy({
+      by: ['productId'],
+      where: {
+        productId: {
+          in: uniqueProductIds,
+        },
+      },
+      _sum: {
+        qty: true,
+      },
+    });
+
+    const stockQtyByProductId = new Map<string, number>(
+      uniqueProductIds.map((productId) => [productId, 0]),
+    );
+
+    aggregates.forEach((row) => {
+      stockQtyByProductId.set(row.productId, Number(row._sum.qty ?? 0));
+    });
+
+    for (const [productId, totalQty] of stockQtyByProductId) {
+      await tx.masterProduct.update({
+        where: { productId },
+        data: { stockQty: totalQty },
+      });
+    }
+
+    return stockQtyByProductId;
+  }
 }
 
 async function importBulkUpdateExcelByProduct(
@@ -1825,19 +1872,20 @@ async function importBulkUpdateExcelByProduct(
         }
       }
 
-      const stockQtyByProductId = new Map<string, number>();
-      for (const productId of new Set(adjustItems.map((item) => item.productId))) {
-        const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
-        stockQtyByProductId.set(productId, totalQty);
-      }
+      const stockQtyByProductId = await this.recalculateMasterProductStockQtyMap(
+        tx,
+        adjustItems.map((item) => item.productId),
+      );
 
+      const auditPayloads: Parameters<AuditService['createMany']>[0] = [];
       for (const item of adjustItems) {
         const afterStockQty = stockQtyByProductId.get(item.productId) ?? 0;
 
-        await createBoxInventoryAudit({
-          auditService: this.auditService,
-          tx,
+        auditPayloads.push({
+          db: tx,
+          entityType: 'box',
           entityId: item.boxId,
+          action: AuditAction.update,
           eventType:
             item.qtyDelta > 0
               ? AuditEventType.BOX_STOCK_INCREASED
@@ -1860,10 +1908,12 @@ async function importBulkUpdateExcelByProduct(
           remark: originalName ? `bulk-inventory-update:${originalName}` : 'bulk-inventory-update',
         });
 
-        await createMasterProductInventoryAdjustAudit({
-          auditService: this.auditService,
-          tx,
+        auditPayloads.push({
+          db: tx,
+          entityType: 'master_product',
           entityId: item.productEntityId,
+          action: AuditAction.update,
+          eventType: AuditEventType.INVENTORY_ADJUST_CONFIRMED,
           beforeData: {
             productId: item.productId,
             productName: item.productName,
@@ -1882,6 +1932,8 @@ async function importBulkUpdateExcelByProduct(
         });
       }
 
+      await this.auditService.createMany(auditPayloads);
+
       return {
         totalRows: rows.length,
         changedProductCount,
@@ -1891,6 +1943,9 @@ async function importBulkUpdateExcelByProduct(
         fileName: originalName ?? null,
         adjustNo: null,
       };
+    }, {
+      maxWait: BULK_INVENTORY_IMPORT_TRANSACTION_MAX_WAIT_MS,
+      timeout: BULK_INVENTORY_IMPORT_TRANSACTION_TIMEOUT_MS,
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
