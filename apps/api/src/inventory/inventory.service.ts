@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -218,7 +219,8 @@ function buildBulkInventoryImportDatabaseError(
     return new BadRequestException('存在无效关联数据，请检查产品ID是否存在、箱号是否可用');
   }
 
-  return new BadRequestException('批量更新库存失败，请检查 Excel 数据后重试');
+  const diagnostic = formatInventoryImportDiagnostic(error.code, targetText);
+  return new BadRequestException(`批量更新库存失败（${diagnostic}）`);
 }
 
 function getPrismaInventoryImportTargetText(
@@ -245,6 +247,39 @@ function getPrismaInventoryImportTargetText(
 
   parts.push(String(error.message ?? ''));
   return parts.join(',').toLowerCase();
+}
+
+function formatInventoryImportDiagnostic(
+  code: string,
+  rawText: string,
+): string {
+  const compact = String(rawText || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240);
+
+  if (!compact) {
+    return code;
+  }
+
+  return `${code}: ${compact}`;
+}
+
+function extractInventoryImportRuntimeErrorMessage(error: unknown): string {
+  const ctorName =
+    error && typeof error === 'object' && 'constructor' in error
+      ? String((error as { constructor?: { name?: string } }).constructor?.name || 'Error')
+      : 'Error';
+  const message =
+    error instanceof Error
+      ? String(error.message || '').replace(/\s+/g, ' ').trim()
+      : String(error ?? '').replace(/\s+/g, ' ').trim();
+
+  if (!message) {
+    return ctorName;
+  }
+
+  return `${ctorName}: ${message}`.slice(0, 280);
 }
 
 @Injectable()
@@ -1866,7 +1901,15 @@ async function importBulkUpdateExcelByProduct(
       error instanceof Prisma.PrismaClientUnknownRequestError ||
       error instanceof Prisma.PrismaClientValidationError
     ) {
-      throw new BadRequestException('批量更新库存失败，请检查 Excel 数据后重试');
+      throw new BadRequestException(
+        `批量更新库存失败（${extractInventoryImportRuntimeErrorMessage(error)}）`,
+      );
+    }
+
+    if (!(error instanceof HttpException)) {
+      throw new BadRequestException(
+        `批量更新库存失败（${extractInventoryImportRuntimeErrorMessage(error)}）`,
+      );
     }
 
     throw error;
