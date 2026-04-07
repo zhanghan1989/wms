@@ -3254,20 +3254,29 @@ function buildInventoryDetailBoxRows(detail) {
           isCurrentProduct: true,
         }];
 
-    items
+    const sortedItems = items
       .sort((a, b) => {
         const currentDelta = Number(Boolean(b?.isCurrentProduct)) - Number(Boolean(a?.isCurrentProduct));
         if (currentDelta !== 0) return currentDelta;
         return String(a?.productId || "").localeCompare(String(b?.productId || ""), "en", {
           numeric: true,
         });
-      })
-      .forEach((item) => {
+      });
+
+    sortedItems.forEach((item, index) => {
         const isCurrentProduct = Boolean(item?.isCurrentProduct);
+        const isFirstRow = index === 0;
+        const isLastRow = index === sortedItems.length - 1;
+        const rowClasses = [
+          isCurrentProduct ? "master-product-current-row" : "",
+          isLastRow ? "inventory-detail-box-group-end" : "inventory-detail-box-group-continue",
+        ]
+          .filter(Boolean)
+          .join(" ");
         rows.push(`
-          <tr${isCurrentProduct ? ' class="master-product-current-row"' : ""}>
-            <td>${escapeHtml(displayText(boxCode))}</td>
-            <td>${escapeHtml(displayText(shelfCode))}</td>
+          <tr${rowClasses ? ` class="${rowClasses}"` : ""}>
+            <td>${isFirstRow ? escapeHtml(displayText(boxCode)) : ""}</td>
+            <td>${isFirstRow ? escapeHtml(displayText(shelfCode)) : ""}</td>
             <td>${escapeHtml(displayText(item?.productName))}</td>
             <td>${escapeHtml(displayText(item?.productId))}</td>
             <td class="${isCurrentProduct ? "master-product-current-cell" : ""}">${escapeHtml(displayText(item?.qty ?? 0))}</td>

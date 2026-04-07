@@ -593,6 +593,10 @@ button.ghost {
   font-weight: 700;
 }
 
+#inventoryDetailBoxBody tr.inventory-detail-box-group-continue td {
+  border-bottom: none;
+}
+
 .master-product-status-chip {
   display: inline-flex;
   align-items: center;
