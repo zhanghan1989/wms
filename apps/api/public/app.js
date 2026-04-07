@@ -1824,7 +1824,9 @@ async function request(path, options = {}) {
   try {
     res = await fetch(`/api${path}`, { ...options, headers });
   } catch (error) {
-    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+    const requestError = new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+    requestError.status = 0;
+    throw requestError;
   }
   const text = await res.text();
 
@@ -1840,9 +1842,13 @@ async function request(path, options = {}) {
     const shouldSuppressAuthError =
       res.status === 401 && (!state.token || Date.now() < suppressAuthErrorToastUntil);
     if (shouldSuppressAuthError) {
-      throw new Error(SILENT_AUTH_ERROR_MESSAGE);
+      const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
+      silentAuthError.status = 401;
+      throw silentAuthError;
     }
-    throw new Error(message);
+    const requestError = new Error(message);
+    requestError.status = res.status;
+    throw requestError;
   }
 
   return payload.data;
@@ -2016,7 +2022,15 @@ async function loadMe() {
     $("sessionInfo").textContent = `${state.me.username}`;
     setAuthGate(true);
     applyRoleView();
-  } catch {
+  } catch (error) {
+    const status = Number(error?.status ?? 0);
+    if (status !== 401) {
+      state.me = null;
+      $("sessionInfo").textContent = "会话校验失败";
+      setAuthGate(true);
+      applyRoleView();
+      throw error;
+    }
     state.token = "";
     state.me = null;
     localStorage.removeItem("wms_token");
