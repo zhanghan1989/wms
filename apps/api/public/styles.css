@@ -646,17 +646,6 @@ button.ghost {
   white-space: nowrap;
 }
 
-.inventory-detail-actions-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(220px, 1fr));
-  gap: 14px;
-}
-
-.inventory-detail-action-form {
-  margin: 0;
-  align-content: start;
-}
-
 .overseas-form {
   align-items: end;
 }
@@ -1154,9 +1143,6 @@ td {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .inventory-detail-actions-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .inventory-box-sku-table {

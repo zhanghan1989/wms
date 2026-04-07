@@ -96,6 +96,8 @@ let actionConfirmResolver = null;
 let suppressAuthErrorToastUntil = 0;
 let adjustBoxValidationTimer = null;
 let adjustBoxValidationToken = 0;
+let inventoryDetailInboundBoxValidationTimer = null;
+let inventoryDetailInboundBoxValidationToken = 0;
 let modalZIndexSeed = 20;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
@@ -3149,6 +3151,22 @@ function buildProductBoxFillButtons(boxCode, actionPrefix) {
   `;
 }
 
+function buildInventoryDetailBoxActionButtons(box) {
+  const boxCode = String(box?.boxCode || "").trim();
+  const qty = Number(box?.qty ?? 0);
+  if (!boxCode || qty <= 0) {
+    return '<span class="muted">-</span>';
+  }
+  const safeBoxCode = escapeHtml(boxCode);
+  return `
+    <div class="master-product-box-actions">
+      <button type="button" class="tiny-btn" data-action="openInventoryDetailInboundBox" data-box-code="${safeBoxCode}">入库</button>
+      <button type="button" class="tiny-btn" data-action="openInventoryDetailFbaBox" data-box-code="${safeBoxCode}">FBA入库</button>
+      <button type="button" class="tiny-btn" data-action="inventoryDetailOutboundOne" data-box-code="${safeBoxCode}">出库1件</button>
+    </div>
+  `;
+}
+
 function buildMasterProductRelatedItems(items) {
   const rows = Array.isArray(items) ? items : [];
   if (!rows.length) {
@@ -3170,14 +3188,21 @@ function buildMasterProductRelatedItems(items) {
   `;
 }
 
-function renderProductBoxTable(detail, { bodyId, actionPrefix } = {}) {
+function renderProductBoxTable(detail, { bodyId, actionPrefix = "", actionRenderer = null } = {}) {
   const body = $(bodyId);
   if (!body) return;
   const rows = Array.isArray(detail?.boxes) ? detail.boxes : [];
+  const hasActionColumn = Boolean(actionPrefix) || typeof actionRenderer === "function";
   body.innerHTML =
     rows
       .map((box) => {
         const boxCode = String(box?.boxCode || "").trim();
+        const actionContent =
+          typeof actionRenderer === "function"
+            ? actionRenderer(box)
+            : actionPrefix
+              ? buildProductBoxFillButtons(boxCode, actionPrefix)
+              : "";
         return `
           <tr>
             <td>${escapeHtml(displayText(boxCode))}</td>
@@ -3185,17 +3210,11 @@ function renderProductBoxTable(detail, { bodyId, actionPrefix } = {}) {
             <td class="master-product-current-cell">${escapeHtml(displayText(box?.qty ?? 0))}</td>
             <td>${escapeHtml(formatDate(box?.updatedAt))}</td>
             <td>${buildMasterProductRelatedItems(box?.items)}</td>
-            <td>${buildProductBoxFillButtons(boxCode, actionPrefix)}</td>
+            ${hasActionColumn ? `<td>${actionContent || '<span class="muted">-</span>'}</td>` : ""}
           </tr>
         `;
       })
-      .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
-}
-
-function resetInventoryDetailForms() {
-  $("inventoryDetailManualAdjustForm")?.reset();
-  $("inventoryDetailOutboundOneForm")?.reset();
-  $("inventoryDetailFbaForm")?.reset();
+      .join("") || `<tr><td colspan="${hasActionColumn ? 6 : 5}" class="muted">-</td></tr>`;
 }
 
 function renderInventoryHomeDetail(detail) {
@@ -3208,7 +3227,10 @@ function renderInventoryHomeDetail(detail) {
     : "-";
   renderProductSummaryMeta("inventoryDetailMeta", detail?.product);
   renderProductSkuTable(detail, { bodyId: "inventoryDetailSkuBody", selectId: "inventoryDetailFbaSkuId" });
-  renderProductBoxTable(detail, { bodyId: "inventoryDetailBoxBody", actionPrefix: "InventoryDetail" });
+  renderProductBoxTable(detail, {
+    bodyId: "inventoryDetailBoxBody",
+    actionRenderer: buildInventoryDetailBoxActionButtons,
+  });
   const skuSummary = $("inventoryDetailSkuSummary");
   if (skuSummary) {
     const skuCount = Array.isArray(detail?.skus) ? detail.skus.length : 0;
@@ -3221,7 +3243,6 @@ function renderInventoryHomeDetail(detail) {
     const totalQty = boxes.reduce((sum, item) => sum + Number(item?.qty ?? 0), 0);
     boxSummary.textContent = `相关箱子 ${boxCount} 个，当前产品箱内合计 ${totalQty}`;
   }
-  resetInventoryDetailForms();
 }
 
 async function loadInventoryHomeProducts({ reset = false } = {}) {
@@ -4700,29 +4721,95 @@ function getSelectedInventoryDetailProductId() {
   return String(state.inventoryHomeSelectedDetail?.product?.productId || "").trim();
 }
 
-function prefillInventoryDetailBoxInputs(boxCode, target) {
-  const normalized = String(boxCode || "").trim();
-  if (!normalized) return;
-  if (target === "inbound" || target === "all") {
-    $("inventoryDetailAdjustBoxCode").value = normalized;
+function renderInventoryDetailInboundBoxSuggestions(keyword = "") {
+  renderBoxOptionsForInput(
+    "inventoryDetailInboundBoxCode",
+    "inventoryDetailInboundBoxCodeList",
+    "输入数字或选择已有箱号",
+    keyword,
+  );
+  const hint = $("inventoryDetailInboundBoxHint");
+  if (!hint) return;
+  const raw = String(keyword ?? "").trim();
+  if (!raw) {
+    hint.classList.add("hidden");
+    return;
   }
-  if (target === "outbound" || target === "all") {
-    $("inventoryDetailOutboundBoxCode").value = normalized;
-  }
-  if (target === "fba" || target === "all") {
-    $("inventoryDetailFbaBoxCode").value = normalized;
-  }
+  hint.classList.toggle("hidden", filterAdjustBoxes(keyword).length > 0);
 }
 
-async function submitInventoryDetailManualAdjust() {
+async function validateInventoryDetailInboundBoxInput(raw, { normalizeInput = false } = {}) {
+  const input = $("inventoryDetailInboundBoxCode");
+  const hint = $("inventoryDetailInboundBoxHint");
+  if (!input) return "";
+
+  const token = ++inventoryDetailInboundBoxValidationToken;
+  const normalized = normalizeBoxCodeInput(raw);
+  if (!normalized) {
+    if (hint) hint.classList.add("hidden");
+    return "";
+  }
+
+  const resolved = await resolveEnabledBoxCodeLive(normalized);
+  if (token !== inventoryDetailInboundBoxValidationToken) return "";
+
+  if (resolved) {
+    renderInventoryDetailInboundBoxSuggestions(resolved);
+    if (normalizeInput) {
+      input.value = resolved;
+    }
+    if (hint) hint.classList.add("hidden");
+    return resolved;
+  }
+
+  renderInventoryDetailInboundBoxSuggestions(normalized);
+  if (normalizeInput) {
+    input.value = normalized;
+  }
+  if (hint) hint.classList.remove("hidden");
+  return "";
+}
+
+function resetInventoryDetailInboundForm() {
+  $("inventoryDetailInboundForm")?.reset();
+  const qtyInput = $("inventoryDetailInboundQty");
+  if (qtyInput) {
+    qtyInput.value = "1";
+  }
+  $("inventoryDetailInboundBoxHint")?.classList.add("hidden");
+  renderInventoryDetailInboundBoxSuggestions("");
+}
+
+function openInventoryDetailInboundModal(prefillBoxCode = "") {
   const productId = getSelectedInventoryDetailProductId();
   if (!productId) {
     throw new Error("请先选择主商品");
   }
+  resetInventoryDetailInboundForm();
+  if (prefillBoxCode) {
+    $("inventoryDetailInboundBoxCode").value = String(prefillBoxCode || "").trim();
+    renderInventoryDetailInboundBoxSuggestions(prefillBoxCode);
+  }
+  openModal("inventoryDetailInboundModal");
+}
+
+async function submitInventoryDetailInbound() {
+  const productId = getSelectedInventoryDetailProductId();
+  if (!productId) {
+    throw new Error("请先选择主商品");
+  }
+  const rawBoxCode = $("inventoryDetailInboundBoxCode").value;
+  const boxCode = await validateInventoryDetailInboundBoxInput(rawBoxCode, { normalizeInput: true });
+  if (!boxCode) {
+    throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
+  }
+  const qtyDelta = Math.abs(Number($("inventoryDetailInboundQty").value));
+  if (!Number.isFinite(qtyDelta) || !Number.isInteger(qtyDelta) || qtyDelta <= 0) {
+    throw new Error("入库数量必须为正整数");
+  }
   const payload = {
-    boxCode: String($("inventoryDetailAdjustBoxCode").value || "").trim(),
-    qtyDelta: Number($("inventoryDetailAdjustQtyDelta").value || 0),
-    reason: String($("inventoryDetailAdjustReason").value || "").trim() || undefined,
+    boxCode,
+    qtyDelta,
   };
   await request(`/master-products/${encodeURIComponent(productId)}/box-inventories/manual-adjust`, {
     method: "POST",
@@ -4730,19 +4817,30 @@ async function submitInventoryDetailManualAdjust() {
   });
 }
 
-async function submitInventoryDetailOutboundOne() {
+function resetInventoryDetailFbaForm() {
+  $("inventoryDetailFbaForm")?.reset();
+  const qtyInput = $("inventoryDetailFbaQty");
+  if (qtyInput) {
+    qtyInput.value = "1";
+  }
+  $("inventoryDetailFbaRemark").value = "";
+}
+
+function openInventoryDetailFbaModal(prefillBoxCode = "") {
   const productId = getSelectedInventoryDetailProductId();
   if (!productId) {
     throw new Error("请先选择主商品");
   }
-  const payload = {
-    boxCode: String($("inventoryDetailOutboundBoxCode").value || "").trim(),
-    remark: String($("inventoryDetailOutboundRemark").value || "").trim() || undefined,
-  };
-  await request(`/master-products/${encodeURIComponent(productId)}/box-inventories/outbound-one`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  const skuSelect = $("inventoryDetailFbaSkuId");
+  if (!skuSelect || skuSelect.options.length <= 1) {
+    throw new Error("当前主商品没有可用的关联SKU");
+  }
+  resetInventoryDetailFbaForm();
+  $("inventoryDetailFbaBoxCode").value = String(prefillBoxCode || "").trim();
+  if (skuSelect.options.length === 2) {
+    skuSelect.value = String(skuSelect.options[1].value || "");
+  }
+  openModal("inventoryDetailFbaModal");
 }
 
 async function submitInventoryDetailFba() {
@@ -4752,17 +4850,43 @@ async function submitInventoryDetailFba() {
   }
   const skuId = Number($("inventoryDetailFbaSkuId").value || 0);
   if (!Number.isInteger(skuId) || skuId <= 0) {
-    throw new Error("请选择关联 SKU");
+    throw new Error("请选择关联SKU");
+  }
+  const boxCode = normalizeBoxCodeInput($("inventoryDetailFbaBoxCode").value);
+  if (!boxCode) {
+    throw new Error("请填写FBA箱号");
+  }
+  const qty = Math.abs(Number($("inventoryDetailFbaQty").value));
+  if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
+    throw new Error("申请数量必须为正整数");
   }
   const payload = {
     skuId,
-    boxCode: String($("inventoryDetailFbaBoxCode").value || "").trim(),
-    qty: Number($("inventoryDetailFbaQty").value || 0),
+    boxCode,
+    qty,
     remark: String($("inventoryDetailFbaRemark").value || "").trim() || undefined,
   };
   await request(`/master-products/${encodeURIComponent(productId)}/fba-replenishments`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+async function quickInventoryDetailOutboundOne(boxCode) {
+  const productId = getSelectedInventoryDetailProductId();
+  if (!productId) {
+    throw new Error("请先选择主商品");
+  }
+  const normalizedBoxCode = normalizeBoxCodeInput(boxCode);
+  if (!normalizedBoxCode) {
+    throw new Error("请填写箱号");
+  }
+  await request(`/master-products/${encodeURIComponent(productId)}/box-inventories/outbound-one`, {
+    method: "POST",
+    body: JSON.stringify({
+      boxCode: normalizedBoxCode,
+      remark: "默认：主商品库存出库",
+    }),
   });
 }
 
@@ -6789,34 +6913,25 @@ function bindForms() {
     setInventoryDisplayMode(false);
   });
 
-  $("inventoryDetailManualAdjustForm").addEventListener("submit", async (event) => {
+  $("openInventoryDetailInboundModal").addEventListener("click", async (event) => {
     event.preventDefault();
-    const submitButton = getSubmitButton(event.currentTarget, event);
     try {
-      const productId = getSelectedInventoryDetailProductId();
-      await withBusyButton(submitButton, "提交中...", async () => {
-        await submitInventoryDetailManualAdjust();
-        showToast("主商品入库完成");
-        await Promise.all([
-          loadInventory({ preserveSearch: true }),
-          loadBoxes(),
-          loadAudit(),
-        ]);
-        await loadInventoryHomeProductDetail(productId);
-      });
+      await loadBoxes();
+      openInventoryDetailInboundModal();
     } catch (error) {
       showToast(error.message, true);
     }
   });
 
-  $("inventoryDetailOutboundOneForm").addEventListener("submit", async (event) => {
+  $("inventoryDetailInboundForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
       const productId = getSelectedInventoryDetailProductId();
       await withBusyButton(submitButton, "提交中...", async () => {
-        await submitInventoryDetailOutboundOne();
-        showToast("主商品单件出库完成");
+        await submitInventoryDetailInbound();
+        closeModal("inventoryDetailInboundModal");
+        showToast("主商品入库完成");
         await Promise.all([
           loadInventory({ preserveSearch: true }),
           loadBoxes(),
@@ -6836,10 +6951,13 @@ function bindForms() {
       const productId = getSelectedInventoryDetailProductId();
       await withBusyButton(submitButton, "提交中...", async () => {
         await submitInventoryDetailFba();
-        showToast("主商品 FBA 补货申请已创建");
+        closeModal("inventoryDetailFbaModal");
+        showToast("FBA 补货申请已创建");
         await Promise.all([
+          loadInventory({ preserveSearch: true }),
+          loadBoxes(),
+          loadAudit(),
           loadFbaReplenishments(),
-          loadFbaPendingSummary(),
         ]);
         await loadInventoryHomeProductDetail(productId);
       });
@@ -7364,6 +7482,43 @@ function bindForms() {
       input.value = "1";
     }
   });
+  $("inventoryDetailInboundBoxCode").addEventListener("input", (event) => {
+    renderInventoryDetailInboundBoxSuggestions(event.target.value);
+    clearTimeout(inventoryDetailInboundBoxValidationTimer);
+    inventoryDetailInboundBoxValidationTimer = setTimeout(() => {
+      validateInventoryDetailInboundBoxInput(event.target.value).catch(() => {});
+    }, 250);
+  });
+  $("inventoryDetailInboundBoxCode").addEventListener("focus", (event) => {
+    renderInventoryDetailInboundBoxSuggestions(event.target.value);
+  });
+  $("inventoryDetailInboundBoxCode").addEventListener("blur", (event) => {
+    clearTimeout(inventoryDetailInboundBoxValidationTimer);
+    validateInventoryDetailInboundBoxInput(event.target.value, { normalizeInput: true }).catch(() => {});
+  });
+  $("inventoryDetailInboundQty").addEventListener("input", (event) => {
+    const input = event.target;
+    let digits = String(input.value || "").replace(/\D/g, "").replace(/^0+/, "");
+    input.value = digits ? String(Number(digits)) : "";
+  });
+  $("inventoryDetailInboundQty").addEventListener("blur", (event) => {
+    const input = event.target;
+    if (!String(input.value || "").trim()) {
+      input.value = "1";
+    }
+  });
+  $("inventoryDetailFbaQty").addEventListener("input", (event) => {
+    const input = event.target;
+    let digits = String(input.value || "").replace(/\D/g, "").replace(/^0+/, "");
+    input.value = digits ? String(Number(digits)) : "";
+  });
+  $("inventoryDetailFbaQty").addEventListener("blur", (event) => {
+    const input = event.target;
+    if (!String(input.value || "").trim()) {
+      input.value = "1";
+    }
+  });
+  $("openCreateBoxFromInventoryDetailInbound").addEventListener("click", openCreateBoxModal);
 
   $("createSkuModalForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -7436,6 +7591,12 @@ function bindForms() {
         if (adjustModal && !adjustModal.classList.contains("hidden")) {
           $("adjustBoxCode").value = createdBoxCode;
           renderAdjustBoxSuggestions(createdBoxCode);
+        }
+        const inventoryDetailInboundModal = $("inventoryDetailInboundModal");
+        if (inventoryDetailInboundModal && !inventoryDetailInboundModal.classList.contains("hidden")) {
+          $("inventoryDetailInboundBoxCode").value = createdBoxCode;
+          renderInventoryDetailInboundBoxSuggestions(createdBoxCode);
+          $("inventoryDetailInboundBoxHint")?.classList.add("hidden");
         }
         await loadAudit();
       });
@@ -8496,17 +8657,45 @@ function bindDelegates() {
     if (!button) return;
     const boxCode = String(button.dataset.boxCode || "").trim();
     if (!boxCode) return;
+    const productId = getSelectedInventoryDetailProductId();
+    if (!productId) return;
 
-    if (button.dataset.action === "fillInventoryDetailInboundBox") {
-      prefillInventoryDetailBoxInputs(boxCode, "inbound");
+    if (button.dataset.action === "openInventoryDetailInboundBox") {
+      loadBoxes()
+        .then(() => {
+          openInventoryDetailInboundModal(boxCode);
+        })
+        .catch((error) => {
+          showToast(error.message, true);
+        });
       return;
     }
-    if (button.dataset.action === "fillInventoryDetailOutboundBox") {
-      prefillInventoryDetailBoxInputs(boxCode, "outbound");
+    if (button.dataset.action === "openInventoryDetailFbaBox") {
+      try {
+        openInventoryDetailFbaModal(boxCode);
+      } catch (error) {
+        showToast(error.message, true);
+      }
       return;
     }
-    if (button.dataset.action === "fillInventoryDetailFbaBox") {
-      prefillInventoryDetailBoxInputs(boxCode, "fba");
+    if (button.dataset.action === "inventoryDetailOutboundOne") {
+      openActionConfirmModal(`确认从箱号 ${boxCode} 出库 1 件当前主商品吗？`, "确认出库", "出库1件")
+        .then(async (confirmed) => {
+          if (!confirmed) return;
+          await withBusyButton(button, "处理中...", async () => {
+            await quickInventoryDetailOutboundOne(boxCode);
+            showToast("主商品已出库 1 件");
+            await Promise.all([
+              loadInventory({ preserveSearch: true }),
+              loadBoxes(),
+              loadAudit(),
+            ]);
+            await loadInventoryHomeProductDetail(productId);
+          });
+        })
+        .catch((error) => {
+          showToast(error.message, true);
+        });
     }
   });
 
@@ -8663,6 +8852,20 @@ function bindDelegates() {
       closeModal("adjustModal");
       return;
     }
+    const inventoryDetailInboundClose = event.target.closest(
+      "button[data-action='closeInventoryDetailInboundModal']",
+    );
+    if (inventoryDetailInboundClose) {
+      closeModal("inventoryDetailInboundModal");
+      return;
+    }
+    const inventoryDetailFbaClose = event.target.closest(
+      "button[data-action='closeInventoryDetailFbaModal']",
+    );
+    if (inventoryDetailFbaClose) {
+      closeModal("inventoryDetailFbaModal");
+      return;
+    }
     const myAuditClose = event.target.closest("button[data-action='closeMyAuditModal']");
     if (myAuditClose) {
       closeModal("myAuditModal");
@@ -8804,6 +9007,18 @@ function bindDelegates() {
   $("adjustModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("adjustModal");
+    }
+  });
+
+  $("inventoryDetailInboundModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("inventoryDetailInboundModal");
+    }
+  });
+
+  $("inventoryDetailFbaModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("inventoryDetailFbaModal");
     }
   });
 

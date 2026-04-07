@@ -126,66 +126,14 @@
                       <th>当前产品数量</th>
                       <th>更新时间</th>
                       <th>同箱其他主商品</th>
-                      <th>快捷填入</th>
+                      <th>操作</th>
                     </tr>
                   </thead>
                   <tbody id="inventoryDetailBoxBody"></tbody>
                 </table>
               </div>
-            </article>
-
-            <article class="card inventory-detail-card">
-              <h4>主商品操作</h4>
-              <div class="inventory-detail-actions-grid">
-                <form id="inventoryDetailManualAdjustForm" class="form-grid inventory-detail-action-form">
-                  <label>
-                    入库箱号
-                    <input id="inventoryDetailAdjustBoxCode" placeholder="输入箱号" required />
-                  </label>
-                  <label>
-                    入库数量
-                    <input id="inventoryDetailAdjustQtyDelta" inputmode="numeric" placeholder="输入正整数" required />
-                  </label>
-                  <label>
-                    备注
-                    <input id="inventoryDetailAdjustReason" maxlength="128" placeholder="可选备注" />
-                  </label>
-                  <button type="submit">主商品入库</button>
-                </form>
-
-                <form id="inventoryDetailOutboundOneForm" class="form-grid inventory-detail-action-form">
-                  <label>
-                    出库箱号
-                    <input id="inventoryDetailOutboundBoxCode" placeholder="输入箱号" required />
-                  </label>
-                  <label>
-                    备注
-                    <input id="inventoryDetailOutboundRemark" maxlength="10" placeholder="默认：主商品库存出库" />
-                  </label>
-                  <button type="submit">单件出库</button>
-                </form>
-
-                <form id="inventoryDetailFbaForm" class="form-grid inventory-detail-action-form">
-                  <label>
-                    关联 SKU
-                    <select id="inventoryDetailFbaSkuId" required>
-                      <option value="">请选择SKU</option>
-                    </select>
-                  </label>
-                  <label>
-                    FBA 箱号
-                    <input id="inventoryDetailFbaBoxCode" placeholder="输入箱号" required />
-                  </label>
-                  <label>
-                    申请数量
-                    <input id="inventoryDetailFbaQty" inputmode="numeric" placeholder="输入正整数" required />
-                  </label>
-                  <label>
-                    备注
-                    <input id="inventoryDetailFbaRemark" maxlength="10" placeholder="默认：FBA补货" />
-                  </label>
-                  <button type="submit">创建 FBA 补货</button>
-                </form>
+              <div class="action-row inventory-detail-box-footer">
+                <button type="button" id="openInventoryDetailInboundModal">主商品入库</button>
               </div>
             </article>
           </div>
@@ -1251,6 +1199,59 @@
         <div class="modal-actions">
           <button id="adjustSubmitBtn" type="submit">提交</button>
           <button type="button" class="ghost" data-action="closeAdjustModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="inventoryDetailInboundModal" class="modal hidden">
+    <div class="modal-card modal-adjust">
+      <div class="modal-head">
+        <h3>主商品入库</h3>
+        <button type="button" class="ghost" data-action="closeInventoryDetailInboundModal">关闭</button>
+      </div>
+      <form id="inventoryDetailInboundForm" class="form-grid modal-grid adjust-single-col">
+        <label>入库箱号
+          <div class="adjust-box-row">
+            <input
+              id="inventoryDetailInboundBoxCode"
+              list="inventoryDetailInboundBoxCodeList"
+              required
+              autocomplete="off"
+              placeholder="输入数字或选择已有箱号"
+            />
+            <datalist id="inventoryDetailInboundBoxCodeList"></datalist>
+            <button id="openCreateBoxFromInventoryDetailInbound" type="button" class="ghost">新增箱号</button>
+          </div>
+          <span id="inventoryDetailInboundBoxHint" class="field-hint hidden">未找到匹配箱号，请点击右侧新增箱号</span>
+        </label>
+        <label>入库数量<input id="inventoryDetailInboundQty" type="number" min="1" step="1" required /></label>
+        <div class="modal-actions">
+          <button id="inventoryDetailInboundSubmitBtn" type="submit">确认入库</button>
+          <button type="button" class="ghost" data-action="closeInventoryDetailInboundModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="inventoryDetailFbaModal" class="modal hidden">
+    <div class="modal-card modal-adjust">
+      <div class="modal-head">
+        <h3>创建 FBA 补货</h3>
+        <button type="button" class="ghost" data-action="closeInventoryDetailFbaModal">关闭</button>
+      </div>
+      <form id="inventoryDetailFbaForm" class="form-grid modal-grid adjust-single-col">
+        <label>关联 SKU
+          <select id="inventoryDetailFbaSkuId" required>
+            <option value="">请选择SKU</option>
+          </select>
+        </label>
+        <label>FBA 箱号<input id="inventoryDetailFbaBoxCode" required readonly /></label>
+        <label>申请数量<input id="inventoryDetailFbaQty" type="number" min="1" step="1" required /></label>
+        <label>备注<input id="inventoryDetailFbaRemark" maxlength="10" placeholder="默认：FBA补货" /></label>
+        <div class="modal-actions">
+          <button id="inventoryDetailFbaSubmitBtn" type="submit">创建 FBA 补货</button>
+          <button type="button" class="ghost" data-action="closeInventoryDetailFbaModal">取消</button>
         </div>
       </form>
     </div>
