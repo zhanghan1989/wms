@@ -1048,7 +1048,6 @@ function isUserOptionEnabled(options, code) {
 function normalizeProductEditChangedFields(changedFields) {
   const allowed = new Set([
     "productId",
-    "sku",
     "rbSku",
     "asin",
     "fnsku",
@@ -4560,7 +4559,6 @@ function renderProductEditRequestDetail(item) {
     ["productId", "产品ID"],
     ["shop", "所属亚马逊店铺"],
     ["remark", "备注"],
-    ["sku", "SKU"],
     ["asin", "ASIN"],
     ["fnsku", "FNSKU"],
     ["fbmSku", "FBMSKU"],
@@ -9466,9 +9464,33 @@ function bindDelegates() {
       resolveActionConfirm(false);
       return;
     }
+    const actionConfirmOk = event.target.closest("#actionConfirmOkBtn");
+    if (actionConfirmOk) {
+      resolveActionConfirm(true);
+      return;
+    }
+    const actionConfirmCancel = event.target.closest("#actionConfirmCancelBtn");
+    if (actionConfirmCancel) {
+      resolveActionConfirm(false);
+      return;
+    }
     const errorModalClose = event.target.closest("button[data-action='closeErrorModal']");
     if (errorModalClose) {
       closeErrorModal();
+      return;
+    }
+    const errorModalCloseBtn = event.target.closest("#errorModalCloseBtn");
+    if (errorModalCloseBtn) {
+      closeErrorModal();
+      return;
+    }
+    const errorModalPrintLabelBtn = event.target.closest("#errorModalPrintLabelBtn");
+    if (errorModalPrintLabelBtn) {
+      try {
+        printPendingLabelFromErrorModal();
+      } catch (error) {
+        showToast(error.message, true);
+      }
       return;
     }
     const batchInboundDetailModalClose = event.target.closest(
@@ -9650,29 +9672,9 @@ function bindDelegates() {
     }
   });
 
-  $("actionConfirmOkBtn").addEventListener("click", () => {
-    resolveActionConfirm(true);
-  });
-
-  $("actionConfirmCancelBtn").addEventListener("click", () => {
-    resolveActionConfirm(false);
-  });
-
   $("actionConfirmModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       resolveActionConfirm(false);
-    }
-  });
-
-  $("errorModalCloseBtn").addEventListener("click", () => {
-    closeErrorModal();
-  });
-
-  $("errorModalPrintLabelBtn").addEventListener("click", () => {
-    try {
-      printPendingLabelFromErrorModal();
-    } catch (error) {
-      showToast(error.message, true);
     }
   });
 

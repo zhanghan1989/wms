@@ -26,7 +26,6 @@ type SkuEditRequestListResult = {
 
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'productId',
-  'sku',
   'rbSku',
   'asin',
   'fnsku',
@@ -152,14 +151,18 @@ export class SkuEditRequestsService {
     ): string | null => {
       const rawPayload = payload as unknown as Record<string, unknown>;
       if (Object.prototype.hasOwnProperty.call(rawPayload, field)) {
-        return normalizeNullableText(rawPayload[field]);
+        const value = rawPayload[field];
+        if (value === undefined) {
+          return fallback;
+        }
+        return normalizeNullableText(value);
       }
       return fallback;
     };
 
     const afterData: ProductSnapshot = {
       productId: resolveEditableField('productId', beforeData.productId),
-      sku: resolveEditableField('sku', beforeData.sku),
+      sku: beforeData.sku,
       rbSku: resolveEditableField('rbSku', beforeData.rbSku),
       asin: resolveEditableField('asin', beforeData.asin),
       fnsku: resolveEditableField('fnsku', beforeData.fnsku),
