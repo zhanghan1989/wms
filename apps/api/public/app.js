@@ -6926,7 +6926,6 @@ function bindForms() {
   $("openProductManagementPanel").addEventListener("click", async () => {
     try {
       switchPanel("productManagement");
-      setMasterProductView("list");
       await Promise.all([
         loadShelves(),
         loadBoxes(),
@@ -6936,6 +6935,20 @@ function bindForms() {
         loadShops(),
         loadProductEditRequests(),
         loadProductEditPendingSummary(),
+      ]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openMasterProductManagementPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("masterProductManagement");
+      setMasterProductView("list");
+      await Promise.all([
+        loadShelves(),
+        loadBoxes(),
+        loadInventory(),
         loadMasterProductExportFilterOptions(),
         loadMasterProducts({ reset: true }),
       ]);
@@ -8993,7 +9006,6 @@ function bindRefresh() {
       loadShops(),
       loadProductEditRequests(),
       loadProductEditPendingSummary(),
-      refreshMasterProductPanel(),
     ]).catch((error) =>
       showToast(error.message, true),
     ),
