@@ -94,29 +94,29 @@ type MasterProductExportFilterKey =
 
 const CREATE_CHUNK_SIZE = 1000;
 const UPDATE_CHUNK_SIZE = 200;
-const MASTER_PRODUCT_TEMPLATE_FILE = '产品列表.xlsx';
+const MASTER_PRODUCT_TEMPLATE_FILE = '????.xlsx';
 const XIYA_EXPORT_URL = 'http://103.236.55.93/api/external/products';
 const XIYA_EXPORT_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
 const MASTER_PRODUCT_SYNC_CRON = '0 0 0 * * 1';
 
 const MASTER_PRODUCT_EXPORT_COLUMNS: Array<[keyof MasterProductImportRow, string]> = [
-  ['productId', '产品ID'],
-  ['productName', '产品名称'],
-  ['productType', '产品类型'],
-  ['bagBrand', '包包品牌'],
-  ['color', '颜色'],
-  ['bagName', '包名'],
-  ['bagType', '包型'],
-  ['zipperStyle', '拉链款式'],
-  ['style', '款式'],
-  ['pattern', '花纹'],
-  ['buckleType', '扣子类型'],
-  ['matchingBagType', '对应包型'],
-  ['length', '长度'],
-  ['width', '宽度'],
-  ['patternType', '花纹类型'],
-  ['size', '尺寸'],
-  ['stockQty', '在库数'],
+  ['productId', '??ID'],
+  ['productName', '????'],
+  ['productType', '????'],
+  ['bagBrand', '????'],
+  ['color', '??'],
+  ['bagName', '??'],
+  ['bagType', '??'],
+  ['zipperStyle', '????'],
+  ['style', '??'],
+  ['pattern', '??'],
+  ['buckleType', '????'],
+  ['matchingBagType', '????'],
+  ['length', '??'],
+  ['width', '??'],
+  ['patternType', '????'],
+  ['size', '??'],
+  ['stockQty', '???'],
 ];
 
 const MASTER_PRODUCT_EXPORT_SELECT_FIELDS: MasterProductExportFilterKey[] = [
@@ -132,23 +132,23 @@ const MASTER_PRODUCT_EXPORT_SELECT_FIELDS: MasterProductExportFilterKey[] = [
 ];
 
 const MASTER_PRODUCT_COLUMN_ALIASES = {
-  productId: ['productId', 'product id', '产品ID', '产品id'],
-  productName: ['productName', 'product name', '产品名称'],
-  productType: ['productType', 'product type', '产品类型', '产品种类'],
-  bagBrand: ['bagBrand', 'bag brand', '包包品牌', '品牌'],
-  color: ['color', '颜色'],
-  bagName: ['bagName', 'bag name', '包名'],
-  bagType: ['bagType', 'bag type', '包型'],
-  zipperStyle: ['zipperStyle', 'zipper style', '拉链款式'],
-  style: ['style', '款式'],
-  pattern: ['pattern', '花纹', '图案'],
-  buckleType: ['buckleType', 'buckle type', '扣子类型'],
-  matchingBagType: ['matchingBagType', 'matching bag type', '对应包型', '配包包型'],
-  length: ['length', '长度'],
-  width: ['width', '宽度'],
-  patternType: ['patternType', 'pattern type', '花纹类型'],
-  size: ['size', '尺寸'],
-  stockQty: ['stockQty', 'stock qty', '在库数', '库存数'],
+  productId: ['productId', 'product id', '??ID', '??id'],
+  productName: ['productName', 'product name', '????'],
+  productType: ['productType', 'product type', '????', '????'],
+  bagBrand: ['bagBrand', 'bag brand', '????', '??'],
+  color: ['color', '??'],
+  bagName: ['bagName', 'bag name', '??'],
+  bagType: ['bagType', 'bag type', '??'],
+  zipperStyle: ['zipperStyle', 'zipper style', '????'],
+  style: ['style', '??'],
+  pattern: ['pattern', '??', '??'],
+  buckleType: ['buckleType', 'buckle type', '????'],
+  matchingBagType: ['matchingBagType', 'matching bag type', '????', '??????'],
+  length: ['length', '??'],
+  width: ['width', '??'],
+  patternType: ['patternType', 'pattern type', '????'],
+  size: ['size', '??'],
+  stockQty: ['stockQty', 'stock qty', '???', '???'],
 } as const;
 
 @Injectable()
@@ -255,7 +255,7 @@ export class MasterProductsService {
     const days = Math.min(this.normalizePositiveInt(daysRaw, 10), 365);
 
     if (this.xiyaSyncStarting || this.masterProductSyncRunning) {
-      throw new ConflictException('当前已有产品主表同步任务正在启动，请稍后再试');
+      throw new ConflictException('\u5f53\u524d\u5df2\u6709\u4ea7\u54c1\u4e3b\u8868\u540c\u6b65\u4efb\u52a1\u6b63\u5728\u542f\u52a8\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5');
     }
 
     this.xiyaSyncStarting = true;
@@ -280,7 +280,7 @@ export class MasterProductsService {
       return {
         recordId: recordId.toString(),
         status: MasterProductSyncStatus.running,
-        message: `已启动同步任务，正在拉取最近 ${days} 天更新的产品主表数据`,
+        message: `\u5df2\u542f\u52a8\u540c\u6b65\u4efb\u52a1\uff0c\u6b63\u5728\u62c9\u53d6\u6700\u8fd1 ${days} \u5929\u66f4\u65b0\u7684\u4ea7\u54c1\u4e3b\u8868\u6570\u636e`,
         days,
       };
     } finally {
@@ -308,10 +308,10 @@ export class MasterProductsService {
       }),
     );
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, '产品主表');
+    XLSX.utils.book_append_sheet(workbook, worksheet, '????');
     const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
     const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
-    const fileName = `产品主表分类下载_${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}.xlsx`;
+    const fileName = `??????_${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}.xlsx`;
 
     return {
       fileName,
@@ -339,7 +339,7 @@ export class MasterProductsService {
       }
     }
 
-    throw new NotFoundException(`未找到模板文件：${MASTER_PRODUCT_TEMPLATE_FILE}`);
+    throw new NotFoundException(`譛ｪ謇ｾ蛻ｰ讓｡譚ｿ譁・ｻｶ・・{MASTER_PRODUCT_TEMPLATE_FILE}`);
   }
 
   async getExportFilterOptions(): Promise<Record<MasterProductExportFilterKey, string[]>> {
@@ -383,7 +383,7 @@ export class MasterProductsService {
     updatedCount: number;
   }> {
     if (this.xiyaSyncStarting || this.masterProductSyncRunning) {
-      throw new ConflictException('当前已有产品主表同步或导入任务正在执行，请稍后再试');
+      throw new ConflictException('\u5f53\u524d\u5df2\u6709\u4ea7\u54c1\u4e3b\u8868\u540c\u6b65\u6216\u5bfc\u5165\u4efb\u52a1\u6b63\u5728\u6267\u884c\uff0c\u8bf7\u7a0d\u540e\u518d\u8bd5');
     }
     this.masterProductSyncRunning = true;
     let recordId: bigint | null = null;
@@ -403,7 +403,7 @@ export class MasterProductsService {
 
       const parsedRows = this.parseImportRows(fileBuffer);
       if (!parsedRows.length) {
-        throw new BadRequestException('Excel 中没有可导入的产品主表数据');
+        throw new BadRequestException('Excel \u4e2d\u6ca1\u6709\u53ef\u5bfc\u5165\u7684\u4ea7\u54c1\u4e3b\u8868\u6570\u636e');
       }
 
       const importResult = await this.upsertImportRows(parsedRows);
@@ -432,6 +432,19 @@ export class MasterProductsService {
     } finally {
       this.masterProductSyncRunning = false;
     }
+  }
+  async syncFromXiya(
+    daysRaw?: string | number,
+    _context?: MasterProductSyncContext,
+  ): Promise<{
+    totalRows: number;
+    importedCount: number;
+    createdCount: number;
+    updatedCount: number;
+    days: number;
+  }> {
+    const days = Math.min(this.normalizePositiveInt(daysRaw, 10), 365);
+    return this.performXiyaSync(days);
   }
   private async runXiyaSyncJob(recordId: bigint, days: number): Promise<void> {
     try {
@@ -498,14 +511,14 @@ export class MasterProductsService {
   async detail(productIdRaw: string): Promise<unknown> {
     const productId = String(productIdRaw || '').trim();
     if (!productId) {
-      throw new BadRequestException('产品ID不能为空');
+      throw new BadRequestException('莠ｧ蜩！D荳崎・荳ｺ遨ｺ');
     }
 
     const product = await this.prisma.masterProduct.findUnique({
       where: { productId },
     });
     if (!product) {
-      throw new NotFoundException('未找到产品主表信息');
+      throw new NotFoundException('譛ｪ謇ｾ蛻ｰ莠ｧ蜩∽ｸｻ陦ｨ菫｡諱ｯ');
     }
 
     const skus = await this.prisma.sku.findMany({
@@ -690,13 +703,13 @@ export class MasterProductsService {
     const reason = String(payload.reason || '').trim() || null;
 
     if (!productId) {
-      throw new BadRequestException('产品ID不能为空');
+      throw new BadRequestException('莠ｧ蜩！D荳崎・荳ｺ遨ｺ');
     }
     if (!boxCode) {
-      throw new BadRequestException('箱号不能为空');
+      throw new BadRequestException('邂ｱ蜿ｷ荳崎・荳ｺ遨ｺ');
     }
     if (!Number.isInteger(qtyDelta) || qtyDelta <= 0) {
-      throw new BadRequestException('数量必须是大于 0 的整数');
+      throw new BadRequestException('謨ｰ驥丞ｿ・｡ｻ譏ｯ螟ｧ莠・0 逧・紛謨ｰ');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -725,10 +738,10 @@ export class MasterProductsService {
       ]);
 
       if (!product) {
-        throw new NotFoundException('未找到产品主表信息');
+        throw new NotFoundException('譛ｪ謇ｾ蛻ｰ莠ｧ蜩∽ｸｻ陦ｨ菫｡諱ｯ');
       }
       if (!box) {
-        throw new NotFoundException('未找到箱号信息');
+        throw new NotFoundException('譛ｪ謇ｾ蛻ｰ莠ｧ蜩∽ｸｻ陦ｨ菫｡諱ｯ');
       }
 
       const currentInventory = await tx.masterProductBoxInventory.findUnique({
@@ -825,16 +838,19 @@ export class MasterProductsService {
     const boxCode = normalizeBoxCode(payload.boxCode);
     const skuId = BigInt(payload.skuId ?? 0);
     const requestedQty = Math.trunc(Number(payload.qty));
-    const remark = String(payload.remark || '').trim() || 'FBA补货';
+    const remark = String(payload.remark || '').trim() || 'FBA??';
 
     if (!productId) {
-      throw new BadRequestException('产品ID不能为空');
+      throw new BadRequestException('??ID????');
     }
     if (!boxCode) {
-      throw new BadRequestException('箱号不能为空');
+      throw new BadRequestException('??????');
+    }
+    if (!skuId || skuId <= 0n) {
+      throw new BadRequestException('??SKU????');
     }
     if (!Number.isInteger(requestedQty) || requestedQty <= 0) {
-      throw new BadRequestException('申请数量必须是大于 0 的整数');
+      throw new BadRequestException('??????????');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -872,22 +888,22 @@ export class MasterProductsService {
       ]);
 
       if (!product) {
-        throw new NotFoundException('未找到产品主表信息');
+        throw new NotFoundException('?????????');
       }
       if (!sku) {
-        throw new NotFoundException('未找到SKU信息');
+        throw new NotFoundException('?????SKU');
       }
       if (String(sku.productId || '').trim() !== productId) {
-        throw new ConflictException('所选SKU不属于当前主表产品');
+        throw new ConflictException('??SKU?????????');
       }
       if (!String(sku.fnsku || '').trim()) {
-        throw new BadRequestException('该SKU缺少FNSKU，无法创建FBA补货');
+        throw new BadRequestException('??SKU??FNSKU?????FBA??');
       }
       if (!String(sku.shop || '').trim()) {
-        throw new BadRequestException('该SKU缺少所属店铺，无法创建FBA补货');
+        throw new BadRequestException('??SKU???????????FBA??');
       }
       if (!box) {
-        throw new NotFoundException('未找到箱号信息');
+        throw new NotFoundException('???????');
       }
 
       const boxInventory = await tx.masterProductBoxInventory.findUnique({
@@ -903,7 +919,7 @@ export class MasterProductsService {
       });
       const currentQty = Number(boxInventory?.qty ?? 0);
       if (currentQty <= 0) {
-        throw new ConflictException('当前箱号下该主表产品无可用库存，无法创建FBA补货申请');
+        throw new ConflictException('?????????????????FBA????');
       }
 
       const existingActiveSku = await tx.fbaReplenishment.findFirst({
@@ -926,11 +942,11 @@ export class MasterProductsService {
       });
       if (existingActiveSku) {
         if (existingActiveSku.boxId !== box.id) {
-          throw new ConflictException('该SKU已有其他箱号的FBA补货申请，请先处理后再申请');
+          throw new ConflictException('?SKU?????FBA????????????');
         }
         const activeQty = this.getActiveFbaReservedQty(existingActiveSku);
         throw new ConflictException(
-          `本SKU已有待处理FBA补货申请 ${activeQty} 件，请求单号（${existingActiveSku.requestNo}）`,
+          `?SKU?? ${activeQty} ????FBA??????? ${existingActiveSku.requestNo}`,
         );
       }
 
@@ -956,7 +972,7 @@ export class MasterProductsService {
       );
       const availableQty = currentQty - reservedQty;
       if (requestedQty > availableQty) {
-        throw new ConflictException(`申请数量不能大于当前箱号该主表产品可用数量（${availableQty}）`);
+        throw new ConflictException(`?????????????????????${availableQty}?`);
       }
 
       const requestNo = await this.generateFbaRequestNo(tx);
@@ -1054,13 +1070,16 @@ export class MasterProductsService {
     const productId = String(productIdRaw || '').trim();
     const boxCode = normalizeBoxCode(payload.boxCode);
     const skuId = BigInt(payload.skuId ?? 0);
-    const remark = String(payload.remark || '').trim() || '主商品库存入库';
+    const remark = String(payload.remark || '').trim() || '????1?';
 
     if (!productId) {
-      throw new BadRequestException('产品ID不能为空');
+      throw new BadRequestException('??ID????');
     }
     if (!boxCode) {
-      throw new BadRequestException('箱号不能为空');
+      throw new BadRequestException('??????');
+    }
+    if (!skuId || skuId <= 0n) {
+      throw new BadRequestException('??SKU????');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -1091,16 +1110,16 @@ export class MasterProductsService {
       ]);
 
       if (!product) {
-        throw new NotFoundException('未找到产品主表信息');
+        throw new NotFoundException('?????????');
       }
       if (!sku) {
-        throw new NotFoundException('未找到SKU信息');
+        throw new NotFoundException('?????SKU');
       }
       if (String(sku.productId || '').trim() !== productId) {
-        throw new ConflictException('所选SKU不属于当前主表产品');
+        throw new ConflictException('??SKU?????????');
       }
       if (!box) {
-        throw new NotFoundException('未找到箱号信息');
+        throw new NotFoundException('???????');
       }
 
       const currentInventory = await tx.masterProductBoxInventory.findUnique({
@@ -1113,7 +1132,7 @@ export class MasterProductsService {
       });
       const beforeQty = Number(currentInventory?.qty ?? 0);
       if (beforeQty <= 0) {
-        throw new ConflictException('当前箱号下该主表产品无可用库存，无法出库');
+        throw new ConflictException('?????????????????');
       }
 
       const afterQty = beforeQty - 1;
@@ -1184,11 +1203,11 @@ export class MasterProductsService {
         boxCode: box.boxCode,
         qtyDelta: -1,
         boxQty: afterQty,
-        stockQty: totalQty,
-      };
     });
   }
 
+  async outboundOneByProduct(
+    });
   async outboundOneByProduct(
     productIdRaw: string,
     payload: CreateMasterProductOutboundOneDto,
@@ -1197,13 +1216,13 @@ export class MasterProductsService {
   ): Promise<unknown> {
     const productId = String(productIdRaw || '').trim();
     const boxCode = normalizeBoxCode(payload.boxCode);
-    const remark = String(payload.remark || '').trim() || '主商品库存出库';
+    const remark = String(payload.remark || '').trim() || '????1?';
 
     if (!productId) {
-      throw new BadRequestException('产品ID不能为空');
+      throw new BadRequestException('??ID????');
     }
     if (!boxCode) {
-      throw new BadRequestException('箱号不能为空');
+      throw new BadRequestException('??????');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -1226,10 +1245,10 @@ export class MasterProductsService {
       ]);
 
       if (!product) {
-        throw new NotFoundException('未找到产品主表信息');
+        throw new NotFoundException('?????????');
       }
       if (!box) {
-        throw new NotFoundException('未找到箱号信息');
+        throw new NotFoundException('???????');
       }
 
       const currentInventory = await tx.masterProductBoxInventory.findUnique({
@@ -1242,7 +1261,7 @@ export class MasterProductsService {
       });
       const beforeQty = Number(currentInventory?.qty ?? 0);
       if (beforeQty <= 0) {
-        throw new ConflictException('当前箱号下该主表产品无可用库存，无法出库');
+        throw new ConflictException('?????????????????');
       }
 
       const afterQty = beforeQty - 1;
@@ -1306,8 +1325,8 @@ export class MasterProductsService {
       return {
         productId,
         boxCode: box.boxCode,
-        qtyDelta: -1,
-        boxQty: afterQty,
+    });
+  }
         stockQty: totalQty,
       };
     });
@@ -1343,18 +1362,18 @@ export class MasterProductsService {
     try {
       workbook = XLSX.read(fileBuffer, { type: 'buffer' });
     } catch {
-      throw new BadRequestException('无法解析 Excel 文件');
+      throw new BadRequestException('???? Excel ??');
     }
 
     const firstSheet = workbook.SheetNames[0];
     if (!firstSheet) {
-      throw new BadRequestException('Excel 中未找到可读取的工作表');
+      throw new BadRequestException('Excel ??????');
     }
 
     const sheet = workbook.Sheets[firstSheet];
     const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
     if (!rawRows.length) {
-      throw new BadRequestException('Excel 中没有数据');
+      throw new BadRequestException('Excel ?????');
     }
 
     const resultByProductId = new Map<string, MasterProductImportRow>();
@@ -1369,7 +1388,7 @@ export class MasterProductsService {
 
       const productId = this.pickField(normalized, MASTER_PRODUCT_COLUMN_ALIASES.productId);
       if (!productId) {
-        errors.push(`第 ${rowNo} 行缺少产品ID`);
+        errors.push(`? ${rowNo} ?????ID`);
         return;
       }
 
@@ -1380,9 +1399,7 @@ export class MasterProductsService {
         );
       } catch (error) {
         errors.push(
-          error instanceof Error
-            ? `第 ${rowNo} 行：${error.message}`
-            : `第 ${rowNo} 行在库数格式无效`,
+          error instanceof Error ? `? ${rowNo} ??${error.message}` : `? ${rowNo} ????????`,
         );
         return;
       }
@@ -1431,7 +1448,7 @@ export class MasterProductsService {
     });
 
     if (errors.length) {
-      throw new BadRequestException(errors.slice(0, 10).join('；'));
+      throw new BadRequestException(errors.slice(0, 10).join('?'));
     }
 
     return Array.from(resultByProductId.values());
@@ -1452,7 +1469,7 @@ export class MasterProductsService {
         },
       });
       if (!response.ok) {
-      throw new InternalServerErrorException(`汐雅产品接口请求失败：HTTP ${response.status}`);
+        throw new InternalServerErrorException(`???????????HTTP ${response.status}`);
       }
       payload = await response.json();
     } catch (error) {
@@ -1460,7 +1477,7 @@ export class MasterProductsService {
         throw error;
       }
       throw new InternalServerErrorException(
-        `汐雅产品接口请求失败：${error instanceof Error ? error.message : '未知错误'}`,
+        `???????????${error instanceof Error ? error.message : '????'}`,
       );
     }
 
@@ -1470,18 +1487,18 @@ export class MasterProductsService {
 
   private extractXiyaRows(payload: unknown): XiyaExternalProductRow[] {
     if (!payload || typeof payload !== 'object') {
-      throw new InternalServerErrorException('汐雅产品接口返回格式无效');
+      throw new InternalServerErrorException('?????????????');
     }
 
     const root = payload as Record<string, unknown>;
     const data = root.data;
     if (!data || typeof data !== 'object') {
-      throw new InternalServerErrorException('汐雅产品接口缺少 data 字段');
+      throw new InternalServerErrorException('?????????? data ??');
     }
 
     const rows = (data as Record<string, unknown>).rows;
     if (!Array.isArray(rows)) {
-      throw new InternalServerErrorException('汐雅产品接口缺少 rows 数据');
+      throw new InternalServerErrorException('?????????? rows ??');
     }
 
     return rows as XiyaExternalProductRow[];
@@ -1494,7 +1511,7 @@ export class MasterProductsService {
     rows.forEach((rawRow, index) => {
       const productId = String(rawRow?.id ?? '').trim();
       if (!productId) {
-        errors.push(`第 ${index + 1} 条缺少产品ID`);
+        errors.push(`? ${index + 1} ???????ID`);
         return;
       }
 
@@ -1533,12 +1550,12 @@ export class MasterProductsService {
         size: this.toNullableText(pickProperty(MASTER_PRODUCT_COLUMN_ALIASES.size)),
         stockQty: null,
       });
-    });
-
     if (errors.length) {
-      throw new BadRequestException(errors.slice(0, 10).join('；'));
+      throw new BadRequestException(errors.slice(0, 10).join('?'));
     }
 
+    return Array.from(resultByProductId.values());
+  }
     return Array.from(resultByProductId.values());
   }
 
@@ -1795,8 +1812,8 @@ export class MasterProductsService {
   private normalizeHeader(value: unknown): string {
     return String(value ?? '')
       .trim()
-      .replace(/[繝ｻ繝ｻ]/g, '(')
-      .replace(/[繝ｻ繝ｻ]/g, ')')
+      .replace(/[・・]/g, '(')
+      .replace(/[・・]/g, ')')
       .replace(/[\s_-]+/g, '')
       .toLowerCase();
   }
@@ -1810,12 +1827,10 @@ export class MasterProductsService {
     }
     return '';
   }
-
-  private toNullableText(value: string): string | null {
+  private toNullableInt(value: string): number | null {
     const text = String(value || '').trim();
-    return text ? text : null;
-  }
-
+    if (!text) {
+      return null;
   private toNullableInt(value: string): number | null {
     const text = String(value || '').trim();
     if (!text) {
@@ -1823,13 +1838,10 @@ export class MasterProductsService {
     }
     const numeric = Number(text);
     if (!Number.isFinite(numeric)) {
-      throw new BadRequestException(`库存数字格式无效：${text}`);
+      throw new BadRequestException(`?????????${text}`);
     }
     return Math.trunc(numeric);
   }
-
-  private getActiveFbaReservedQty(row: {
-    status: string;
     requestedQty: number;
     actualQty: number | null;
   }): number {
@@ -1856,7 +1868,7 @@ export class MasterProductsService {
       }
       candidate = new Date(candidate.getTime() + 1000);
     }
-    throw new ConflictException('生成FBA补货申请单号失败，请稍后重试');
+    throw new ConflictException('FBA陦･雍ｧ逕ｳ隸ｷ蜊募捷逕滓・螟ｱ雍･・瑚ｯｷ遞榊錘驥崎ｯ・);
   }
 
   private chunkRows<T>(rows: T[], size: number): T[][] {

@@ -31,11 +31,17 @@ import {
   SearchSkuDto,
 } from './dto/search-sku.dto';
 import { InventoryService } from './inventory.service';
-
+import { InventoryAdjustService } from './inventory-adjust.service';
+import { FbaReplenishmentResponseDto } from './dto/fba-replenishment-response.dto';
+import { FbaReplenishmentService } from './fba-replenishment.service';
 @Controller('inventory')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class InventoryController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(
+    private readonly inventoryService: InventoryService,
+    private readonly inventoryAdjustService: InventoryAdjustService,
+    private readonly fbaReplenishmentService: FbaReplenishmentService,
+  ) {}
 
   @Get('search')
   async search(@Query() query: SearchSkuDto): Promise<unknown[]> {
@@ -63,7 +69,7 @@ export class InventoryController {
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.inventoryService.createAdjustOrder(payload, user.id, req.requestId);
+    return this.inventoryAdjustService.createAdjustOrder(payload, user.id, req.requestId);
   }
 
   @Post('adjust-orders/:id/confirm')
@@ -72,7 +78,7 @@ export class InventoryController {
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.inventoryService.confirmAdjustOrder(id, user.id, req.requestId);
+    return this.inventoryAdjustService.confirmAdjustOrder(id, user.id, req.requestId);
   }
 
   @Post('manual-adjust')
@@ -81,7 +87,7 @@ export class InventoryController {
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.inventoryService.manualAdjust(payload, user.id, req.requestId);
+    return this.inventoryAdjustService.manualAdjust(payload, user.id, req.requestId);
   }
 
   @Post('move-product-between-boxes')
@@ -90,7 +96,7 @@ export class InventoryController {
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.inventoryService.moveProductBetweenBoxes(payload, user.id, req.requestId);
+    return this.inventoryAdjustService.moveProductBetweenBoxes(payload, user.id, req.requestId);
   }
 
   @Post('fba-replenishments')
@@ -98,8 +104,8 @@ export class InventoryController {
     @Body() payload: CreateFbaReplenishmentDto,
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
-  ): Promise<unknown> {
-    return this.inventoryService.createFbaReplenishment(payload, user.id, req.requestId);
+  ): Promise<FbaReplenishmentResponseDto> {
+    return this.fbaReplenishmentService.createFbaReplenishment(payload, user.id, req.requestId);
   }
 
   @Post('fba-replenishments/:id/confirm')
@@ -108,8 +114,8 @@ export class InventoryController {
     @Body() payload: ConfirmFbaReplenishmentDto,
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
-  ): Promise<unknown> {
-    return this.inventoryService.confirmFbaReplenishment(id, payload, user.id, req.requestId);
+  ): Promise<FbaReplenishmentResponseDto> {
+    return this.fbaReplenishmentService.confirmFbaReplenishment(id, payload, user.id, req.requestId);
   }
 
   @Post('fba-replenishments/outbound')
@@ -118,7 +124,7 @@ export class InventoryController {
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.inventoryService.outboundFbaReplenishments(payload, user.id, req.requestId);
+    return this.fbaReplenishmentService.outboundFbaReplenishments(payload, user.id, req.requestId);
   }
 
   @Post('fba-replenishments/:id/delete')
@@ -127,7 +133,7 @@ export class InventoryController {
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.inventoryService.deleteFbaReplenishment(id, user.id, req.requestId);
+    return this.fbaReplenishmentService.deleteFbaReplenishment(id, user.id, req.requestId);
   }
 
   @Post('fba-replenishments/:id/reopen')
@@ -136,22 +142,22 @@ export class InventoryController {
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.inventoryService.reopenFbaReplenishment(id, user.id, req.requestId);
+    return this.fbaReplenishmentService.reopenFbaReplenishment(id, user.id, req.requestId);
   }
 
   @Get('fba-replenishments')
-  async listFbaReplenishments(): Promise<unknown[]> {
-    return this.inventoryService.listFbaReplenishments();
+  async listFbaReplenishments(): Promise<FbaReplenishmentResponseDto[]> {
+    return this.fbaReplenishmentService.listFbaReplenishments();
   }
 
   @Get('fba-replenishments/pending-summary')
   async getFbaPendingSummary(): Promise<unknown> {
-    return this.inventoryService.getFbaPendingSummary();
+    return this.fbaReplenishmentService.getFbaPendingSummary();
   }
 
   @Get('fba-replenishments/outbound-excel')
   async downloadFbaOutboundExcel(@Res() res: Response): Promise<void> {
-    const file = await this.inventoryService.buildFbaOutboundExcel();
+    const file = await this.fbaReplenishmentService.buildFbaOutboundExcel();
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
