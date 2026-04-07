@@ -8637,6 +8637,18 @@ function bindDelegates() {
     }
   };
 
+  const openInventoryEditByAction = async (event) => {
+    const button = event.target.closest("button[data-action='inventoryEdit']");
+    if (!button) return;
+    const skuId = Number(button.dataset.skuId);
+    if (!Number.isInteger(skuId) || skuId <= 0) return;
+    try {
+      await openEditSkuModal(skuId);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+
   $("inventoryBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -8991,6 +9003,8 @@ function bindDelegates() {
   });
 
   $("inventorySearchResults")?.addEventListener("click", openAdjustByAction);
+  $("inventorySearchResults")?.addEventListener("click", openInventoryEditByAction);
+  $("skuManagementBody")?.addEventListener("click", openInventoryEditByAction);
 
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action='closeCreateSkuModal']");
