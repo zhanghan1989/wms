@@ -105,6 +105,80 @@
                 <tbody id="inventoryDetailSkuBody"></tbody>
               </table>
             </div>
+
+            <div class="master-product-detail-layout">
+              <article class="card master-product-detail-card">
+                <h4>主商品操作</h4>
+                <form id="inventoryDetailManualAdjustForm" class="form-grid">
+                  <label>
+                    入库箱号
+                    <input id="inventoryDetailAdjustBoxCode" placeholder="输入箱号" required />
+                  </label>
+                  <label>
+                    入库数量
+                    <input id="inventoryDetailAdjustQtyDelta" inputmode="numeric" placeholder="输入正整数" required />
+                  </label>
+                  <label>
+                    备注
+                    <input id="inventoryDetailAdjustReason" maxlength="128" placeholder="可选备注" />
+                  </label>
+                  <button type="submit">主商品入库</button>
+                </form>
+
+                <form id="inventoryDetailOutboundOneForm" class="form-grid">
+                  <label>
+                    出库箱号
+                    <input id="inventoryDetailOutboundBoxCode" placeholder="输入箱号" required />
+                  </label>
+                  <label>
+                    备注
+                    <input id="inventoryDetailOutboundRemark" maxlength="10" placeholder="默认：主商品库存出库" />
+                  </label>
+                  <button type="submit">单件出库</button>
+                </form>
+
+                <form id="inventoryDetailFbaForm" class="form-grid">
+                  <label>
+                    关联 SKU
+                    <select id="inventoryDetailFbaSkuId" required>
+                      <option value="">请选择SKU</option>
+                    </select>
+                  </label>
+                  <label>
+                    FBA 箱号
+                    <input id="inventoryDetailFbaBoxCode" placeholder="输入箱号" required />
+                  </label>
+                  <label>
+                    申请数量
+                    <input id="inventoryDetailFbaQty" inputmode="numeric" placeholder="输入正整数" required />
+                  </label>
+                  <label>
+                    备注
+                    <input id="inventoryDetailFbaRemark" maxlength="10" placeholder="默认：FBA补货" />
+                  </label>
+                  <button type="submit">创建 FBA 补货</button>
+                </form>
+              </article>
+
+              <article class="card master-product-detail-card">
+                <h4>箱内库存</h4>
+                <div class="master-product-table-wrap">
+                  <table class="master-product-sku-management-table">
+                    <thead>
+                      <tr>
+                        <th>货架</th>
+                        <th>箱号</th>
+                        <th>当前产品数量</th>
+                        <th>更新时间</th>
+                        <th>同箱其他主商品</th>
+                        <th>快捷填入</th>
+                      </tr>
+                    </thead>
+                    <tbody id="inventoryDetailBoxBody"></tbody>
+                  </table>
+                </div>
+              </article>
+            </div>
           </div>
         </div>
 
@@ -185,20 +259,20 @@
         </article>
 
         <article class="card">
-          <h3>移动产品到新箱子</h3>
+          <h3>移动主商品到新箱子</h3>
           <form id="moveBoxCodeForm" class="form-grid overseas-form overseas-form-five">
             <label>
-              SKU
-              <input id="moveProductSkuId" list="moveProductSkuIdList" placeholder="请输入或选择SKU" required />
-              <datalist id="moveProductSkuIdList"></datalist>
+              产品ID
+              <input id="moveProductProductId" list="moveProductProductIdList" placeholder="请输入或选择产品ID" required />
+              <datalist id="moveProductProductIdList"></datalist>
             </label>
             <label>
               <span class="label-inline-note">
                 旧箱号
-                <span id="moveProductOldBoxHint" class="inline-note hidden">（该SKU存在多个箱号，请手动指定旧箱号。）</span>
+                <span id="moveProductOldBoxHint" class="inline-note hidden">（该主商品存在多个箱号，请手动指定旧箱号。）</span>
               </span>
               <select id="moveProductOldBoxCode" required>
-                <option value="">请先选择SKU</option>
+                <option value="">请先选择产品ID</option>
               </select>
             </label>
             <label>
@@ -220,7 +294,7 @@
               新货架
               <input id="moveProductNewShelfCode" readonly placeholder="根据新箱号自动显示" />
             </label>
-            <button type="submit">移动产品到新箱子</button>
+            <button type="submit">移动主商品到新箱子</button>
           </form>
         </article>
       </section>
@@ -938,22 +1012,8 @@
           <select id="modalNewShop"></select>
         </label>
         <label class="create-sku-right-col">FNSKU<input id="modalNewFnsku" /></label>
-        <label class="create-sku-left-col">箱号
-          <input
-            id="modalNewSkuBoxCode"
-            list="modalNewSkuBoxCodeList"
-            placeholder="请选择已有箱号或者新增箱号"
-            inputmode="numeric"
-            required
-          />
-          <datalist id="modalNewSkuBoxCodeList"></datalist>
-        </label>
         <label class="create-sku-right-col">FBMSKU<input id="modalNewFbmSku" /></label>
-        <div class="create-sku-box-action create-sku-left-col">
-          <button type="button" id="openCreateBoxFromSkuModal" class="small-btn">新增箱号</button>
-        </div>
         <label class="create-sku-right-col">rbSKU<input id="modalNewErpSku" /></label>
-        <label class="create-sku-left-col">入库数<input id="modalNewSkuQty" type="number" min="1" value="1" required /></label>
         <div class="modal-actions">
           <button type="submit">确认新增</button>
           <button type="button" class="ghost" data-action="closeCreateSkuModal">取消</button>

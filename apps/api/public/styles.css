@@ -276,13 +276,6 @@ h3 {
   grid-template-columns: repeat(2, minmax(180px, 1fr));
 }
 
-.create-sku-box-action {
-  grid-column: 1 / 2;
-  align-self: end;
-  display: flex;
-  justify-content: flex-start;
-}
-
 .create-sku-left-col {
   grid-column: 1 / 2;
 }
@@ -308,21 +301,6 @@ h3 {
 #createSkuModalForm label:has(#modalNewShop) {
   grid-column: 1 / 2;
   grid-row: 3;
-}
-
-#createSkuModalForm label:has(#modalNewSkuBoxCode) {
-  grid-column: 1 / 2;
-  grid-row: 4;
-}
-
-#createSkuModalForm .create-sku-box-action {
-  grid-column: 1 / 2;
-  grid-row: 5;
-}
-
-#createSkuModalForm label:has(#modalNewSkuQty) {
-  grid-column: 1 / 2;
-  grid-row: 6;
 }
 
 #createSkuModalForm label:has(#modalNewSku) {
@@ -1515,8 +1493,7 @@ button.danger-solid {
   }
 
   .create-sku-left-col,
-  .create-sku-right-col,
-  .create-sku-box-action {
+  .create-sku-right-col {
     grid-column: 1 / -1;
   }
 
