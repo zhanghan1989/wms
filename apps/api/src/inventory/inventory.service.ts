@@ -132,6 +132,8 @@ const BULK_UPDATE_DEFAULT_SHELF_CODE = '00';
 // Historical default shelf codes may still exist in old data and must keep resolving here.
 const BULK_UPDATE_COMPAT_SHELF_CODES = ['S-00', 'Z-0'];
 const BULK_UPDATE_DEFAULT_SHELF_NAME = '默认货架';
+const BULK_UPDATE_MAX_BOX_CODE_LENGTH = 128;
+const BULK_UPDATE_MAX_PRODUCT_ID_LENGTH = 128;
 const MASTER_PRODUCT_BOX_SHELF_SELECT = {
   id: true,
   shelfCode: true,
@@ -155,8 +157,52 @@ const ANOMALY_RATIO = 2;
 
 function normalizeImportHeaderValue(header: string): string {
   return String(header || '')
-    .replace(/[\s_\-()\[\]]/g, '')
+    .replace(/[\s_\-()\[\]（）【】]/g, '')
     .toLowerCase();
+}
+
+function validateBulkInventoryImportRows(
+  rows: Array<{ boxCode: string; productId: string; qty: number }>,
+): void {
+  const errors: string[] = [];
+
+  rows.forEach((row, index) => {
+    const rowNo = index + 2;
+
+    if (row.boxCode.length > BULK_UPDATE_MAX_BOX_CODE_LENGTH) {
+      errors.push(`第${rowNo}行箱号超长，最多 ${BULK_UPDATE_MAX_BOX_CODE_LENGTH} 个字符`);
+    }
+
+    if (row.productId.length > BULK_UPDATE_MAX_PRODUCT_ID_LENGTH) {
+      errors.push(`第${rowNo}行产品ID超长，最多 ${BULK_UPDATE_MAX_PRODUCT_ID_LENGTH} 个字符`);
+    }
+
+    if (!Number.isInteger(row.qty) || row.qty < 0) {
+      errors.push(`第${rowNo}行数量必须是大于等于 0 的整数`);
+    }
+  });
+
+  if (errors.length > 0) {
+    throw new BadRequestException(errors.join(' | '));
+  }
+}
+
+function buildBulkInventoryImportDatabaseError(
+  error: Prisma.PrismaClientKnownRequestError,
+): BadRequestException {
+  if (error.code === 'P2000') {
+    return new BadRequestException('Excel 中存在超长字段，请检查箱号、产品ID、备注等字段长度');
+  }
+
+  if (error.code === 'P2002') {
+    return new BadRequestException('数据库中已存在重复唯一值，请检查箱号和产品ID组合是否异常');
+  }
+
+  if (error.code === 'P2003') {
+    return new BadRequestException('存在无效关联数据，请检查产品ID是否存在、箱号是否可用');
+  }
+
+  return new BadRequestException('批量更新库存失败，请检查 Excel 数据后重试');
 }
 
 @Injectable()
@@ -1518,255 +1564,271 @@ async function importBulkUpdateExcelByProduct(
       productId: String(row.productId || row.sku || '').trim(),
       qty: Number(row.qty ?? 0),
     }));
+  validateBulkInventoryImportRows(rows);
   const productIds = Array.from(new Set(rows.map((row) => row.productId).filter(Boolean)));
   const boxCodes = Array.from(new Set(rows.map((row) => row.boxCode)));
   const equivalentBoxCodes = Array.from(
     new Set(boxCodes.flatMap((boxCode) => buildEquivalentBoxCodes(boxCode))),
   );
 
-  return this.prisma.$transaction(async (tx) => {
-    const [products, boxes] = await Promise.all([
-      tx.masterProduct.findMany({
-        where: {
-          productId: { in: productIds },
-        },
-        select: {
-          id: true,
-          productId: true,
-          productName: true,
-          stockQty: true,
-        },
-      }),
-      tx.box.findMany({
-        where: {
-          boxCode: { in: equivalentBoxCodes },
-        },
-        select: {
-          id: true,
-          boxCode: true,
-          status: true,
-          shelf: {
-            select: {
-              status: true,
+  try {
+    return await this.prisma.$transaction(async (tx) => {
+      const [products, boxes] = await Promise.all([
+        tx.masterProduct.findMany({
+          where: {
+            productId: { in: productIds },
+          },
+          select: {
+            id: true,
+            productId: true,
+            productName: true,
+            stockQty: true,
+          },
+        }),
+        tx.box.findMany({
+          where: {
+            boxCode: { in: equivalentBoxCodes },
+          },
+          select: {
+            id: true,
+            boxCode: true,
+            status: true,
+            shelf: {
+              select: {
+                status: true,
+              },
             },
           },
-        },
-      }),
-    ]);
+        }),
+      ]);
 
-    const productById = new Map(products.map((item) => [item.productId, item]));
-    const missingProductIds = productIds.filter((productId) => !productById.has(productId));
-    if (missingProductIds.length > 0) {
-      const preview = missingProductIds.slice(0, 20).join('、');
-      const suffix = missingProductIds.length > 20 ? ' 等' : '';
-      throw new UnprocessableEntityException(`以下产品ID不存在：${preview}${suffix}`);
-    }
-
-    const boxByCode = new Map<
-      string,
-      {
-        id: bigint;
-        boxCode: string;
-        status: number;
-        shelf: { status: number } | null;
+      const productById = new Map(products.map((item) => [item.productId, item]));
+      const missingProductIds = productIds.filter((productId) => !productById.has(productId));
+      if (missingProductIds.length > 0) {
+        const preview = missingProductIds.slice(0, 20).join('、');
+        const suffix = missingProductIds.length > 20 ? ' 等' : '';
+        throw new UnprocessableEntityException(`以下产品ID不存在：${preview}${suffix}`);
       }
-    >(boxes.map((item) => [normalizeBoxCode(item.boxCode) || item.boxCode, item]));
 
-    const missingBoxCodes = boxCodes.filter((boxCode) => !boxByCode.has(boxCode));
-    if (missingBoxCodes.length > 0) {
-      const defaultShelf = await this.resolveOrCreateBulkUpdateDefaultShelf(tx, operatorId, requestId);
+      const boxByCode = new Map<
+        string,
+        {
+          id: bigint;
+          boxCode: string;
+          status: number;
+          shelf: { status: number } | null;
+        }
+      >(boxes.map((item) => [normalizeBoxCode(item.boxCode) || item.boxCode, item]));
 
-      for (const boxCode of missingBoxCodes) {
-        const resolvedBox = await this.resolveOrCreateBulkUpdateBox(
+      const missingBoxCodes = boxCodes.filter((boxCode) => !boxByCode.has(boxCode));
+      if (missingBoxCodes.length > 0) {
+        const defaultShelf = await this.resolveOrCreateBulkUpdateDefaultShelf(tx, operatorId, requestId);
+
+        for (const boxCode of missingBoxCodes) {
+          const resolvedBox = await this.resolveOrCreateBulkUpdateBox(
+            tx,
+            boxCode,
+            defaultShelf.id,
+            operatorId,
+            requestId,
+          );
+
+          const mappedBox = {
+            id: resolvedBox.id,
+            boxCode: resolvedBox.boxCode,
+            status: resolvedBox.status,
+            shelf: { status: resolvedBox.shelfStatus },
+          };
+          boxByCode.set(boxCode, mappedBox);
+          boxByCode.set(resolvedBox.boxCode, mappedBox);
+        }
+      }
+
+      const disabledBoxCodes = Array.from(boxByCode.values())
+        .filter((item) => Number(item.status) !== 1 || Number(item.shelf?.status ?? 0) !== 1)
+        .map((item) => item.boxCode);
+      if (disabledBoxCodes.length > 0) {
+        const preview = disabledBoxCodes.slice(0, 20).join('、');
+        const suffix = disabledBoxCodes.length > 20 ? ' 等' : '';
+        throw new UnprocessableEntityException(`以下箱号未启用，请先启用后再更新库存：${preview}${suffix}`);
+      }
+
+      const targets = rows.map((row) => {
+        const product = productById.get(row.productId);
+        const box = boxByCode.get(row.boxCode);
+        if (!product || !box) {
+          throw new UnprocessableEntityException('批量更新库存数据无效');
+        }
+        return {
+          productEntityId: product.id,
+          productId: product.productId,
+          productName: product.productName,
+          beforeStockQty: Number(product.stockQty ?? 0),
+          boxId: box.id,
+          boxCode: box.boxCode,
+          qty: row.qty,
+        };
+      });
+
+      const inventoryRows = await findMasterProductBoxInventoryByPairs(tx, targets, {
+        select: {
+          boxId: true,
+          productId: true,
+          qty: true,
+        },
+      });
+
+      const inventoryQtyByBoxProduct = new Map<string, number>();
+      inventoryRows.forEach((row) => {
+        inventoryQtyByBoxProduct.set(
+          getBoxProductInventoryKey(row.boxId, row.productId),
+          Number(row.qty ?? 0),
+        );
+      });
+
+      const adjustItems: Array<{
+        boxId: bigint;
+        boxCode: string;
+        productEntityId: bigint;
+        productId: string;
+        productName: string | null;
+        beforeStockQty: number;
+        beforeQty: number;
+        afterQty: number;
+        qtyDelta: number;
+      }> = [];
+
+      targets.forEach((target) => {
+        const key = getBoxProductInventoryKey(target.boxId, target.productId);
+        const currentQty = inventoryQtyByBoxProduct.get(key) ?? 0;
+        const delta = target.qty - currentQty;
+        if (delta === 0) return;
+        adjustItems.push({
+          boxId: target.boxId,
+          boxCode: target.boxCode,
+          productEntityId: target.productEntityId,
+          productId: target.productId,
+          productName: target.productName ?? null,
+          beforeStockQty: target.beforeStockQty,
+          beforeQty: currentQty,
+          afterQty: target.qty,
+          qtyDelta: delta,
+        });
+      });
+
+      const changedProductCount = new Set(adjustItems.map((item) => item.productId)).size;
+
+      if (adjustItems.length === 0) {
+        return {
+          totalRows: rows.length,
+          changedProductCount: 0,
+          changedSkuCount: 0,
+          changedItemCount: 0,
+          changedRows: 0,
+          fileName: originalName ?? null,
+          adjustNo: null,
+        };
+      }
+
+      for (const item of adjustItems) {
+        if (item.afterQty <= 0) {
+          await tx.masterProductBoxInventory.deleteMany({
+            where: {
+              boxId: item.boxId,
+              productId: item.productId,
+            },
+          });
+        } else {
+          await upsertMasterProductBoxInventoryQty(
+            tx,
+            item.boxId,
+            item.productId,
+            item.afterQty,
+          );
+        }
+      }
+
+      const stockQtyByProductId = new Map<string, number>();
+      for (const productId of new Set(adjustItems.map((item) => item.productId))) {
+        const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
+        stockQtyByProductId.set(productId, totalQty);
+      }
+
+      for (const item of adjustItems) {
+        const afterStockQty = stockQtyByProductId.get(item.productId) ?? 0;
+
+        await createBoxInventoryAudit({
+          auditService: this.auditService,
           tx,
-          boxCode,
-          defaultShelf.id,
+          entityId: item.boxId,
+          eventType:
+            item.qtyDelta > 0
+              ? AuditEventType.BOX_STOCK_INCREASED
+              : AuditEventType.BOX_STOCK_OUTBOUND,
+          beforeData: {
+            scope: 'master_product',
+            productId: item.productId,
+            productName: item.productName,
+            qty: item.beforeQty,
+          },
+          afterData: {
+            scope: 'master_product',
+            productId: item.productId,
+            productName: item.productName,
+            qty: item.afterQty,
+            qtyDelta: item.qtyDelta,
+          },
           operatorId,
           requestId,
-        );
+          remark: originalName ? `bulk-inventory-update:${originalName}` : 'bulk-inventory-update',
+        });
 
-        const mappedBox = {
-          id: resolvedBox.id,
-          boxCode: resolvedBox.boxCode,
-          status: resolvedBox.status,
-          shelf: { status: resolvedBox.shelfStatus },
-        };
-        boxByCode.set(boxCode, mappedBox);
-        boxByCode.set(resolvedBox.boxCode, mappedBox);
+        await createMasterProductInventoryAdjustAudit({
+          auditService: this.auditService,
+          tx,
+          entityId: item.productEntityId,
+          beforeData: {
+            productId: item.productId,
+            productName: item.productName,
+            stockQty: item.beforeStockQty,
+          },
+          afterData: {
+            productId: item.productId,
+            productName: item.productName,
+            stockQty: afterStockQty,
+            boxCode: item.boxCode,
+            qtyDelta: item.qtyDelta,
+          },
+          operatorId,
+          requestId,
+          remark: originalName ? `bulk-inventory-update:${originalName}` : 'bulk-inventory-update',
+        });
       }
-    }
 
-    const disabledBoxCodes = Array.from(boxByCode.values())
-      .filter((item) => Number(item.status) !== 1 || Number(item.shelf?.status ?? 0) !== 1)
-      .map((item) => item.boxCode);
-    if (disabledBoxCodes.length > 0) {
-      const preview = disabledBoxCodes.slice(0, 20).join('、');
-      const suffix = disabledBoxCodes.length > 20 ? ' 等' : '';
-      throw new UnprocessableEntityException(`以下箱号未启用，请先启用后再更新库存：${preview}${suffix}`);
-    }
-
-    const targets = rows.map((row) => {
-      const product = productById.get(row.productId);
-      const box = boxByCode.get(row.boxCode);
-      if (!product || !box) {
-        throw new UnprocessableEntityException('批量更新库存数据无效');
-      }
-      return {
-        productEntityId: product.id,
-        productId: product.productId,
-        productName: product.productName,
-        beforeStockQty: Number(product.stockQty ?? 0),
-        boxId: box.id,
-        boxCode: box.boxCode,
-        qty: row.qty,
-      };
-    });
-
-    const inventoryRows = await findMasterProductBoxInventoryByPairs(tx, targets, {
-      select: {
-        boxId: true,
-        productId: true,
-        qty: true,
-      },
-    });
-
-    const inventoryQtyByBoxProduct = new Map<string, number>();
-    inventoryRows.forEach((row) => {
-      inventoryQtyByBoxProduct.set(
-        getBoxProductInventoryKey(row.boxId, row.productId),
-        Number(row.qty ?? 0),
-      );
-    });
-
-    const adjustItems: Array<{
-      boxId: bigint;
-      boxCode: string;
-      productEntityId: bigint;
-      productId: string;
-      productName: string | null;
-      beforeStockQty: number;
-      beforeQty: number;
-      afterQty: number;
-      qtyDelta: number;
-    }> = [];
-
-    targets.forEach((target) => {
-      const key = getBoxProductInventoryKey(target.boxId, target.productId);
-      const currentQty = inventoryQtyByBoxProduct.get(key) ?? 0;
-      const delta = target.qty - currentQty;
-      if (delta === 0) return;
-      adjustItems.push({
-        boxId: target.boxId,
-        boxCode: target.boxCode,
-        productEntityId: target.productEntityId,
-        productId: target.productId,
-        productName: target.productName ?? null,
-        beforeStockQty: target.beforeStockQty,
-        beforeQty: currentQty,
-        afterQty: target.qty,
-        qtyDelta: delta,
-      });
-    });
-
-    const changedProductCount = new Set(adjustItems.map((item) => item.productId)).size;
-
-    if (adjustItems.length === 0) {
       return {
         totalRows: rows.length,
-        changedProductCount: 0,
-        changedSkuCount: 0,
-        changedItemCount: 0,
-        changedRows: 0,
+        changedProductCount,
+        changedSkuCount: changedProductCount,
+        changedItemCount: adjustItems.length,
+        changedRows: adjustItems.length,
         fileName: originalName ?? null,
         adjustNo: null,
       };
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      throw buildBulkInventoryImportDatabaseError(error);
     }
 
-    for (const item of adjustItems) {
-      if (item.afterQty <= 0) {
-        await tx.masterProductBoxInventory.deleteMany({
-          where: {
-            boxId: item.boxId,
-            productId: item.productId,
-          },
-        });
-      } else {
-        await upsertMasterProductBoxInventoryQty(
-          tx,
-          item.boxId,
-          item.productId,
-          item.afterQty,
-        );
-      }
+    if (
+      error instanceof Prisma.PrismaClientUnknownRequestError ||
+      error instanceof Prisma.PrismaClientValidationError
+    ) {
+      throw new BadRequestException('批量更新库存失败，请检查 Excel 数据后重试');
     }
 
-    const stockQtyByProductId = new Map<string, number>();
-    for (const productId of new Set(adjustItems.map((item) => item.productId))) {
-      const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
-      stockQtyByProductId.set(productId, totalQty);
-    }
-
-    for (const item of adjustItems) {
-      const afterStockQty = stockQtyByProductId.get(item.productId) ?? 0;
-
-      await createBoxInventoryAudit({
-        auditService: this.auditService,
-        tx,
-        entityId: item.boxId,
-        eventType:
-          item.qtyDelta > 0
-            ? AuditEventType.BOX_STOCK_INCREASED
-            : AuditEventType.BOX_STOCK_OUTBOUND,
-        beforeData: {
-          scope: 'master_product',
-          productId: item.productId,
-          productName: item.productName,
-          qty: item.beforeQty,
-        },
-        afterData: {
-          scope: 'master_product',
-          productId: item.productId,
-          productName: item.productName,
-          qty: item.afterQty,
-          qtyDelta: item.qtyDelta,
-        },
-        operatorId,
-        requestId,
-        remark: originalName ? `bulk-inventory-update:${originalName}` : 'bulk-inventory-update',
-      });
-
-      await createMasterProductInventoryAdjustAudit({
-        auditService: this.auditService,
-        tx,
-        entityId: item.productEntityId,
-        beforeData: {
-          productId: item.productId,
-          productName: item.productName,
-          stockQty: item.beforeStockQty,
-        },
-        afterData: {
-          productId: item.productId,
-          productName: item.productName,
-          stockQty: afterStockQty,
-          boxCode: item.boxCode,
-          qtyDelta: item.qtyDelta,
-        },
-        operatorId,
-        requestId,
-        remark: originalName ? `bulk-inventory-update:${originalName}` : 'bulk-inventory-update',
-      });
-    }
-
-    return {
-      totalRows: rows.length,
-      changedProductCount,
-      changedSkuCount: changedProductCount,
-      changedItemCount: adjustItems.length,
-      changedRows: adjustItems.length,
-      fileName: originalName ?? null,
-      adjustNo: null,
-    };
-  });
+    throw error;
+  }
 };
 
 function parseBulkInventoryUpdateRowsByProduct(
