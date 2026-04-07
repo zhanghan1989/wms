@@ -674,6 +674,10 @@ button.ghost {
   white-space: nowrap;
 }
 
+.inventory-detail-box-footer {
+  margin-top: 18px;
+}
+
 .overseas-form {
   align-items: end;
 }
