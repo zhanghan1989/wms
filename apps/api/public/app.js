@@ -4559,6 +4559,7 @@ function renderProductEditRequestDetail(item) {
     ["productId", "产品ID"],
     ["shop", "所属亚马逊店铺"],
     ["remark", "备注"],
+    ["sku", "SKU"],
     ["asin", "ASIN"],
     ["fnsku", "FNSKU"],
     ["fbmSku", "FBMSKU"],
