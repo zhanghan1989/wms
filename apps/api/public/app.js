@@ -110,6 +110,7 @@ let errorModalCountdownTimer = null;
 let errorModalAutoAction = null;
 let inventoryHomeLoadObserver = null;
 let productEditRequestLoadObserver = null;
+let skuProductLookupToken = 0;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 const $ = (id) => document.getElementById(id);
@@ -3767,6 +3768,7 @@ async function openEditSkuModal(skuId) {
 
   $("editSkuId").value = String(sku.id);
   $("editProductId").value = sku.productId || "";
+  $("editProductName").value = sku.productName || "";
   renderShopOptionsForSelect("editShop", "请选择店铺", sku.shop || "");
   $("editRemark").value = sku.remark || "";
   $("editSku").value = sku.sku || "";
@@ -3774,6 +3776,7 @@ async function openEditSkuModal(skuId) {
   $("editAsin").value = sku.asin || "";
   $("editFnsku").value = sku.fnsku || "";
   $("editFbmSku").value = sku.fbmSku || "";
+  await syncSkuProductName("editProductId", "editProductName");
   openModal("editSkuModal");
 }
 
@@ -3799,6 +3802,14 @@ async function submitEditSkuForm() {
     fnsku: toNullableValue("editFnsku"),
     fbmSku: toNullableValue("editFbmSku"),
   };
+
+  if (payload.productId) {
+    const matchedProduct = await syncSkuProductName("editProductId", "editProductName");
+    if (!matchedProduct?.productId) {
+      throw new Error("未匹配到产品名称，请确认产品ID");
+    }
+    payload.productId = matchedProduct.productId;
+  }
 
   await request("/sku-edit-requests", {
     method: "POST",
@@ -3908,6 +3919,59 @@ function getKnownMasterProductsSorted() {
   return [...productMap.values()].sort((a, b) =>
     String(a.productId || "").localeCompare(String(b.productId || ""), "en", { numeric: true }),
   );
+}
+
+async function findMasterProductByProductId(productId) {
+  const normalizedId = String(productId || "").trim();
+  if (!normalizedId) return null;
+
+  const localMatch = getKnownMasterProductsSorted().find(
+    (item) => String(item?.productId || "").trim().toUpperCase() === normalizedId.toUpperCase(),
+  );
+  if (localMatch) {
+    return localMatch;
+  }
+
+  const params = new URLSearchParams({
+    page: "1",
+    pageSize: "20",
+    keyword: normalizedId,
+  });
+  const result = await request(`/master-products?${params.toString()}`);
+  const rows = Array.isArray(result?.items) ? result.items : [];
+  const remoteMatch = rows.find(
+    (item) => String(item?.productId || "").trim().toUpperCase() === normalizedId.toUpperCase(),
+  );
+  return remoteMatch || null;
+}
+
+async function syncSkuProductName(productInputId, productNameInputId, { normalizeProductId = true } = {}) {
+  const productInput = $(productInputId);
+  const productNameInput = $(productNameInputId);
+  if (!productInput || !productNameInput) return null;
+
+  const rawProductId = String(productInput.value || "").trim();
+  if (!rawProductId) {
+    productNameInput.value = "";
+    return null;
+  }
+
+  const lookupToken = ++skuProductLookupToken;
+  const matched = await findMasterProductByProductId(rawProductId);
+  if (lookupToken !== skuProductLookupToken) {
+    return matched;
+  }
+
+  if (matched?.productId) {
+    if (normalizeProductId) {
+      productInput.value = matched.productId;
+    }
+    productNameInput.value = String(matched.productName || "").trim();
+    return matched;
+  }
+
+  productNameInput.value = "";
+  return null;
 }
 
 function renderMasterProductOptionsForInput(inputId, listId) {
@@ -6188,7 +6252,7 @@ async function moveProductBetweenBoxes({ productId, oldBoxCode, newBoxCode }) {
   return request("/inventory/move-product-between-boxes", {
     method: "POST",
     body: JSON.stringify({
-      productId,
+      productId: normalizedProductId,
       fromBoxCode: oldBoxCode,
       toBoxCode: newBoxCode,
     }),
@@ -6380,6 +6444,15 @@ async function createSkuFromModal() {
   const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
   if (possibleDuplicate.some((item) => item.sku === sku)) {
     throw new Error("SKU 已存在");
+  }
+
+  let normalizedProductId = productId;
+  if (normalizedProductId) {
+    const matchedProduct = await syncSkuProductName("modalNewProductId", "modalNewProductName");
+    if (!matchedProduct?.productId) {
+      throw new Error("未匹配到产品名称，请确认产品ID");
+    }
+    normalizedProductId = matchedProduct.productId;
   }
 
   await request("/skus", {
@@ -7259,6 +7332,19 @@ function bindForms() {
     renderSkuManagementTable();
   });
 
+  $("modalNewProductId").addEventListener("input", () => {
+    syncSkuProductName("modalNewProductId", "modalNewProductName").catch(() => {});
+  });
+  $("modalNewProductId").addEventListener("blur", () => {
+    syncSkuProductName("modalNewProductId", "modalNewProductName").catch(() => {});
+  });
+  $("editProductId").addEventListener("input", () => {
+    syncSkuProductName("editProductId", "editProductName").catch(() => {});
+  });
+  $("editProductId").addEventListener("blur", () => {
+    syncSkuProductName("editProductId", "editProductName").catch(() => {});
+  });
+
   $("backToInventoryListBtn").addEventListener("click", () => {
     state.inventoryHomeSelectedDetail = null;
     setInventoryDisplayMode(false);
@@ -7628,6 +7714,7 @@ function bindForms() {
       showToast(error.message, true),
     );
     $("createSkuModalForm").reset();
+    $("modalNewProductName").value = "";
     renderShopOptionsForSelect("modalNewShop", "请选择店铺");
     openModal("createSkuModal");
   });
