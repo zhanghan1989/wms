@@ -9439,6 +9439,16 @@ function bindDelegates() {
       resolveDeleteConfirm(false);
       return;
     }
+    const deleteConfirmOk = event.target.closest("#deleteConfirmOkBtn");
+    if (deleteConfirmOk) {
+      resolveDeleteConfirm(true);
+      return;
+    }
+    const deleteConfirmCancel = event.target.closest("#deleteConfirmCancelBtn");
+    if (deleteConfirmCancel) {
+      resolveDeleteConfirm(false);
+      return;
+    }
     const actionConfirmClose = event.target.closest("button[data-action='closeActionConfirmModal']");
     if (actionConfirmClose) {
       resolveActionConfirm(false);
@@ -9620,14 +9630,6 @@ function bindDelegates() {
     if (event.target === event.currentTarget) {
       closeModal("fbaOutboundModal");
     }
-  });
-
-  $("deleteConfirmOkBtn").addEventListener("click", () => {
-    resolveDeleteConfirm(true);
-  });
-
-  $("deleteConfirmCancelBtn").addEventListener("click", () => {
-    resolveDeleteConfirm(false);
   });
 
   $("deleteConfirmModal").addEventListener("click", (event) => {
