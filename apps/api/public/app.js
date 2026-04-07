@@ -105,6 +105,7 @@ let modalZIndexSeed = 20;
 let errorModalAutoActionTimer = null;
 let errorModalCountdownTimer = null;
 let errorModalAutoAction = null;
+let inventoryHomeLoadObserver = null;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 const $ = (id) => document.getElementById(id);
@@ -3150,6 +3151,31 @@ function maybeAutoLoadInventoryHome() {
   loadInventoryHomeProducts({ reset: false }).catch((error) => {
     showToast(error.message, true);
   });
+}
+
+function setupInventoryHomeLoadObserver() {
+  if (inventoryHomeLoadObserver) {
+    inventoryHomeLoadObserver.disconnect();
+    inventoryHomeLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("inventoryHomeTableWrap");
+  const sentinel = $("inventoryHomeLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  inventoryHomeLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreInventoryIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  inventoryHomeLoadObserver.observe(sentinel);
 }
 
 function getSkuManagementFilteredRows() {
@@ -9577,6 +9603,7 @@ function bindRefresh() {
 
 ensureBrandingUi();
 ensureInventoryPanelUi();
+setupInventoryHomeLoadObserver();
 ensureOverseasWarehouseQueryUi();
 renderStocktakePlanner();
 bindTabs();

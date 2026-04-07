@@ -921,6 +921,10 @@ td {
   max-height: 70vh;
 }
 
+.inventory-home-load-sentinel {
+  height: 1px;
+}
+
 .master-product-sku-table {
   min-width: 720px;
 }
