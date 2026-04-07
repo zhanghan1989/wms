@@ -260,9 +260,13 @@ h3 {
 }
 
 .inventory-search-form {
-  grid-template-columns: minmax(240px, 33%) 100px 150px;
+  grid-template-columns: minmax(420px, 46%) 100px 150px;
   justify-content: start;
   align-items: end;
+}
+
+.inventory-search-note {
+  margin: 0 0 10px;
 }
 
 .adjust-box-row {
