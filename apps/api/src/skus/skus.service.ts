@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -413,7 +414,21 @@ export class SkusService {
     requestId?: string,
   ): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'skuId');
-    const sku = await this.prisma.sku.findUnique({ where: { id } });
+    const [sku, operator] = await Promise.all([
+      this.prisma.sku.findUnique({ where: { id } }),
+      this.prisma.user.findUnique({
+        where: { id: operatorId },
+        select: {
+          role: true,
+          status: true,
+        },
+      }),
+    ]);
+    const isSystemAdmin =
+      String(operator?.role ?? '') === 'system_admin' && Number(operator?.status ?? 0) === 1;
+    if (!isSystemAdmin) {
+      throw new ForbiddenException('Only system administrators can delete SKUs');
+    }
     if (!sku) {
       throw new NotFoundException('SKU not found');
     }

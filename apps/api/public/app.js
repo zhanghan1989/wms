@@ -991,6 +991,10 @@ function hasAdminAccess(role) {
   return ["admin", "system_admin"].includes(String(role || ""));
 }
 
+function isCurrentUserSystemAdmin() {
+  return String(state.me?.role || "") === "system_admin" && Number(state.me?.status ?? 0) === 1;
+}
+
 function getDepartmentText(department) {
   const code = String(department || "");
   if (!code) return "";
@@ -2968,6 +2972,19 @@ function renderEditButton(skuId) {
   return `<button class="tiny-btn" data-action="inventoryEdit" data-sku-id="${skuId}">编辑</button>`;
 }
 
+function renderSkuManagementActions(skuId, skuCode = "") {
+  const editButton = renderEditButton(skuId);
+  if (!isCurrentUserSystemAdmin()) {
+    return editButton;
+  }
+  return `
+    <div class="action-row">
+      ${editButton}
+      <button class="tiny-btn danger" data-action="deleteSkuRow" data-sku-id="${escapeHtml(skuId)}" data-sku-code="${escapeHtml(displayText(skuCode))}">删除</button>
+    </div>
+  `;
+}
+
 function renderInventoryFbaJumpButton(skuCode) {
   const keyword = String(skuCode || "").trim();
   return `<button class="tiny-btn" data-action="inventoryFbaJump" data-sku-code="${escapeHtml(keyword)}">查看</button>`;
@@ -3247,7 +3264,7 @@ function renderSkuManagementTable() {
             <td>${escapeHtml(displayText(item?.rbSku))}</td>
             <td>${escapeHtml(displayText(item?.shop))}</td>
             <td>${escapeHtml(displayText(item?.remark))}</td>
-            <td>${renderEditButton(skuId)}</td>
+            <td>${renderSkuManagementActions(skuId, item?.sku)}</td>
           </tr>
         `;
       })
@@ -5335,6 +5352,12 @@ async function confirmProductEditRequest(id) {
 async function deleteProductEditRequest(id) {
   return request(`/sku-edit-requests/${id}/delete`, {
     method: "POST",
+  });
+}
+
+async function deleteSku(id) {
+  return request(`/skus/${id}`, {
+    method: "DELETE",
   });
 }
 
@@ -8897,11 +8920,23 @@ function bindDelegates() {
   };
 
   const openInventoryEditByAction = async (event) => {
-    const button = event.target.closest("button[data-action='inventoryEdit']");
+    const button = event.target.closest("button[data-action='inventoryEdit'], button[data-action='deleteSkuRow']");
     if (!button) return;
     const skuId = Number(button.dataset.skuId);
     if (!Number.isInteger(skuId) || skuId <= 0) return;
     try {
+      if (button.dataset.action === "deleteSkuRow") {
+        const skuCode = String(button.dataset.skuCode || `#${skuId}`).trim();
+        const ok = await openDeleteConfirmModal(`确定物理删除SKU：${skuCode}？`);
+        if (!ok) return;
+        await deleteSku(skuId);
+        showToast("SKU已删除");
+        await Promise.all([
+          loadInventory({ preserveSearch: true }),
+          loadAudit(),
+        ]);
+        return;
+      }
       await openEditSkuModal(skuId);
     } catch (error) {
       showToast(error.message, true);
