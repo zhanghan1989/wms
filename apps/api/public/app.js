@@ -4557,6 +4557,7 @@ function renderProductEditRequestDetail(item) {
 
   const fieldDefs = [
     ["productId", "产品ID"],
+    ["productName", "产品名称"],
     ["shop", "所属亚马逊店铺"],
     ["remark", "备注"],
     ["sku", "SKU"],
