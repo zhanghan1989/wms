@@ -32,7 +32,6 @@ const requiredTokens = {
     "库存管理系统",
     "登录系统",
     "店铺管理",
-    "输入任意 产品ID / 产品名称 / SKU / ASIN / FNSKU / FBMSKU / RBSKU / 产品属性关键词",
   ],
   "apps/api/public/app.js": ["showErrorModal", "normalizeErrorMessage", "openShopManageModal"],
 };

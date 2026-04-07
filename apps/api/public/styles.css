@@ -265,10 +265,6 @@ h3 {
   align-items: end;
 }
 
-.inventory-search-note {
-  margin: 0 0 10px;
-}
-
 .adjust-box-row {
   display: grid;
   grid-template-columns: 1fr auto;
