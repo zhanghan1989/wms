@@ -28,6 +28,12 @@ const state = {
   inventoryVisibleCount: 0,
   inventoryListPageSize: 20,
   inventoryPageSize: 30,
+  inventoryHomeProducts: [],
+  inventoryHomePage: 1,
+  inventoryHomePageSize: 30,
+  inventoryHomeHasMore: false,
+  inventoryHomeKeyword: "",
+  inventoryHomeSelectedDetail: null,
   inventorySearchMode: false,
   inventorySearchKeyword: "",
   inventorySearchPage: 0,
@@ -1442,17 +1448,17 @@ async function openInventoryHomeDefault() {
     keywordInput.value = "";
   }
 
-  resetInventorySearchState();
+  state.inventoryHomeKeyword = "";
+  state.inventoryHomeSelectedDetail = null;
   setInventoryDisplayMode(false);
 
-  if (state.inventorySortedSkus.length) {
-    state.inventoryVisibleCount = state.inventoryListPageSize;
+  if (state.inventoryHomeProducts.length) {
     renderInventoryTable();
     focusInventorySearch();
     return;
   }
 
-  await loadInventory();
+  await loadInventoryHomeProducts({ reset: true });
   focusInventorySearch();
 }
 
@@ -3026,29 +3032,120 @@ function renderBoxSkuFlatTable(currentSku, rows, boxSkuMap) {
 }
 
 function renderInventoryTable() {
-  const list = state.inventorySortedSkus.slice(0, state.inventoryVisibleCount);
-  const html = list
-    .map((sku) => {
-      const totalQty = Number(state.inventoryTotalsBySku?.[String(sku.id)] ?? 0);
-      const pendingQty = getFbaPendingQtyBySku(sku.id);
-      return `
-      <tr class="inventory-main-row">
-        <td>${escapeHtml(displayText(sku.model))}</td>
-        <td>${escapeHtml(displayText(sku.remark))}</td>
-        <td>${escapeHtml(displayText(sku.shop))}</td>
-        <td>${escapeHtml(sku.sku)}</td>
-        <td>${renderQtyWithPending(totalQty, pendingQty)}</td>
-        <td>
-          <div class="action-row">
-            ${renderInventoryFbaJumpButton(sku.sku)}
-          </div>
-        </td>
-      </tr>
-    `;
-    })
-    .join("");
+  const body = $("inventoryBody");
+  const loadMoreBtn = $("loadMoreInventoryHomeBtn");
+  if (!body) return;
 
-  $("inventoryBody").innerHTML = html || '<tr><td colspan="6" class="muted">-</td></tr>';
+  const rows = Array.isArray(state.inventoryHomeProducts) ? state.inventoryHomeProducts : [];
+  body.innerHTML =
+    rows
+      .map((item) => {
+        const productId = String(item?.productId || "").trim();
+        return `
+          <tr class="inventory-main-row">
+            <td>${escapeHtml(displayText(productId))}</td>
+            <td>${escapeHtml(displayText(item?.productName))}</td>
+            <td class="master-product-current-cell">${escapeHtml(displayText(item?.stockQty ?? 0))}</td>
+            <td>
+              <button type="button" class="tiny-btn" data-action="inventoryOpenMasterProductDetail" data-product-id="${escapeHtml(productId)}">查看</button>
+            </td>
+          </tr>
+        `;
+      })
+      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+
+  if (loadMoreBtn) {
+    loadMoreBtn.classList.toggle("hidden", !state.inventoryHomeHasMore);
+  }
+}
+
+function renderInventoryHomeDetail(detail) {
+  state.inventoryHomeSelectedDetail = detail || null;
+  $("inventoryDetailTitle").textContent = detail?.product?.productName
+    ? `产品主表详情：${detail.product.productName}`
+    : "产品主表详情";
+  $("inventoryDetailSubtitle").textContent = detail?.product?.productId
+    ? `产品ID：${detail.product.productId}`
+    : "-";
+
+  const meta = $("inventoryDetailMeta");
+  if (meta) {
+    const product = detail?.product || null;
+    const fields = [
+      ["产品ID", product?.productId],
+      ["产品名称", product?.productName],
+      ["产品类型", product?.productType],
+      ["包包品牌", product?.bagBrand],
+      ["颜色", product?.color],
+      ["包名", product?.bagName],
+      ["包型", product?.bagType],
+      ["拉链款式", product?.zipperStyle],
+      ["款式", product?.style],
+      ["花纹", product?.pattern],
+      ["扣子类型", product?.buckleType],
+      ["对应包型", product?.matchingBagType],
+      ["长度", product?.length],
+      ["宽度", product?.width],
+      ["花纹类型", product?.patternType],
+      ["尺寸", product?.size],
+      ["在库数", product?.stockQty],
+    ];
+    meta.innerHTML = fields
+      .map(
+        ([label, value]) => `
+          <div class="summary-item">
+            <span class="summary-label">${escapeHtml(label)}</span>
+            <span class="summary-value">${escapeHtml(displayText(value))}</span>
+          </div>
+        `,
+      )
+      .join("");
+  }
+
+  const skuBody = $("inventoryDetailSkuBody");
+  if (skuBody) {
+    const skus = Array.isArray(detail?.skus) ? detail.skus : [];
+    skuBody.innerHTML =
+      skus
+        .map(
+          (item) => `
+            <tr>
+              <td>${escapeHtml(displayText(item?.sku))}</td>
+              <td>${escapeHtml(displayText(item?.asin))}</td>
+              <td>${escapeHtml(displayText(item?.fnsku))}</td>
+              <td>${escapeHtml(displayText(item?.fbmSku))}</td>
+              <td>${escapeHtml(displayText(item?.rbSku))}</td>
+              <td>${escapeHtml(displayText(item?.shop))}</td>
+            </tr>
+          `,
+        )
+        .join("") || '<tr><td colspan="6" class="muted">-</td></tr>';
+  }
+}
+
+async function loadInventoryHomeProducts({ reset = false } = {}) {
+  const page = reset ? 1 : state.inventoryHomePage + 1;
+  const keyword = String(state.inventoryHomeKeyword || "").trim();
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(state.inventoryHomePageSize),
+  });
+  if (keyword) {
+    params.set("keyword", keyword);
+  }
+  const result = await request(`/master-products?${params.toString()}`);
+  const items = Array.isArray(result?.items) ? result.items : [];
+  state.inventoryHomeProducts = reset ? items : [...state.inventoryHomeProducts, ...items];
+  state.inventoryHomePage = Number(result?.page || page);
+  state.inventoryHomeHasMore = Boolean(result?.hasMore);
+  renderInventoryTable();
+}
+
+async function loadInventoryHomeProductDetail(productId) {
+  const detail = await request(`/master-products/${encodeURIComponent(productId)}/detail`);
+  renderInventoryHomeDetail(detail);
+  setInventoryDisplayMode(true);
+  return detail;
 }
 
 function loadMoreInventoryIfNeeded() {
@@ -3056,22 +3153,14 @@ function loadMoreInventoryIfNeeded() {
   if (!state.token) return;
   const inventoryPanel = $("inventory");
   if (!inventoryPanel || !inventoryPanel.classList.contains("active")) return;
-  if (state.inventoryVisibleCount >= state.inventorySortedSkus.length) return;
-  state.inventoryVisibleCount += state.inventoryListPageSize;
-  renderInventoryTable();
+  if (!state.inventoryHomeHasMore) return;
+  loadInventoryHomeProducts({ reset: false }).catch((error) => {
+    showToast(error.message, true);
+  });
 }
 
 function loadMoreInventorySearchIfNeeded() {
-  if (!state.inventorySearchMode) return;
-  if (!state.token) return;
-  if (!state.inventorySearchHasMore || state.inventorySearchLoading) return;
-  const inventoryPanel = $("inventory");
-  if (!inventoryPanel || !inventoryPanel.classList.contains("active")) return;
-  if (!state.inventorySearchKeyword) return;
-
-  searchInventoryProducts(state.inventorySearchKeyword, { append: true }).catch((error) => {
-    showToast(error.message, true);
-  });
+  return;
 }
 
 async function loadInventory({ preserveSearch = false } = {}) {
@@ -5951,7 +6040,8 @@ async function reloadAll() {
     $("batchInboundBody").innerHTML = "";
     $("fbaReplenishmentBody").innerHTML = "";
     renderBatchInboundDetail(null);
-    $("inventorySearchResults").textContent = "-";
+    if ($("inventoryDetailMeta")) $("inventoryDetailMeta").innerHTML = "";
+    if ($("inventoryDetailSkuBody")) $("inventoryDetailSkuBody").innerHTML = "";
     $("brandsBody").innerHTML = "";
     $("skuTypesBody").innerHTML = "";
     $("shopsBody").innerHTML = "";
@@ -5982,6 +6072,11 @@ async function reloadAll() {
     state.inventorySkus = [];
     state.emptyBoxes = [];
     state.orders = [];
+    state.inventoryHomeProducts = [];
+    state.inventoryHomePage = 1;
+    state.inventoryHomeHasMore = false;
+    state.inventoryHomeKeyword = "";
+    state.inventoryHomeSelectedDetail = null;
     state.masterProducts = [];
     state.masterProductsPage = 1;
     state.masterProductsHasMore = false;
@@ -6040,6 +6135,7 @@ async function reloadAll() {
   const isAdmin = hasAdminAccess(state.me?.role);
   const tasks = [
     loadInventory(),
+    loadInventoryHomeProducts({ reset: true }),
     loadProductEditPendingSummary(),
   ];
   if (!isAdmin) {
@@ -6066,7 +6162,7 @@ async function reloadAll() {
   if (firstError && firstError.status === "rejected") {
     throw firstError.reason;
   }
-  resetInventorySearchState();
+  state.inventoryHomeSelectedDetail = null;
   setInventoryDisplayMode(false);
   focusInventorySearch();
 }
@@ -6088,7 +6184,7 @@ function bindForms() {
         localStorage.setItem("wms_token", state.token);
         showToast("登录成功");
         await reloadAll();
-        switchPanel("inventory");
+        await openInventoryHomeDefault();
       });
     } catch (error) {
       showToast(error.message, true);
@@ -6657,11 +6753,31 @@ function bindForms() {
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
       await withBusyButton(submitButton, "检索中...", async () => {
-        await searchInventoryProducts($("inventoryKeyword").value.trim());
+        state.inventoryHomeKeyword = String($("inventoryKeyword").value || "").trim();
+        state.inventoryHomeSelectedDetail = null;
+        setInventoryDisplayMode(false);
+        await loadInventoryHomeProducts({ reset: true });
       });
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("resetInventoryKeywordBtn").addEventListener("click", async () => {
+    try {
+      $("inventoryKeyword").value = "";
+      state.inventoryHomeKeyword = "";
+      state.inventoryHomeSelectedDetail = null;
+      setInventoryDisplayMode(false);
+      await loadInventoryHomeProducts({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("backToInventoryListBtn").addEventListener("click", () => {
+    state.inventoryHomeSelectedDetail = null;
+    setInventoryDisplayMode(false);
   });
 
   $("downloadStockAdjustmentCsvBtn").addEventListener("click", async (event) => {
@@ -8147,34 +8263,12 @@ function bindDelegates() {
     if (!button) return;
     try {
       const action = String(button.dataset.action || "");
-      if (action === "inventoryEdit") {
-        const skuId = Number(button.dataset.skuId);
-        if (!Number.isInteger(skuId) || skuId <= 0) return;
-        await openEditSkuModal(skuId);
+      if (action === "inventoryOpenMasterProductDetail") {
+        const productId = String(button.dataset.productId || "").trim();
+        if (!productId) return;
+        await loadInventoryHomeProductDetail(productId);
         return;
       }
-
-      if (action === "inventoryFbaJump") {
-        const skuCode = String(button.dataset.skuCode || "").trim();
-        if (!skuCode) return;
-        const keywordInput = $("inventoryKeyword");
-        if (keywordInput) {
-          keywordInput.value = skuCode;
-        }
-        await searchInventoryProducts(skuCode);
-      }
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("inventorySearchResults").addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action='inventoryEdit']");
-    if (!button) return;
-    const skuId = Number(button.dataset.skuId);
-    if (!Number.isInteger(skuId) || skuId <= 0) return;
-    try {
-      await openEditSkuModal(skuId);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -8470,7 +8564,7 @@ function bindDelegates() {
     }
   });
 
-  $("inventorySearchResults").addEventListener("click", openAdjustByAction);
+  $("inventorySearchResults")?.addEventListener("click", openAdjustByAction);
 
   document.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action='closeCreateSkuModal']");
@@ -8880,7 +8974,12 @@ function bindRefresh() {
       showToast(error.message, true);
     }
   });
-  $("refreshInventory").addEventListener("click", () => loadInventory().catch((error) => showToast(error.message, true)));
+  $("refreshInventory").addEventListener("click", () =>
+    (state.inventorySearchMode && state.inventoryHomeSelectedDetail
+      ? loadInventoryHomeProductDetail(state.inventoryHomeSelectedDetail?.product?.productId || "")
+      : loadInventoryHomeProducts({ reset: true })
+    ).catch((error) => showToast(error.message, true)),
+  );
   $("refreshOverseasWarehouse").addEventListener("click", () =>
     Promise.all([loadShelves(), loadBoxes()]).catch((error) => showToast(error.message, true)),
   );
