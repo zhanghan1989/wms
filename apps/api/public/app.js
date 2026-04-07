@@ -106,6 +106,7 @@ let errorModalAutoActionTimer = null;
 let errorModalCountdownTimer = null;
 let errorModalAutoAction = null;
 let inventoryHomeLoadObserver = null;
+let productEditRequestLoadObserver = null;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 const $ = (id) => document.getElementById(id);
@@ -1569,6 +1570,11 @@ function ensureInventoryPanelUi() {
   downloadButton.type = "button";
   downloadButton.id = "downloadInventorySkuSummaryBtn";
   downloadButton.textContent = "下载系统所有产品";
+  const shopManageButton = $("openShopManageModal");
+  if (shopManageButton) {
+    shopManageButton.insertAdjacentElement("afterend", downloadButton);
+    return;
+  }
   bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
 }
 
@@ -4382,6 +4388,31 @@ function loadMoreProductEditRequestsIfNeeded() {
   if (state.skuEditRequestsVisibleCount >= state.skuEditRequests.length) return;
   state.skuEditRequestsVisibleCount += state.inventoryPageSize;
   renderProductEditRequestTable();
+}
+
+function setupProductEditRequestLoadObserver() {
+  if (productEditRequestLoadObserver) {
+    productEditRequestLoadObserver.disconnect();
+    productEditRequestLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("productEditRequestTableWrap");
+  const sentinel = $("productEditRequestLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  productEditRequestLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreProductEditRequestsIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  productEditRequestLoadObserver.observe(sentinel);
 }
 
 function loadMoreSkuManagementIfNeeded() {
@@ -9604,6 +9635,7 @@ function bindRefresh() {
 ensureBrandingUi();
 ensureInventoryPanelUi();
 setupInventoryHomeLoadObserver();
+setupProductEditRequestLoadObserver();
 ensureOverseasWarehouseQueryUi();
 renderStocktakePlanner();
 bindTabs();

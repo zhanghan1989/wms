@@ -925,6 +925,10 @@ td {
   height: 1px;
 }
 
+.product-edit-request-table-wrap {
+  max-height: 70vh;
+}
+
 .master-product-sku-table {
   min-width: 720px;
 }

@@ -268,9 +268,10 @@
         <article class="card">
           <h3>基础操作</h3>
           <div class="action-row product-actions">
-            <div class="product-actions-right">
-              <button type="button" id="openShopManageModal">店铺管理</button>
+            <div class="product-actions-left">
               <button type="button" id="openSkuManagementPanel">SKU管理</button>
+            </div>
+            <div class="product-actions-right">
               <button type="button" id="openMasterProductManagementPanel">主表产品管理</button>
             </div>
           </div>
@@ -281,19 +282,22 @@
             <h3>编辑SKU申请一览表</h3>
             <button type="button" id="batchConfirmProductEditRequestBtn">批量确认</button>
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th><input id="productEditSelectAll" type="checkbox" /></th>
-                <th>申请时间</th>
-                <th>SKU</th>
-                <th>状态</th>
-                <th>申请人</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody id="productEditRequestBody"></tbody>
-          </table>
+          <div id="productEditRequestTableWrap" class="master-product-table-wrap product-edit-request-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th><input id="productEditSelectAll" type="checkbox" /></th>
+                  <th>申请时间</th>
+                  <th>SKU</th>
+                  <th>状态</th>
+                  <th>申请人</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="productEditRequestBody"></tbody>
+            </table>
+            <div id="productEditRequestLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
         </article>
       </section>
 
@@ -309,6 +313,7 @@
             <div class="product-actions-left">
               <button type="button" id="openCreateSkuModal">新增SKU</button>
               <button type="button" id="openBulkSkuUploadModal">批量上传SKU</button>
+              <button type="button" id="openShopManageModal">店铺管理</button>
             </div>
             <div class="product-actions-right">
               <button type="button" id="backToProductManagementFromSku" class="ghost">返回产品管理</button>
