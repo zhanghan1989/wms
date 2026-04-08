@@ -9814,13 +9814,6 @@ function bindRefresh() {
   $("refreshSkuManagement").addEventListener("click", () =>
     loadInventory({ preserveSearch: true }).catch((error) => showToast(error.message, true)),
   );
-  $("refreshMasterProductBtn").addEventListener("click", async () => {
-    try {
-      await navigateToProductManagement();
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
   $("refreshUsers").addEventListener("click", () =>
     Promise.all([loadUsers(), loadUserOptions()]).catch((error) => showToast(error.message, true)),
   );
