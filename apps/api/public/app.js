@@ -731,6 +731,8 @@ function triggerCsvDownload(fileName, rows) {
 }
 
 async function downloadInventorySkuSummaryCsv() {
+  await downloadAuthorizedFile("/skus/export-excel", {}, "系统所有产品SKU.xlsx");
+  return;
   if (!state.token) {
     throw new Error("请先登录系统");
   }
@@ -1589,6 +1591,16 @@ function ensureInventoryPanelUi() {
   downloadButton.type = "button";
   downloadButton.id = "downloadInventorySkuSummaryBtn";
   downloadButton.textContent = "下载系统所有产品";
+  downloadButton.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadInventorySkuSummaryCsv();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
   const shopManageButton = $("openShopManageModal");
   if (shopManageButton) {
     shopManageButton.insertAdjacentElement("afterend", downloadButton);

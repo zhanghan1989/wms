@@ -38,6 +38,11 @@ type ProductSnapshot = {
   remark: string | null;
 };
 
+type SkuExportFile = {
+  fileName: string;
+  content: Buffer;
+};
+
 const SNAPSHOT_FIELDS: Array<keyof ProductSnapshot> = [
   'productId',
   'sku',
@@ -74,6 +79,7 @@ const IMPORT_FIELD_LABELS: Record<keyof ImportSkuRow, string> = {
 
 const BULK_SKU_IMPORT_TRANSACTION_TIMEOUT_MS = 120000;
 const BULK_SKU_IMPORT_TRANSACTION_MAX_WAIT_MS = 10000;
+const SKU_EXPORT_FILE_NAME = '系统所有产品SKU.xlsx';
 
 @Injectable()
 export class SkusService {
@@ -178,6 +184,59 @@ export class SkusService {
     }
 
     throw new NotFoundException(`找不到模板文件：${SKU_UPLOAD_TEMPLATE_FILE}`);
+  }
+
+  async exportExcel(): Promise<SkuExportFile> {
+    const rows = await this.prisma.sku.findMany({
+      include: {
+        masterProduct: {
+          select: {
+            productName: true,
+            stockQty: true,
+          },
+        },
+      },
+      orderBy: [{ productId: 'asc' }, { sku: 'asc' }, { id: 'asc' }],
+    });
+
+    const sheetRows = [
+      [
+        'SKU',
+        'ASIN',
+        'FNSKU',
+        'FBMSKU',
+        'RBSKU',
+        '所属店铺',
+        '备注',
+        '产品ID',
+        '产品名称',
+        '产品库存',
+      ],
+      ...rows.map((row) => [
+        row.sku ?? '',
+        row.asin ?? '',
+        row.fnsku ?? '',
+        row.fbmSku ?? '',
+        row.rbSku ?? '',
+        row.shop ?? '',
+        row.remark ?? '',
+        row.productId ?? '',
+        row.masterProduct?.productName ?? '',
+        Number(row.masterProduct?.stockQty ?? 0),
+      ]),
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet(sheetRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'SKU列表');
+
+    return {
+      fileName: SKU_EXPORT_FILE_NAME,
+      content: XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer,
+    };
   }
 
   async importExcel(
