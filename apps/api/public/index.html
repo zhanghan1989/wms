@@ -739,7 +739,7 @@
             <h3>快速统计</h3>
             <ul class="stats">
               <li><span>员工数</span><strong id="statUsers">-</strong></li>
-              <li><span>SKU 数</span><strong id="statSkus">-</strong></li>
+              <li><span>产品数</span><strong id="statSkus">-</strong></li>
               <li><span>货架数</span><strong id="statShelves">-</strong></li>
               <li><span>箱号数</span><strong id="statBoxes">-</strong></li>
               <li><span>待确认入库单</span><strong id="statInboundDraft">-</strong></li>
@@ -753,8 +753,8 @@
               <li><span>可用库存</span><strong id="overviewAvailableStock">-</strong></li>
               <li><span>锁定库存</span><strong id="overviewLockedStock">-</strong></li>
               <li><span>在途库存</span><strong id="overviewInTransitStock">-</strong></li>
-              <li><span>缺货 SKU 数</span><strong id="overviewOutOfStockSkuCount">-</strong></li>
-              <li><span>低覆盖 SKU 数</span><strong id="overviewLowCoverageSkuCount">-</strong></li>
+              <li><span>缺货产品数</span><strong id="overviewOutOfStockSkuCount">-</strong></li>
+              <li><span>低覆盖产品数</span><strong id="overviewLowCoverageSkuCount">-</strong></li>
               <li><span>覆盖天数</span><strong id="overviewCoverageDays">-</strong></li>
               <li><span>日均消耗</span><strong id="overviewAvgDailyOutbound">-</strong></li>
             </ul>
@@ -769,13 +769,13 @@
               <li><span>日均消耗</span><strong id="overviewDemandAvgDailyOutbound">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
-              <h4>Top SKU 消耗排行（30天）</h4>
+              <h4>Top 产品消耗排行（30天）</h4>
               <table>
                 <thead>
                   <tr>
-                    <th>SKU</th>
-                    <th>型号</th>
-                    <th>rbSKU</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>产品库存</th>
                     <th>30天出库量</th>
                     <th>日均消耗</th>
                   </tr>
@@ -784,13 +784,13 @@
               </table>
             </div>
             <div class="overview-table-wrap">
-              <h4>异常波动 SKU（近7天 vs 前7天）</h4>
+              <h4>异常波动产品（近7天 vs 前7天）</h4>
               <table>
                 <thead>
                   <tr>
-                    <th>SKU</th>
-                    <th>型号</th>
-                    <th>rbSKU</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>产品库存</th>
                     <th>近7天</th>
                     <th>前7天</th>
                     <th>波动倍数</th>
@@ -804,7 +804,7 @@
           <article class="card">
             <h3>工厂备货建议</h3>
             <ul class="stats">
-              <li><span>建议备货 SKU 数</span><strong id="overviewRecommendationCount">-</strong></li>
+              <li><span>建议备货产品数</span><strong id="overviewRecommendationCount">-</strong></li>
               <li><span>紧急</span><strong id="overviewRecommendationUrgentCount">-</strong></li>
               <li><span>高优先</span><strong id="overviewRecommendationHighCount">-</strong></li>
               <li><span>中优先</span><strong id="overviewRecommendationMediumCount">-</strong></li>
@@ -814,9 +814,9 @@
               <table>
                 <thead>
                   <tr>
-                    <th>SKU</th>
-                    <th>型号</th>
-                    <th>rbSKU</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>总库存</th>
                     <th>可用库存</th>
                     <th>在途库存</th>
                     <th>日均消耗</th>
@@ -833,17 +833,16 @@
           <article class="card">
             <h3>废弃建议</h3>
             <ul class="stats">
-              <li><span>90天无销量 SKU</span><strong id="overviewNoSales90Count">-</strong></li>
-              <li><span>270天无销量 SKU</span><strong id="overviewNoSales270Count">-</strong></li>
+              <li><span>90天无销量产品</span><strong id="overviewNoSales90Count">-</strong></li>
+              <li><span>270天无销量产品</span><strong id="overviewNoSales270Count">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
-              <h4>90天无销量 SKU（仅显示有库存）</h4>
+              <h4>90天无销量产品（仅显示有库存）</h4>
               <table>
                 <thead>
                   <tr>
-                    <th>SKU</th>
-                    <th>型号</th>
-                    <th>rbSKU</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
                     <th>总库存</th>
                     <th>可用库存</th>
                     <th>在途库存</th>
@@ -853,13 +852,12 @@
               </table>
             </div>
             <div class="overview-table-wrap">
-              <h4>270天无销量 SKU（仅显示有库存）</h4>
+              <h4>270天无销量产品（仅显示有库存）</h4>
               <table>
                 <thead>
                   <tr>
-                    <th>SKU</th>
-                    <th>型号</th>
-                    <th>rbSKU</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
                     <th>总库存</th>
                     <th>可用库存</th>
                     <th>在途库存</th>

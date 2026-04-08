@@ -1216,6 +1216,11 @@ function renderOverviewTable(bodyId, html, colspan) {
 
 function clearOverviewDashboard() {
   state.overviewDashboard = null;
+  $("statUsers").textContent = "-";
+  $("statSkus").textContent = "-";
+  $("statShelves").textContent = "-";
+  $("statBoxes").textContent = "-";
+  $("statInboundDraft").textContent = "-";
   [
     "overviewTotalStock",
     "overviewAvailableStock",
@@ -1240,15 +1245,22 @@ function clearOverviewDashboard() {
   renderOverviewTable("overviewTopDemandBody", "", 5);
   renderOverviewTable("overviewAnomalyBody", "", 6);
   renderOverviewTable("overviewProductionBody", "", 9);
-  renderOverviewTable("overviewNoSales90Body", "", 6);
-  renderOverviewTable("overviewNoSales270Body", "", 6);
+  renderOverviewTable("overviewNoSales90Body", "", 5);
+  renderOverviewTable("overviewNoSales270Body", "", 5);
 }
 
 function renderOverviewDashboard(data) {
+  const summary = data?.summary || {};
   const health = data?.health || {};
   const demand = data?.demand || {};
   const production = data?.production || {};
   const obsolete = data?.obsolete || {};
+
+  setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
+  setTextById("statSkus", formatOverviewNumber(summary.activeProductCount));
+  setTextById("statShelves", formatOverviewNumber(summary.shelfCount));
+  setTextById("statBoxes", formatOverviewNumber(summary.boxCount));
+  setTextById("statInboundDraft", formatOverviewNumber(summary.pendingInboundOrderCount));
 
   setTextById("overviewTotalStock", formatOverviewNumber(health.totalStock));
   setTextById("overviewAvailableStock", formatOverviewNumber(health.availableStock));
@@ -1276,9 +1288,9 @@ function renderOverviewDashboard(data) {
     .map(
       (item) => `
       <tr>
-        <td>${escapeHtml(displayText(item.sku))}</td>
-        <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.rbSku))}</td>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.qty30d)}</td>
         <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
       </tr>
@@ -1293,9 +1305,9 @@ function renderOverviewDashboard(data) {
       const ratioText = Number.isFinite(ratio) ? `${formatOverviewNumber(ratio, 2)}x` : "NEW";
       return `
       <tr>
-        <td>${escapeHtml(displayText(item.sku))}</td>
-        <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.rbSku))}</td>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.qty7d)}</td>
         <td>${formatOverviewNumber(item.prev7d)}</td>
         <td>${ratioText}</td>
@@ -1312,9 +1324,9 @@ function renderOverviewDashboard(data) {
         priority === "紧急" ? "urgent" : priority === "高" ? "high" : priority === "中" ? "medium" : "normal";
       return `
       <tr>
-        <td>${escapeHtml(displayText(item.sku))}</td>
-        <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.rbSku))}</td>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
         <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
@@ -1331,9 +1343,8 @@ function renderOverviewDashboard(data) {
     .map(
       (item) => `
       <tr>
-        <td>${escapeHtml(displayText(item.sku))}</td>
-        <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.rbSku))}</td>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
@@ -1341,15 +1352,14 @@ function renderOverviewDashboard(data) {
     `,
     )
     .join("");
-  renderOverviewTable("overviewNoSales90Body", noSales90Rows, 6);
+  renderOverviewTable("overviewNoSales90Body", noSales90Rows, 5);
 
   const noSales270Rows = (Array.isArray(obsolete.noSales270dSkus) ? obsolete.noSales270dSkus : [])
     .map(
       (item) => `
       <tr>
-        <td>${escapeHtml(displayText(item.sku))}</td>
-        <td>${escapeHtml(displayText(item.model))}</td>
-        <td>${escapeHtml(displayText(item.rbSku))}</td>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
@@ -1357,7 +1367,7 @@ function renderOverviewDashboard(data) {
     `,
     )
     .join("");
-  renderOverviewTable("overviewNoSales270Body", noSales270Rows, 6);
+  renderOverviewTable("overviewNoSales270Body", noSales270Rows, 5);
 }
 
 async function loadOverviewDashboard() {
