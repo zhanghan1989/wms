@@ -635,6 +635,60 @@ model OrderRecord {
   @@map("order_records")
 }
 
+model AmazonOrderRecord {
+  id                    BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  rowHash               String   @unique @map("row_hash") @db.Char(40)
+  orderId               String?  @map("order_id") @db.VarChar(64)
+  orderItemId           String?  @map("order_item_id") @db.VarChar(64)
+  purchaseDateRaw       String?  @map("purchase_date_raw") @db.VarChar(64)
+  paymentsDateRaw       String?  @map("payments_date_raw") @db.VarChar(64)
+  reportingDateRaw      String?  @map("reporting_date_raw") @db.VarChar(64)
+  promiseDateRaw        String?  @map("promise_date_raw") @db.VarChar(64)
+  daysPastPromise       Int?     @map("days_past_promise")
+  buyerEmail            String?  @map("buyer_email") @db.VarChar(255)
+  buyerName             String?  @map("buyer_name") @db.VarChar(255)
+  buyerPhoneNumber      String?  @map("buyer_phone_number") @db.VarChar(64)
+  sku                   String?  @db.VarChar(128)
+  productName           String?  @map("product_name") @db.Text
+  quantityPurchased     Int?     @map("quantity_purchased")
+  quantityShipped       Int?     @map("quantity_shipped")
+  quantityToShip        Int?     @map("quantity_to_ship")
+  shipServiceLevel      String?  @map("ship_service_level") @db.VarChar(128)
+  recipientName         String?  @map("recipient_name") @db.VarChar(255)
+  shipAddress1          String?  @map("ship_address_1") @db.Text
+  shipAddress2          String?  @map("ship_address_2") @db.Text
+  shipAddress3          String?  @map("ship_address_3") @db.Text
+  shipCity              String?  @map("ship_city") @db.VarChar(255)
+  shipState             String?  @map("ship_state") @db.VarChar(255)
+  shipPostalCode        String?  @map("ship_postal_code") @db.VarChar(32)
+  shipCountry           String?  @map("ship_country") @db.VarChar(32)
+  customizedUrl         String?  @map("customized_url") @db.Text
+  customizedPage        String?  @map("customized_page") @db.Text
+  isBusinessOrder       Boolean? @map("is_business_order")
+  purchaseOrderNumber   String?  @map("purchase_order_number") @db.VarChar(128)
+  priceDesignation      String?  @map("price_designation") @db.VarChar(128)
+  vergeOfCancellation   Boolean? @map("verge_of_cancellation")
+  vergeOfLateShipment   Boolean? @map("verge_of_late_shipment")
+  mallName              String?  @map("mall_name") @db.VarChar(128)
+  shopName              String?  @map("shop_name") @db.VarChar(128)
+  shipmentCompany       String?  @map("shipment_company") @db.VarChar(128)
+  shipmentNo            String?  @map("shipment_no") @db.VarChar(128)
+  shipmentNoRegisteredAt DateTime? @map("shipment_no_registered_at")
+  sourceFileName        String?  @map("source_file_name") @db.VarChar(255)
+  sourceFilePath        String?  @map("source_file_path") @db.VarChar(512)
+  rawPayload            Json?    @map("raw_payload")
+  csvImportedAt         DateTime @default(now()) @map("csv_imported_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([sku])
+  @@index([csvImportedAt])
+  @@index([createdAt])
+  @@map("amazon_order_records")
+}
+
 model MasterProduct {
   id              BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   productId       String   @unique @map("product_id") @db.VarChar(128)

@@ -64,6 +64,7 @@ const state = {
   selectedBatchInboundOrderId: "",
   selectedBatchInboundOrderDetail: null,
   orders: [],
+  amazonOrders: [],
   fbaReplenishments: [],
   fbaReplenishmentsVisibleCount: 0,
   fbaPendingCount: 0,
@@ -1581,8 +1582,8 @@ function switchPanel(targetId) {
     loadAudit().catch((error) => showToast(error.message, true));
     return;
   }
-  if (targetId === "orderProcessing" && state.token && !state.orders.length) {
-    loadOrders().catch((error) => showToast(error.message, true));
+  if (targetId === "amazonOrderImport" && state.token && !state.amazonOrders.length) {
+    loadAmazonOrders().catch((error) => showToast(error.message, true));
     return;
   }
   if (targetId === "overview" && !state.overviewDashboard) {
@@ -6198,8 +6199,8 @@ async function loadProductEditPendingSummary() {
 }
 
 function renderOrdersTable() {
-  const tbody = $("ordersBody");
-  if (!tbody) return;
+  const tbodies = [$("ordersBody"), $("amazonOrdersBody")].filter(Boolean);
+  if (!tbodies.length) return;
 
   if (!state.orders.length) {
     tbody.innerHTML = '<tr><td colspan="10" class="muted">暂无订单数据</td></tr>';
@@ -6227,6 +6228,42 @@ function renderOrdersTable() {
     .join("");
 }
 
+function renderOrdersPanels() {
+  const tbodies = [$("ordersBody"), $("amazonOrdersBody")].filter(Boolean);
+  if (!tbodies.length) return;
+
+  if (!state.orders.length) {
+    tbodies.forEach((tbody) => {
+      tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无订单数据</td></tr>';
+    });
+    return;
+  }
+
+  const html = state.orders
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
+        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td>${escapeHtml(displayText(item.skuCode))}</td>
+        <td>${escapeHtml(displayText(item.orderQuantity))}</td>
+        <td>${escapeHtml(displayText(item.mallName))}</td>
+        <td>${escapeHtml(displayText(item.shopName))}</td>
+        <td>${escapeHtml(displayText(item.mallOrderNo))}</td>
+        <td>${escapeHtml(displayText(item.shippingName))}</td>
+        <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
+        <td>${escapeHtml(displayText(item.shipmentNo))}</td>
+        <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
+      </tr>
+    `,
+    )
+    .join("");
+
+  tbodies.forEach((tbody) => {
+    tbody.innerHTML = html;
+  });
+}
+
 async function loadOrders() {
   if (!state.token) {
     state.orders = [];
@@ -6243,6 +6280,57 @@ async function importOrdersFile(file) {
   const formData = new FormData();
   formData.append("file", file);
   return request("/orders/import-csv", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+function renderAmazonOrdersTable() {
+  const tbody = $("amazonOrdersBody");
+  if (!tbody) return;
+
+  if (!state.amazonOrders.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无亚马逊订单数据</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = state.amazonOrders
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
+        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
+        <td>${escapeHtml(displayText(item.mallName))}</td>
+        <td>${escapeHtml(displayText(item.shopName))}</td>
+        <td>${escapeHtml(displayText(item.orderItemId))}</td>
+        <td>${escapeHtml(displayText(item.recipientName))}</td>
+        <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
+        <td>${escapeHtml(displayText(item.shipmentNo))}</td>
+        <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
+      </tr>
+    `,
+    )
+    .join("");
+}
+
+async function loadAmazonOrders() {
+  if (!state.token) {
+    state.amazonOrders = [];
+    renderAmazonOrdersTable();
+    return;
+  }
+
+  const list = await request("/orders/amazon");
+  state.amazonOrders = Array.isArray(list) ? list : [];
+  renderAmazonOrdersTable();
+}
+
+async function importAmazonOrdersFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request("/orders/amazon/import-txt", {
     method: "POST",
     body: formData,
   });
@@ -6800,6 +6888,7 @@ async function reloadAll() {
     state.inventorySkus = [];
     state.emptyBoxes = [];
     state.orders = [];
+    state.amazonOrders = [];
     state.inventoryHomeProducts = [];
     state.inventoryHomePage = 1;
     state.inventoryHomeHasMore = false;
@@ -6857,6 +6946,7 @@ async function reloadAll() {
     renderEmptyBoxManageBadge();
     renderEmptyBoxManageTable();
     renderOrdersTable();
+    renderAmazonOrdersTable();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
     resetInventorySearchState();
@@ -6944,13 +7034,13 @@ function bindForms() {
       await withBusyButton(submitButton, "导入中...", async () => {
         const file = $("ordersImportFile").files?.[0];
         if (!file) {
-          throw new Error("请选择订单CSV文件");
+          throw new Error("请选择亚马逊订单TXT文件");
         }
-        const result = await importOrdersFile(file);
-        await loadOrders();
+        const result = await importAmazonOrdersFile(file);
+        await loadAmazonOrders();
         form.reset();
         showToast(
-          `订单导入完成：新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条（文件 ${result.sourceFileName}）`,
+          `亚马逊订单导入完成：新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条（文件 ${result.sourceFileName}）`,
           false,
         );
       });
@@ -7735,10 +7825,22 @@ function bindForms() {
   $("openOrderProcessingPanel").addEventListener("click", async () => {
     try {
       switchPanel("orderProcessing");
-      await loadOrders();
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("openAmazonOrderImportPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("amazonOrderImport");
+      await loadAmazonOrders();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("backToOrderProcessingBtn").addEventListener("click", () => {
+    switchPanel("orderProcessing");
   });
 
   $("openShopManageModal").addEventListener("click", async () => {
@@ -9912,7 +10014,7 @@ function bindRefresh() {
     loadBatchInboundOrders().catch((error) => showToast(error.message, true)),
   );
   $("refreshOrders").addEventListener("click", () =>
-    loadOrders().catch((error) => showToast(error.message, true)),
+    loadAmazonOrders().catch((error) => showToast(error.message, true)),
   );
   $("refreshFbaReplenishment").addEventListener("click", () =>
     Promise.all([loadFbaReplenishments(), loadFbaPendingSummary()]).catch((error) =>

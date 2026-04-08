@@ -573,25 +573,18 @@
       <section class="panel" id="orderProcessing">
         <div class="panel-head">
           <h2>订单处理</h2>
-          <button id="refreshOrders" class="ghost">刷新</button>
         </div>
 
         <article class="card">
           <div class="card-head order-import-head">
             <div>
-              <h3>批量导入订单</h3>
-              <p class="muted order-import-note">支持从当前电脑手动上传订单 CSV，导入到独立订单表；暂不关联既有入库、库存或 FBA 流程。</p>
+              <h3>订单功能入口</h3>
+              <p class="muted order-import-note">点击下方按钮进入亚马逊订单导入页面，执行批量导入与查看亚马逊订单列表。</p>
             </div>
           </div>
-          <form id="importOrdersForm" class="form-grid order-import-form">
-            <label>
-              订单 CSV 文件
-              <input id="ordersImportFile" type="file" accept=".csv,text/csv" required />
-            </label>
-            <div class="actions order-import-actions">
-              <button type="submit" id="uploadOrdersBtn">上传并导入</button>
-            </div>
-          </form>
+          <div class="actions order-import-actions">
+            <button id="openAmazonOrderImportPanel" type="button">亚马逊订单导入</button>
+          </div>
         </article>
 
         <article class="card">
@@ -614,6 +607,58 @@
                 </tr>
               </thead>
               <tbody id="ordersBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel" id="amazonOrderImport">
+        <div class="panel-head">
+          <h2>亚马逊订单导入</h2>
+          <div class="panel-tools">
+            <button id="refreshOrders" class="ghost">刷新</button>
+            <button id="backToOrderProcessingBtn" class="ghost">返回订单处理</button>
+          </div>
+        </div>
+
+        <article class="card">
+          <div class="card-head order-import-head">
+            <div>
+              <h3>亚马逊批量导入订单</h3>
+              <p class="muted order-import-note">支持从当前电脑手动上传亚马逊订单 TXT，导入到独立订单表；暂不关联既有入库、库存或 FBA 流程。</p>
+            </div>
+          </div>
+          <form id="importOrdersForm" class="form-grid order-import-form">
+            <label>
+              亚马逊订单 TXT 文件
+              <input id="ordersImportFile" type="file" accept=".txt,text/plain" required />
+            </label>
+            <div class="actions order-import-actions">
+              <button type="submit" id="uploadOrdersBtn">上传并导入</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="card">
+          <h3>亚马逊订单列表一览</h3>
+          <div class="overview-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>CSV導入日時</th>
+                  <th>注文ID</th>
+                  <th>SKUコード</th>
+                  <th>注文個数</th>
+                  <th>モール名</th>
+                  <th>ショップ名</th>
+                  <th>モール注文番号</th>
+                  <th>送付先氏名</th>
+                  <th>発送会社</th>
+                  <th>発送番号</th>
+                  <th>発送番号登録日時</th>
+                </tr>
+              </thead>
+              <tbody id="amazonOrdersBody"></tbody>
             </table>
           </div>
         </article>

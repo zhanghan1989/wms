@@ -26,6 +26,12 @@ export class OrdersController {
     return this.ordersService.list(limit);
   }
 
+  @Get('amazon')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async listAmazon(@Query('limit') limit?: string): Promise<unknown[]> {
+    return this.ordersService.listAmazon(limit);
+  }
+
   @Post('import-csv')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @UseInterceptors(FileInterceptor('file'))
@@ -36,6 +42,18 @@ export class OrdersController {
       throw new BadRequestException('请上传订单CSV文件');
     }
     return this.ordersService.importUploadedCsv(file.buffer, file.originalname);
+  }
+
+  @Post('amazon/import-txt')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseInterceptors(FileInterceptor('file'))
+  async importAmazonTxt(
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+  ): Promise<unknown> {
+    if (!file?.buffer) {
+      throw new BadRequestException('请选择亚马逊订单TXT文件');
+    }
+    return this.ordersService.importAmazonTxt(file.buffer, file.originalname);
   }
 
   @Get('export')

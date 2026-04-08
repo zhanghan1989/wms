@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { OrderRecord, OrderSendStatus, Prisma } from '@prisma/client';
+import { AmazonOrderRecord, OrderRecord, OrderSendStatus, Prisma } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -77,6 +77,96 @@ interface OrderImportResult {
   existingDuplicateCount: number;
 }
 
+const AMAZON_ORDER_TXT_COLUMNS = [
+  { header: 'order-id', key: 'orderId' },
+  { header: 'order-item-id', key: 'orderItemId' },
+  { header: 'purchase-date', key: 'purchaseDateRaw' },
+  { header: 'payments-date', key: 'paymentsDateRaw' },
+  { header: 'reporting-date', key: 'reportingDateRaw' },
+  { header: 'promise-date', key: 'promiseDateRaw' },
+  { header: 'days-past-promise', key: 'daysPastPromiseRaw' },
+  { header: 'buyer-email', key: 'buyerEmail' },
+  { header: 'buyer-name', key: 'buyerName' },
+  { header: 'buyer-phone-number', key: 'buyerPhoneNumber' },
+  { header: 'sku', key: 'sku' },
+  { header: 'product-name', key: 'productName' },
+  { header: 'quantity-purchased', key: 'quantityPurchasedRaw' },
+  { header: 'quantity-shipped', key: 'quantityShippedRaw' },
+  { header: 'quantity-to-ship', key: 'quantityToShipRaw' },
+  { header: 'ship-service-level', key: 'shipServiceLevel' },
+  { header: 'recipient-name', key: 'recipientName' },
+  { header: 'ship-address-1', key: 'shipAddress1' },
+  { header: 'ship-address-2', key: 'shipAddress2' },
+  { header: 'ship-address-3', key: 'shipAddress3' },
+  { header: 'ship-city', key: 'shipCity' },
+  { header: 'ship-state', key: 'shipState' },
+  { header: 'ship-postal-code', key: 'shipPostalCode' },
+  { header: 'ship-country', key: 'shipCountry' },
+  { header: 'customized-url', key: 'customizedUrl' },
+  { header: 'customized-page', key: 'customizedPage' },
+  { header: 'is-business-order', key: 'isBusinessOrderRaw' },
+  { header: 'purchase-order-number', key: 'purchaseOrderNumber' },
+  { header: 'price-designation', key: 'priceDesignation' },
+  { header: 'verge-of-cancellation', key: 'vergeOfCancellationRaw' },
+  { header: 'verge-of-lateShipment', key: 'vergeOfLateShipmentRaw' },
+] as const;
+
+type AmazonOrderTxtColumn = (typeof AMAZON_ORDER_TXT_COLUMNS)[number];
+type AmazonOrderTxtHeader = AmazonOrderTxtColumn['header'];
+
+interface ParsedAmazonOrderRow {
+  rowHash: string;
+  orderId: string | null;
+  orderItemId: string | null;
+  purchaseDateRaw: string | null;
+  paymentsDateRaw: string | null;
+  reportingDateRaw: string | null;
+  promiseDateRaw: string | null;
+  daysPastPromise: number | null;
+  buyerEmail: string | null;
+  buyerName: string | null;
+  buyerPhoneNumber: string | null;
+  sku: string | null;
+  productName: string | null;
+  quantityPurchased: number | null;
+  quantityShipped: number | null;
+  quantityToShip: number | null;
+  shipServiceLevel: string | null;
+  recipientName: string | null;
+  shipAddress1: string | null;
+  shipAddress2: string | null;
+  shipAddress3: string | null;
+  shipCity: string | null;
+  shipState: string | null;
+  shipPostalCode: string | null;
+  shipCountry: string | null;
+  customizedUrl: string | null;
+  customizedPage: string | null;
+  isBusinessOrder: boolean | null;
+  purchaseOrderNumber: string | null;
+  priceDesignation: string | null;
+  vergeOfCancellation: boolean | null;
+  vergeOfLateShipment: boolean | null;
+  mallName: string | null;
+  shopName: string | null;
+  shipmentCompany: string | null;
+  shipmentNo: string | null;
+  shipmentNoRegisteredAt: Date | null;
+  rawPayload: Record<AmazonOrderTxtHeader, string | null>;
+}
+
+interface AmazonOrderImportResult {
+  sourceFileName: string;
+  sourceFilePath: string;
+  csvImportedAt: string;
+  totalRows: number;
+  uniqueRows: number;
+  createdCount: number;
+  skippedCount: number;
+  duplicateInFileCount: number;
+  existingDuplicateCount: number;
+}
+
 @Injectable()
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -90,12 +180,29 @@ export class OrdersService {
     });
   }
 
+  async listAmazon(limitParam?: string): Promise<AmazonOrderRecord[]> {
+    const parsedLimit = Number(limitParam);
+    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    return this.prisma.amazonOrderRecord.findMany({
+      orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+    });
+  }
+
   async importUploadedCsv(
     fileBuffer: Buffer,
     originalName?: string,
   ): Promise<OrderImportResult> {
     const sourceFileName = String(originalName ?? '').trim() || 'uploaded-orders.csv';
     return this.importCsvBuffer(fileBuffer, sourceFileName, `uploaded:${sourceFileName}`);
+  }
+
+  async importAmazonTxt(
+    fileBuffer: Buffer,
+    originalName?: string,
+  ): Promise<AmazonOrderImportResult> {
+    const sourceFileName = String(originalName ?? '').trim() || 'amazon-orders.txt';
+    return this.importAmazonTxtBuffer(fileBuffer, sourceFileName, `uploaded:${sourceFileName}`);
   }
 
   async exportForThirdParty(): Promise<{
@@ -284,6 +391,180 @@ export class OrdersService {
     return parsedRows;
   }
 
+  private async importAmazonTxtBuffer(
+    fileBuffer: Buffer,
+    sourceFileName: string,
+    sourceFilePath: string,
+  ): Promise<AmazonOrderImportResult> {
+    const parsedRows = this.parseAmazonTxt(fileBuffer);
+    const uniqueRowsMap = new Map<string, ParsedAmazonOrderRow>();
+    for (const row of parsedRows) {
+      if (!uniqueRowsMap.has(row.rowHash)) {
+        uniqueRowsMap.set(row.rowHash, row);
+      }
+    }
+
+    const uniqueRows = Array.from(uniqueRowsMap.values());
+    const importedAt = new Date();
+    const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = uniqueRows.map((row) => ({
+      rowHash: row.rowHash,
+      orderId: row.orderId,
+      orderItemId: row.orderItemId,
+      purchaseDateRaw: row.purchaseDateRaw,
+      paymentsDateRaw: row.paymentsDateRaw,
+      reportingDateRaw: row.reportingDateRaw,
+      promiseDateRaw: row.promiseDateRaw,
+      daysPastPromise: row.daysPastPromise,
+      buyerEmail: row.buyerEmail,
+      buyerName: row.buyerName,
+      buyerPhoneNumber: row.buyerPhoneNumber,
+      sku: row.sku,
+      productName: row.productName,
+      quantityPurchased: row.quantityPurchased,
+      quantityShipped: row.quantityShipped,
+      quantityToShip: row.quantityToShip,
+      shipServiceLevel: row.shipServiceLevel,
+      recipientName: row.recipientName,
+      shipAddress1: row.shipAddress1,
+      shipAddress2: row.shipAddress2,
+      shipAddress3: row.shipAddress3,
+      shipCity: row.shipCity,
+      shipState: row.shipState,
+      shipPostalCode: row.shipPostalCode,
+      shipCountry: row.shipCountry,
+      customizedUrl: row.customizedUrl,
+      customizedPage: row.customizedPage,
+      isBusinessOrder: row.isBusinessOrder,
+      purchaseOrderNumber: row.purchaseOrderNumber,
+      priceDesignation: row.priceDesignation,
+      vergeOfCancellation: row.vergeOfCancellation,
+      vergeOfLateShipment: row.vergeOfLateShipment,
+      mallName: row.mallName,
+      shopName: row.shopName,
+      shipmentCompany: row.shipmentCompany,
+      shipmentNo: row.shipmentNo,
+      shipmentNoRegisteredAt: row.shipmentNoRegisteredAt,
+      sourceFileName,
+      sourceFilePath,
+      rawPayload: row.rawPayload,
+      csvImportedAt: importedAt,
+    }));
+
+    const result = await this.prisma.amazonOrderRecord.createMany({
+      data: createManyInput,
+      skipDuplicates: true,
+    });
+
+    const duplicateInFileCount = parsedRows.length - uniqueRows.length;
+    const existingDuplicateCount = uniqueRows.length - result.count;
+
+    return {
+      sourceFileName,
+      sourceFilePath,
+      csvImportedAt: importedAt.toISOString(),
+      totalRows: parsedRows.length,
+      uniqueRows: uniqueRows.length,
+      createdCount: result.count,
+      skippedCount: parsedRows.length - result.count,
+      duplicateInFileCount,
+      existingDuplicateCount,
+    };
+  }
+
+  private parseAmazonTxt(fileBuffer: Buffer): ParsedAmazonOrderRow[] {
+    const content = fileBuffer.toString('utf8').replace(/^\uFEFF/, '');
+    const lines = content
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\r/g, ''))
+      .filter((line) => line.trim().length > 0);
+
+    if (lines.length <= 1) {
+      throw new BadRequestException('亚马逊订单TXT缺少数据行');
+    }
+
+    const headerRow = lines[0].split('\t').map((cell) => cell.trim());
+    const headerIndexMap = new Map<string, number>();
+    headerRow.forEach((header, index) => {
+      if (header) {
+        headerIndexMap.set(header, index);
+      }
+    });
+
+    const missingHeaders = AMAZON_ORDER_TXT_COLUMNS.map((column) => column.header).filter(
+      (header) => !headerIndexMap.has(header),
+    );
+    if (missingHeaders.length) {
+      throw new BadRequestException(`亚马逊订单TXT缺少列：${missingHeaders.join('、')}`);
+    }
+
+    const parsedRows: ParsedAmazonOrderRow[] = [];
+    for (let rowIndex = 1; rowIndex < lines.length; rowIndex += 1) {
+      const sourceRow = lines[rowIndex].split('\t');
+      const rawPayload = {} as Record<AmazonOrderTxtHeader, string | null>;
+      for (const column of AMAZON_ORDER_TXT_COLUMNS) {
+        const cellIndex = headerIndexMap.get(column.header);
+        rawPayload[column.header] =
+          cellIndex === undefined ? null : this.normalizeCellValue(sourceRow[cellIndex]);
+      }
+
+      const hasAnyValue = Object.values(rawPayload).some((value) => Boolean(value));
+      if (!hasAnyValue) {
+        continue;
+      }
+
+      const parsedRowWithoutHash = {
+        orderId: rawPayload['order-id'],
+        orderItemId: rawPayload['order-item-id'],
+        purchaseDateRaw: rawPayload['purchase-date'],
+        paymentsDateRaw: rawPayload['payments-date'],
+        reportingDateRaw: rawPayload['reporting-date'],
+        promiseDateRaw: rawPayload['promise-date'],
+        daysPastPromise: this.parseQuantity(rawPayload['days-past-promise']),
+        buyerEmail: rawPayload['buyer-email'],
+        buyerName: rawPayload['buyer-name'],
+        buyerPhoneNumber: rawPayload['buyer-phone-number'],
+        sku: rawPayload['sku'],
+        productName: rawPayload['product-name'],
+        quantityPurchased: this.parseQuantity(rawPayload['quantity-purchased']),
+        quantityShipped: this.parseQuantity(rawPayload['quantity-shipped']),
+        quantityToShip: this.parseQuantity(rawPayload['quantity-to-ship']),
+        shipServiceLevel: rawPayload['ship-service-level'],
+        recipientName: rawPayload['recipient-name'],
+        shipAddress1: rawPayload['ship-address-1'],
+        shipAddress2: rawPayload['ship-address-2'],
+        shipAddress3: rawPayload['ship-address-3'],
+        shipCity: rawPayload['ship-city'],
+        shipState: rawPayload['ship-state'],
+        shipPostalCode: rawPayload['ship-postal-code'],
+        shipCountry: rawPayload['ship-country'],
+        customizedUrl: rawPayload['customized-url'],
+        customizedPage: rawPayload['customized-page'],
+        isBusinessOrder: this.parseBoolean(rawPayload['is-business-order']),
+        purchaseOrderNumber: rawPayload['purchase-order-number'],
+        priceDesignation: rawPayload['price-designation'],
+        vergeOfCancellation: this.parseBoolean(rawPayload['verge-of-cancellation']),
+        vergeOfLateShipment: this.parseBoolean(rawPayload['verge-of-lateShipment']),
+        mallName: 'Amazon',
+        shopName: null,
+        shipmentCompany: null,
+        shipmentNo: null,
+        shipmentNoRegisteredAt: null,
+        rawPayload,
+      };
+
+      parsedRows.push({
+        ...parsedRowWithoutHash,
+        rowHash: this.buildAmazonRowHash(parsedRowWithoutHash),
+      });
+    }
+
+    if (!parsedRows.length) {
+      throw new BadRequestException('亚马逊订单TXT缺少有效数据');
+    }
+
+    return parsedRows;
+  }
+
   private normalizeCellValue(value: string | number | boolean | null | undefined): string | null {
     const normalized = String(value ?? '')
       .replace(/\uFEFF/g, '')
@@ -307,12 +588,34 @@ export class OrdersService {
     return Math.trunc(parsed);
   }
 
+  private parseBoolean(value: string | null): boolean | null {
+    if (!value) {
+      return null;
+    }
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (['true', '1', 'yes'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no'].includes(normalized)) {
+      return false;
+    }
+    return null;
+  }
+
   private resolveSendStatus(shipmentNo: string | null): OrderSendStatus {
     return shipmentNo && shipmentNo.trim() ? OrderSendStatus.sent : OrderSendStatus.unsent;
   }
 
   private buildRowHash(row: Omit<ParsedOrderCsvRow, 'rowHash'>): string {
     const hashBase = ORDER_CSV_COLUMNS.map((column) => row.rawPayload[column.header] ?? '').join('\u001f');
+    return createHash('sha1').update(hashBase).digest('hex');
+  }
+
+  private buildAmazonRowHash(row: Omit<ParsedAmazonOrderRow, 'rowHash'>): string {
+    const hashBase = AMAZON_ORDER_TXT_COLUMNS.map((column) => row.rawPayload[column.header] ?? '').join('\u001f');
     return createHash('sha1').update(hashBase).digest('hex');
   }
 
