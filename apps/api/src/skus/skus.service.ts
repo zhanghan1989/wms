@@ -80,6 +80,7 @@ const IMPORT_FIELD_LABELS: Record<keyof ImportSkuRow, string> = {
 const BULK_SKU_IMPORT_TRANSACTION_TIMEOUT_MS = 120000;
 const BULK_SKU_IMPORT_TRANSACTION_MAX_WAIT_MS = 10000;
 const SKU_EXPORT_FILE_NAME = '系统所有产品SKU.xlsx';
+const UNMATCHED_SKU_EXPORT_FILE_NAME = '未匹配产品ID的SKU.xlsx';
 
 @Injectable()
 export class SkusService {
@@ -199,43 +200,31 @@ export class SkusService {
       orderBy: [{ productId: 'asc' }, { sku: 'asc' }, { id: 'asc' }],
     });
 
-    const sheetRows = [
-      [
-        'SKU',
-        'ASIN',
-        'FNSKU',
-        'FBMSKU',
-        'RBSKU',
-        '所属店铺',
-        '备注',
-        '产品ID',
-        '产品名称',
-        '产品库存',
-      ],
-      ...rows.map((row) => [
-        row.sku ?? '',
-        row.asin ?? '',
-        row.fnsku ?? '',
-        row.fbmSku ?? '',
-        row.rbSku ?? '',
-        row.shop ?? '',
-        row.remark ?? '',
-        row.productId ?? '',
-        row.masterProduct?.productName ?? '',
-        Number(row.masterProduct?.stockQty ?? 0),
-      ]),
-    ];
-
-    const worksheet = XLSX.utils.aoa_to_sheet(sheetRows);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'SKU列表');
-
     return {
       fileName: SKU_EXPORT_FILE_NAME,
-      content: XLSX.write(workbook, {
-        type: 'buffer',
-        bookType: 'xlsx',
-      }) as Buffer,
+      content: this.buildSkuExportWorkbook(rows),
+    };
+  }
+
+  async exportUnmatchedExcel(): Promise<SkuExportFile> {
+    const rows = await this.prisma.sku.findMany({
+      include: {
+        masterProduct: {
+          select: {
+            productName: true,
+            stockQty: true,
+          },
+        },
+      },
+      where: {
+        OR: [{ productId: null }, { productId: '' }, { masterProduct: null }],
+      },
+      orderBy: [{ productId: 'asc' }, { sku: 'asc' }, { id: 'asc' }],
+    });
+
+    return {
+      fileName: UNMATCHED_SKU_EXPORT_FILE_NAME,
+      content: this.buildSkuExportWorkbook(rows),
     };
   }
 
@@ -613,6 +602,58 @@ export class SkusService {
     }
 
     return result;
+  }
+
+  private buildSkuExportWorkbook(
+    rows: Array<{
+      sku: string | null;
+      asin: string | null;
+      fnsku: string | null;
+      fbmSku: string | null;
+      rbSku: string | null;
+      shop: string | null;
+      remark: string | null;
+      productId: string | null;
+      masterProduct?: {
+        productName: string | null;
+        stockQty: number | bigint | null;
+      } | null;
+    }>,
+  ): Buffer {
+    const sheetRows = [
+      [
+        'SKU',
+        'ASIN',
+        'FNSKU',
+        'FBMSKU',
+        'RBSKU',
+        '所属店铺',
+        '备注',
+        '产品ID',
+        '产品名称',
+        '产品库存',
+      ],
+      ...rows.map((row) => [
+        row.sku ?? '',
+        row.asin ?? '',
+        row.fnsku ?? '',
+        row.fbmSku ?? '',
+        row.rbSku ?? '',
+        row.shop ?? '',
+        row.remark ?? '',
+        row.productId ?? '',
+        row.masterProduct?.productName ?? '',
+        Number(row.masterProduct?.stockQty ?? 0),
+      ]),
+    ];
+
+    const worksheet = XLSX.utils.aoa_to_sheet(sheetRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'SKU列表');
+    return XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+    }) as Buffer;
   }
 
   private normalizeHeader(header: string): string {

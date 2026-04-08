@@ -774,6 +774,10 @@ async function downloadInventorySkuSummaryCsv() {
   showToast(`已下载 ${fileName}`);
 }
 
+async function downloadUnmatchedInventorySkuSummaryCsv() {
+  await downloadAuthorizedFile("/skus/export-unmatched-excel", {}, "未匹配产品ID的SKU.xlsx");
+}
+
 async function downloadFbaOutboundExcel() {
   if (!state.token) {
     throw new Error("请先登录");
@@ -1602,12 +1606,28 @@ function ensureInventoryPanelUi() {
       showToast(error.message, true);
     }
   });
+  const unmatchedDownloadButton = document.createElement("button");
+  unmatchedDownloadButton.type = "button";
+  unmatchedDownloadButton.id = "downloadUnmatchedInventorySkuSummaryBtn";
+  unmatchedDownloadButton.textContent = "未匹配产品ID的SKU下载";
+  unmatchedDownloadButton.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadUnmatchedInventorySkuSummaryCsv();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
   const shopManageButton = $("openShopManageModal");
   if (shopManageButton) {
     shopManageButton.insertAdjacentElement("afterend", downloadButton);
+    downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
     return;
   }
   bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
+  downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
 }
 
 async function openProductManagementPanelView() {
