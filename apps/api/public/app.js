@@ -1609,6 +1609,11 @@ function ensureInventoryPanelUi() {
   bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
 }
 
+async function openProductManagementPanelView() {
+  switchPanel("productManagement");
+  await Promise.all([loadProductEditRequests({ reset: true }), loadProductEditPendingSummary()]);
+}
+
 function openModal(modalId) {
   const modal = $(modalId);
   if (!modal) return;
@@ -7597,11 +7602,7 @@ function bindForms() {
 
   $("openProductManagementPanel").addEventListener("click", async () => {
     try {
-      switchPanel("productManagement");
-      await Promise.all([
-        loadProductEditRequests({ reset: true }),
-        loadProductEditPendingSummary(),
-      ]);
+      await openProductManagementPanelView();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -7632,8 +7633,12 @@ function bindForms() {
     }
   });
 
-  $("backToProductManagementFromSku").addEventListener("click", () => {
-    switchPanel("productManagement");
+  $("backToProductManagementFromSku").addEventListener("click", async () => {
+    try {
+      await openProductManagementPanelView();
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   $("openOrderProcessingPanel").addEventListener("click", async () => {
@@ -9800,8 +9805,12 @@ function bindRefresh() {
   $("refreshSkuManagement").addEventListener("click", () =>
     loadInventory({ preserveSearch: true }).catch((error) => showToast(error.message, true)),
   );
-  $("refreshMasterProductBtn").addEventListener("click", () => {
-    switchPanel("productManagement");
+  $("refreshMasterProductBtn").addEventListener("click", async () => {
+    try {
+      await openProductManagementPanelView();
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
   $("refreshUsers").addEventListener("click", () =>
     Promise.all([loadUsers(), loadUserOptions()]).catch((error) => showToast(error.message, true)),
