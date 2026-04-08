@@ -7649,6 +7649,13 @@ function bindForms() {
       showToast(error.message, true);
     }
   });
+  $("backToProductManagementFromMasterProduct").addEventListener("click", async () => {
+    try {
+      await navigateToProductManagement();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
 
   $("openOrderProcessingPanel").addEventListener("click", async () => {
     try {
