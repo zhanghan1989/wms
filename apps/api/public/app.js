@@ -1574,9 +1574,9 @@ function switchPanel(targetId) {
 }
 
 function ensureBrandingUi() {
-  document.title = "日本乐天库存系统";
+  document.title = "日本乐天库存系统2.0";
   document.querySelectorAll(".brand-title").forEach((node) => {
-    node.textContent = "日本乐天库存系统";
+    node.textContent = "日本乐天库存系统2.0";
   });
 }
 

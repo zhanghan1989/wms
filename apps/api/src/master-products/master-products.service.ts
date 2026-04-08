@@ -354,15 +354,15 @@ export class MasterProductsService {
           select: {
             [field]: true,
           } as Prisma.MasterProductSelect,
-          distinct: [field],
-          orderBy: {
-            [field]: 'asc',
-          } as Prisma.MasterProductOrderByWithRelationInput,
         });
 
-        const values = rows
-          .map((row) => String(row[field] ?? '').trim())
-          .filter((value) => Boolean(value));
+        const values = Array.from(
+          new Set(
+            rows
+              .map((row) => String(row[field] ?? '').trim())
+              .filter((value) => Boolean(value)),
+          ),
+        ).sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
 
         return [field, values] as const;
       }),
