@@ -9800,9 +9800,9 @@ function bindRefresh() {
   $("refreshSkuManagement").addEventListener("click", () =>
     loadInventory({ preserveSearch: true }).catch((error) => showToast(error.message, true)),
   );
-  $("refreshMasterProductBtn").addEventListener("click", () =>
-    refreshMasterProductPanel().catch((error) => showToast(error.message, true)),
-  );
+  $("refreshMasterProductBtn").addEventListener("click", () => {
+    switchPanel("productManagement");
+  });
   $("refreshUsers").addEventListener("click", () =>
     Promise.all([loadUsers(), loadUserOptions()]).catch((error) => showToast(error.message, true)),
   );
