@@ -3348,6 +3348,7 @@ function renderSkuManagementTable() {
   }
 
   setupSkuManagementLoadObserver();
+  maybeAutoLoadSkuManagement();
 }
 
 function renderProductSummaryMeta(containerId, product) {
@@ -4589,6 +4590,21 @@ function loadMoreSkuManagementIfNeeded() {
   if (state.skuManagementVisibleCount >= total) return;
   state.skuManagementVisibleCount += state.inventoryListPageSize;
   renderSkuManagementTable();
+}
+
+function maybeAutoLoadSkuManagement() {
+  const panel = $("skuManagement");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("skuManagementTableWrap");
+  if (!tableWrap || tableWrap.classList.contains("hidden")) return;
+  const total = getSkuManagementFilteredRows().length;
+  if (state.skuManagementVisibleCount >= total) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreSkuManagementIfNeeded();
 }
 
 function setupSkuManagementLoadObserver() {
@@ -9406,6 +9422,16 @@ function bindDelegates() {
   $("skuManagementBody")?.addEventListener("click", openInventoryEditByAction);
 
   document.addEventListener("click", (event) => {
+    const runDataBackupBtn = event.target.closest("#runDataBackupBtn");
+    if (runDataBackupBtn) {
+      runDataBackupNow(runDataBackupBtn).catch((error) => showToast(error.message, true));
+      return;
+    }
+    const refreshDataBackupBtn = event.target.closest("#refreshDataBackup");
+    if (refreshDataBackupBtn) {
+      loadDataBackups().catch((error) => showToast(error.message, true));
+      return;
+    }
     const button = event.target.closest("button[data-action='closeCreateSkuModal']");
     if (button) {
       closeModal("createSkuModal");
@@ -9814,6 +9840,13 @@ function bindScrollLoad() {
     });
   }
 
+  const skuManagementTableWrap = $("skuManagementTableWrap");
+  if (skuManagementTableWrap) {
+    skuManagementTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadSkuManagement();
+    });
+  }
+
   const myAuditCard = document.querySelector("#myAuditModal .modal-card");
   if (myAuditCard) {
     myAuditCard.addEventListener("scroll", () => {
@@ -9839,16 +9872,6 @@ function bindScrollLoad() {
 function bindRefresh() {
   $("refreshOverviewDashboard").addEventListener("click", () =>
     loadOverviewDashboard().catch((error) => showToast(error.message, true)),
-  );
-  $("runDataBackupBtn").addEventListener("click", async (event) => {
-    try {
-      await runDataBackupNow(event.currentTarget);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-  $("refreshDataBackup").addEventListener("click", () =>
-    loadDataBackups().catch((error) => showToast(error.message, true)),
   );
   $("downloadInventorySkuSummaryBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
