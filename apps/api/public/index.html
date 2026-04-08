@@ -330,7 +330,7 @@
             <button type="submit">检索</button>
             <button type="button" id="resetSkuManagementKeywordBtn" class="ghost">重置</button>
           </form>
-          <div class="master-product-table-wrap">
+          <div id="skuManagementTableWrap" class="master-product-table-wrap">
             <table class="master-product-sku-management-table">
               <thead>
                 <tr>
@@ -346,6 +346,7 @@
               </thead>
               <tbody id="skuManagementBody"></tbody>
             </table>
+            <div id="skuManagementLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
           </div>
         </article>
       </section>

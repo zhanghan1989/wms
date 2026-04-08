@@ -110,6 +110,7 @@ let errorModalCountdownTimer = null;
 let errorModalAutoAction = null;
 let inventoryHomeLoadObserver = null;
 let productEditRequestLoadObserver = null;
+let skuManagementLoadObserver = null;
 let skuProductLookupToken = 0;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
@@ -3315,6 +3316,8 @@ function renderSkuManagementTable() {
       ? `检索到 ${filteredRows.length} 条SKU`
       : `共 ${filteredRows.length} 条SKU`;
   }
+
+  setupSkuManagementLoadObserver();
 }
 
 function renderProductSummaryMeta(containerId, product) {
@@ -4556,6 +4559,31 @@ function loadMoreSkuManagementIfNeeded() {
   if (state.skuManagementVisibleCount >= total) return;
   state.skuManagementVisibleCount += state.inventoryListPageSize;
   renderSkuManagementTable();
+}
+
+function setupSkuManagementLoadObserver() {
+  if (skuManagementLoadObserver) {
+    skuManagementLoadObserver.disconnect();
+    skuManagementLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("skuManagementTableWrap");
+  const sentinel = $("skuManagementLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  skuManagementLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreSkuManagementIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  skuManagementLoadObserver.observe(sentinel);
 }
 
 function renderProductEditRequestDetail(item) {
