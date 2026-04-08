@@ -1614,6 +1614,15 @@ async function openProductManagementPanelView() {
   await Promise.all([loadProductEditRequests({ reset: true }), loadProductEditPendingSummary()]);
 }
 
+async function navigateToProductManagement() {
+  const entryButton = $("openProductManagementPanel");
+  if (entryButton) {
+    entryButton.click();
+    return;
+  }
+  await openProductManagementPanelView();
+}
+
 function openModal(modalId) {
   const modal = $(modalId);
   if (!modal) return;
@@ -7635,7 +7644,7 @@ function bindForms() {
 
   $("backToProductManagementFromSku").addEventListener("click", async () => {
     try {
-      await openProductManagementPanelView();
+      await navigateToProductManagement();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -9807,7 +9816,7 @@ function bindRefresh() {
   );
   $("refreshMasterProductBtn").addEventListener("click", async () => {
     try {
-      await openProductManagementPanelView();
+      await navigateToProductManagement();
     } catch (error) {
       showToast(error.message, true);
     }
