@@ -1715,16 +1715,16 @@ function ensureOverseasWarehouseQueryUi() {
                 <button type="button" class="ghost" data-action="closeStocktakeTaskDetailModal">关闭</button>
               </div>
             </div>
-            <div id="stocktakeTaskDetailMeta" class="batch-detail-meta"></div>
-            <div id="stocktakeTaskDetailSummary" class="muted manage-query-summary">请选择盘点任务后查看。</div>
-            <div class="manage-table-scroll">
-              <table>
-                <thead><tr><th>箱号</th><th>SKU</th><th>数量</th></tr></thead>
-                <tbody id="stocktakeTaskDetailBody">
-                  <tr><td colspan="3" class="muted">请选择盘点任务后查看。</td></tr>
-                </tbody>
-              </table>
-            </div>
+              <div id="stocktakeTaskDetailMeta" class="batch-detail-meta"></div>
+              <div id="stocktakeTaskDetailSummary" class="muted manage-query-summary">请选择盘点任务后查看。</div>
+              <div class="manage-table-scroll">
+                <table>
+                  <thead><tr><th>箱号</th><th>产品ID</th><th>产品名称</th><th>数量</th></tr></thead>
+                  <tbody id="stocktakeTaskDetailBody">
+                    <tr><td colspan="4" class="muted">请选择盘点任务后查看。</td></tr>
+                  </tbody>
+                </table>
+              </div>
           </div>
         </div>
       `,
@@ -2829,7 +2829,7 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
   if (!task) {
     meta.innerHTML = "";
     summary.textContent = "请选择盘点任务后查看。";
-    body.innerHTML = '<tr><td colspan="3" class="muted">请选择盘点任务后查看。</td></tr>';
+    body.innerHTML = '<tr><td colspan="4" class="muted">请选择盘点任务后查看。</td></tr>';
     return;
   }
 
@@ -2844,7 +2844,7 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
 
   if (!boxCount) {
     summary.textContent = `货架 ${displayText(task?.shelfCode)} 当前没有箱号。`;
-    body.innerHTML = `<tr><td colspan="3" class="muted">货架 ${escapeHtml(displayText(task?.shelfCode))} 当前没有箱号。</td></tr>`;
+    body.innerHTML = `<tr><td colspan="4" class="muted">货架 ${escapeHtml(displayText(task?.shelfCode))} 当前没有箱号。</td></tr>`;
     return;
   }
 
@@ -2854,7 +2854,8 @@ function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
       (row) => `
         <tr>
           <td>${escapeHtml(displayText(row?.boxCode))}</td>
-          <td>${escapeHtml(displayText(row?.sku))}</td>
+          <td>${escapeHtml(displayText(row?.productId))}</td>
+          <td>${escapeHtml(displayText(row?.productName))}</td>
           <td>${escapeHtml(displayText(row?.qty))}</td>
         </tr>
       `,
@@ -2898,16 +2899,17 @@ function openStocktakePrintWindow(task, rows) {
       <div><strong>确认人：</strong>${escapeHtml(displayText(task?.confirmedByName) || "-")}</div>
     </div>
     <table>
-      <thead><tr><th>箱号</th><th>SKU</th><th>数量</th></tr></thead>
+      <thead><tr><th>箱号</th><th>产品ID</th><th>产品名称</th><th>数量</th></tr></thead>
       <tbody>
         ${
           safeRows.length
             ? safeRows
                 .map(
-                  (row) => `<tr><td>${escapeHtml(displayText(row?.boxCode))}</td><td>${escapeHtml(displayText(row?.sku))}</td><td>${escapeHtml(displayText(row?.qty))}</td></tr>`,
+                  (row) =>
+                    `<tr><td>${escapeHtml(displayText(row?.boxCode))}</td><td>${escapeHtml(displayText(row?.productId))}</td><td>${escapeHtml(displayText(row?.productName))}</td><td>${escapeHtml(displayText(row?.qty))}</td></tr>`,
                 )
                 .join("")
-            : `<tr><td colspan="3">当前没有盘点明细。</td></tr>`
+            : `<tr><td colspan="4">当前没有盘点明细。</td></tr>`
         }
       </tbody>
     </table>

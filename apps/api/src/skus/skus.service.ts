@@ -432,6 +432,11 @@ export class SkusService {
     if (!sku) {
       throw new NotFoundException('SKU not found');
     }
+    const blockingRelations = await this.getSkuDeleteBlockingRelations(id);
+    if (blockingRelations.length > 0) {
+      const details = blockingRelations.map((item) => `${item.label}${item.count}条`).join('、');
+      throw new BadRequestException(`无法删除 SKU：存在${details}关联记录，请先处理后再删除`);
+    }
     await this.prisma.$transaction(async (tx) => {
       await tx.sku.delete({ where: { id } });
       await this.auditService.create({
@@ -447,6 +452,39 @@ export class SkusService {
       });
     });
     return { success: true };
+  }
+
+  private async getSkuDeleteBlockingRelations(skuId: bigint): Promise<Array<{ label: string; count: number }>> {
+    const [
+      itemCodeCount,
+      inventoryCount,
+      outboundItemCount,
+      stocktakeRecordCount,
+      stockMovementCount,
+      adjustItemCount,
+      fbaReplenishmentCount,
+      productEditRequestCount,
+    ] = await Promise.all([
+      this.prisma.itemCode.count({ where: { skuId } }),
+      this.prisma.inventoryBoxSku.count({ where: { skuId } }),
+      this.prisma.outboundOrderItem.count({ where: { skuId } }),
+      this.prisma.stocktakeRecord.count({ where: { skuId } }),
+      this.prisma.stockMovement.count({ where: { skuId } }),
+      this.prisma.inventoryAdjustOrderItem.count({ where: { skuId } }),
+      this.prisma.fbaReplenishment.count({ where: { skuId } }),
+      this.prisma.productEditRequest.count({ where: { skuId } }),
+    ]);
+
+    return [
+      { label: '条码', count: itemCodeCount },
+      { label: '箱内库存', count: inventoryCount },
+      { label: '出库明细', count: outboundItemCount },
+      { label: '盘点记录', count: stocktakeRecordCount },
+      { label: '库存流水', count: stockMovementCount },
+      { label: '库存调整明细', count: adjustItemCount },
+      { label: 'FBA补货', count: fbaReplenishmentCount },
+      { label: '编辑申请', count: productEditRequestCount },
+    ].filter((item) => item.count > 0);
   }
 
   private parseImportRows(fileBuffer: Buffer): ImportSkuRow[] {
