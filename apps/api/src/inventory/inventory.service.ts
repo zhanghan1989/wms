@@ -866,6 +866,8 @@ export class InventoryService {
   }
 
   async buildStockAdjustmentCsv(): Promise<{ fileName: string; content: Buffer }> {
+    return this.buildBossStockAdjustmentCsvByProduct();
+
     const [skus, inventoryRows, pendingRows] = await Promise.all([
       this.prisma.sku.findMany({
         select: {
@@ -925,6 +927,47 @@ export class InventoryService {
       const pendingQty = pendingBySku.get(skuKey) ?? 0;
       const actualQty = totalQty - pendingQty;
       const row = [sku.sku || '', STOCK_ADJUSTMENT_WAREHOUSE_ID, actualQty, ''];
+      lines.push(row.map((cell) => this.escapeCsvCell(cell)).join(','));
+    });
+
+    const csvText = `${lines.join('\r\n')}\r\n`;
+    const fileName = `stock_ajustment_${this.formatDateForFilename(new Date())}.csv`;
+    return {
+      fileName,
+      content: iconv.encode(csvText, 'shift_jis'),
+    };
+  }
+
+  private async buildBossStockAdjustmentCsvByProduct(): Promise<{
+    fileName: string;
+    content: Buffer;
+  }> {
+    const products = await this.prisma.masterProduct.findMany({
+      where: {
+        status: 1,
+      },
+      select: {
+        productId: true,
+        stockQty: true,
+      },
+      orderBy: {
+        productId: 'asc',
+      },
+    });
+
+    const lines: string[] = [
+      ['SKUコード', '倉庫ID', '実在庫数', '差分指定']
+        .map((cell) => this.escapeCsvCell(cell))
+        .join(','),
+    ];
+
+    products.forEach((product) => {
+      const row = [
+        product.productId || '',
+        STOCK_ADJUSTMENT_WAREHOUSE_ID,
+        Number(product.stockQty ?? 0),
+        '',
+      ];
       lines.push(row.map((cell) => this.escapeCsvCell(cell)).join(','));
     });
 
