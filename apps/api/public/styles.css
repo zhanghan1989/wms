@@ -497,6 +497,7 @@ button.ghost {
 
 .master-product-export-form {
   grid-template-columns: repeat(3, minmax(180px, 1fr));
+  margin-top: 16px;
 }
 
 #masterProductExportForm label:has(#masterProductExport_stockQtyMin),
