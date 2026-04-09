@@ -176,8 +176,17 @@ export class InventoryController {
   }
 
   @Get('stock-adjustment-csv')
-  async downloadStockAdjustmentCsv(@Res() res: Response): Promise<void> {
-    const csv = await this.inventoryService.buildStockAdjustmentCsv();
+  async downloadStockAdjustmentCsv(
+    @Query('productTypes') productTypes: string | string[] | undefined,
+    @Res() res: Response,
+  ): Promise<void> {
+    const normalizedProductTypes = (Array.isArray(productTypes) ? productTypes : [productTypes])
+      .flatMap((value) => String(value || '').split(','))
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const csv = await this.inventoryService.buildStockAdjustmentCsv({
+      productTypes: normalizedProductTypes,
+    });
     res.setHeader('Content-Type', 'text/csv; charset=Shift_JIS');
     res.setHeader('Content-Disposition', `attachment; filename="${csv.fileName}"`);
     res.setHeader('Cache-Control', 'no-store');

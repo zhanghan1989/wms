@@ -865,8 +865,10 @@ export class InventoryService {
     return importBulkUpdateExcelByProduct.call(this, fileBuffer, originalName, operatorId, requestId);
   }
 
-  async buildStockAdjustmentCsv(): Promise<{ fileName: string; content: Buffer }> {
-    return this.buildBossStockAdjustmentCsvByProduct();
+  async buildStockAdjustmentCsv(filters?: {
+    productTypes?: string[];
+  }): Promise<{ fileName: string; content: Buffer }> {
+    return this.buildBossStockAdjustmentCsvByProduct(filters);
 
     const [skus, inventoryRows, pendingRows] = await Promise.all([
       this.prisma.sku.findMany({
@@ -938,13 +940,25 @@ export class InventoryService {
     };
   }
 
-  private async buildBossStockAdjustmentCsvByProduct(): Promise<{
+  private async buildBossStockAdjustmentCsvByProduct(filters?: {
+    productTypes?: string[];
+  }): Promise<{
     fileName: string;
     content: Buffer;
   }> {
+    const productTypes = Array.isArray(filters?.productTypes)
+      ? filters.productTypes.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
     const products = await this.prisma.masterProduct.findMany({
       where: {
         status: 1,
+        ...(productTypes.length
+          ? {
+              productType: {
+                in: productTypes,
+              },
+            }
+          : {}),
       },
       select: {
         productId: true,

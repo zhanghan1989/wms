@@ -1106,6 +1106,25 @@
     </div>
   </div>
 
+  <div id="bossStockAdjustmentModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>BOSS系统用库存下载</h3>
+        <button type="button" class="ghost" data-action="closeBossStockAdjustmentModal">关闭</button>
+      </div>
+      <form id="bossStockAdjustmentForm" class="form-grid modal-grid">
+        <div class="create-sku-full-row">
+          <div class="boss-stock-adjustment-label">产品类型</div>
+          <div id="bossStockAdjustmentProductTypes" class="boss-stock-adjustment-options"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" id="submitBossStockAdjustmentBtn">下载 CSV</button>
+          <button type="button" class="ghost" data-action="closeBossStockAdjustmentModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="masterProductImportModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">

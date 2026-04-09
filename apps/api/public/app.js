@@ -660,13 +660,49 @@ function formatDateForFilename(date) {
   }${parts.second || "00"}`;
 }
 
-async function downloadStockAdjustmentCsv() {
+function renderBossStockAdjustmentProductTypes() {
+  const container = $("bossStockAdjustmentProductTypes");
+  if (!container) return;
+  const values = Array.isArray(state.masterProductExportFilterOptions?.productType)
+    ? state.masterProductExportFilterOptions.productType
+    : [];
+  if (!values.length) {
+    container.innerHTML = '<div class="muted">暂无可选产品类型</div>';
+    return;
+  }
+  container.innerHTML = values
+    .map(
+      (value) => `
+        <label class="boss-stock-adjustment-option">
+          <input type="checkbox" name="bossStockAdjustmentProductType" value="${escapeHtml(value)}" />
+          <span>${escapeHtml(value)}</span>
+        </label>
+      `,
+    )
+    .join("");
+}
+
+async function openBossStockAdjustmentModal() {
+  await loadMasterProductExportFilterOptions();
+  renderBossStockAdjustmentProductTypes();
+  openModal("bossStockAdjustmentModal");
+}
+
+function getSelectedBossStockAdjustmentProductTypes() {
+  return Array.from(document.querySelectorAll('input[name="bossStockAdjustmentProductType"]:checked'))
+    .map((input) => String(input.value || "").trim())
+    .filter(Boolean);
+}
+
+async function downloadStockAdjustmentCsv(productTypes = []) {
   if (!state.token) {
     throw new Error("请先登录");
   }
+  const params = new URLSearchParams();
+  productTypes.forEach((value) => params.append("productTypes", value));
   let response;
   try {
-    response = await fetch("/api/inventory/stock-adjustment-csv", {
+    response = await fetch(params.toString() ? `/api/inventory/stock-adjustment-csv?${params.toString()}` : "/api/inventory/stock-adjustment-csv", {
       headers: {
         Authorization: `Bearer ${state.token}`,
       },
@@ -1639,6 +1675,39 @@ function ensureInventoryPanelUi() {
   }
   bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
   downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
+}
+
+function ensureBossStockAdjustmentUi() {
+  const originalButton = $("downloadStockAdjustmentCsvBtn");
+  if (!originalButton || originalButton.dataset.bound === "boss-filter") return;
+
+  const button = originalButton.cloneNode(true);
+  button.dataset.bound = "boss-filter";
+  originalButton.replaceWith(button);
+  button.addEventListener("click", async () => {
+    try {
+      await openBossStockAdjustmentModal();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  const form = $("bossStockAdjustmentForm");
+  if (form && !form.dataset.bound) {
+    form.dataset.bound = "true";
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const submitButton = getSubmitButton(event.currentTarget, event);
+      try {
+        await withBusyButton(submitButton, "下载中...", async () => {
+          await downloadStockAdjustmentCsv(getSelectedBossStockAdjustmentProductTypes());
+          closeModal("bossStockAdjustmentModal");
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  }
 }
 
 async function openProductManagementPanelView() {
@@ -9575,6 +9644,13 @@ function bindDelegates() {
       closeModal("bulkInventoryUpdateModal");
       return;
     }
+    const bossStockAdjustmentClose = event.target.closest(
+      "button[data-action='closeBossStockAdjustmentModal']",
+    );
+    if (bossStockAdjustmentClose) {
+      closeModal("bossStockAdjustmentModal");
+      return;
+    }
     const masterProductImportClose = event.target.closest(
       "button[data-action='closeMasterProductImportModal']",
     );
@@ -10057,6 +10133,7 @@ renderStocktakePlanner();
 bindTabs();
 bindInputRules();
 bindForms();
+ensureBossStockAdjustmentUi();
 bindDelegates();
 bindScrollLoad();
 bindRefresh();
