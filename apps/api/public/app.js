@@ -1761,18 +1761,6 @@ function ensureBossStockAdjustmentUi() {
   }
 }
 
-function ensureBossMappingDownloadButton() {
-  const stockButton = $("downloadStockAdjustmentCsvBtn");
-  if (!stockButton) return;
-  if ($("downloadBossMappingCsvBtn")) return;
-
-  const button = document.createElement("button");
-  button.type = "button";
-  button.id = "downloadBossMappingCsvBtn";
-  button.textContent = "BOSS系统用匹配数据下载";
-  stockButton.insertAdjacentElement("afterend", button);
-}
-
 async function openProductManagementPanelView() {
   switchPanel("productManagement");
   await Promise.all([loadProductEditRequests({ reset: true }), loadProductEditPendingSummary()]);
@@ -10199,7 +10187,6 @@ function bindRefresh() {
 
 ensureBrandingUi();
 ensureInventoryPanelUi();
-ensureBossMappingDownloadButton();
 setupInventoryHomeLoadObserver();
 setupProductEditRequestLoadObserver();
 ensureOverseasWarehouseQueryUi();
