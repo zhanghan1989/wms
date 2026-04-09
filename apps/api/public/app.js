@@ -2441,7 +2441,6 @@ async function toggleUserStatus(userId, username, nextStatus) {
     localStorage.removeItem("wms_token");
     showToast("当前用户已被禁用，请重新登录");
     await reloadAll();
-    switchPanel("overview");
   }
   return true;
 }
@@ -2461,8 +2460,7 @@ async function removeUser(userId, username) {
     state.me = null;
     localStorage.removeItem("wms_token");
     showToast("当前用户已被删除，请重新登录");
-    await reloadAll();
-    switchPanel("overview");
+      await reloadAll();
   }
   return true;
 }
@@ -7037,7 +7035,6 @@ function bindForms() {
     document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden"));
     clearErrorModalAutoState();
     await reloadAll();
-    switchPanel("overview");
   };
 
   $("logoutBtn")?.addEventListener("click", handleLogout);
