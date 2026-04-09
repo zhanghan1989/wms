@@ -3390,6 +3390,15 @@ function renderProductSummaryMeta(containerId, product) {
     .join("");
 }
 
+function renderAmazonAsinCell(asin) {
+  const value = String(asin || "").trim();
+  if (!value) {
+    return escapeHtml(displayText(value));
+  }
+  const href = `https://www.amazon.co.jp/dp/${encodeURIComponent(value)}?th=1`;
+  return `<a href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`;
+}
+
 function renderProductSkuTable(detail, { bodyId, selectId = "" } = {}) {
   const body = $(bodyId);
   const select = selectId ? $(selectId) : null;
@@ -3401,7 +3410,7 @@ function renderProductSkuTable(detail, { bodyId, selectId = "" } = {}) {
         (item) => `
           <tr>
             <td>${escapeHtml(displayText(item?.sku))}</td>
-            <td>${escapeHtml(displayText(item?.asin))}</td>
+            <td>${renderAmazonAsinCell(item?.asin)}</td>
             <td>${escapeHtml(displayText(item?.fnsku))}</td>
             <td>${escapeHtml(displayText(item?.fbmSku))}</td>
             <td>${escapeHtml(displayText(item?.rbSku))}</td>
