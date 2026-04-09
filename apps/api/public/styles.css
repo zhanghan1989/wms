@@ -858,6 +858,21 @@ td {
   color: var(--ink);
 }
 
+.inline-link-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.inline-link-btn:hover {
+  opacity: 0.82;
+}
+
 .tiny-input {
   width: 88px;
   min-width: 88px;

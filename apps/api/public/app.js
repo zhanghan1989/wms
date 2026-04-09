@@ -6374,7 +6374,15 @@ function renderFbaReplenishmentList() {
         <td>${escapeHtml(item.requestNo)}</td>
         <td>${escapeHtml(getFbaStatusText(item.status))}</td>
         <td>${escapeHtml(displayText(item.sku?.sku))}</td>
-        <td>${escapeHtml(displayText(item.sku?.productId))}</td>
+        <td>
+          ${
+            item.sku?.productId
+              ? `<button type="button" class="inline-link-btn" data-action="fbaOpenMasterProductDetail" data-product-id="${escapeHtml(
+                  item.sku.productId,
+                )}">${escapeHtml(displayText(item.sku.productId))}</button>`
+              : escapeHtml(displayText(item.sku?.productId))
+          }
+        </td>
         <td>${escapeHtml(displayText(item.sku?.productName))}</td>
         <td>${escapeHtml(displayText(item.box?.boxCode))}</td>
         <td>${escapeHtml(displayText(item.box?.shelfCode))}</td>
@@ -9041,6 +9049,14 @@ function bindDelegates() {
 
     try {
       const action = button.dataset.action;
+      if (action === "fbaOpenMasterProductDetail") {
+        const productId = String(button.dataset.productId || "").trim();
+        if (!productId) return;
+        switchPanel("inventory");
+        await loadInventoryHomeProductDetail(productId);
+        return;
+      }
+
       const id = Number(button.dataset.id);
       if (!Number.isInteger(id) || id <= 0) {
         throw new Error("申请单ID无效");
