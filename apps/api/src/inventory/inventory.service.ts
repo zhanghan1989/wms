@@ -940,6 +940,76 @@ export class InventoryService {
     };
   }
 
+  async buildBossMappingCsv(): Promise<{
+    fileName: string;
+    content: Buffer;
+  }> {
+    const rows = await this.prisma.sku.findMany({
+      where: {
+        status: 1,
+        productId: {
+          not: null,
+        },
+        rbSku: {
+          not: null,
+        },
+        masterProduct: {
+          is: {
+            status: 1,
+          },
+        },
+      },
+      select: {
+        productId: true,
+        rbSku: true,
+      },
+      orderBy: [{ productId: 'asc' }, { rbSku: 'asc' }, { id: 'asc' }],
+    });
+
+    const lines: string[] = [
+      [
+        '削除フラグ',
+        'ショップID',
+        'SKUコード',
+        'モール商品ID',
+        'モール商品サブコード1',
+        'モール商品サブコード2',
+        '在庫管理方法',
+        '販売在庫',
+        'バックオーダー設定',
+        'モールリードタイム',
+      ].join(','),
+    ];
+
+    rows
+      .filter((row) => String(row.productId ?? '').trim() && String(row.rbSku ?? '').trim())
+      .forEach((row) => {
+        lines.push(
+          [
+            '',
+            '74748',
+            row.productId ?? '',
+            row.rbSku ?? '',
+            '',
+            '',
+            '1',
+            '',
+            '0',
+            '',
+          ]
+            .map((value) => this.escapeCsvCell(value))
+            .join(','),
+        );
+      });
+
+    const csvText = `${lines.join('\r\n')}\r\n`;
+    const fileName = `MappingItem_${this.formatDateForFilename(new Date())}.csv`;
+    return {
+      fileName,
+      content: iconv.encode(csvText, 'shift_jis'),
+    };
+  }
+
   private async buildBossStockAdjustmentCsvByProduct(filters?: {
     productTypes?: string[];
   }): Promise<{

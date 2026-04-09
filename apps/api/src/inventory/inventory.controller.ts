@@ -193,6 +193,15 @@ export class InventoryController {
     res.status(200).send(csv.content);
   }
 
+  @Get('boss-mapping-csv')
+  async downloadBossMappingCsv(@Res() res: Response): Promise<void> {
+    const csv = await this.inventoryService.buildBossMappingCsv();
+    res.setHeader('Content-Type', 'text/csv; charset=Shift_JIS');
+    res.setHeader('Content-Disposition', `attachment; filename="${csv.fileName}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(csv.content);
+  }
+
   @Get('bulk-update-template')
   async downloadBulkUpdateTemplate(@Res() res: Response): Promise<void> {
     const file = await this.inventoryService.getBulkUpdateTemplate();
