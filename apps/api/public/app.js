@@ -1761,6 +1761,24 @@ function ensureBossStockAdjustmentUi() {
   }
 }
 
+function ensureBossMappingDownloadUi() {
+  const originalButton = $("downloadBossMappingCsvBtn");
+  if (!originalButton || originalButton.dataset.bound === "boss-mapping") return;
+
+  const button = originalButton.cloneNode(true);
+  button.dataset.bound = "boss-mapping";
+  originalButton.replaceWith(button);
+  button.addEventListener("click", async () => {
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadBossMappingCsv();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+}
+
 async function openProductManagementPanelView() {
   switchPanel("productManagement");
   await Promise.all([loadProductEditRequests({ reset: true }), loadProductEditPendingSummary()]);
@@ -10136,16 +10154,6 @@ function bindRefresh() {
       showToast(error.message, true);
     }
   });
-  $("downloadBossMappingCsvBtn")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      await withBusyButton(button, "下载中...", async () => {
-        await downloadBossMappingCsv();
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
   $("refreshInventory").addEventListener("click", () =>
     (state.inventorySearchMode && state.inventoryHomeSelectedDetail
       ? loadInventoryHomeProductDetail(state.inventoryHomeSelectedDetail?.product?.productId || "")
@@ -10195,6 +10203,7 @@ bindTabs();
 bindInputRules();
 bindForms();
 ensureBossStockAdjustmentUi();
+ensureBossMappingDownloadUi();
 bindDelegates();
 bindScrollLoad();
 bindRefresh();
