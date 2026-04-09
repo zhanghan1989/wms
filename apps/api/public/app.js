@@ -9052,8 +9052,10 @@ function bindDelegates() {
       if (action === "fbaOpenMasterProductDetail") {
         const productId = String(button.dataset.productId || "").trim();
         if (!productId) return;
+        const detail = await request(`/master-products/${encodeURIComponent(productId)}/detail`);
         switchPanel("inventory");
-        await loadInventoryHomeProductDetail(productId);
+        renderInventoryHomeDetail(detail);
+        setInventoryDisplayMode(true);
         return;
       }
 
