@@ -8579,7 +8579,21 @@ function bindForms() {
 }
 
 function bindDelegates() {
-    $("stocktakePlannerBody")?.addEventListener("click", async (event) => {
+  if (!document.body.dataset.bossMappingDownloadBound) {
+    document.body.dataset.bossMappingDownloadBound = "true";
+    document.body.addEventListener("click", async (event) => {
+      const button = event.target.closest("#downloadBossMappingCsvBtn");
+      if (!button) return;
+      try {
+        await withBusyButton(button, "下载中...", async () => {
+          await downloadBossMappingCsv();
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  }
+  $("stocktakePlannerBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
     try {
