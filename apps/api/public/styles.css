@@ -1733,6 +1733,45 @@ button.danger-solid {
 
   .topbar {
     padding: 14px 12px 10px;
+    gap: 10px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .brand {
+    width: 100%;
+    gap: 10px;
+  }
+
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    font-size: 14px;
+  }
+
+  #appTopbar .brand-title {
+    font-size: 14px;
+    line-height: 1.2;
+  }
+
+  .session-wrap {
+    width: 100%;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .session-main {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .session {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .layout {
@@ -1756,6 +1795,47 @@ button.danger-solid {
   .session-main,
   .session-actions {
     gap: 8px;
+  }
+
+  .session-actions {
+    width: 100%;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .session-actions button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .action-row-left,
+  .action-row-right,
+  .product-actions-left,
+  .product-actions-right,
+  .master-product-entry-actions-left,
+  .master-product-entry-actions-right,
+  .panel-tools {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .action-row-left button,
+  .action-row-right button,
+  .product-actions-left button,
+  .product-actions-right button,
+  .master-product-entry-actions-left button,
+  .master-product-entry-actions-right button,
+  .panel-tools button {
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .session-actions button,
