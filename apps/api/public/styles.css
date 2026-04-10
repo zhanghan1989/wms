@@ -1691,15 +1691,18 @@ button.danger-solid {
     -webkit-overflow-scrolling: touch;
   }
 
-  #fbaReplenishment > table,
-  #dataBackup > table,
-  #users > table,
-  #audit > table,
-  #batchInbound > .card > table {
-    display: block;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
+#fbaReplenishment > table,
+#dataBackup > table,
+#users > table,
+#audit > table,
+#batchInbound > .card > table,
+#stocktakePlanner > table,
+#shelves > table,
+#boxes > table {
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
 
   .adjust-box-row {
     grid-template-columns: 1fr;
@@ -1818,19 +1821,28 @@ button.danger-solid {
     min-width: 760px;
   }
 
-  #fbaReplenishment > table {
-    min-width: 980px;
-  }
+#fbaReplenishment > table {
+  min-width: 980px;
+}
 
-  #batchInbound > .card > table {
-    min-width: 860px;
-  }
+#batchInbound > .card > table {
+  min-width: 860px;
+}
 
-  #dataBackup > table,
-  #users > table,
-  #audit > table {
-    min-width: 640px;
-  }
+#dataBackup > table,
+#users > table,
+#audit > table {
+  min-width: 640px;
+}
+
+#stocktakePlanner > table {
+  min-width: 760px;
+}
+
+#shelves > table,
+#boxes > table {
+  min-width: 520px;
+}
 
   .batch-no-editor {
     flex-wrap: wrap;
