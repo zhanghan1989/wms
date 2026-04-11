@@ -114,6 +114,8 @@ let errorModalAutoAction = null;
 let inventoryHomeLoadObserver = null;
 let productEditRequestLoadObserver = null;
 let skuManagementLoadObserver = null;
+let shelfManageLoadObserver = null;
+let boxManageLoadObserver = null;
 let skuProductLookupToken = 0;
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
@@ -4878,6 +4880,86 @@ function loadMoreBoxesManageIfNeeded() {
   renderBoxesManageTable();
 }
 
+function maybeAutoLoadShelvesManage() {
+  const modal = $("shelfManageModal");
+  if (!modal || modal.classList.contains("hidden")) return;
+  const tableWrap = $("shelfManageTableWrap");
+  if (!tableWrap) return;
+  const total = getShelvesSortedForManage().length;
+  if (state.shelfManageVisibleCount >= total) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreShelvesManageIfNeeded();
+}
+
+function maybeAutoLoadBoxesManage() {
+  const modal = $("boxManageModal");
+  if (!modal || modal.classList.contains("hidden")) return;
+  const tableWrap = $("boxManageTableWrap");
+  if (!tableWrap) return;
+  const total = getBoxesSortedForManage().length;
+  if (state.boxManageVisibleCount >= total) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreBoxesManageIfNeeded();
+}
+
+function setupShelfManageLoadObserver() {
+  if (shelfManageLoadObserver) {
+    shelfManageLoadObserver.disconnect();
+    shelfManageLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("shelfManageTableWrap");
+  const sentinel = $("shelfManageLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  shelfManageLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreShelvesManageIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  shelfManageLoadObserver.observe(sentinel);
+}
+
+function setupBoxManageLoadObserver() {
+  if (boxManageLoadObserver) {
+    boxManageLoadObserver.disconnect();
+    boxManageLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("boxManageTableWrap");
+  const sentinel = $("boxManageLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  boxManageLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreBoxesManageIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  boxManageLoadObserver.observe(sentinel);
+}
+
 function buildShelfManageSelectOptions(selectedShelfId) {
   const selected = String(selectedShelfId || "");
   const rows = getShelvesSortedForManage();
@@ -4946,6 +5028,8 @@ function renderShelvesManageTable() {
       `<button class="tiny-btn secondary" data-action="queryShelfManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.shelfCode || "")}">查询</button>`,
     );
   });
+  setupShelfManageLoadObserver();
+  maybeAutoLoadShelvesManage();
 }
 
 function renderBoxesManageTable() {
@@ -5000,6 +5084,8 @@ function renderBoxesManageTable() {
     `;
       })
       .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
+  setupBoxManageLoadObserver();
+  maybeAutoLoadBoxesManage();
 }
 
 function renderEmptyBoxManageBadge() {
@@ -8450,6 +8536,8 @@ function bindForms() {
         wrap.scrollTop = 0;
       }
       openModal("shelfManageModal");
+      setupShelfManageLoadObserver();
+      maybeAutoLoadShelvesManage();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -8502,6 +8590,8 @@ function bindForms() {
         wrap.scrollTop = 0;
       }
       openModal("boxManageModal");
+      setupBoxManageLoadObserver();
+      maybeAutoLoadBoxesManage();
     } catch (error) {
       showToast(error.message, true);
     }
