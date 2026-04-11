@@ -2942,7 +2942,7 @@ function renderBoxContentQueryResult(box, rows) {
         <tr>
           <td>${escapeHtml(boxCode)}</td>
           <td>${escapeHtml(shelfCode)}</td>
-          <td>${escapeHtml(displayText(row?.product?.productId))}</td>
+          <td>${renderMasterProductDetailLink(displayText(row?.product?.productId))}</td>
           <td>${escapeHtml(displayText(row?.product?.productName))}</td>
           <td>${escapeHtml(displayText(row?.qty))}</td>
         </tr>
@@ -3009,7 +3009,7 @@ function renderShelfBoxQueryResult(shelf, rows, boxCount = 0) {
       (row) => `
         <tr>
           <td>${escapeHtml(displayText(row?.boxCode))}</td>
-          <td>${escapeHtml(displayText(row?.productId))}</td>
+          <td>${renderMasterProductDetailLink(displayText(row?.productId))}</td>
           <td>${escapeHtml(displayText(row?.productName))}</td>
           <td>${escapeHtml(displayText(row?.qty))}</td>
         </tr>
@@ -3666,6 +3666,16 @@ function renderAmazonAsinCell(asin) {
   }
   const href = `https://www.amazon.co.jp/dp/${encodeURIComponent(value)}?th=1`;
   return `<a href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`;
+}
+
+function renderMasterProductDetailLink(productId) {
+  const value = String(productId || "").trim();
+  if (!value) {
+    return escapeHtml(displayText(value));
+  }
+  return `<button type="button" class="inline-link-btn" data-action="openMasterProductDetail" data-product-id="${escapeHtml(
+    value,
+  )}">${escapeHtml(value)}</button>`;
 }
 
 function renderProductSkuTable(detail, { bodyId, selectId = "" } = {}) {
@@ -9504,6 +9514,24 @@ function bindDelegates() {
       showToast(error.message, true);
     }
   });
+
+  const openMasterProductDetailFromManageModal = async (event) => {
+    const button = event.target.closest("button[data-action='openMasterProductDetail']");
+    if (!button) return;
+    try {
+      const productId = String(button.dataset.productId || "").trim();
+      if (!productId) return;
+      const detail = await request(`/master-products/${encodeURIComponent(productId)}/detail`);
+      switchPanel("inventory");
+      renderInventoryHomeDetail(detail);
+      setInventoryDisplayMode(true);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+
+  $("boxContentQueryBody")?.addEventListener("click", openMasterProductDetailFromManageModal);
+  $("shelfBoxQueryBody")?.addEventListener("click", openMasterProductDetailFromManageModal);
 
   $("usersBody").addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
