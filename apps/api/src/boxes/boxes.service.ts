@@ -232,6 +232,48 @@ export class BoxesService {
       const activeFbaRows = activeFbaCountByBoxId.get(boxId) ?? 0;
       const pendingBatchInboundRows = pendingBatchInboundCountByCode.get(box.boxCode) ?? 0;
       const lockingOrderNo = lockingOrderByCode.get(String(box.boxCode).trim().toUpperCase()) ?? null;
+      const deleteBlockedReasons: string[] = [];
+      const archiveReleaseBlockedReasons: string[] = [];
+
+      if (lockingOrderNo) {
+        deleteBlockedReasons.push(`被批量入库单 ${lockingOrderNo} 占用`);
+        archiveReleaseBlockedReasons.push(`被批量入库单 ${lockingOrderNo} 占用`);
+      }
+      if (pendingBatchInboundRows > 0) {
+        const message = `存在 ${pendingBatchInboundRows} 条待处理批量入库明细`;
+        deleteBlockedReasons.push(message);
+        archiveReleaseBlockedReasons.push(message);
+      }
+      if (inventoryRows > 0) {
+        deleteBlockedReasons.push(`存在 ${inventoryRows} 条库存记录`);
+      }
+      if (itemCodeRows > 0) {
+        deleteBlockedReasons.push(`存在 ${itemCodeRows} 条 item code 记录`);
+      }
+      if (inboundRows > 0) {
+        deleteBlockedReasons.push(`存在 ${inboundRows} 条入库记录`);
+      }
+      if (outboundRows > 0) {
+        deleteBlockedReasons.push(`存在 ${outboundRows} 条出库记录`);
+      }
+      if (stocktakeRows > 0) {
+        deleteBlockedReasons.push(`存在 ${stocktakeRows} 条盘点记录`);
+      }
+      if (movementRows > 0) {
+        deleteBlockedReasons.push(`存在 ${movementRows} 条移动记录`);
+      }
+      if (adjustRows > 0) {
+        deleteBlockedReasons.push(`存在 ${adjustRows} 条调整记录`);
+      }
+      if (fbaRows > 0) {
+        deleteBlockedReasons.push(`存在 ${fbaRows} 条 FBA 历史记录`);
+      }
+      if (totalStock > 0) {
+        archiveReleaseBlockedReasons.push(`当前库存数量 ${totalStock}`);
+      }
+      if (activeFbaRows > 0) {
+        archiveReleaseBlockedReasons.push(`存在 ${activeFbaRows} 条进行中的 FBA 记录`);
+      }
 
       const canDelete =
         !lockingOrderNo &&
@@ -256,6 +298,8 @@ export class BoxesService {
         totalStock,
         canDelete,
         canArchiveRelease,
+        deleteBlockedReasons,
+        archiveReleaseBlockedReasons,
       };
     });
   }

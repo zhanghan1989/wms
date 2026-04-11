@@ -3291,9 +3291,11 @@ function renderBoxContentQueryResult(box, rows) {
   const sortedRows = [...(Array.isArray(rows) ? rows : [])].sort((a, b) =>
     String(a?.product?.productId || "").localeCompare(String(b?.product?.productId || ""), "en", { numeric: true }),
   );
+  const reasonLines = collectBoxBlockedReasonLines(box);
+  const summaryText = (baseText) => (reasonLines.length ? `${baseText}\n${reasonLines.join("\n")}` : baseText);
 
   if (!sortedRows.length) {
-    summary.textContent = `箱号 ${boxCode} 当前没有箱内主商品。`;
+    summary.textContent = summaryText(`箱号 ${boxCode} 当前没有箱内主商品。`);
     body.innerHTML = `
       <tr>
         <td>${escapeHtml(boxCode)}</td>
@@ -3306,7 +3308,7 @@ function renderBoxContentQueryResult(box, rows) {
     return;
   }
 
-  summary.textContent = `箱号 ${boxCode} 共 ${sortedRows.length} 个主商品。`;
+  summary.textContent = summaryText(`箱号 ${boxCode} 共 ${sortedRows.length} 个主商品。`);
   body.innerHTML = sortedRows
     .map(
       (row) => `
@@ -5252,6 +5254,25 @@ function renderBoxesManageTable() {
       .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
   setupBoxManageLoadObserver();
   maybeAutoLoadBoxesManage();
+}
+
+function collectBoxBlockedReasonLines(box) {
+  const lines = [];
+  const archiveReleaseBlockedReasons = Array.isArray(box?.archiveReleaseBlockedReasons)
+    ? box.archiveReleaseBlockedReasons.map((reason) => String(reason || "").trim()).filter((reason) => Boolean(reason))
+    : [];
+  const deleteBlockedReasons = Array.isArray(box?.deleteBlockedReasons)
+    ? box.deleteBlockedReasons.map((reason) => String(reason || "").trim()).filter((reason) => Boolean(reason))
+    : [];
+
+  if (!box?.canArchiveRelease && archiveReleaseBlockedReasons.length) {
+    lines.push(`不可归档释放：${archiveReleaseBlockedReasons.join("；")}`);
+  }
+  if (!box?.canDelete && deleteBlockedReasons.length) {
+    lines.push(`不可删除：${deleteBlockedReasons.join("；")}`);
+  }
+
+  return lines;
 }
 
 function renderEmptyBoxManageBadge() {
