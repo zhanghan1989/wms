@@ -96,6 +96,8 @@ const state = {
   stocktakeVisibleCount: 0,
   selectedStocktakeTask: null,
   selectedStocktakeTaskRows: [],
+  selectedShelfBoxQueryShelfCode: "",
+  selectedShelfBoxQueryRows: [],
 };
 
 let deleteConfirmResolver = null;
@@ -682,6 +684,127 @@ function openProductIdLabelWindow(productId) {
         </div>
       </div>
     </div>
+    <script>
+      window.addEventListener("load", function () {
+        setTimeout(function () {
+          window.focus();
+          window.print();
+        }, 120);
+      });
+      window.addEventListener("afterprint", function () {
+        window.close();
+      });
+    </script>
+  </body>
+</html>`);
+  popup.document.close();
+}
+
+function openBatchProductIdLabelWindow(entries, shelfCode = "") {
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const aggregated = new Map();
+  safeEntries.forEach((item) => {
+    const productId = String(item?.productId || "").trim();
+    const qty = Math.max(0, Number(item?.qty ?? 0));
+    if (!productId || qty <= 0) return;
+    aggregated.set(productId, (aggregated.get(productId) || 0) + qty);
+  });
+
+  if (!aggregated.size) {
+    throw new Error("没有可打印的产品标签");
+  }
+
+  const pageWidth = LABEL_5030_SIZE_MM.width;
+  const pageHeight = LABEL_5030_SIZE_MM.height;
+  const labels = [];
+  aggregated.forEach((qty, productId) => {
+    const barcode = buildCode39BarcodeSvgForValue(productId, "产品ID");
+    for (let index = 0; index < qty; index += 1) {
+      labels.push(`
+        <div class="print-page">
+          <div class="label">
+            <div class="label-barcode">${barcode.svg}</div>
+            <div class="label-bottom">
+              <div class="label-product-id">${escapeHtml(barcode.normalized)}</div>
+            </div>
+          </div>
+        </div>
+      `);
+    }
+  });
+
+  const popup = window.open("", "_blank", "width=720,height=640");
+  if (!popup) {
+    throw new Error("打印窗口被浏览器阻止，请允许弹窗后重试");
+  }
+
+  const titleSuffix = shelfCode ? ` - 货架 ${escapeHtml(String(shelfCode))}` : "";
+  popup.document.open();
+  popup.document.write(`<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>产品入库标批量打印${titleSuffix}</title>
+    <style>
+      @page {
+        size: ${pageWidth}mm ${pageHeight}mm;
+        margin: 0;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+      }
+      .print-page {
+        width: ${pageWidth}mm;
+        height: ${pageHeight}mm;
+        page-break-after: always;
+        break-after: page;
+      }
+      .print-page:last-child {
+        page-break-after: auto;
+        break-after: auto;
+      }
+      .label {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 1mm;
+        display: flex;
+        flex-direction: column;
+      }
+      .label-barcode {
+        height: 58%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2mm 3mm 0;
+        overflow: hidden;
+      }
+      .label-barcode svg {
+        width: 100%;
+        height: 100%;
+      }
+      .label-bottom {
+        flex: 1;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: 1mm;
+      }
+      .label-product-id {
+        text-align: center;
+        font-size: 5mm;
+        font-weight: 700;
+        color: #111;
+        line-height: 1.1;
+      }
+    </style>
+  </head>
+  <body>
+    ${labels.join("")}
     <script>
       window.addEventListener("load", function () {
         setTimeout(function () {
@@ -2059,6 +2182,22 @@ function ensureOverseasWarehouseQueryUi() {
       `,
     );
   }
+
+  const shelfQueryModalHead = document.querySelector("#shelfBoxQueryModal .modal-head");
+  const shelfQueryCloseBtn = shelfQueryModalHead?.querySelector("[data-action='closeShelfBoxQueryModal']");
+  if (shelfQueryModalHead && shelfQueryCloseBtn && !$("printShelfBoxQueryLabelsBtn")) {
+    const tools = document.createElement("div");
+    tools.className = "panel-tools";
+    const printBtn = document.createElement("button");
+    printBtn.type = "button";
+    printBtn.id = "printShelfBoxQueryLabelsBtn";
+    printBtn.className = "ghost";
+    printBtn.textContent = "批量打印";
+    printBtn.disabled = true;
+    shelfQueryCloseBtn.replaceWith(tools);
+    tools.appendChild(printBtn);
+    tools.appendChild(shelfQueryCloseBtn);
+  }
 }
 
 function getSubmitButton(form, event) {
@@ -2834,6 +2973,9 @@ function renderBoxContentQueryNotFound(boxCode = "") {
 function resetShelfBoxQueryResult() {
   const summary = $("shelfBoxQuerySummary");
   const body = $("shelfBoxQueryBody");
+  const printButton = $("printShelfBoxQueryLabelsBtn");
+  state.selectedShelfBoxQueryShelfCode = "";
+  state.selectedShelfBoxQueryRows = [];
   if (summary) {
     summary.textContent = "请输入货架号后查询。";
     summary.classList.remove("is-error");
@@ -2841,17 +2983,26 @@ function resetShelfBoxQueryResult() {
   if (body) {
     body.innerHTML = '<tr><td colspan="4" class="muted">请输入货架号后查询。</td></tr>';
   }
+  if (printButton) {
+    printButton.disabled = true;
+  }
 }
 
 function renderShelfBoxQueryNotFound(shelfCode = "") {
   const summary = $("shelfBoxQuerySummary");
   const body = $("shelfBoxQueryBody");
+  const printButton = $("printShelfBoxQueryLabelsBtn");
+  state.selectedShelfBoxQueryShelfCode = String(shelfCode || "").trim();
+  state.selectedShelfBoxQueryRows = [];
   if (summary) {
     summary.textContent = "未找到该货架号";
     summary.classList.add("is-error");
   }
   if (body) {
     body.innerHTML = '<tr><td colspan="4" class="muted">请输入货架号后查询。</td></tr>';
+  }
+  if (printButton) {
+    printButton.disabled = true;
   }
 }
 
@@ -2991,11 +3142,22 @@ async function getShelfBoxQueryRows(shelf) {
 function renderShelfBoxQueryResult(shelf, rows, boxCount = 0) {
   const summary = $("shelfBoxQuerySummary");
   const body = $("shelfBoxQueryBody");
+  const printButton = $("printShelfBoxQueryLabelsBtn");
   if (!summary || !body) return;
   summary.classList.remove("is-error");
 
   const shelfCode = displayText(shelf?.shelfCode);
   const safeRows = Array.isArray(rows) ? rows : [];
+  state.selectedShelfBoxQueryShelfCode = shelfCode;
+  state.selectedShelfBoxQueryRows = safeRows.map((row) => ({
+    productId: displayText(row?.productId),
+    qty: Number(row?.qty ?? 0),
+  }));
+  if (printButton) {
+    printButton.disabled = !state.selectedShelfBoxQueryRows.some(
+      (row) => String(row?.productId || "").trim() && Number(row?.qty ?? 0) > 0,
+    );
+  }
 
   if (!boxCount) {
     summary.textContent = `货架 ${shelfCode} 当前没有箱号。`;
@@ -8247,6 +8409,20 @@ function bindForms() {
       $("shelfBoxQueryForm")?.reset();
       resetShelfBoxQueryResult();
       openModal("shelfBoxQueryModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("printShelfBoxQueryLabelsBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "打印中...", async () => {
+        openBatchProductIdLabelWindow(
+          state.selectedShelfBoxQueryRows,
+          state.selectedShelfBoxQueryShelfCode,
+        );
+      });
     } catch (error) {
       showToast(error.message, true);
     }
