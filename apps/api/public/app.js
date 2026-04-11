@@ -2009,6 +2009,12 @@ async function openInventoryHomeDefault() {
   focusInventorySearch();
 }
 
+async function openInventoryStartupView() {
+  if (!state.token) return;
+  if (await openPendingMasterProductDetailFromUrl()) return;
+  await openInventoryHomeDefault();
+}
+
 function switchPanel(targetId) {
   document.querySelectorAll(".nav-btn").forEach((button) => button.classList.remove("active"));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
@@ -3949,14 +3955,46 @@ function renderAmazonAsinCell(asin) {
   return `<a href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`;
 }
 
+function buildMasterProductDetailUrl(productId) {
+  const value = String(productId || "").trim();
+  if (!value) return "";
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", "master-product-detail");
+  url.searchParams.set("productId", value);
+  return url.toString();
+}
+
+function getPendingMasterProductDetailIdFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const view = String(params.get("view") || "").trim();
+  const productId = String(params.get("productId") || "").trim();
+  if (view !== "master-product-detail" || !productId) return "";
+  return productId;
+}
+
+function clearPendingMasterProductDetailUrlState() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("view") && !url.searchParams.has("productId")) return;
+  url.searchParams.delete("view");
+  url.searchParams.delete("productId");
+  window.history.replaceState({}, "", url.toString());
+}
+
+async function openPendingMasterProductDetailFromUrl() {
+  const productId = getPendingMasterProductDetailIdFromUrl();
+  if (!productId) return false;
+  await loadInventoryHomeProductDetail(productId);
+  clearPendingMasterProductDetailUrlState();
+  return true;
+}
+
 function renderMasterProductDetailLink(productId) {
   const value = String(productId || "").trim();
   if (!value) {
     return escapeHtml(displayText(value));
   }
-  return `<button type="button" class="inline-link-btn" data-action="openMasterProductDetail" data-product-id="${escapeHtml(
-    value,
-  )}">${escapeHtml(value)}</button>`;
+  const href = buildMasterProductDetailUrl(value);
+  return `<a class="inline-link-btn" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`;
 }
 
 function renderProductSkuTable(detail, { bodyId, selectId = "" } = {}) {
@@ -7035,9 +7073,7 @@ function renderFbaReplenishmentList() {
         <td>
           ${
             item.sku?.productId
-              ? `<button type="button" class="inline-link-btn" data-action="fbaOpenMasterProductDetail" data-product-id="${escapeHtml(
-                  item.sku.productId,
-                )}">${escapeHtml(displayText(item.sku.productId))}</button>`
+              ? `<a class="inline-link-btn" href="${escapeHtml(buildMasterProductDetailUrl(item.sku.productId))}" target="_blank" rel="noopener noreferrer">${escapeHtml(displayText(item.sku.productId))}</a>`
               : escapeHtml(displayText(item.sku?.productId))
           }
         </td>
@@ -7680,7 +7716,7 @@ function bindForms() {
         state.token = data.accessToken;
         localStorage.setItem("wms_token", state.token);
         await reloadAll();
-        await openInventoryHomeDefault();
+        await openInventoryStartupView();
       });
     } catch (error) {
       showToast(error.message, true);
@@ -10810,4 +10846,6 @@ bindRefresh();
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
 switchPanel("inventory");
-reloadAll().catch((error) => showToast(error.message, true));
+reloadAll()
+  .then(() => openInventoryStartupView())
+  .catch((error) => showToast(error.message, true));
