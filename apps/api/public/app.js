@@ -118,6 +118,7 @@ let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let skuProductLookupToken = 0;
 const AUTH_ERROR_STORAGE_KEY = "wms_auth_error_message";
+const AUTH_WINDOW_NAME_PREFIX = "__WMS_AUTH_HANDOFF__:";
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 const $ = (id) => document.getElementById(id);
@@ -4019,6 +4020,46 @@ function clearPendingMasterProductDetailUrlState() {
   window.history.replaceState({}, "", url.toString());
 }
 
+function buildAuthWindowNamePayload() {
+  const token = String(state.token || "").trim();
+  if (!token) return "";
+  return `${AUTH_WINDOW_NAME_PREFIX}${token}`;
+}
+
+function bootstrapAuthTokenFromWindowName() {
+  if (String(state.token || "").trim()) return false;
+  const raw = String(window.name || "");
+  if (!raw.startsWith(AUTH_WINDOW_NAME_PREFIX)) return false;
+  const token = raw.slice(AUTH_WINDOW_NAME_PREFIX.length).trim();
+  if (!token) {
+    window.name = "";
+    return false;
+  }
+  state.token = token;
+  try {
+    localStorage.setItem("wms_token", token);
+  } catch {}
+  window.name = "";
+  return true;
+}
+
+function openMasterProductDetailWindow(href) {
+  const targetHref = String(href || "").trim();
+  if (!targetHref) return;
+  const popup = window.open("about:blank", "_blank");
+  if (!popup) {
+    window.open(targetHref, "_blank");
+    return;
+  }
+  const handoff = buildAuthWindowNamePayload();
+  if (handoff) {
+    try {
+      popup.name = handoff;
+    } catch {}
+  }
+  popup.location.href = targetHref;
+}
+
 async function openPendingMasterProductDetailFromUrl() {
   const productId = getPendingMasterProductDetailIdFromUrl();
   if (!productId) return false;
@@ -4033,7 +4074,7 @@ function renderMasterProductDetailLink(productId) {
     return escapeHtml(displayText(value));
   }
   const href = buildMasterProductDetailUrl(value);
-  return `<a class="inline-link-btn" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`;
+  return `<a class="inline-link-btn" href="${escapeHtml(href)}" data-master-product-link="1" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`;
 }
 
 function renderProductSkuTable(detail, { bodyId, selectId = "" } = {}) {
@@ -9209,6 +9250,15 @@ function bindForms() {
 }
 
 function bindDelegates() {
+  if (!document.body.dataset.masterProductLinkBound) {
+    document.body.dataset.masterProductLinkBound = "true";
+    document.body.addEventListener("click", (event) => {
+      const link = event.target.closest("a[data-master-product-link='1']");
+      if (!link) return;
+      event.preventDefault();
+      openMasterProductDetailWindow(link.getAttribute("href"));
+    });
+  }
   if (!document.body.dataset.bossMappingDownloadBound) {
     document.body.dataset.bossMappingDownloadBound = "true";
     document.body.addEventListener("click", async (event) => {
@@ -10886,6 +10936,7 @@ bindScrollLoad();
 bindRefresh();
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
+bootstrapAuthTokenFromWindowName();
 switchPanel("inventory");
 reloadAll()
   .then(() => openInventoryStartupView())
