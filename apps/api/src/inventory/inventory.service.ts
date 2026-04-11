@@ -9,7 +9,7 @@ import {
 import { readFile } from 'fs/promises';
 import { AuditAction, BatchInboundOrderStatus, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import * as iconv from 'iconv-lite';
-import JSZip from 'jszip';
+import JSZip = require('jszip');
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
