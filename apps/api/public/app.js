@@ -702,22 +702,21 @@ function openProductIdLabelWindow(productId) {
 
 function openBatchProductIdLabelWindow(entries, shelfCode = "") {
   const safeEntries = Array.isArray(entries) ? entries : [];
-  const aggregated = new Map();
-  safeEntries.forEach((item) => {
-    const productId = String(item?.productId || "").trim();
-    const qty = Math.max(0, Number(item?.qty ?? 0));
-    if (!productId || qty <= 0) return;
-    aggregated.set(productId, (aggregated.get(productId) || 0) + qty);
-  });
+  const printableEntries = safeEntries
+    .map((item) => ({
+      productId: String(item?.productId || "").trim(),
+      qty: Math.max(0, Number(item?.qty ?? 0)),
+    }))
+    .filter((item) => item.productId && item.qty > 0);
 
-  if (!aggregated.size) {
+  if (!printableEntries.length) {
     throw new Error("没有可打印的产品标签");
   }
 
   const pageWidth = LABEL_5030_SIZE_MM.width;
   const pageHeight = LABEL_5030_SIZE_MM.height;
   const labels = [];
-  aggregated.forEach((qty, productId) => {
+  printableEntries.forEach(({ productId, qty }) => {
     const barcode = buildCode39BarcodeSvgForValue(productId, "产品ID");
     for (let index = 0; index < qty; index += 1) {
       labels.push(`
