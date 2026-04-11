@@ -2453,10 +2453,14 @@ async function request(path, options = {}) {
     if (shouldSuppressAuthError) {
       const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
       silentAuthError.status = 401;
+      silentAuthError.path = path;
+      silentAuthError.responseMessage = message;
       throw silentAuthError;
     }
     const requestError = new Error(message);
     requestError.status = res.status;
+    requestError.path = path;
+    requestError.responseMessage = message;
     throw requestError;
   }
 
@@ -2646,6 +2650,7 @@ async function loadMe() {
     $("sessionInfo").textContent = "登录失效";
     setAuthGate(false);
     applyRoleView();
+    showToast(normalizeErrorMessage(error?.responseMessage || error?.message || "/auth/me 返回 401"), true);
   }
 }
 
