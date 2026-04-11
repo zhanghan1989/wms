@@ -1,5 +1,60 @@
+const AUTH_STORAGE_KEY = "wms_token";
+const AUTH_COOKIE_KEY = "wms_token";
+
+function readCookieValue(name) {
+  const target = `${String(name || "").trim()}=`;
+  if (!target || typeof document === "undefined") return "";
+  const parts = String(document.cookie || "").split(";");
+  for (const part of parts) {
+    const item = String(part || "").trim();
+    if (!item.startsWith(target)) continue;
+    try {
+      return decodeURIComponent(item.slice(target.length));
+    } catch {
+      return item.slice(target.length);
+    }
+  }
+  return "";
+}
+
+function persistAuthToken(token) {
+  const value = String(token || "").trim();
+  if (!value) {
+    clearPersistedAuthToken();
+    return "";
+  }
+  try {
+    localStorage.setItem(AUTH_STORAGE_KEY, value);
+  } catch {}
+  document.cookie = `${AUTH_COOKIE_KEY}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
+  return value;
+}
+
+function clearPersistedAuthToken() {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {}
+  document.cookie = `${AUTH_COOKIE_KEY}=; Max-Age=0; Path=/; SameSite=Lax`;
+}
+
+function readPersistedAuthToken() {
+  let value = "";
+  try {
+    value = String(localStorage.getItem(AUTH_STORAGE_KEY) || "").trim();
+  } catch {}
+  if (value) {
+    persistAuthToken(value);
+    return value;
+  }
+  value = String(readCookieValue(AUTH_COOKIE_KEY) || "").trim();
+  if (value) {
+    persistAuthToken(value);
+  }
+  return value;
+}
+
 const state = {
-  token: localStorage.getItem("wms_token") || "",
+  token: readPersistedAuthToken(),
   me: null,
   shelves: [],
   boxes: [],
@@ -2677,7 +2732,7 @@ async function loadMe() {
     }
     state.token = "";
     state.me = null;
-    localStorage.removeItem("wms_token");
+    clearPersistedAuthToken();
     $("sessionInfo").textContent = "登录失效";
     setAuthGate(false);
     applyRoleView();
@@ -3013,7 +3068,7 @@ async function toggleUserStatus(userId, username, nextStatus) {
   if (String(state.me?.id || "") === String(userId) && nextStatus !== 1) {
     state.token = "";
     state.me = null;
-    localStorage.removeItem("wms_token");
+    clearPersistedAuthToken();
     showToast("当前用户已被禁用，请重新登录");
     await reloadAll();
   }
@@ -3033,7 +3088,7 @@ async function removeUser(userId, username) {
   if (String(state.me?.id || "") === String(userId)) {
     state.token = "";
     state.me = null;
-    localStorage.removeItem("wms_token");
+    clearPersistedAuthToken();
     showToast("当前用户已被删除，请重新登录");
       await reloadAll();
   }
@@ -4030,10 +4085,7 @@ function bootstrapAuthTokenFromLocationHash() {
   const params = new URLSearchParams(hash);
   const token = String(params.get(AUTH_HASH_PARAM) || "").trim();
   if (!token) return false;
-  state.token = token;
-  try {
-    localStorage.setItem("wms_token", token);
-  } catch {}
+  state.token = persistAuthToken(token);
   params.delete(AUTH_HASH_PARAM);
   const url = new URL(window.location.href);
   const nextHash = params.toString();
@@ -7777,8 +7829,7 @@ function bindForms() {
             password: $("gatePassword").value,
           }),
         });
-        state.token = data.accessToken;
-        localStorage.setItem("wms_token", state.token);
+        state.token = persistAuthToken(data.accessToken);
         await reloadAll();
         await openInventoryStartupView();
       });
@@ -7791,7 +7842,7 @@ function bindForms() {
     state.token = "";
     state.me = null;
     suppressAuthErrorToastUntil = Date.now() + 3000;
-    localStorage.removeItem("wms_token");
+    clearPersistedAuthToken();
     document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden"));
     clearErrorModalAutoState();
     await reloadAll();
