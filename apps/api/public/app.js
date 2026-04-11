@@ -117,6 +117,7 @@ let skuManagementLoadObserver = null;
 let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let skuProductLookupToken = 0;
+const AUTH_ERROR_STORAGE_KEY = "wms_auth_error_message";
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 const $ = (id) => document.getElementById(id);
@@ -203,6 +204,32 @@ function showToast(message, isError = false, options = {}) {
     return;
   }
   showErrorModal(message, isError, options);
+}
+
+function persistAuthGateMessage(message) {
+  try {
+    if (message) {
+      window.sessionStorage.setItem(AUTH_ERROR_STORAGE_KEY, String(message));
+      return;
+    }
+    window.sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY);
+  } catch {}
+}
+
+function readPersistedAuthGateMessage() {
+  try {
+    return String(window.sessionStorage.getItem(AUTH_ERROR_STORAGE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function renderAuthGateMessage(message = "") {
+  const node = $("loginGateStatus");
+  if (!node) return;
+  const text = String(message || "").trim();
+  node.textContent = text;
+  node.classList.toggle("hidden", !text);
 }
 
 function clearErrorModalAutoState({ keepAction = false } = {}) {
@@ -2627,6 +2654,7 @@ async function loadMe() {
     $("sessionInfo").textContent = "未登录";
     setAuthGate(false);
     applyRoleView();
+    renderAuthGateMessage(readPersistedAuthGateMessage());
     return;
   }
 
@@ -2635,6 +2663,8 @@ async function loadMe() {
     $("sessionInfo").textContent = `${state.me.username}`;
     setAuthGate(true);
     applyRoleView();
+    persistAuthGateMessage("");
+    renderAuthGateMessage("");
   } catch (error) {
     const status = Number(error?.status ?? 0);
     if (status !== 401) {
@@ -2650,7 +2680,11 @@ async function loadMe() {
     $("sessionInfo").textContent = "登录失效";
     setAuthGate(false);
     applyRoleView();
-    showToast(normalizeErrorMessage(error?.responseMessage || error?.message || "/auth/me 返回 401"), true);
+    const authMessage = normalizeErrorMessage(error?.responseMessage || error?.message || "/auth/me 返回 401");
+    const loginGateMessage = `/auth/me 返回 401\n${authMessage}`;
+    persistAuthGateMessage(loginGateMessage);
+    renderAuthGateMessage(loginGateMessage);
+    showToast(authMessage, true);
   }
 }
 
@@ -7710,6 +7744,8 @@ function bindForms() {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
+      persistAuthGateMessage("");
+      renderAuthGateMessage("");
       await withBusyButton(submitButton, "登录中...", async () => {
         const data = await request("/auth/login", {
           method: "POST",

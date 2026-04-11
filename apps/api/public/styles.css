@@ -83,6 +83,19 @@ body {
   margin-bottom: 0;
 }
 
+.login-gate-status {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(192, 57, 43, 0.24);
+  background: rgba(192, 57, 43, 0.08);
+  color: #9f2f25;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .brand {
   display: flex;
   align-items: center;
