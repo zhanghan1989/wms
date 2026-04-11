@@ -1054,6 +1054,110 @@ async function downloadBossMappingCsv() {
   showToast(`已下载 ${fileName}`);
 }
 
+/*
+async function downloadBossNewItemZip() {
+  if (!state.token) {
+    throw new Error("隸ｷ蜈育匳蠖・);
+  }
+  let response;
+  try {
+    response = await fetch("/api/inventory/boss-newitem-zip", {
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+      },
+    });
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || `HTTP ${response.status}`;
+    try {
+      const payload = text ? JSON.parse(text) : null;
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {}
+    throw new Error(normalizeErrorMessage(message));
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainNameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
+  let fileName = `boss_newitem_${formatDateForFilename(new Date())}.zip`;
+  if (utf8NameMatch?.[1]) {
+    try {
+      fileName = decodeURIComponent(utf8NameMatch[1]);
+    } catch {}
+  } else if (plainNameMatch?.[1]) {
+    fileName = plainNameMatch[1];
+  }
+
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  const href = URL.createObjectURL(blob);
+  link.href = href;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  showToast(`蟾ｲ荳玖ｽｽ ${fileName}`);
+}
+
+*/
+async function downloadBossNewItemZip() {
+  if (!state.token) {
+    throw new Error("请先登录");
+  }
+  let response;
+  try {
+    response = await fetch("/api/inventory/boss-newitem-zip", {
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+      },
+    });
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text || `HTTP ${response.status}`;
+    try {
+      const payload = text ? JSON.parse(text) : null;
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {}
+    throw new Error(normalizeErrorMessage(message));
+  }
+
+  const disposition = response.headers.get("content-disposition") || "";
+  const utf8NameMatch = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plainNameMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
+  let fileName = `boss_newitem_${formatDateForFilename(new Date())}.zip`;
+  if (utf8NameMatch?.[1]) {
+    try {
+      fileName = decodeURIComponent(utf8NameMatch[1]);
+    } catch {}
+  } else if (plainNameMatch?.[1]) {
+    fileName = plainNameMatch[1];
+  }
+
+  const blob = await response.blob();
+  const link = document.createElement("a");
+  const href = URL.createObjectURL(blob);
+  link.href = href;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  showToast(`已下载 ${fileName}`);
+}
+
 function escapeCsvCell(value) {
   const text = String(value ?? "");
   if (/[",\r\n]/.test(text)) {
@@ -2033,6 +2137,20 @@ function ensureBossMappingDownloadUi() {
       showToast(error.message, true);
     }
   });
+}
+
+function ensureBossNewItemDownloadUi() {
+  const mappingButton = $("downloadBossMappingCsvBtn");
+  if (!mappingButton) return;
+
+  let button = $("downloadBossNewItemZipBtn");
+  if (!button) {
+    button = document.createElement("button");
+    button.type = "button";
+    button.id = "downloadBossNewItemZipBtn";
+    button.textContent = "BOSS系统用新增产品csv下载";
+    mappingButton.insertAdjacentElement("afterend", button);
+  }
 }
 
 async function openProductManagementPanelView() {
@@ -8922,6 +9040,20 @@ function bindDelegates() {
         });
       } catch (error) {
         showToast(error.message, true);
+        }
+      });
+  }
+  if (!document.body.dataset.bossNewItemDownloadBound) {
+    document.body.dataset.bossNewItemDownloadBound = "true";
+    document.body.addEventListener("click", async (event) => {
+      const button = event.target.closest("#downloadBossNewItemZipBtn");
+      if (!button) return;
+      try {
+        await withBusyButton(button, "下载中...", async () => {
+          await downloadBossNewItemZip();
+        });
+      } catch (error) {
+        showToast(error.message, true);
       }
     });
   }
@@ -10568,6 +10700,7 @@ bindInputRules();
 bindForms();
 ensureBossStockAdjustmentUi();
 ensureBossMappingDownloadUi();
+ensureBossNewItemDownloadUi();
 bindDelegates();
 bindScrollLoad();
 bindRefresh();

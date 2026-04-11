@@ -9,6 +9,7 @@ import {
 import { readFile } from 'fs/promises';
 import { AuditAction, BatchInboundOrderStatus, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import * as iconv from 'iconv-lite';
+import JSZip from 'jszip';
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
@@ -39,6 +40,12 @@ interface BulkInventoryUpdateRow {
   sku: string;
   qty: number;
 }
+
+const BOSS_NEW_ITEM_TEMPLATE_HEADER =
+  '取扱状態,SKUコード,商品コード,選択肢コード,商品名,商品タイプ,商品カテゴリー,販売価格,原価,JANコード,メーカー品番,原産地,重量,商品状態,在庫しきい値,安全在庫設定値,RSLへ商品情報を連携します,代表商品コード,商品属性,メーカーカラー,店舗カラー,メーカーサイズ,店舗サイズ,ブランド名,服種区分,仕入区分,入荷形態,シーズンコード,シーズン年,限定区分,アダルト商品フラグ,目次,ページ数,版表示,月号,曲情報,和書区分,判型区分,提供元特定情報1,提供元特定情報2,本人確認フラグ,税抜本体価格,税抜特価,出荷期限日数,情報解禁日,発売日,特価適用開始日,特価適用終了日,セットSKUコード,セット構成品SKUコード,セット構成品名,構成品数,セット構成品削除';
+const BOSS_NEW_ITEM_TEMPLATE_ROW =
+  ',33169,sku,,,0,,,,,,,,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,';
+const BOSS_NEW_ITEM_MAX_ROWS_PER_FILE = 950;
 
 interface BoxProductInventoryPair {
   boxId: bigint;
@@ -1007,6 +1014,53 @@ export class InventoryService {
     return {
       fileName,
       content: iconv.encode(csvText, 'shift_jis'),
+    };
+  }
+
+  async buildBossNewItemsZip(): Promise<{
+    fileName: string;
+    content: Buffer;
+  }> {
+    const products = await this.prisma.masterProduct.findMany({
+      where: {
+        status: 1,
+      },
+      select: {
+        productId: true,
+      },
+      orderBy: {
+        productId: 'asc',
+      },
+    });
+
+    const header = BOSS_NEW_ITEM_TEMPLATE_HEADER.split(',');
+    const templateRow = BOSS_NEW_ITEM_TEMPLATE_ROW.split(',');
+    const validProducts = products
+      .map((product) => String(product.productId || '').trim())
+      .filter(Boolean);
+
+    const zip = new JSZip();
+    const totalChunks = Math.max(1, Math.ceil(validProducts.length / BOSS_NEW_ITEM_MAX_ROWS_PER_FILE));
+
+    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+      const start = chunkIndex * BOSS_NEW_ITEM_MAX_ROWS_PER_FILE;
+      const chunkRows = validProducts.slice(start, start + BOSS_NEW_ITEM_MAX_ROWS_PER_FILE);
+      const lines: string[] = [header.map((cell) => this.escapeCsvCell(cell)).join(',')];
+
+      chunkRows.forEach((productId) => {
+        const row = [...templateRow];
+        row[1] = productId;
+        lines.push(row.map((cell) => this.escapeCsvCell(cell)).join(','));
+      });
+
+      const csvText = `${lines.join('\r\n')}\r\n`;
+      const fileName = `newitem_${String(chunkIndex + 1).padStart(3, '0')}.csv`;
+      zip.file(fileName, iconv.encode(csvText, 'shift_jis'));
+    }
+
+    return {
+      fileName: `boss_newitem_${this.formatDateForFilename(new Date())}.zip`,
+      content: await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }),
     };
   }
 

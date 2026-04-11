@@ -202,6 +202,15 @@ export class InventoryController {
     res.status(200).send(csv.content);
   }
 
+  @Get('boss-newitem-zip')
+  async downloadBossNewItemsZip(@Res() res: Response): Promise<void> {
+    const zip = await this.inventoryService.buildBossNewItemsZip();
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zip.fileName}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(zip.content);
+  }
+
   @Get('bulk-update-template')
   async downloadBulkUpdateTemplate(@Res() res: Response): Promise<void> {
     const file = await this.inventoryService.getBulkUpdateTemplate();
