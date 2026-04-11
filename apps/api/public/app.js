@@ -437,6 +437,45 @@ function buildCode39BarcodeSvg(value) {
   )}</svg>`;
 }
 
+function buildCode39BarcodeSvgForValue(rawValue, fieldLabel = "编码") {
+  const normalized = String(rawValue || "").trim().toUpperCase();
+  if (!normalized) {
+    throw new Error(`${fieldLabel}为空，无法打印标签`);
+  }
+  const unsupportedChars = Array.from(normalized).filter((char) => !CODE39_PATTERNS[char]);
+  if (unsupportedChars.length) {
+    throw new Error(`${fieldLabel}包含不支持字符：${unsupportedChars.join(" ")}`);
+  }
+  const encoded = `*${normalized}*`;
+  const narrow = 2;
+  const wide = 5;
+  const height = 88;
+  let x = 0;
+  const bars = [];
+
+  for (let idx = 0; idx < encoded.length; idx += 1) {
+    const pattern = CODE39_PATTERNS[encoded[idx]];
+    for (let i = 0; i < pattern.length; i += 1) {
+      const isBar = i % 2 === 0;
+      const width = pattern[i] === "w" ? wide : narrow;
+      if (isBar) {
+        bars.push(`<rect x="${x}" y="0" width="${width}" height="${height}" fill="#111" />`);
+      }
+      x += width;
+    }
+    if (idx < encoded.length - 1) {
+      x += narrow;
+    }
+  }
+
+  return {
+    normalized,
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${x} ${height}" preserveAspectRatio="none">${bars.join(
+      "",
+    )}</svg>`,
+  };
+}
+
 function openPrintLabelWindow(labelData) {
   const fnsku = normalizeFnskuForLabel(labelData?.fnsku);
   const printQty = normalizeLabelPrintQty(labelData?.qty);
@@ -549,6 +588,100 @@ function openPrintLabelWindow(labelData) {
     </div>`,
       )
       .join("")}
+    <script>
+      window.addEventListener("load", function () {
+        setTimeout(function () {
+          window.focus();
+          window.print();
+        }, 120);
+      });
+      window.addEventListener("afterprint", function () {
+        window.close();
+      });
+    </script>
+  </body>
+</html>`);
+  popup.document.close();
+}
+
+function openProductIdLabelWindow(productId) {
+  const barcode = buildCode39BarcodeSvgForValue(productId, "产品ID");
+  const pageWidth = LABEL_5030_SIZE_MM.width;
+  const pageHeight = LABEL_5030_SIZE_MM.height;
+  const popup = window.open("", "_blank", "width=520,height=360");
+  if (!popup) {
+    throw new Error("打印窗口被拦截，请允许弹窗后重试");
+  }
+
+  popup.document.open();
+  popup.document.write(`<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>产品入库标打印</title>
+    <style>
+      @page {
+        size: ${pageWidth}mm ${pageHeight}mm;
+        margin: 0;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: ${pageWidth}mm;
+        height: ${pageHeight}mm;
+      }
+      body {
+        font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+      }
+      .print-page {
+        width: ${pageWidth}mm;
+        height: ${pageHeight}mm;
+      }
+      .label {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 1mm;
+        display: flex;
+        flex-direction: column;
+      }
+      .label-barcode {
+        height: 58%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2mm 3mm 0;
+        overflow: hidden;
+      }
+      .label-barcode svg {
+        width: 100%;
+        height: 100%;
+      }
+      .label-bottom {
+        flex: 1;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding-top: 1mm;
+      }
+      .label-product-id {
+        text-align: center;
+        font-size: 5mm;
+        font-weight: 700;
+        color: #111;
+        line-height: 1.1;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="print-page">
+      <div class="label">
+        <div class="label-barcode">${barcode.svg}</div>
+        <div class="label-bottom">
+          <div class="label-product-id">${escapeHtml(barcode.normalized)}</div>
+        </div>
+      </div>
+    </div>
     <script>
       window.addEventListener("load", function () {
         setTimeout(function () {
@@ -7735,6 +7868,19 @@ function bindForms() {
     try {
       await loadBoxes();
       openInventoryDetailInboundModal();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("printInventoryDetailProductLabelBtn").addEventListener("click", (event) => {
+    event.preventDefault();
+    try {
+      const productId = getSelectedInventoryDetailProductId();
+      if (!productId) {
+        throw new Error("当前没有可打印的产品ID");
+      }
+      openProductIdLabelWindow(productId);
     } catch (error) {
       showToast(error.message, true);
     }
