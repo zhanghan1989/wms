@@ -4860,14 +4860,29 @@ function resetBoxManageVisibleCount() {
   state.boxManageVisibleCount = state.manageModalInitialPageSize;
 }
 
+function increaseShelvesManageVisibleCount() {
+  const total = getShelvesSortedForManage().length;
+  if (state.shelfManageVisibleCount >= total) return false;
+  state.shelfManageVisibleCount = Math.min(total, state.shelfManageVisibleCount + state.manageModalLoadStep);
+  renderShelvesManageTable();
+  return true;
+}
+
+function increaseBoxesManageVisibleCount() {
+  const total = getBoxesSortedForManage().length;
+  if (state.boxManageVisibleCount >= total) return false;
+  state.boxManageVisibleCount = Math.min(total, state.boxManageVisibleCount + state.manageModalLoadStep);
+  renderBoxesManageTable();
+  return true;
+}
+
 function loadMoreShelvesManageIfNeeded() {
   const wrap = $("shelfManageTableWrap");
   if (!wrap) return;
   const total = getShelvesSortedForManage().length;
   if (state.shelfManageVisibleCount >= total) return;
   if (wrap.scrollTop + wrap.clientHeight < wrap.scrollHeight - 24) return;
-  state.shelfManageVisibleCount = Math.min(total, state.shelfManageVisibleCount + state.manageModalLoadStep);
-  renderShelvesManageTable();
+  increaseShelvesManageVisibleCount();
 }
 
 function loadMoreBoxesManageIfNeeded() {
@@ -4876,8 +4891,7 @@ function loadMoreBoxesManageIfNeeded() {
   const total = getBoxesSortedForManage().length;
   if (state.boxManageVisibleCount >= total) return;
   if (wrap.scrollTop + wrap.clientHeight < wrap.scrollHeight - 24) return;
-  state.boxManageVisibleCount = Math.min(total, state.boxManageVisibleCount + state.manageModalLoadStep);
-  renderBoxesManageTable();
+  increaseBoxesManageVisibleCount();
 }
 
 function maybeAutoLoadShelvesManage() {
@@ -4923,7 +4937,7 @@ function setupShelfManageLoadObserver() {
   shelfManageLoadObserver = new IntersectionObserver(
     (entries) => {
       if (entries.some((entry) => entry.isIntersecting)) {
-        loadMoreShelvesManageIfNeeded();
+        increaseShelvesManageVisibleCount();
       }
     },
     {
@@ -4948,7 +4962,7 @@ function setupBoxManageLoadObserver() {
   boxManageLoadObserver = new IntersectionObserver(
     (entries) => {
       if (entries.some((entry) => entry.isIntersecting)) {
-        loadMoreBoxesManageIfNeeded();
+        increaseBoxesManageVisibleCount();
       }
     },
     {
