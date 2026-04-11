@@ -2310,7 +2310,7 @@ function ensureOverseasWarehouseQueryUi() {
     const printBtn = document.createElement("button");
     printBtn.type = "button";
     printBtn.id = "printShelfBoxQueryLabelsBtn";
-    printBtn.className = "ghost";
+    printBtn.className = "";
     printBtn.textContent = "批量打印";
     printBtn.disabled = true;
     shelfQueryCloseBtn.replaceWith(tools);
