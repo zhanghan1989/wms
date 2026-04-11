@@ -1058,7 +1058,7 @@ async function downloadBossMappingCsv() {
 /*
 async function downloadBossNewItemZip() {
   if (!state.token) {
-    throw new Error("隸ｷ蜈育匳蠖・);
+    throw new Error("隸キ蜈育匳蠖・);
   }
   let response;
   try {
@@ -1104,7 +1104,7 @@ async function downloadBossNewItemZip() {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  showToast(`蟾ｲ荳玖ｽｽ ${fileName}`);
+  showToast(`蟾イ荳玖スス ${fileName}`);
 }
 
 */
