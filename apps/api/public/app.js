@@ -118,7 +118,7 @@ let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let skuProductLookupToken = 0;
 const AUTH_ERROR_STORAGE_KEY = "wms_auth_error_message";
-const AUTH_WINDOW_NAME_PREFIX = "__WMS_AUTH_HANDOFF__:";
+const AUTH_HASH_PARAM = "wmsToken";
 
 const SILENT_AUTH_ERROR_MESSAGE = "__silent_auth__";
 const $ = (id) => document.getElementById(id);
@@ -4001,6 +4001,10 @@ function buildMasterProductDetailUrl(productId) {
   const url = new URL(window.location.href);
   url.searchParams.set("view", "master-product-detail");
   url.searchParams.set("productId", value);
+  const token = String(state.token || "").trim();
+  if (token) {
+    url.hash = new URLSearchParams([[AUTH_HASH_PARAM, token]]).toString();
+  }
   return url.toString();
 }
 
@@ -4020,44 +4024,22 @@ function clearPendingMasterProductDetailUrlState() {
   window.history.replaceState({}, "", url.toString());
 }
 
-function buildAuthWindowNamePayload() {
-  const token = String(state.token || "").trim();
-  if (!token) return "";
-  return `${AUTH_WINDOW_NAME_PREFIX}${token}`;
-}
-
-function bootstrapAuthTokenFromWindowName() {
-  if (String(state.token || "").trim()) return false;
-  const raw = String(window.name || "");
-  if (!raw.startsWith(AUTH_WINDOW_NAME_PREFIX)) return false;
-  const token = raw.slice(AUTH_WINDOW_NAME_PREFIX.length).trim();
-  if (!token) {
-    window.name = "";
-    return false;
-  }
+function bootstrapAuthTokenFromLocationHash() {
+  const hash = String(window.location.hash || "").replace(/^#/, "").trim();
+  if (!hash) return false;
+  const params = new URLSearchParams(hash);
+  const token = String(params.get(AUTH_HASH_PARAM) || "").trim();
+  if (!token) return false;
   state.token = token;
   try {
     localStorage.setItem("wms_token", token);
   } catch {}
-  window.name = "";
+  params.delete(AUTH_HASH_PARAM);
+  const url = new URL(window.location.href);
+  const nextHash = params.toString();
+  url.hash = nextHash ? `#${nextHash}` : "";
+  window.history.replaceState({}, "", url.toString());
   return true;
-}
-
-function openMasterProductDetailWindow(href) {
-  const targetHref = String(href || "").trim();
-  if (!targetHref) return;
-  const popup = window.open("about:blank", "_blank");
-  if (!popup) {
-    window.open(targetHref, "_blank");
-    return;
-  }
-  const handoff = buildAuthWindowNamePayload();
-  if (handoff) {
-    try {
-      popup.name = handoff;
-    } catch {}
-  }
-  popup.location.href = targetHref;
 }
 
 async function openPendingMasterProductDetailFromUrl() {
@@ -4074,7 +4056,7 @@ function renderMasterProductDetailLink(productId) {
     return escapeHtml(displayText(value));
   }
   const href = buildMasterProductDetailUrl(value);
-  return `<a class="inline-link-btn" href="${escapeHtml(href)}" data-master-product-link="1" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`;
+  return `<a class="inline-link-btn" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a>`;
 }
 
 function renderProductSkuTable(detail, { bodyId, selectId = "" } = {}) {
@@ -9250,15 +9232,6 @@ function bindForms() {
 }
 
 function bindDelegates() {
-  if (!document.body.dataset.masterProductLinkBound) {
-    document.body.dataset.masterProductLinkBound = "true";
-    document.body.addEventListener("click", (event) => {
-      const link = event.target.closest("a[data-master-product-link='1']");
-      if (!link) return;
-      event.preventDefault();
-      openMasterProductDetailWindow(link.getAttribute("href"));
-    });
-  }
   if (!document.body.dataset.bossMappingDownloadBound) {
     document.body.dataset.bossMappingDownloadBound = "true";
     document.body.addEventListener("click", async (event) => {
@@ -10936,7 +10909,7 @@ bindScrollLoad();
 bindRefresh();
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
-bootstrapAuthTokenFromWindowName();
+bootstrapAuthTokenFromLocationHash();
 switchPanel("inventory");
 reloadAll()
   .then(() => openInventoryStartupView())
