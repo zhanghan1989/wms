@@ -1856,7 +1856,17 @@ button.danger-solid {
   }
 
   .master-product-summary-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 10px;
+  }
+
+  .master-product-summary-grid .summary-item {
+    padding: 8px 10px;
+  }
+
+  .master-product-summary-grid .summary-value {
+    word-break: break-word;
+    line-height: 1.35;
   }
 
   .inventory-search-card,
@@ -1889,6 +1899,207 @@ button.danger-solid {
 
   .master-product-sku-management-table {
     min-width: 900px;
+  }
+
+  #inventorySearchSection .card-head,
+  #masterProductDetailSection .card-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  #inventorySearchSection .master-product-table-wrap,
+  #masterProductDetailSection .master-product-table-wrap {
+    overflow: visible;
+  }
+
+  #inventorySearchSection .master-product-sku-table,
+  #inventorySearchSection .master-product-sku-management-table,
+  #masterProductDetailSection .master-product-sku-table,
+  #masterProductDetailSection .master-product-sku-management-table {
+    min-width: 0;
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0 8px;
+    background: transparent;
+  }
+
+  #inventorySearchSection .master-product-sku-table thead,
+  #inventorySearchSection .master-product-sku-management-table thead,
+  #masterProductDetailSection .master-product-sku-table thead,
+  #masterProductDetailSection .master-product-sku-management-table thead {
+    display: none;
+  }
+
+  #inventorySearchSection .master-product-sku-table tbody,
+  #inventorySearchSection .master-product-sku-management-table tbody,
+  #masterProductDetailSection .master-product-sku-table tbody,
+  #masterProductDetailSection .master-product-sku-management-table tbody,
+  #inventorySearchSection .master-product-sku-table tr,
+  #inventorySearchSection .master-product-sku-management-table tr,
+  #masterProductDetailSection .master-product-sku-table tr,
+  #masterProductDetailSection .master-product-sku-management-table tr,
+  #inventorySearchSection .master-product-sku-table td,
+  #inventorySearchSection .master-product-sku-management-table td,
+  #masterProductDetailSection .master-product-sku-table td,
+  #masterProductDetailSection .master-product-sku-management-table td {
+    display: block;
+    width: 100%;
+  }
+
+  #inventorySearchSection .master-product-sku-table tr,
+  #inventorySearchSection .master-product-sku-management-table tr,
+  #masterProductDetailSection .master-product-sku-table tr,
+  #masterProductDetailSection .master-product-sku-management-table tr {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+  }
+
+  #inventorySearchSection .master-product-sku-table td,
+  #inventorySearchSection .master-product-sku-management-table td,
+  #masterProductDetailSection .master-product-sku-table td,
+  #masterProductDetailSection .master-product-sku-management-table td {
+    border: 0;
+    padding: 5px 0;
+    display: grid;
+    grid-template-columns: 84px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    text-align: left;
+    white-space: normal;
+  }
+
+  #inventorySearchSection .master-product-sku-table td::before,
+  #inventorySearchSection .master-product-sku-management-table td::before,
+  #masterProductDetailSection .master-product-sku-table td::before,
+  #masterProductDetailSection .master-product-sku-management-table td::before {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  #inventorySearchSection .master-product-sku-table td:empty,
+  #inventorySearchSection .master-product-sku-management-table td:empty,
+  #masterProductDetailSection .master-product-sku-table td:empty,
+  #masterProductDetailSection .master-product-sku-management-table td:empty {
+    display: none;
+  }
+
+  #inventorySearchSection .master-product-sku-table td:nth-child(1)::before {
+    content: "SKU";
+  }
+
+  #inventorySearchSection .master-product-sku-table td:nth-child(2)::before {
+    content: "ASIN";
+  }
+
+  #inventorySearchSection .master-product-sku-table td:nth-child(3)::before {
+    content: "FNSKU";
+  }
+
+  #inventorySearchSection .master-product-sku-table td:nth-child(4)::before {
+    content: "FBMSKU";
+  }
+
+  #inventorySearchSection .master-product-sku-table td:nth-child(5)::before {
+    content: "RBSKU";
+  }
+
+  #inventorySearchSection .master-product-sku-table td:nth-child(6)::before {
+    content: "所属店铺";
+  }
+
+  #masterProductDetailSection .master-product-sku-table td:nth-child(1)::before {
+    content: "SKU";
+  }
+
+  #masterProductDetailSection .master-product-sku-table td:nth-child(2)::before {
+    content: "ASIN";
+  }
+
+  #masterProductDetailSection .master-product-sku-table td:nth-child(3)::before {
+    content: "FNSKU";
+  }
+
+  #masterProductDetailSection .master-product-sku-table td:nth-child(4)::before {
+    content: "FBMSKU";
+  }
+
+  #masterProductDetailSection .master-product-sku-table td:nth-child(5)::before {
+    content: "RBSKU";
+  }
+
+  #masterProductDetailSection .master-product-sku-table td:nth-child(6)::before {
+    content: "所属店铺";
+  }
+
+  #inventorySearchSection .master-product-sku-management-table td:nth-child(1)::before {
+    content: "箱号";
+  }
+
+  #inventorySearchSection .master-product-sku-management-table td:nth-child(2)::before {
+    content: "货架号";
+  }
+
+  #inventorySearchSection .master-product-sku-management-table td:nth-child(3)::before {
+    content: "产品名称";
+  }
+
+  #inventorySearchSection .master-product-sku-management-table td:nth-child(4)::before {
+    content: "产品ID";
+  }
+
+  #inventorySearchSection .master-product-sku-management-table td:nth-child(5)::before {
+    content: "在库数";
+  }
+
+  #inventorySearchSection .master-product-sku-management-table td:nth-child(6)::before {
+    content: "操作";
+  }
+
+  #masterProductDetailSection .master-product-sku-management-table td:nth-child(1)::before {
+    content: "货架";
+  }
+
+  #masterProductDetailSection .master-product-sku-management-table td:nth-child(2)::before {
+    content: "箱号";
+  }
+
+  #masterProductDetailSection .master-product-sku-management-table td:nth-child(3)::before {
+    content: "当前数量";
+  }
+
+  #masterProductDetailSection .master-product-sku-management-table td:nth-child(4)::before {
+    content: "更新时间";
+  }
+
+  #masterProductDetailSection .master-product-sku-management-table td:nth-child(5)::before {
+    content: "同箱其他主商品";
+  }
+
+  #masterProductDetailSection .master-product-sku-management-table td:nth-child(6)::before {
+    content: "快捷填入";
+  }
+
+  #inventorySearchSection .master-product-current-row td {
+    font-weight: 600;
+  }
+
+  #inventorySearchSection .master-product-box-actions,
+  #masterProductDetailSection .master-product-box-actions {
+    justify-content: flex-start;
+  }
+
+  #inventorySearchSection .inventory-detail-box-footer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  #inventorySearchSection .inventory-detail-box-footer button {
+    width: 100%;
   }
 
   .master-product-sync-record-table {
