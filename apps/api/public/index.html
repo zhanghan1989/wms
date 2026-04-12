@@ -619,6 +619,7 @@
         <div class="panel-head">
           <h2>亚马逊订单导入</h2>
           <div class="panel-tools">
+            <button id="amazonBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
             <button id="refreshOrders" class="ghost">刷新</button>
             <button id="backToOrderProcessingBtn" class="ghost">返回订单处理</button>
           </div>
@@ -648,6 +649,7 @@
             <table>
               <thead>
                 <tr>
+                  <th><input id="amazonOrdersSelectAll" type="checkbox" /></th>
                   <th>CSV導入日時</th>
                   <th>注文ID</th>
                   <th>SKUコード</th>

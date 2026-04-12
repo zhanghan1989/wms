@@ -1,4 +1,5 @@
 import {
+  Body,
   BadRequestException,
   Controller,
   Get,
@@ -30,6 +31,14 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async listAmazon(@Query('limit') limit?: string): Promise<unknown[]> {
     return this.ordersService.listAmazon(limit);
+  }
+
+  @Post('amazon/delete-batch')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async deleteAmazonBatch(
+    @Body() payload: { ids?: Array<string | number> },
+  ): Promise<{ deletedCount: number }> {
+    return this.ordersService.deleteAmazonBatch(payload);
   }
 
   @Post('import-csv')

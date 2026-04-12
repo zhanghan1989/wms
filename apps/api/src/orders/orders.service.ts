@@ -1,7 +1,9 @@
 import { createHash } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { AmazonOrderRecord, OrderRecord, OrderSendStatus, Prisma } from '@prisma/client';
+import * as iconv from 'iconv-lite';
 import * as XLSX from 'xlsx';
+import { parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
 
 const ORDER_CSV_COLUMNS = [
@@ -167,6 +169,9 @@ interface AmazonOrderImportResult {
   existingDuplicateCount: number;
 }
 
+const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
+type AmazonTxtEncodingCandidate = (typeof AMAZON_TXT_ENCODING_CANDIDATES)[number];
+
 @Injectable()
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -187,6 +192,32 @@ export class OrdersService {
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
     });
+  }
+
+  async deleteAmazonBatch(payload: {
+    ids?: Array<string | number>;
+  }): Promise<{ deletedCount: number }> {
+    const rawIds = Array.isArray(payload?.ids) ? payload.ids : [];
+    const ids = Array.from(
+      new Set(
+        rawIds
+          .map((id, index) => {
+            const text = String(id ?? '').trim();
+            return text ? parseId(text, `ids[${index}]`) : null;
+          })
+          .filter((id): id is bigint => id !== null),
+      ),
+    );
+
+    if (!ids.length) {
+      throw new BadRequestException('请至少选择一条亚马逊订单记录');
+    }
+
+    const result = await this.prisma.amazonOrderRecord.deleteMany({
+      where: { id: { in: ids } },
+    });
+
+    return { deletedCount: result.count };
   }
 
   async importUploadedCsv(
@@ -472,7 +503,7 @@ export class OrdersService {
   }
 
   private parseAmazonTxt(fileBuffer: Buffer): ParsedAmazonOrderRow[] {
-    const content = fileBuffer.toString('utf8').replace(/^\uFEFF/, '');
+    const content = this.decodeAmazonTxtContent(fileBuffer);
     const lines = content
       .split(/\r?\n/)
       .map((line) => line.replace(/\r/g, ''))
@@ -563,6 +594,55 @@ export class OrdersService {
     }
 
     return parsedRows;
+  }
+
+  private decodeAmazonTxtContent(fileBuffer: Buffer): string {
+    const evaluated = AMAZON_TXT_ENCODING_CANDIDATES.map((encoding, index) => {
+      const content = this.decodeTextBuffer(fileBuffer, encoding).replace(/^\uFEFF/, '');
+      return {
+        encoding,
+        content,
+        score: this.scoreAmazonTxtDecodedContent(content) - index,
+      };
+    }).sort((left, right) => right.score - left.score);
+
+    const best = evaluated[0];
+    if (!best || best.score < 0) {
+      throw new BadRequestException('亚马逊订单TXT编码无法识别，请保存为 UTF-8 或 Shift_JIS 后重试');
+    }
+    return best.content;
+  }
+
+  private decodeTextBuffer(fileBuffer: Buffer, encoding: AmazonTxtEncodingCandidate): string {
+    if (encoding === 'utf8') {
+      return fileBuffer.toString('utf8');
+    }
+    return iconv.decode(fileBuffer, encoding);
+  }
+
+  private scoreAmazonTxtDecodedContent(content: string): number {
+    if (!content.trim()) return -1_000_000;
+
+    const lines = content
+      .split(/\r?\n/)
+      .map((line) => line.replace(/\r/g, ''))
+      .filter((line) => line.trim().length > 0);
+    if (lines.length <= 1) return -100_000;
+
+    const headerRow = lines[0].split('\t').map((cell) => cell.trim());
+    const headerSet = new Set(headerRow);
+    const missingHeaders = AMAZON_ORDER_TXT_COLUMNS.filter((column) => !headerSet.has(column.header)).length;
+    if (missingHeaders > 0) {
+      return -50_000 - missingHeaders * 100;
+    }
+
+    const sample = lines.slice(1, 21).join('\n');
+    const replacementCount = (sample.match(/\uFFFD/g) || []).length;
+    const controlCount = (sample.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g) || []).length;
+    const cjkCount = (sample.match(/[\u3040-\u30FF\u3400-\u9FFF]/g) || []).length;
+    const extendedLatinCount = (sample.match(/[\u00C0-\u024F]/g) || []).length;
+
+    return 10_000 + cjkCount * 4 - replacementCount * 500 - controlCount * 100 - extendedLatinCount * 3;
   }
 
   private normalizeCellValue(value: string | number | boolean | null | undefined): string | null {

@@ -232,6 +232,7 @@ const state = {
   selectedProductEditRequestIds: new Set(),
   selectedEditUserId: null,
   selectedResetPasswordUserId: null,
+  selectedAmazonOrderIds: new Set(),
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
@@ -7423,9 +7424,12 @@ async function importOrdersFile(file) {
 function renderAmazonOrdersTable() {
   const tbody = $("amazonOrdersBody");
   if (!tbody) return;
+  syncSelectedAmazonOrderIds();
 
   if (!state.amazonOrders.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无亚马逊订单数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无亚马逊订单数据</td></tr>';
+    updateAmazonOrdersSelectAll();
+    updateAmazonBatchDeleteButtonState();
     return;
   }
 
@@ -7433,6 +7437,9 @@ function renderAmazonOrdersTable() {
     .map(
       (item) => `
       <tr>
+        <td><input type="checkbox" data-action="amazonOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
+          state.selectedAmazonOrderIds.has(String(item.id)) ? "checked" : ""
+        } /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td>${escapeHtml(displayText(item.orderId))}</td>
         <td>${escapeHtml(displayText(item.sku))}</td>
@@ -7448,11 +7455,14 @@ function renderAmazonOrdersTable() {
     `,
     )
     .join("");
+  updateAmazonOrdersSelectAll();
+  updateAmazonBatchDeleteButtonState();
 }
 
 async function loadAmazonOrders() {
   if (!state.token) {
     state.amazonOrders = [];
+    state.selectedAmazonOrderIds = new Set();
     renderAmazonOrdersTable();
     return;
   }
@@ -7468,6 +7478,13 @@ async function importAmazonOrdersFile(file) {
   return request("/orders/amazon/import-txt", {
     method: "POST",
     body: formData,
+  });
+}
+
+async function deleteAmazonOrders(ids) {
+  return request("/orders/amazon/delete-batch", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
   });
 }
 
@@ -7633,6 +7650,35 @@ function syncSelectedFbaIds() {
   state.selectedFbaIds = new Set(
     Array.from(state.selectedFbaIds).filter((id) => selectableIds.has(String(id))),
   );
+}
+
+function syncSelectedAmazonOrderIds() {
+  const selectableIds = new Set(state.amazonOrders.map((item) => String(item.id)));
+  state.selectedAmazonOrderIds = new Set(
+    Array.from(state.selectedAmazonOrderIds).filter((id) => selectableIds.has(String(id))),
+  );
+}
+
+function updateAmazonOrdersSelectAll() {
+  const selectAll = $("amazonOrdersSelectAll");
+  if (!selectAll) return;
+  if (!state.amazonOrders.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+
+  const selectedCount = state.amazonOrders.filter((item) => state.selectedAmazonOrderIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === state.amazonOrders.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.amazonOrders.length;
+}
+
+function updateAmazonBatchDeleteButtonState() {
+  const button = $("amazonBatchDeleteBtn");
+  if (!button) return;
+  const count = state.selectedAmazonOrderIds.size;
+  button.disabled = count <= 0;
+  button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
 }
 
 function updateFbaSelectAll() {
@@ -8030,6 +8076,7 @@ async function reloadAll() {
     state.emptyBoxes = [];
     state.orders = [];
     state.amazonOrders = [];
+    state.selectedAmazonOrderIds = new Set();
     state.inventoryHomeProducts = [];
     state.inventoryHomePage = 1;
     state.inventoryHomeHasMore = false;
@@ -8088,6 +8135,8 @@ async function reloadAll() {
     renderEmptyBoxManageTable();
     renderOrdersTable();
     renderAmazonOrdersTable();
+    updateAmazonOrdersSelectAll();
+    updateAmazonBatchDeleteButtonState();
     updateFbaSelectAll();
     updateFbaOutboundButtonState();
     resetInventorySearchState();
@@ -8194,6 +8243,35 @@ function bindForms() {
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("amazonBatchDeleteBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "删除中...", async () => {
+        const ids = Array.from(state.selectedAmazonOrderIds)
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0);
+        if (!ids.length) {
+          throw new Error("请先选择要删除的亚马逊订单");
+        }
+        const ok = await openDeleteConfirmModal(`确认批量删除 ${ids.length} 条亚马逊订单记录？`);
+        if (!ok) return;
+        const result = await deleteAmazonOrders(ids);
+        state.selectedAmazonOrderIds = new Set();
+        await loadAmazonOrders();
+        showToast(`已删除 ${Number(result?.deletedCount || 0)} 条亚马逊订单记录`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("amazonOrdersSelectAll").addEventListener("change", (event) => {
+    const checked = Boolean(event.target.checked);
+    const selectableIds = state.amazonOrders.map((item) => String(item.id));
+    state.selectedAmazonOrderIds = checked ? new Set(selectableIds) : new Set();
+    renderAmazonOrdersTable();
   });
 
   $("openCreateUserModal")?.addEventListener("click", async () => {
@@ -10309,6 +10387,21 @@ function bindDelegates() {
     updateFbaOutboundButtonState();
   });
 
+  $("amazonOrdersBody").addEventListener("change", (event) => {
+    const checkbox = event.target.closest("input[data-action='amazonOrderToggleRow']");
+    if (!checkbox) return;
+
+    const id = String(checkbox.dataset.id || "");
+    if (!id) return;
+    if (checkbox.checked) {
+      state.selectedAmazonOrderIds.add(id);
+    } else {
+      state.selectedAmazonOrderIds.delete(id);
+    }
+    updateAmazonOrdersSelectAll();
+    updateAmazonBatchDeleteButtonState();
+  });
+
   const openAdjustByAction = async (event) => {
     const button = event.target.closest(
       "button[data-action='inventoryInbound'], button[data-action='inventoryOutbound'], button[data-action='inventoryOutboundOne']",
@@ -11273,6 +11366,8 @@ ensureBossNewItemDownloadUi();
 bindDelegates();
 bindScrollLoad();
 bindRefresh();
+updateAmazonBatchDeleteButtonState();
+updateAmazonOrdersSelectAll();
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
 bootstrapAuthTokenFromLocationHash();
