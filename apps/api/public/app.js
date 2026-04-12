@@ -8610,6 +8610,7 @@ function bindForms() {
           `亚马逊订单导入完成：新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条（文件 ${result.sourceFileName}）`,
           false,
         );
+        closeModal("amazonOrderImportModal");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -9446,6 +9447,18 @@ function bindForms() {
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("openAmazonOrderImportModal").addEventListener("click", () => {
+    openModal("amazonOrderImportModal");
+  });
+
+  $("closeAmazonOrderImportModal").addEventListener("click", () => {
+    closeModal("amazonOrderImportModal");
+  });
+
+  $("cancelAmazonOrderImportModal").addEventListener("click", () => {
+    closeModal("amazonOrderImportModal");
   });
 
   $("backToOrderProcessingBtn").addEventListener("click", () => {
