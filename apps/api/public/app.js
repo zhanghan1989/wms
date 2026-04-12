@@ -7686,9 +7686,30 @@ function joinRakutenParts(parts, separator = "") {
     .join(separator);
 }
 
+function formatRakutenOrderDateTime(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  const normalized = text.replace(/\//g, "-");
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return text;
+  }
+
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  const seconds = String(parsed.getSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
 function buildRakutenOrderDetailFields(item) {
   const orderNo = getRakutenRawValue(item, "注文番号") || item?.orderId || item?.mallOrderNo || "";
-  const orderCreatedAt = getRakutenRawValue(item, "注文日時") || item?.orderImportedAtRaw || "";
+  const orderCreatedAt = formatRakutenOrderDateTime(
+    getRakutenRawValue(item, "注文日時") || item?.orderImportedAtRaw || "",
+  );
   const productName = getRakutenRawValue(item, "商品名") || item?.productName || "";
   const skuInfo = getRakutenRawValue(item, "SKU情報") || item?.productNameExtra || "";
   const quantity = getRakutenRawValue(item, "個数") || item?.orderQuantity || "";
