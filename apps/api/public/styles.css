@@ -786,13 +786,29 @@ button.ghost {
 
 .overview-table-wrap {
   margin-top: 10px;
-  overflow-x: auto;
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfefd;
 }
 
 .overview-table-wrap h4 {
   margin: 0 0 8px;
   color: var(--muted);
   font-size: 13px;
+  padding: 12px 12px 0;
+}
+
+.overview-table-wrap table {
+  margin: 0;
+}
+
+.overview-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #eef5f0;
 }
 
 #overview .cards {
