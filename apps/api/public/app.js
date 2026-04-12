@@ -27,7 +27,15 @@ function persistAuthToken(token) {
   }
   try {
     localStorage.setItem(AUTH_STORAGE_KEY, value);
-  } catch {}
+    const storedValue = String(localStorage.getItem(AUTH_STORAGE_KEY) || "").trim();
+    if (storedValue !== value) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+  } catch {
+    try {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    } catch {}
+  }
   document.cookie = `${AUTH_COOKIE_KEY}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
   return value;
 }
@@ -59,19 +67,24 @@ function clearPersistedAuthToken() {
 }
 
 function readPersistedAuthToken() {
-  let value = "";
+  let storageValue = "";
   try {
-    value = String(localStorage.getItem(AUTH_STORAGE_KEY) || "").trim();
+    storageValue = String(localStorage.getItem(AUTH_STORAGE_KEY) || "").trim();
   } catch {}
-  if (value) {
-    persistAuthToken(value);
-    return value;
+  const cookieValue = String(readCookieValue(AUTH_COOKIE_KEY) || "").trim();
+  if (cookieValue && cookieValue !== storageValue) {
+    persistAuthToken(cookieValue);
+    return cookieValue;
   }
-  value = String(readCookieValue(AUTH_COOKIE_KEY) || "").trim();
-  if (value) {
-    persistAuthToken(value);
+  if (storageValue) {
+    persistAuthToken(storageValue);
+    return storageValue;
   }
-  return value;
+  if (cookieValue) {
+    persistAuthToken(cookieValue);
+    return cookieValue;
+  }
+  return "";
 }
 
 function readPersistedAuthDeployVersion() {

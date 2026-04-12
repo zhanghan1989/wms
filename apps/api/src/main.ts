@@ -14,7 +14,14 @@ async function bootstrap(): Promise<void> {
   const preferredPublicDir = join(process.cwd(), 'public');
   const fallbackPublicDir = join(process.cwd(), 'apps', 'api', 'public');
   const publicDir = existsSync(preferredPublicDir) ? preferredPublicDir : fallbackPublicDir;
-  app.useStaticAssets(publicDir, { index: 'index.html' });
+  app.useStaticAssets(publicDir, {
+    index: 'index.html',
+    setHeaders: (res, filePath) => {
+      if (/\.(html|js|css)$/i.test(filePath)) {
+        res.setHeader('Cache-Control', 'no-store');
+      }
+    },
+  });
 
   app.setGlobalPrefix('api');
   app.use((req: Record<string, unknown>, res: Record<string, unknown>, next: () => void) => {
