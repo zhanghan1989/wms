@@ -7784,6 +7784,72 @@ function openRakutenOrderDetailModalFromItem(item) {
   openModal("rakutenOrderDetailModal");
 }
 
+function getAmazonRawValue(item, key) {
+  const rawPayload = item?.rawPayload;
+  if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+    return "";
+  }
+  const value = rawPayload[key];
+  return value === null || value === undefined ? "" : String(value).trim();
+}
+
+function buildAmazonOrderDetailFields(item) {
+  const orderNo = getAmazonRawValue(item, "order-id") || item?.orderId || "";
+  const orderCreatedAt = getAmazonRawValue(item, "purchase-date") || item?.purchaseDateRaw || "";
+  const productName = getAmazonRawValue(item, "product-name") || item?.productName || "";
+  const quantity = getAmazonRawValue(item, "quantity-purchased") || item?.quantityPurchased || item?.orderQuantity || "";
+  const recipientName = getAmazonRawValue(item, "recipient-name") || item?.recipientName || item?.shippingName || "";
+  const phone = getAmazonRawValue(item, "buyer-phone-number") || item?.buyerPhoneNumber || "";
+  const postalCode = getAmazonRawValue(item, "ship-postal-code") || item?.shipPostalCode || "";
+  const address1 = joinRakutenParts(
+    [getAmazonRawValue(item, "ship-state") || item?.shipState, getAmazonRawValue(item, "ship-address-1") || item?.shipAddress1],
+    " ",
+  );
+  const address2 = joinRakutenParts(
+    [getAmazonRawValue(item, "ship-address-2") || item?.shipAddress2, getAmazonRawValue(item, "ship-address-3") || item?.shipAddress3],
+    " ",
+  );
+
+  return [
+    ["注文番号", orderNo],
+    ["注文日時", orderCreatedAt],
+    ["商品名", productName],
+    ["SKU情報", "-"],
+    ["個数", quantity],
+    ["收件人", recipientName],
+    ["电话", phone],
+    ["邮编", postalCode],
+    ["地址1", address1],
+    ["地址2", address2],
+    ["指定配送", "-"],
+  ];
+}
+
+function openAmazonOrderDetailModal(orderId) {
+  const item = state.amazonOrders.find((row) => String(row?.id || "") === String(orderId || ""));
+  openAmazonOrderDetailModalFromItem(item);
+}
+
+function openAmazonOrderDetailModalFromItem(item) {
+  if (!item) {
+    throw new Error("未找到对应的亚马逊订单");
+  }
+
+  const meta = $("amazonOrderDetailMeta");
+  if (!meta) return;
+  meta.innerHTML = buildAmazonOrderDetailFields(item)
+    .map(
+      ([label, value]) => `
+        <div class="summary-item">
+          <span class="summary-label">${escapeHtml(label)}</span>
+          <span class="summary-value">${escapeHtml(displayText(value))}</span>
+        </div>
+      `,
+    )
+    .join("");
+  openModal("amazonOrderDetailModal");
+}
+
 function formatAmazonShippingOriginAsMode(origin) {
   const value = String(origin || "").trim();
   if (!value) return "-";
@@ -7882,7 +7948,9 @@ function renderAmazonOrdersTable() {
           state.selectedAmazonOrderIds.has(String(item.id)) ? "checked" : ""
         } /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
-        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td><button type="button" class="inline-link-btn" data-action="openAmazonOrderDetail" data-id="${escapeHtml(
+          item.id,
+        )}">${escapeHtml(displayText(item.orderId))}</button></td>
         <td>${escapeHtml(displayText(item.sku))}</td>
         <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
         <td>${escapeHtml(displayText(item.mallName || "亚马逊"))}</td>
@@ -7943,7 +8011,11 @@ function renderOverseasOrderProcessingTable() {
             ? `<button type="button" class="inline-link-btn" data-action="openOverseasRakutenOrderDetail" data-id="${escapeHtml(
                 item.id || "",
               )}">${escapeHtml(displayText(item.orderId))}</button>`
-            : escapeHtml(displayText(item.orderId))
+            : item.source === "amazon"
+              ? `<button type="button" class="inline-link-btn" data-action="openOverseasAmazonOrderDetail" data-id="${escapeHtml(
+                  item.id || "",
+                )}">${escapeHtml(displayText(item.orderId))}</button>`
+              : escapeHtml(displayText(item.orderId))
         }</td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
         <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
@@ -11166,14 +11238,33 @@ function bindDelegates() {
   });
 
   $("overseasOrderProcessingBody").addEventListener("click", (event) => {
-    const trigger = event.target.closest("button[data-action='openOverseasRakutenOrderDetail']");
+    try {
+      const rakutenTrigger = event.target.closest("button[data-action='openOverseasRakutenOrderDetail']");
+      if (rakutenTrigger) {
+        const item = state.overseasOrderProcessingOrders.find(
+          (row) => row?.source === "rakuten" && String(row?.id || "") === String(rakutenTrigger.dataset.id || ""),
+        );
+        openRakutenOrderDetailModalFromItem(item);
+        return;
+      }
+
+      const amazonTrigger = event.target.closest("button[data-action='openOverseasAmazonOrderDetail']");
+      if (!amazonTrigger) return;
+      const item = state.overseasOrderProcessingOrders.find(
+        (row) => row?.source === "amazon" && String(row?.id || "") === String(amazonTrigger.dataset.id || ""),
+      );
+      openAmazonOrderDetailModalFromItem(item);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("amazonOrdersBody").addEventListener("click", (event) => {
+    const trigger = event.target.closest("button[data-action='openAmazonOrderDetail']");
     if (!trigger) return;
 
     try {
-      const item = state.overseasOrderProcessingOrders.find(
-        (row) => row?.source === "rakuten" && String(row?.id || "") === String(trigger.dataset.id || ""),
-      );
-      openRakutenOrderDetailModalFromItem(item);
+      openAmazonOrderDetailModal(trigger.dataset.id || "");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -11786,6 +11877,11 @@ function bindDelegates() {
       closeModal("rakutenOrderDetailModal");
       return;
     }
+    const amazonOrderDetailClose = event.target.closest("button[data-action='closeAmazonOrderDetailModal']");
+    if (amazonOrderDetailClose) {
+      closeModal("amazonOrderDetailModal");
+      return;
+    }
     const deleteConfirmClose = event.target.closest("button[data-action='closeDeleteConfirmModal']");
     if (deleteConfirmClose) {
       resolveDeleteConfirm(false);
@@ -11999,6 +12095,12 @@ function bindDelegates() {
   $("rakutenOrderDetailModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("rakutenOrderDetailModal");
+    }
+  });
+
+  $("amazonOrderDetailModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("amazonOrderDetailModal");
     }
   });
 

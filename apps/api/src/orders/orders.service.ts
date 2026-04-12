@@ -267,6 +267,13 @@ interface OverseasWarehouseOrderListItem {
   deliveryDateRaw?: string | null;
   deliveryTimeSlot?: string | null;
   rawPayload?: Prisma.JsonValue | null;
+  purchaseDateRaw?: string | null;
+  buyerPhoneNumber?: string | null;
+  shipPostalCode?: string | null;
+  shipState?: string | null;
+  shipAddress1?: string | null;
+  shipAddress2?: string | null;
+  shipAddress3?: string | null;
 }
 
 const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
@@ -361,6 +368,7 @@ export class OrdersService {
         .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock > 0)
         .map((row) => ({
           source: 'amazon' as const,
+          id: row.id.toString(),
           sourceLabel: '亚马逊',
           csvImportedAt: row.csvImportedAt,
           createdAt: row.createdAt,
@@ -371,6 +379,15 @@ export class OrdersService {
           shopName: row.resolvedShopName || row.shopName,
           shippingName: row.recipientName,
           availableStock: row.availableStock,
+          purchaseDateRaw: row.purchaseDateRaw,
+          productName: row.productName,
+          buyerPhoneNumber: row.buyerPhoneNumber,
+          shipPostalCode: row.shipPostalCode,
+          shipState: row.shipState,
+          shipAddress1: row.shipAddress1,
+          shipAddress2: row.shipAddress2,
+          shipAddress3: row.shipAddress3,
+          rawPayload: row.rawPayload,
         })),
     ]
       .sort((a, b) => {
