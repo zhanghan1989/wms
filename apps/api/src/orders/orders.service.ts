@@ -245,6 +245,7 @@ interface AmazonEnrichedOrderListItem extends AmazonOrderListItem {
 
 interface OverseasWarehouseOrderListItem {
   source: 'rakuten' | 'amazon';
+  id?: string;
   sourceLabel: string;
   csvImportedAt: Date;
   createdAt: Date;
@@ -255,6 +256,17 @@ interface OverseasWarehouseOrderListItem {
   shopName: string | null;
   shippingName: string | null;
   availableStock: number;
+  orderImportedAtRaw?: string | null;
+  productName?: string | null;
+  productNameExtra?: string | null;
+  shippingPhone?: string | null;
+  shippingPostalCode?: string | null;
+  shippingPrefecture?: string | null;
+  shippingCity?: string | null;
+  shippingAddress?: string | null;
+  deliveryDateRaw?: string | null;
+  deliveryTimeSlot?: string | null;
+  rawPayload?: Prisma.JsonValue | null;
 }
 
 const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
@@ -322,6 +334,7 @@ export class OrdersService {
         .filter((row) => row.fulfillmentMode === 'rakuten_warehouse' && row.availableStock > 0)
         .map((row) => ({
           source: 'rakuten' as const,
+          id: row.id.toString(),
           sourceLabel: '乐天',
           csvImportedAt: row.csvImportedAt,
           createdAt: row.createdAt,
@@ -332,6 +345,17 @@ export class OrdersService {
           shopName: row.shopName,
           shippingName: row.shippingName,
           availableStock: row.availableStock,
+          orderImportedAtRaw: row.orderImportedAtRaw,
+          productName: row.productName,
+          productNameExtra: row.productNameExtra,
+          shippingPhone: row.shippingPhone,
+          shippingPostalCode: row.shippingPostalCode,
+          shippingPrefecture: row.shippingPrefecture,
+          shippingCity: row.shippingCity,
+          shippingAddress: row.shippingAddress,
+          deliveryDateRaw: row.deliveryDateRaw,
+          deliveryTimeSlot: row.deliveryTimeSlot,
+          rawPayload: row.rawPayload,
         })),
       ...enrichedAmazonRows
         .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock > 0)

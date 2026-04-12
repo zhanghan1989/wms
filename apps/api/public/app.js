@@ -7761,6 +7761,10 @@ function buildRakutenOrderDetailFields(item) {
 
 function openRakutenOrderDetailModal(orderId) {
   const item = state.orders.find((row) => String(row?.id || "") === String(orderId || ""));
+  openRakutenOrderDetailModalFromItem(item);
+}
+
+function openRakutenOrderDetailModalFromItem(item) {
   if (!item) {
     throw new Error("未找到对应的乐天订单");
   }
@@ -7934,7 +7938,13 @@ function renderOverseasOrderProcessingTable() {
       <tr>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td>${escapeHtml(displayText(item.sourceLabel))}</td>
-        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td>${
+          item.source === "rakuten"
+            ? `<button type="button" class="inline-link-btn" data-action="openOverseasRakutenOrderDetail" data-id="${escapeHtml(
+                item.id || "",
+              )}">${escapeHtml(displayText(item.orderId))}</button>`
+            : escapeHtml(displayText(item.orderId))
+        }</td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
         <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
         <td>${escapeHtml(displayText(item.orderQuantity))}</td>
@@ -11150,6 +11160,20 @@ function bindDelegates() {
 
     try {
       openRakutenOrderDetailModal(trigger.dataset.id || "");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("overseasOrderProcessingBody").addEventListener("click", (event) => {
+    const trigger = event.target.closest("button[data-action='openOverseasRakutenOrderDetail']");
+    if (!trigger) return;
+
+    try {
+      const item = state.overseasOrderProcessingOrders.find(
+        (row) => row?.source === "rakuten" && String(row?.id || "") === String(trigger.dataset.id || ""),
+      );
+      openRakutenOrderDetailModalFromItem(item);
     } catch (error) {
       showToast(error.message, true);
     }
