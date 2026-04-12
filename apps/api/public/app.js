@@ -2328,6 +2328,10 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
     loadAudit().catch((error) => showToast(error.message, true));
     return;
   }
+  if (targetId === "rakutenOrderImport" && state.token && !state.orders.length) {
+    loadOrders().catch((error) => showToast(error.message, true));
+    return;
+  }
   if (targetId === "amazonOrderImport" && state.token && !state.amazonOrders.length) {
     loadAmazonOrders().catch((error) => showToast(error.message, true));
     return;
@@ -2510,8 +2514,15 @@ function ensureOverseasWarehouseQueryUi() {
     const createBtn = $("openCreateShelfFromManage");
     shelfManageForm.insertBefore(shelfQueryBtn, createBtn || null);
   } else if (actionRow && shelfQueryBtn && !shelfQueryBtn.parentElement) {
-    actionRow.insertBefore(shelfQueryBtn, $("downloadStockAdjustmentCsvBtn") || null);
-  }
+  actionRow.insertBefore(shelfQueryBtn, $("downloadStockAdjustmentCsvBtn") || null);
+}
+
+function ensureOrderProcessingLandingUi() {
+  const legacyOrdersWrap = $("ordersTableWrap");
+  if (!legacyOrdersWrap) return;
+  legacyOrdersWrap.innerHTML =
+    '<div class="muted order-import-note">请使用上方按钮进入乐天或亚马逊订单页面分别处理导入与发货。</div>';
+}
 
   if (!$("boxContentQueryModal")) {
     document.body.insertAdjacentHTML(
@@ -7056,9 +7067,9 @@ function loadMoreBatchInboundOrdersIfNeeded() {
 }
 
 function maybeAutoLoadOrders() {
-  const panel = $("orderProcessing");
+  const panel = $("rakutenOrderImport");
   if (!panel || !panel.classList.contains("active")) return;
-  const tableWrap = $("ordersTableWrap");
+  const tableWrap = $("rakutenOrdersTableWrap");
   if (!tableWrap) return;
   if (state.ordersVisibleCount >= state.orders.length) return;
 
@@ -7089,8 +7100,8 @@ function setupOrdersLoadObserver() {
     ordersLoadObserver = null;
   }
   if (typeof IntersectionObserver !== "function") return;
-  const tableWrap = $("ordersTableWrap");
-  const sentinel = $("ordersLoadSentinel");
+  const tableWrap = $("rakutenOrdersTableWrap");
+  const sentinel = $("rakutenOrdersLoadSentinel");
   if (!tableWrap || !sentinel) return;
 
   ordersLoadObserver = new IntersectionObserver(
@@ -7599,7 +7610,7 @@ async function loadProductEditPendingSummary() {
 }
 
 function renderOrdersTable() {
-  const tbody = $("ordersBody");
+  const tbody = $("rakutenOrdersBody");
   if (!tbody) return;
   const visibleCount = Math.max(state.inventoryPageSize, Number(state.ordersVisibleCount || 0));
   const list = state.orders.slice(0, visibleCount);
@@ -7618,8 +7629,8 @@ function renderOrdersTable() {
         <td>${escapeHtml(displayText(item.skuCode))}</td>
         <td>${escapeHtml(displayText(item.orderQuantity))}</td>
         <td>${escapeHtml(displayText(item.mallName))}</td>
+        <td>${escapeHtml(displayText(formatOrderFulfillmentMode(item.fulfillmentMode)))}</td>
         <td>${escapeHtml(displayText(item.shopName))}</td>
-        <td>${escapeHtml(displayText(item.mallOrderNo))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
@@ -7628,6 +7639,12 @@ function renderOrdersTable() {
     `,
     )
     .join("");
+}
+
+function formatOrderFulfillmentMode(mode) {
+  if (mode === "rakuten_warehouse") return "乐天仓库发货";
+  if (mode === "xiya_api") return "推送汐雅 API";
+  return mode;
 }
 
 function renderOrdersPanels() {
@@ -7681,7 +7698,7 @@ async function loadOrders() {
 }
 
 function loadMoreOrdersIfNeeded() {
-  const panel = $("orderProcessing");
+  const panel = $("rakutenOrderImport");
   if (!panel || !panel.classList.contains("active")) return;
   if (state.ordersVisibleCount >= state.orders.length) return;
   state.ordersVisibleCount += state.inventoryPageSize;
@@ -8593,6 +8610,30 @@ function bindForms() {
   $("logoutBtn")?.addEventListener("click", handleLogout);
   $("topLogoutBtn")?.addEventListener("click", handleLogout);
 
+  $("importRakutenOrdersForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = getSubmitButton(form, event);
+    try {
+      await withBusyButton(submitButton, "导入中...", async () => {
+        const file = $("rakutenOrdersImportFile").files?.[0];
+        if (!file) {
+          throw new Error("请选择乐天订单文件");
+        }
+        const result = await importOrdersFile(file);
+        await loadOrders();
+        form.reset();
+        showToast(
+          `乐天订单导入完成，新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条，来源文件 ${result.sourceFileName}`,
+          false,
+        );
+        closeModal("rakutenOrderImportModal");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("importOrdersForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -9447,6 +9488,31 @@ function bindForms() {
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("openRakutenOrderImportPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("rakutenOrderImport");
+      await loadOrders();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openRakutenOrderImportModal").addEventListener("click", () => {
+    openModal("rakutenOrderImportModal");
+  });
+
+  $("closeRakutenOrderImportModal").addEventListener("click", () => {
+    closeModal("rakutenOrderImportModal");
+  });
+
+  $("cancelRakutenOrderImportModal").addEventListener("click", () => {
+    closeModal("rakutenOrderImportModal");
+  });
+
+  $("backToOrderProcessingFromRakutenBtn").addEventListener("click", () => {
+    switchPanel("orderProcessing");
   });
 
   $("openAmazonOrderImportModal").addEventListener("click", () => {
@@ -11664,9 +11730,9 @@ function bindScrollLoad() {
     });
   }
 
-  const ordersTableWrap = $("ordersTableWrap");
-  if (ordersTableWrap) {
-    ordersTableWrap.addEventListener("scroll", () => {
+  const rakutenOrdersTableWrap = $("rakutenOrdersTableWrap");
+  if (rakutenOrdersTableWrap) {
+    rakutenOrdersTableWrap.addEventListener("scroll", () => {
       maybeAutoLoadOrders();
     });
   }
@@ -11777,6 +11843,9 @@ function bindRefresh() {
   $("refreshBatchInbound").addEventListener("click", () =>
     loadBatchInboundOrders().catch((error) => showToast(error.message, true)),
   );
+  $("refreshRakutenOrders").addEventListener("click", () =>
+    loadOrders().catch((error) => showToast(error.message, true)),
+  );
   $("refreshOrders").addEventListener("click", () =>
     loadAmazonOrders().catch((error) => showToast(error.message, true)),
   );
@@ -11790,6 +11859,7 @@ function bindRefresh() {
 
 ensureBrandingUi();
 ensureInventoryPanelUi();
+ensureOrderProcessingLandingUi();
 setupInventoryHomeLoadObserver();
 setupProductEditRequestLoadObserver();
 setupOrdersLoadObserver();

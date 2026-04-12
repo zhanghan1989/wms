@@ -32,7 +32,61 @@ const ORDER_CSV_COLUMNS = [
   { header: '商品名１', key: 'productNameExtra' },
 ] as const;
 
-type OrderCsvColumn = (typeof ORDER_CSV_COLUMNS)[number];
+const RAKUTEN_ORDER_HEADERS = {
+  skuCode: 'SKU管理番号',
+  productName: '商品名',
+  skuInfo: 'SKU情報',
+  unitPrice: '単価',
+  orderQuantity: '個数',
+  orderId: '注文番号',
+  orderCreatedAt: '注文日時',
+  orderConfirmedAt: '注文確定日時',
+  deliveryMethod: '配送方法',
+  deliveryClass: '配送区分',
+  shippingPostalCode1: '送付先郵便番号1',
+  shippingPostalCode2: '送付先郵便番号2',
+  shippingPrefecture: '送付先住所都道府県',
+  shippingCity: '送付先住所郡市区',
+  shippingAddress: '送付先住所それ以降の住所',
+  shippingLastName: '送付先姓',
+  shippingFirstName: '送付先名',
+  shippingPhone1: '送付先電話番号1',
+  shippingPhone2: '送付先電話番号2',
+  shippingPhone3: '送付先電話番号3',
+  deliveryTimeSlot: 'お届け時間帯',
+  deliveryDateRaw: 'お届け日指定',
+  orderRemark: 'コメント',
+} as const;
+
+const RAKUTEN_ORDER_COLUMNS = [
+  { header: RAKUTEN_ORDER_HEADERS.skuCode, key: 'skuCode' },
+  { header: RAKUTEN_ORDER_HEADERS.productName, key: 'productName' },
+  { header: RAKUTEN_ORDER_HEADERS.skuInfo, key: 'skuInfo' },
+  { header: RAKUTEN_ORDER_HEADERS.unitPrice, key: 'unitPrice' },
+  { header: RAKUTEN_ORDER_HEADERS.orderQuantity, key: 'orderQuantityRaw' },
+  { header: RAKUTEN_ORDER_HEADERS.orderId, key: 'orderId' },
+  { header: RAKUTEN_ORDER_HEADERS.orderCreatedAt, key: 'orderCreatedAtRaw' },
+  { header: RAKUTEN_ORDER_HEADERS.orderConfirmedAt, key: 'orderConfirmedAtRaw' },
+  { header: RAKUTEN_ORDER_HEADERS.deliveryMethod, key: 'deliveryMethod' },
+  { header: RAKUTEN_ORDER_HEADERS.deliveryClass, key: 'deliveryClass' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPostalCode1, key: 'shippingPostalCode1' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPostalCode2, key: 'shippingPostalCode2' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPrefecture, key: 'shippingPrefecture' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingCity, key: 'shippingCity' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingAddress, key: 'shippingAddress' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingLastName, key: 'shippingLastName' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingFirstName, key: 'shippingFirstName' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPhone1, key: 'shippingPhone1' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPhone2, key: 'shippingPhone2' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPhone3, key: 'shippingPhone3' },
+  { header: RAKUTEN_ORDER_HEADERS.deliveryTimeSlot, key: 'deliveryTimeSlot' },
+  { header: RAKUTEN_ORDER_HEADERS.deliveryDateRaw, key: 'deliveryDateRaw' },
+  { header: RAKUTEN_ORDER_HEADERS.orderRemark, key: 'orderRemark' },
+] as const;
+
+void ORDER_CSV_COLUMNS;
+
+type OrderCsvColumn = (typeof RAKUTEN_ORDER_COLUMNS)[number];
 type OrderCsvHeader = OrderCsvColumn['header'];
 
 interface ParsedOrderCsvRow {
@@ -77,6 +131,14 @@ interface OrderImportResult {
   skippedCount: number;
   duplicateInFileCount: number;
   existingDuplicateCount: number;
+}
+
+type OrderFulfillmentMode = 'rakuten_warehouse' | 'xiya_api';
+
+interface OrderListItem extends OrderRecord {
+  resolvedProductId: string | null;
+  availableStock: number;
+  fulfillmentMode: OrderFulfillmentMode;
 }
 
 const AMAZON_ORDER_TXT_COLUMNS = [
@@ -188,13 +250,14 @@ function normalizeAmazonSkuLookupKey(value: string | null | undefined): string {
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(limitParam?: string): Promise<OrderRecord[]> {
+  async list(limitParam?: string): Promise<OrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
-    return this.prisma.orderRecord.findMany({
+    const rows = await this.prisma.orderRecord.findMany({
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
     });
+    return this.enrichOrderRows(rows);
   }
 
   async listAmazon(limitParam?: string): Promise<AmazonOrderListItem[]> {
@@ -280,7 +343,7 @@ export class OrdersService {
     fileBuffer: Buffer,
     originalName?: string,
   ): Promise<OrderImportResult> {
-    const sourceFileName = String(originalName ?? '').trim() || 'uploaded-orders.csv';
+    const sourceFileName = String(originalName ?? '').trim() || 'rakuten-orders.csv';
     return this.importCsvBuffer(fileBuffer, sourceFileName, `uploaded:${sourceFileName}`);
   }
 
@@ -303,12 +366,116 @@ export class OrdersService {
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
+    const enrichedRows = await this.enrichOrderRows(rows);
+    const targetRows = enrichedRows.filter((row) => row.fulfillmentMode === 'xiya_api');
 
     return {
       exportedAt: new Date().toISOString(),
-      total: rows.length,
-      rows: rows.map((row) => this.toThirdPartyRow(row)),
+      total: targetRows.length,
+      rows: targetRows.map((row) => this.toThirdPartyRow(row)),
     };
+  }
+
+  private async enrichOrderRows(rows: OrderRecord[]): Promise<OrderListItem[]> {
+    if (!rows.length) {
+      return [];
+    }
+
+    const lookupCodes = Array.from(
+      new Set(
+        rows
+          .flatMap((row) => [row.skuCode, row.setComponentSkuCode])
+          .map((value) => String(value ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    if (!lookupCodes.length) {
+      return rows.map((row) => ({
+        ...row,
+        resolvedProductId: null,
+        availableStock: 0,
+        fulfillmentMode: 'xiya_api',
+      }));
+    }
+
+    const skuRows = await this.prisma.sku.findMany({
+      where: {
+        productId: { not: null },
+        OR: [{ sku: { in: lookupCodes } }, { rbSku: { in: lookupCodes } }, { fbmSku: { in: lookupCodes } }],
+      },
+      select: {
+        sku: true,
+        rbSku: true,
+        fbmSku: true,
+        productId: true,
+      },
+    });
+
+    const productIds = Array.from(
+      new Set(
+        skuRows
+          .map((row) => String(row.productId ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    const productRows = productIds.length
+      ? await this.prisma.masterProduct.findMany({
+          where: {
+            productId: { in: productIds },
+          },
+          select: {
+            productId: true,
+            stockQty: true,
+          },
+        })
+      : [];
+
+    const stockQtyByProductId = new Map(
+      productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
+    );
+
+    const productIdBySkuCode = new Map<string, string>();
+    const normalizedProductIdBySkuCode = new Map<string, string>();
+    skuRows.forEach((row) => {
+      const productId = String(row.productId ?? '').trim();
+      if (!productId) return;
+
+      [row.sku, row.rbSku, row.fbmSku].forEach((candidate) => {
+        const rawKey = String(candidate ?? '').trim();
+        if (rawKey && !productIdBySkuCode.has(rawKey)) {
+          productIdBySkuCode.set(rawKey, productId);
+        }
+
+        const normalizedKey = normalizeAmazonSkuLookupKey(candidate);
+        if (normalizedKey && !normalizedProductIdBySkuCode.has(normalizedKey)) {
+          normalizedProductIdBySkuCode.set(normalizedKey, productId);
+        }
+      });
+    });
+
+    const resolveProductId = (value: string | null): string | null => {
+      const rawKey = String(value ?? '').trim();
+      if (!rawKey) return null;
+      return (
+        productIdBySkuCode.get(rawKey) ??
+        normalizedProductIdBySkuCode.get(normalizeAmazonSkuLookupKey(rawKey)) ??
+        null
+      );
+    };
+
+    return rows.map((row) => {
+      const productId = resolveProductId(row.skuCode) ?? resolveProductId(row.setComponentSkuCode);
+      const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+
+      return {
+        ...row,
+        resolvedProductId: productId,
+        availableStock,
+        fulfillmentMode: availableStock > 0 ? 'rakuten_warehouse' : 'xiya_api',
+      };
+    });
   }
 
   private async importCsvBuffer(
@@ -412,7 +579,7 @@ export class OrdersService {
       }
     });
 
-    const missingHeaders = ORDER_CSV_COLUMNS.map((column) => column.header).filter(
+    const missingHeaders = RAKUTEN_ORDER_COLUMNS.map((column) => column.header).filter(
       (header) => !headerIndexMap.has(header),
     );
     if (missingHeaders.length) {
@@ -423,7 +590,7 @@ export class OrdersService {
     for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
       const sourceRow = rows[rowIndex] ?? [];
       const rawPayload = {} as Record<OrderCsvHeader, string | null>;
-      for (const column of ORDER_CSV_COLUMNS) {
+      for (const column of RAKUTEN_ORDER_COLUMNS) {
         const cellIndex = headerIndexMap.get(column.header);
         rawPayload[column.header] =
           cellIndex === undefined ? null : this.normalizeCellValue(sourceRow[cellIndex]);
@@ -434,34 +601,54 @@ export class OrdersService {
         continue;
       }
 
+      const shippingName = this.combineNonEmptyParts([
+        rawPayload[RAKUTEN_ORDER_HEADERS.shippingLastName],
+        rawPayload[RAKUTEN_ORDER_HEADERS.shippingFirstName],
+      ]);
+      const shippingPostalCode = this.combineNonEmptyParts(
+        [
+          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPostalCode1],
+          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPostalCode2],
+        ],
+        '-',
+      );
+      const shippingPhone = this.combineNonEmptyParts(
+        [
+          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPhone1],
+          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPhone2],
+          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPhone3],
+        ],
+        '-',
+      );
+
       const parsedRowWithoutHash = {
-        orderId: rawPayload['注文ID'],
-        itemDetailStatus: rawPayload['商品明細ステータス'],
-        skuCode: rawPayload['SKUコード'],
-        setComponentSkuCode: rawPayload['セット構成品SKUコード'],
-        orderQuantity: this.parseQuantity(rawPayload['注文個数']),
-        productName: rawPayload['商品名'],
-        mallName: rawPayload['モール名'],
-        shopName: rawPayload['ショップ名'],
-        mallOrderNo: rawPayload['モール注文番号'],
-        orderStatusText: rawPayload['注文ステータス'],
-        orderImportedAtRaw: rawPayload['注文取込日時'],
-        orderRemark: rawPayload['注文備考'],
-        shippingName: rawPayload['送付先氏名'],
-        shippingPostalCode: rawPayload['送付先郵便番号'],
-        shippingPrefecture: rawPayload['送付先都道府県'],
-        shippingCity: rawPayload['送付先市区町村'],
-        shippingAddress: rawPayload['送付先町名・番地以降'],
-        shippingPhone: rawPayload['送付先電話番号'],
+        orderId: rawPayload[RAKUTEN_ORDER_HEADERS.orderId],
+        itemDetailStatus: rawPayload[RAKUTEN_ORDER_HEADERS.deliveryClass],
+        skuCode: rawPayload[RAKUTEN_ORDER_HEADERS.skuCode],
+        setComponentSkuCode: null,
+        orderQuantity: this.parseQuantity(rawPayload[RAKUTEN_ORDER_HEADERS.orderQuantity]),
+        productName: rawPayload[RAKUTEN_ORDER_HEADERS.productName],
+        mallName: 'Rakuten',
+        shopName: null,
+        mallOrderNo: rawPayload[RAKUTEN_ORDER_HEADERS.orderId],
+        orderStatusText: rawPayload[RAKUTEN_ORDER_HEADERS.orderConfirmedAt],
+        orderImportedAtRaw: rawPayload[RAKUTEN_ORDER_HEADERS.orderCreatedAt],
+        orderRemark: rawPayload[RAKUTEN_ORDER_HEADERS.orderRemark],
+        shippingName,
+        shippingPostalCode,
+        shippingPrefecture: rawPayload[RAKUTEN_ORDER_HEADERS.shippingPrefecture],
+        shippingCity: rawPayload[RAKUTEN_ORDER_HEADERS.shippingCity],
+        shippingAddress: rawPayload[RAKUTEN_ORDER_HEADERS.shippingAddress],
+        shippingPhone,
         shipmentCompany: null,
         shipmentNo: null,
         shipmentNoRegisteredAt: null,
         sendStatus: this.resolveSendStatus(null),
-        deliveryMethod: rawPayload['配送方法'],
-        deliveryDateRaw: rawPayload['お届け指定日'],
-        deliveryTimeSlot: rawPayload['お届け指定時間帯'],
-        shipmentRequestNo: rawPayload['出荷依頼番号'],
-        productNameExtra: rawPayload['商品名１'],
+        deliveryMethod: rawPayload[RAKUTEN_ORDER_HEADERS.deliveryMethod],
+        deliveryDateRaw: rawPayload[RAKUTEN_ORDER_HEADERS.deliveryDateRaw],
+        deliveryTimeSlot: rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot],
+        shipmentRequestNo: null,
+        productNameExtra: rawPayload[RAKUTEN_ORDER_HEADERS.skuInfo],
         rawPayload,
       };
 
@@ -805,12 +992,19 @@ export class OrdersService {
     return null;
   }
 
+  private combineNonEmptyParts(parts: Array<string | null>, separator = ''): string | null {
+    const normalized = parts
+      .map((value) => String(value ?? '').trim())
+      .filter((value) => value.length > 0);
+    return normalized.length ? normalized.join(separator) : null;
+  }
+
   private resolveSendStatus(shipmentNo: string | null): OrderSendStatus {
     return shipmentNo && shipmentNo.trim() ? OrderSendStatus.sent : OrderSendStatus.unsent;
   }
 
   private buildRowHash(row: Omit<ParsedOrderCsvRow, 'rowHash'>): string {
-    const hashBase = ORDER_CSV_COLUMNS.map((column) => row.rawPayload[column.header] ?? '').join('\u001f');
+    const hashBase = RAKUTEN_ORDER_COLUMNS.map((column) => row.rawPayload[column.header] ?? '').join('\u001f');
     return createHash('sha1').update(hashBase).digest('hex');
   }
 

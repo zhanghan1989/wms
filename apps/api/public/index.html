@@ -586,6 +586,7 @@
             </div>
           </div>
           <div class="actions order-import-actions">
+            <button id="openRakutenOrderImportPanel" type="button">乐天订单处理</button>
             <button id="openAmazonOrderImportPanel" type="button">亚马逊订单处理</button>
           </div>
         </article>
@@ -614,6 +615,44 @@
               <tbody id="ordersBody"></tbody>
             </table>
             <div id="ordersLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel" id="rakutenOrderImport">
+        <div class="panel-head">
+          <h2>乐天订单处理</h2>
+          <div class="panel-tools">
+            <button id="openRakutenOrderImportModal" class="ghost">订单导入</button>
+            <button id="refreshRakutenOrders" class="ghost">刷新</button>
+            <button id="backToOrderProcessingFromRakutenBtn" class="ghost">返回订单处理</button>
+          </div>
+        </div>
+
+        <article class="card">
+          <div class="card-head">
+            <h3>乐天订单列表</h3>
+          </div>
+          <div id="rakutenOrdersTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>导入时间</th>
+                  <th>订单号</th>
+                  <th>SKU</th>
+                  <th>数量</th>
+                  <th>平台</th>
+                  <th>发货模式</th>
+                  <th>店铺</th>
+                  <th>收件人</th>
+                  <th>发货公司</th>
+                  <th>发货单号</th>
+                  <th>发货单号登记时间</th>
+                </tr>
+              </thead>
+              <tbody id="rakutenOrdersBody"></tbody>
+            </table>
+            <div id="rakutenOrdersLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
           </div>
         </article>
       </section>
@@ -1089,6 +1128,25 @@
       </section>
     </section>
   </main>
+
+  <div id="rakutenOrderImportModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>导入乐天订单</h3>
+        <button type="button" class="ghost" id="closeRakutenOrderImportModal">关闭</button>
+      </div>
+      <form id="importRakutenOrdersForm" class="form-grid order-import-form">
+        <label>
+          乐天订单 CSV 文件
+          <input id="rakutenOrdersImportFile" type="file" accept=".csv,.xlsx,.xls" required />
+        </label>
+        <div class="actions order-import-actions">
+          <button type="submit" id="uploadRakutenOrdersBtn">上传并导入</button>
+          <button type="button" class="ghost" id="cancelRakutenOrderImportModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <div id="amazonOrderImportModal" class="modal hidden">
     <div class="modal-card">
