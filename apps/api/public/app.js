@@ -1,6 +1,7 @@
 const AUTH_STORAGE_KEY = "wms_token";
 const AUTH_COOKIE_KEY = "wms_token";
 const AUTH_DEPLOY_VERSION_STORAGE_KEY = "wms_auth_deploy_version";
+const AUTH_DEPLOY_VERSION_COOKIE_KEY = "wms_auth_deploy_version";
 
 function readCookieValue(name) {
   const target = `${String(name || "").trim()}=`;
@@ -36,10 +37,15 @@ function persistAuthDeployVersion(version) {
   try {
     if (value) {
       localStorage.setItem(AUTH_DEPLOY_VERSION_STORAGE_KEY, value);
-      return value;
+    } else {
+      localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
     }
-    localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
   } catch {}
+  if (value) {
+    document.cookie = `${AUTH_DEPLOY_VERSION_COOKIE_KEY}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
+    return value;
+  }
+  document.cookie = `${AUTH_DEPLOY_VERSION_COOKIE_KEY}=; Max-Age=0; Path=/; SameSite=Lax`;
   return "";
 }
 
@@ -49,6 +55,7 @@ function clearPersistedAuthToken() {
     localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
   } catch {}
   document.cookie = `${AUTH_COOKIE_KEY}=; Max-Age=0; Path=/; SameSite=Lax`;
+  document.cookie = `${AUTH_DEPLOY_VERSION_COOKIE_KEY}=; Max-Age=0; Path=/; SameSite=Lax`;
 }
 
 function readPersistedAuthToken() {
@@ -68,11 +75,19 @@ function readPersistedAuthToken() {
 }
 
 function readPersistedAuthDeployVersion() {
+  let value = "";
   try {
-    return String(localStorage.getItem(AUTH_DEPLOY_VERSION_STORAGE_KEY) || "").trim();
-  } catch {
-    return "";
+    value = String(localStorage.getItem(AUTH_DEPLOY_VERSION_STORAGE_KEY) || "").trim();
+  } catch {}
+  if (value) {
+    persistAuthDeployVersion(value);
+    return value;
   }
+  value = String(readCookieValue(AUTH_DEPLOY_VERSION_COOKIE_KEY) || "").trim();
+  if (value) {
+    persistAuthDeployVersion(value);
+  }
+  return value;
 }
 
 const state = {
