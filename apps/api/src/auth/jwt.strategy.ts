@@ -8,15 +8,10 @@ interface JwtPayload {
   sub: string;
   username: string;
   role: Role;
-  deployVersion: string;
 }
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  private readonly deploySessionVersion =
-    String(process.env.DEPLOY_SESSION_VERSION ?? process.env.npm_package_version ?? 'local-dev').trim() ||
-    'local-dev';
-
   constructor() {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -26,11 +21,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthUser> {
-    if (!payload.sub || !payload.username || !payload.role || !payload.deployVersion) {
-      throw new UnauthorizedException('登录令牌无效，请重新登录');
-    }
-    if (payload.deployVersion !== this.deploySessionVersion) {
-      throw new UnauthorizedException('系统已升级，请重新登录');
+    if (!payload.sub || !payload.username || !payload.role) {
+      throw new UnauthorizedException('登录令牌无效');
     }
     return {
       id: BigInt(payload.sub),

@@ -10,6 +10,13 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @Get('deploy-version')
+  async deployVersion(): Promise<{ deployVersion: string }> {
+    return {
+      deployVersion: this.authService.getDeploySessionVersion(),
+    };
+  }
+
   @Post('login')
   async login(@Body() payload: LoginDto): Promise<unknown> {
     return this.authService.login(payload.username, payload.password);

@@ -1,5 +1,6 @@
 const AUTH_STORAGE_KEY = "wms_token";
 const AUTH_COOKIE_KEY = "wms_token";
+const AUTH_DEPLOY_VERSION_STORAGE_KEY = "wms_auth_deploy_version";
 
 function readCookieValue(name) {
   const target = `${String(name || "").trim()}=`;
@@ -30,9 +31,22 @@ function persistAuthToken(token) {
   return value;
 }
 
+function persistAuthDeployVersion(version) {
+  const value = String(version || "").trim();
+  try {
+    if (value) {
+      localStorage.setItem(AUTH_DEPLOY_VERSION_STORAGE_KEY, value);
+      return value;
+    }
+    localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
+  } catch {}
+  return "";
+}
+
 function clearPersistedAuthToken() {
   try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
   } catch {}
   document.cookie = `${AUTH_COOKIE_KEY}=; Max-Age=0; Path=/; SameSite=Lax`;
 }
@@ -53,8 +67,18 @@ function readPersistedAuthToken() {
   return value;
 }
 
+function readPersistedAuthDeployVersion() {
+  try {
+    return String(localStorage.getItem(AUTH_DEPLOY_VERSION_STORAGE_KEY) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
 const state = {
   token: readPersistedAuthToken(),
+  authDeployVersion: readPersistedAuthDeployVersion(),
+  currentDeployVersion: "",
   me: null,
   shelves: [],
   boxes: [],
@@ -292,6 +316,8 @@ function expireAuthSession(message = "未授权，请重新登录", sourcePath =
   const authMessage = normalizeErrorMessage(message || "未授权，请重新登录");
   const loginGateMessage = sourcePath ? `${sourcePath} 返回 401\n${authMessage}` : authMessage;
   state.token = "";
+  state.authDeployVersion = "";
+  state.currentDeployVersion = "";
   state.me = null;
   suppressAuthErrorToastUntil = Date.now() + 3000;
   clearPersistedAuthToken();
@@ -303,6 +329,64 @@ function expireAuthSession(message = "未授权，请重新登录", sourcePath =
   persistAuthGateMessage(loginGateMessage);
   renderAuthGateMessage(loginGateMessage);
   showToast(authMessage, true);
+}
+
+async function fetchDeployVersion() {
+  let res;
+  try {
+    res = await fetch("/api/auth/deploy-version");
+  } catch (error) {
+    const requestError = new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
+    requestError.status = 0;
+    throw requestError;
+  }
+
+  const text = await res.text();
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = { message: text || "请求失败" };
+  }
+
+  if (!res.ok || payload.code !== 0) {
+    const requestError = new Error(normalizeErrorMessage(payload.message || `HTTP ${res.status}`));
+    requestError.status = res.status;
+    requestError.path = "/auth/deploy-version";
+    throw requestError;
+  }
+
+  const deployVersion = String(payload?.data?.deployVersion || "").trim();
+  if (!deployVersion) {
+    throw new Error("系统部署版本缺失");
+  }
+  state.currentDeployVersion = deployVersion;
+  return deployVersion;
+}
+
+async function ensureAuthDeployVersion() {
+  if (!state.token) return "";
+
+  const currentDeployVersion = await fetchDeployVersion();
+  const authDeployVersion = String(state.authDeployVersion || readPersistedAuthDeployVersion() || "").trim();
+  if (!authDeployVersion) {
+    expireAuthSession("系统已升级，请重新登录", "/auth/deploy-version");
+    const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
+    silentAuthError.status = 401;
+    silentAuthError.path = "/auth/deploy-version";
+    silentAuthError.responseMessage = "系统已升级，请重新登录";
+    throw silentAuthError;
+  }
+  if (authDeployVersion !== currentDeployVersion) {
+    expireAuthSession("系统已升级，请重新登录", "/auth/deploy-version");
+    const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
+    silentAuthError.status = 401;
+    silentAuthError.path = "/auth/deploy-version";
+    silentAuthError.responseMessage = "系统已升级，请重新登录";
+    throw silentAuthError;
+  }
+
+  return currentDeployVersion;
 }
 
 function clearErrorModalAutoState({ keepAction = false } = {}) {
@@ -2519,6 +2603,13 @@ function resolveActionConfirm(confirmed) {
 }
 
 async function request(path, options = {}) {
+  const normalizedPath = String(path || "").trim();
+  const isLoginRequest = normalizedPath === "/auth/login";
+  const isDeployVersionRequest = normalizedPath === "/auth/deploy-version";
+  if (state.token && !isLoginRequest && !isDeployVersionRequest && !options.skipDeployVersionCheck) {
+    await ensureAuthDeployVersion();
+  }
+
   const headers = { ...(options.headers || {}) };
   const isFormData = options.body instanceof FormData;
 
@@ -2548,7 +2639,6 @@ async function request(path, options = {}) {
 
   if (!res.ok || payload.code !== 0) {
     const message = normalizeErrorMessage(payload.message || `HTTP ${res.status}`);
-    const isLoginRequest = String(path || "").trim() === "/auth/login";
     if (res.status === 401 && state.token && !isLoginRequest) {
       expireAuthSession(message, path);
       const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
@@ -2741,7 +2831,8 @@ async function loadMe() {
   }
 
   try {
-    state.me = await request("/auth/me");
+    await ensureAuthDeployVersion();
+    state.me = await request("/auth/me", { skipDeployVersionCheck: true });
     $("sessionInfo").textContent = `${state.me.username}`;
     setAuthGate(true);
     applyRoleView();
@@ -7938,6 +8029,8 @@ function bindForms() {
           }),
         });
         state.token = persistAuthToken(data.accessToken);
+        state.authDeployVersion = persistAuthDeployVersion(data.deployVersion);
+        state.currentDeployVersion = String(data.deployVersion || "").trim();
         await reloadAll();
         await openInventoryStartupView();
       });
@@ -7948,6 +8041,8 @@ function bindForms() {
 
   const handleLogout = async () => {
     state.token = "";
+    state.authDeployVersion = "";
+    state.currentDeployVersion = "";
     state.me = null;
     suppressAuthErrorToastUntil = Date.now() + 3000;
     clearPersistedAuthToken();

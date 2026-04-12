@@ -16,7 +16,7 @@ export class AuthService {
     private readonly auditService: AuditService,
   ) {}
 
-  private getDeploySessionVersion(): string {
+  getDeploySessionVersion(): string {
     return String(
       process.env.DEPLOY_SESSION_VERSION ?? process.env.npm_package_version ?? 'local-dev',
     ).trim() || 'local-dev';
@@ -24,6 +24,7 @@ export class AuthService {
 
   async login(username: string, password: string): Promise<{
     accessToken: string;
+    deployVersion: string;
     user: Pick<User, 'id' | 'username' | 'role' | 'status' | 'department'>;
   }> {
     const user = await this.prisma.user.findUnique({
@@ -50,11 +51,11 @@ export class AuthService {
       sub: user.id.toString(),
       username: user.username,
       role: user.role,
-      deployVersion: this.getDeploySessionVersion(),
     });
 
     return {
       accessToken,
+      deployVersion: this.getDeploySessionVersion(),
       user: {
         id: user.id,
         username: user.username,
