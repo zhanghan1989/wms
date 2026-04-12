@@ -7705,7 +7705,7 @@ function renderAmazonOrdersTable() {
   const list = state.amazonOrders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无亚马逊订单数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="muted">暂无亚马逊订单数据</td></tr>';
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
     return;
@@ -7726,6 +7726,7 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(displayText(item.mallName))}</td>
         <td>${escapeHtml(displayText(item.resolvedShopName || item.shopName))}</td>
         <td>${escapeHtml(displayText(item.recipientName))}</td>
+        <td>${escapeHtml(displayText(item.shippingOrigin))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>

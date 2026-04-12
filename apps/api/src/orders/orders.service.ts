@@ -492,8 +492,72 @@ export class OrdersService {
     }
 
     const uniqueRows = Array.from(uniqueRowsMap.values());
+    const skuRows = await this.prisma.sku.findMany({
+      where: {
+        productId: { not: null },
+      },
+      select: {
+        sku: true,
+        rbSku: true,
+        fbmSku: true,
+        productId: true,
+        shop: true,
+      },
+    });
+
+    const skuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
+    const normalizedSkuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
+    skuRows.forEach((row) => {
+      const meta = {
+        productId: String(row.productId ?? '').trim() || null,
+        shopName: String(row.shop ?? '').trim() || null,
+      };
+      [row.rbSku, row.fbmSku, row.sku].forEach((candidate) => {
+        const key = String(candidate ?? '').trim();
+        if (key && !skuMetaByCode.has(key)) {
+          skuMetaByCode.set(key, meta);
+        }
+        const normalizedKey = normalizeAmazonSkuLookupKey(candidate);
+        if (!normalizedKey || normalizedSkuMetaByCode.has(normalizedKey)) return;
+        normalizedSkuMetaByCode.set(normalizedKey, meta);
+      });
+    });
+
+    const resolveSkuMeta = (skuCode: string | null) => {
+      const rawCode = String(skuCode ?? '').trim();
+      if (!rawCode) return null;
+      return (
+        skuMetaByCode.get(rawCode) ??
+        normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(rawCode)) ??
+        null
+      );
+    };
+
+    const productIds = Array.from(
+      new Set(
+        uniqueRows
+          .map((row) => resolveSkuMeta(row.sku)?.productId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    const productRows = productIds.length
+      ? await this.prisma.masterProduct.findMany({
+          where: { productId: { in: productIds } },
+          select: { productId: true, stockQty: true },
+        })
+      : [];
+
+    const stockQtyByProductId = new Map(
+      productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
+    );
     const importedAt = new Date();
     const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = uniqueRows.map((row) => ({
+      shippingOrigin: (() => {
+        const productId = resolveSkuMeta(row.sku)?.productId;
+        const stockQty = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+        return stockQty > 0 ? '日本発' : '中国発';
+      })(),
       rowHash: row.rowHash,
       orderId: row.orderId,
       orderItemId: row.orderItemId,
