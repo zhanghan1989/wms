@@ -7644,7 +7644,9 @@ function renderOrdersTable() {
           state.selectedRakutenOrderIds.has(String(item.id)) ? "checked" : ""
         } /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
-        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td><button type="button" class="inline-link-btn" data-action="openRakutenOrderDetail" data-id="${escapeHtml(
+          item.id,
+        )}">${escapeHtml(displayText(item.orderId))}</button></td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
         <td>${escapeHtml(displayText(item.orderQuantity))}</td>
         <td>${escapeHtml(displayText(item.mallName))}</td>
@@ -7666,6 +7668,95 @@ function formatOrderFulfillmentMode(mode) {
   if (mode === "rakuten_warehouse") return "乐天仓库发货";
   if (mode === "xiya_api") return "推送汐雅 API";
   return mode;
+}
+
+function getRakutenRawValue(item, key) {
+  const rawPayload = item?.rawPayload;
+  if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+    return "";
+  }
+  const value = rawPayload[key];
+  return value === null || value === undefined ? "" : String(value).trim();
+}
+
+function joinRakutenParts(parts, separator = "") {
+  return parts
+    .map((value) => String(value || "").trim())
+    .filter((value) => value.length > 0)
+    .join(separator);
+}
+
+function buildRakutenOrderDetailFields(item) {
+  const orderNo = getRakutenRawValue(item, "注文番号") || item?.orderId || item?.mallOrderNo || "";
+  const orderCreatedAt = getRakutenRawValue(item, "注文日時") || item?.orderImportedAtRaw || "";
+  const productName = getRakutenRawValue(item, "商品名") || item?.productName || "";
+  const skuInfo = getRakutenRawValue(item, "SKU情報") || item?.productNameExtra || "";
+  const quantity = getRakutenRawValue(item, "個数") || item?.orderQuantity || "";
+  const recipientName =
+    joinRakutenParts([getRakutenRawValue(item, "送付先姓"), getRakutenRawValue(item, "送付先名")]) ||
+    item?.shippingName ||
+    "";
+  const phone =
+    joinRakutenParts(
+      [
+        getRakutenRawValue(item, "送付先電話番号1"),
+        getRakutenRawValue(item, "送付先電話番号2"),
+        getRakutenRawValue(item, "送付先電話番号3"),
+      ],
+      "-",
+    ) || item?.shippingPhone || "";
+  const postalCode =
+    joinRakutenParts(
+      [getRakutenRawValue(item, "送付先郵便番号1"), getRakutenRawValue(item, "送付先郵便番号2")],
+      "-",
+    ) || item?.shippingPostalCode || "";
+  const address1 =
+    joinRakutenParts([getRakutenRawValue(item, "送付先住所都道府県"), getRakutenRawValue(item, "送付先住所郡市区")]) ||
+    joinRakutenParts([item?.shippingPrefecture, item?.shippingCity]) ||
+    "";
+  const address2 = getRakutenRawValue(item, "送付先住所それ以降の住所") || item?.shippingAddress || "";
+  const delivery = joinRakutenParts(
+    [
+      getRakutenRawValue(item, "お届け日指定") || item?.deliveryDateRaw,
+      getRakutenRawValue(item, "お届け時間帯") || item?.deliveryTimeSlot,
+    ],
+    " ",
+  );
+
+  return [
+    ["注文番号", orderNo],
+    ["注文日時", orderCreatedAt],
+    ["商品名", productName],
+    ["SKU情報", skuInfo],
+    ["個数", quantity],
+    ["收件人", recipientName],
+    ["电话", phone],
+    ["邮编", postalCode],
+    ["地址1", address1],
+    ["地址2", address2],
+    ["指定配送", delivery],
+  ];
+}
+
+function openRakutenOrderDetailModal(orderId) {
+  const item = state.orders.find((row) => String(row?.id || "") === String(orderId || ""));
+  if (!item) {
+    throw new Error("未找到对应的乐天订单");
+  }
+
+  const meta = $("rakutenOrderDetailMeta");
+  if (!meta) return;
+  meta.innerHTML = buildRakutenOrderDetailFields(item)
+    .map(
+      ([label, value]) => `
+        <div class="summary-item">
+          <span class="summary-label">${escapeHtml(label)}</span>
+          <span class="summary-value">${escapeHtml(displayText(value))}</span>
+        </div>
+      `,
+    )
+    .join("");
+  openModal("rakutenOrderDetailModal");
 }
 
 function formatAmazonShippingOriginAsMode(origin) {
@@ -11032,6 +11123,17 @@ function bindDelegates() {
     updateRakutenBatchDeleteButtonState();
   });
 
+  $("rakutenOrdersBody").addEventListener("click", (event) => {
+    const trigger = event.target.closest("button[data-action='openRakutenOrderDetail']");
+    if (!trigger) return;
+
+    try {
+      openRakutenOrderDetailModal(trigger.dataset.id || "");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   const openAdjustByAction = async (event) => {
     const button = event.target.closest(
       "button[data-action='inventoryInbound'], button[data-action='inventoryOutbound'], button[data-action='inventoryOutboundOne']",
@@ -11634,6 +11736,11 @@ function bindDelegates() {
       closeModal("productEditRequestDetailModal");
       return;
     }
+    const rakutenOrderDetailClose = event.target.closest("button[data-action='closeRakutenOrderDetailModal']");
+    if (rakutenOrderDetailClose) {
+      closeModal("rakutenOrderDetailModal");
+      return;
+    }
     const deleteConfirmClose = event.target.closest("button[data-action='closeDeleteConfirmModal']");
     if (deleteConfirmClose) {
       resolveDeleteConfirm(false);
@@ -11841,6 +11948,12 @@ function bindDelegates() {
   $("productEditRequestDetailModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("productEditRequestDetailModal");
+    }
+  });
+
+  $("rakutenOrderDetailModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("rakutenOrderDetailModal");
     }
   });
 

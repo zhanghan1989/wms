@@ -597,6 +597,21 @@ button.ghost {
   word-break: break-all;
 }
 
+.rakuten-order-detail-grid {
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  margin-bottom: 0;
+}
+
+.rakuten-order-detail-grid .summary-item {
+  min-height: 78px;
+}
+
+.rakuten-order-detail-grid .summary-value {
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .master-product-detail-layout {
   display: grid;
   grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);

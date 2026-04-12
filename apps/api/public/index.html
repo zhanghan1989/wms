@@ -705,7 +705,7 @@
         <div class="panel-head">
           <h2>乐天订单处理</h2>
           <div class="panel-tools">
-            <button id="openRakutenOrderImportModal" class="ghost">订单导入</button>
+            <button id="openRakutenOrderImportModal">订单导入</button>
             <button id="refreshRakutenOrders" class="ghost">刷新</button>
             <button id="backToOrderProcessingFromRakutenBtn" class="ghost">返回订单处理</button>
           </div>
@@ -745,7 +745,7 @@
         <div class="panel-head">
           <h2>亚马逊订单处理</h2>
           <div class="panel-tools">
-            <button id="openAmazonOrderImportModal" class="ghost">订单导入</button>
+            <button id="openAmazonOrderImportModal">订单导入</button>
             <button id="refreshOrders" class="ghost">刷新</button>
             <button id="backToOrderProcessingBtn" class="ghost">返回订单处理</button>
           </div>
@@ -1401,6 +1401,16 @@
       <div id="productEditRequestActions" class="modal-actions">
         <button type="button" id="confirmProductEditRequestBtn">确认</button>
       </div>
+    </div>
+  </div>
+
+  <div id="rakutenOrderDetailModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>乐天订单详情</h3>
+        <button type="button" class="ghost" data-action="closeRakutenOrderDetailModal">关闭</button>
+      </div>
+      <div id="rakutenOrderDetailMeta" class="master-product-summary-grid rakuten-order-detail-grid"></div>
     </div>
   </div>
 
