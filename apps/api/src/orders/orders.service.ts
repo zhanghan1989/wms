@@ -717,7 +717,8 @@ export class OrdersService {
       type: 'buffer',
       codepage: 932,
       dense: true,
-      raw: false,
+      raw: true,
+      cellText: true,
     });
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) {
@@ -725,11 +726,7 @@ export class OrdersService {
     }
 
     const firstSheet = workbook.Sheets[firstSheetName];
-    const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(firstSheet, {
-      header: 1,
-      raw: false,
-      defval: '',
-    });
+    const rows = this.extractSheetRows(firstSheet);
     if (rows.length <= 1) {
       throw new BadRequestException('订单CSV没有可导入的数据');
     }
@@ -826,6 +823,58 @@ export class OrdersService {
     }
 
     return parsedRows;
+  }
+
+  private extractSheetRows(sheet: XLSX.WorkSheet): Array<Array<string | number | boolean | null>> {
+    const sheetRange = sheet['!ref'];
+    if (!sheetRange) {
+      return [];
+    }
+
+    const range = XLSX.utils.decode_range(sheetRange);
+    const rows: Array<Array<string | number | boolean | null>> = [];
+    const denseSheet = sheet as unknown as Array<Array<XLSX.CellObject | undefined>>;
+
+    for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+      const row: Array<string | number | boolean | null> = [];
+      for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
+        const cell = Array.isArray(denseSheet)
+          ? denseSheet[rowIndex]?.[columnIndex]
+          : (sheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })] as XLSX.CellObject | undefined);
+        row.push(this.extractSheetCellValue(cell));
+      }
+      rows.push(row);
+    }
+
+    return rows;
+  }
+
+  private extractSheetCellValue(cell: XLSX.CellObject | undefined): string | number | boolean | null {
+    if (!cell) {
+      return null;
+    }
+
+    const formattedValue = typeof cell.w === 'string' ? cell.w.replace(/\uFEFF/g, '').replace(/\r?\n/g, ' ').trim() : '';
+    if (formattedValue) {
+      return formattedValue;
+    }
+
+    const rawValue = cell.v;
+    if (rawValue === null || rawValue === undefined || rawValue === '') {
+      return null;
+    }
+
+    if (rawValue instanceof Date) {
+      const year = rawValue.getFullYear();
+      const month = String(rawValue.getMonth() + 1).padStart(2, '0');
+      const day = String(rawValue.getDate()).padStart(2, '0');
+      const hours = String(rawValue.getHours()).padStart(2, '0');
+      const minutes = String(rawValue.getMinutes()).padStart(2, '0');
+      const seconds = String(rawValue.getSeconds()).padStart(2, '0');
+      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    }
+
+    return rawValue;
   }
 
   private async importAmazonTxtBuffer(

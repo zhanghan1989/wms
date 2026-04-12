@@ -7665,8 +7665,8 @@ function renderOrdersTable() {
 }
 
 function formatOrderFulfillmentMode(mode) {
-  if (mode === "rakuten_warehouse") return "乐天仓库发货";
-  if (mode === "xiya_api") return "推送汐雅 API";
+  if (mode === "rakuten_warehouse") return "日本発";
+  if (mode === "xiya_api") return "中国発";
   return mode;
 }
 
@@ -7783,8 +7783,8 @@ function openRakutenOrderDetailModal(orderId) {
 function formatAmazonShippingOriginAsMode(origin) {
   const value = String(origin || "").trim();
   if (!value) return "-";
-  if (value.includes("日本")) return "日本发货";
-  if (value.includes("中国")) return "中国发货";
+  if (value.includes("日本")) return "日本発";
+  if (value.includes("中国")) return "中国発";
   return value;
 }
 
