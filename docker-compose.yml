@@ -8,6 +8,8 @@ services:
       PORT: 3000
       DATABASE_URL: mysql://root:root@db:3306/wms_v1
       JWT_SECRET: wms-dev-secret
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-30d}
+      DEPLOY_SESSION_VERSION: ${DEPLOY_SESSION_VERSION:-local-dev}
       THIRD_PARTY_API_KEY: xiya-t4HHGJWBDGg29yp8W8TK3QRQ3m1A
       BACKUP_DIR: /app/storage/backups
     depends_on:

@@ -83,6 +83,9 @@ jobs:
             timed "git_fetch" git fetch --all --prune
             timed "git_checkout_main" git checkout main
             timed "git_reset_origin_main" git reset --hard origin/main
+            DEPLOY_SESSION_VERSION="$(git rev-parse HEAD)"
+            export DEPLOY_SESSION_VERSION
+            echo "Using DEPLOY_SESSION_VERSION=${DEPLOY_SESSION_VERSION}"
             timed "git_show_head" git rev-parse --short HEAD
             timed_retry "compose_up_db_redis" 3 docker compose up -d db redis
             timed_retry "compose_build_api_once" 3 docker compose build api

@@ -288,6 +288,23 @@ function renderAuthGateMessage(message = "") {
   node.classList.toggle("hidden", !text);
 }
 
+function expireAuthSession(message = "未授权，请重新登录", sourcePath = "") {
+  const authMessage = normalizeErrorMessage(message || "未授权，请重新登录");
+  const loginGateMessage = sourcePath ? `${sourcePath} 返回 401\n${authMessage}` : authMessage;
+  state.token = "";
+  state.me = null;
+  suppressAuthErrorToastUntil = Date.now() + 3000;
+  clearPersistedAuthToken();
+  document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden"));
+  clearErrorModalAutoState();
+  $("sessionInfo").textContent = "登录失效";
+  setAuthGate(false);
+  applyRoleView();
+  persistAuthGateMessage(loginGateMessage);
+  renderAuthGateMessage(loginGateMessage);
+  showToast(authMessage, true);
+}
+
 function clearErrorModalAutoState({ keepAction = false } = {}) {
   if (errorModalAutoActionTimer) {
     clearTimeout(errorModalAutoActionTimer);
@@ -2531,8 +2548,17 @@ async function request(path, options = {}) {
 
   if (!res.ok || payload.code !== 0) {
     const message = normalizeErrorMessage(payload.message || `HTTP ${res.status}`);
+    const isLoginRequest = String(path || "").trim() === "/auth/login";
+    if (res.status === 401 && state.token && !isLoginRequest) {
+      expireAuthSession(message, path);
+      const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
+      silentAuthError.status = 401;
+      silentAuthError.path = path;
+      silentAuthError.responseMessage = message;
+      throw silentAuthError;
+    }
     const shouldSuppressAuthError =
-      res.status === 401 && (!state.token || Date.now() < suppressAuthErrorToastUntil);
+      res.status === 401 && !isLoginRequest && (!state.token || Date.now() < suppressAuthErrorToastUntil);
     if (shouldSuppressAuthError) {
       const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
       silentAuthError.status = 401;
@@ -2730,17 +2756,7 @@ async function loadMe() {
       applyRoleView();
       throw error;
     }
-    state.token = "";
-    state.me = null;
-    clearPersistedAuthToken();
-    $("sessionInfo").textContent = "登录失效";
-    setAuthGate(false);
-    applyRoleView();
-    const authMessage = normalizeErrorMessage(error?.responseMessage || error?.message || "/auth/me 返回 401");
-    const loginGateMessage = `/auth/me 返回 401\n${authMessage}`;
-    persistAuthGateMessage(loginGateMessage);
-    renderAuthGateMessage(loginGateMessage);
-    showToast(authMessage, true);
+    expireAuthSession(error?.responseMessage || error?.message || "未授权，请重新登录", "/auth/me");
   }
 }
 

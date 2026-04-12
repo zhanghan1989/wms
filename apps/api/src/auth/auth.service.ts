@@ -16,6 +16,12 @@ export class AuthService {
     private readonly auditService: AuditService,
   ) {}
 
+  private getDeploySessionVersion(): string {
+    return String(
+      process.env.DEPLOY_SESSION_VERSION ?? process.env.npm_package_version ?? 'local-dev',
+    ).trim() || 'local-dev';
+  }
+
   async login(username: string, password: string): Promise<{
     accessToken: string;
     user: Pick<User, 'id' | 'username' | 'role' | 'status' | 'department'>;
@@ -44,6 +50,7 @@ export class AuthService {
       sub: user.id.toString(),
       username: user.username,
       role: user.role,
+      deployVersion: this.getDeploySessionVersion(),
     });
 
     return {
