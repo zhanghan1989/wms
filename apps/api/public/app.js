@@ -224,6 +224,7 @@ const state = {
   amazonOrders: [],
   amazonOrdersVisibleCount: 0,
   overseasOrderProcessingOrders: [],
+  selectedOverseasOrderKeys: new Set(),
   fbaReplenishments: [],
   fbaReplenishmentsVisibleCount: 0,
   fbaPendingCount: 0,
@@ -7984,6 +7985,7 @@ function renderOverseasOrderProcessingTable() {
   const tbody = $("overseasOrderProcessingBody");
   const summary = $("overseasOrderProcessingSummary");
   if (!tbody) return;
+  syncSelectedOverseasOrderKeys();
 
   const list = Array.isArray(state.overseasOrderProcessingOrders) ? state.overseasOrderProcessingOrders : [];
   const rakutenCount = list.filter((item) => item.source === "rakuten").length;
@@ -7993,7 +7995,9 @@ function renderOverseasOrderProcessingTable() {
   }
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="muted">暂无可归结的海外仓订单</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">暂无可归结的海外仓订单</td></tr>';
+    updateOverseasOrderProcessingSelectAll();
+    updateOverseasBatchPrintButtonState();
     return;
   }
 
@@ -8001,6 +8005,9 @@ function renderOverseasOrderProcessingTable() {
     .map(
       (item) => `
       <tr>
+        <td><input type="checkbox" data-action="overseasOrderToggleRow" data-key="${escapeHtml(
+          `${item.source}:${item.id || ""}`,
+        )}" ${state.selectedOverseasOrderKeys.has(`${item.source}:${item.id || ""}`) ? "checked" : ""} /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td>${escapeHtml(displayText(item.sourceLabel))}</td>
         <td>${
@@ -8024,11 +8031,14 @@ function renderOverseasOrderProcessingTable() {
     `,
     )
     .join("");
+  updateOverseasOrderProcessingSelectAll();
+  updateOverseasBatchPrintButtonState();
 }
 
 async function loadOverseasOrderProcessingOrders() {
   if (!state.token) {
     state.overseasOrderProcessingOrders = [];
+    state.selectedOverseasOrderKeys = new Set();
     renderOverseasOrderProcessingTable();
     return;
   }
@@ -8052,6 +8062,20 @@ async function deleteRakutenOrders(ids) {
     method: "POST",
     body: JSON.stringify({ ids }),
   });
+}
+
+async function downloadOverseasYamatoImport(items) {
+  return downloadAuthorizedFile(
+    "/orders/overseas-warehouse/yamato-export",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ items }),
+    },
+    "ヤマト-インポート.xlsx",
+  );
 }
 
 async function deleteAmazonOrders(ids) {
@@ -8345,6 +8369,42 @@ function updateRakutenBatchDeleteButtonState() {
   const count = state.selectedRakutenOrderIds.size;
   button.disabled = count <= 0;
   button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
+}
+
+function syncSelectedOverseasOrderKeys() {
+  const selectableKeys = new Set(
+    state.overseasOrderProcessingOrders
+      .filter((item) => item?.id)
+      .map((item) => `${item.source}:${item.id}`),
+  );
+  state.selectedOverseasOrderKeys = new Set(
+    Array.from(state.selectedOverseasOrderKeys).filter((key) => selectableKeys.has(String(key))),
+  );
+}
+
+function updateOverseasOrderProcessingSelectAll() {
+  const selectAll = $("overseasOrderProcessingSelectAll");
+  if (!selectAll) return;
+  const selectable = state.overseasOrderProcessingOrders
+    .filter((item) => item?.id)
+    .map((item) => `${item.source}:${item.id}`);
+  if (!selectable.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+
+  const selectedCount = selectable.filter((key) => state.selectedOverseasOrderKeys.has(key)).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === selectable.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
+}
+
+function updateOverseasBatchPrintButtonState() {
+  const button = $("overseasBatchPrintBtn");
+  if (!button) return;
+  const count = state.selectedOverseasOrderKeys.size;
+  button.disabled = count <= 0;
+  button.textContent = count > 0 ? `批量打单（${count}）` : "批量打单";
 }
 
 function updateAmazonOrdersSelectAll() {
@@ -8964,6 +9024,28 @@ function bindForms() {
     }
   });
 
+  $("overseasBatchPrintBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "生成中...", async () => {
+        const items = state.overseasOrderProcessingOrders
+          .filter((item) => state.selectedOverseasOrderKeys.has(`${item.source}:${item.id || ""}`))
+          .map((item) => ({
+            source: item.source,
+            id: item.id,
+          }))
+          .filter((item) => item.id);
+        if (!items.length) {
+          throw new Error("请先选择要批量打单的订单");
+        }
+        const fileName = await downloadOverseasYamatoImport(items);
+        showToast(`已下载 ${fileName}`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("importOrdersForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -9024,6 +9106,15 @@ function bindForms() {
     const selectableIds = state.orders.map((item) => String(item.id));
     state.selectedRakutenOrderIds = checked ? new Set(selectableIds) : new Set();
     renderOrdersTable();
+  });
+
+  $("overseasOrderProcessingSelectAll").addEventListener("change", (event) => {
+    const checked = Boolean(event.target.checked);
+    const selectableKeys = state.overseasOrderProcessingOrders
+      .filter((item) => item?.id)
+      .map((item) => `${item.source}:${item.id}`);
+    state.selectedOverseasOrderKeys = checked ? new Set(selectableKeys) : new Set();
+    renderOverseasOrderProcessingTable();
   });
 
   $("openCreateUserModal")?.addEventListener("click", async () => {
@@ -11221,6 +11312,21 @@ function bindDelegates() {
     }
     updateRakutenOrdersSelectAll();
     updateRakutenBatchDeleteButtonState();
+  });
+
+  $("overseasOrderProcessingBody").addEventListener("change", (event) => {
+    const checkbox = event.target.closest("input[data-action='overseasOrderToggleRow']");
+    if (!checkbox) return;
+
+    const key = String(checkbox.dataset.key || "");
+    if (!key) return;
+    if (checkbox.checked) {
+      state.selectedOverseasOrderKeys.add(key);
+    } else {
+      state.selectedOverseasOrderKeys.delete(key);
+    }
+    updateOverseasOrderProcessingSelectAll();
+    updateOverseasBatchPrintButtonState();
   });
 
   $("rakutenOrdersBody").addEventListener("click", (event) => {

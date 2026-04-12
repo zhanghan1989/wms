@@ -39,6 +39,26 @@ export class OrdersController {
     return this.ordersService.listOverseasWarehouse(limit);
   }
 
+  @Post('overseas-warehouse/yamato-export')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async exportOverseasWarehouseYamatoImport(
+    @Body() payload: { items?: Array<{ source?: 'rakuten' | 'amazon'; id?: string | number }> },
+    @Res() res: Response,
+  ): Promise<void> {
+    const file = await this.ordersService.buildOverseasWarehouseYamatoImport(payload);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
   @Post('amazon/delete-batch')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async deleteAmazonBatch(

@@ -1,9 +1,11 @@
 import { createHash } from 'crypto';
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { readFile } from 'fs/promises';
 import { AmazonOrderRecord, OrderSendStatus, Prisma, RakutenOrderRecord } from '@prisma/client';
 import * as iconv from 'iconv-lite';
+import { join } from 'path';
 import * as XLSX from 'xlsx';
-import { parseId } from '../common/utils';
+import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
 
 const ORDER_CSV_COLUMNS = [
@@ -276,6 +278,65 @@ interface OverseasWarehouseOrderListItem {
   shipAddress3?: string | null;
 }
 
+interface SelectedOverseasWarehouseOrderRef {
+  source?: 'rakuten' | 'amazon';
+  id?: string | number;
+}
+
+interface YamatoImportFileResult {
+  fileName: string;
+  content: Buffer;
+}
+
+interface YamatoExportItem {
+  source: 'rakuten' | 'amazon';
+  id: string;
+  orderId: string;
+  productId: string;
+  quantity: number;
+  deliveryDate: string;
+  deliveryTimeSlot: string;
+  phone: string;
+  postalCode: string;
+  address1: string;
+  address2: string;
+  recipientName: string;
+}
+
+const YAMATO_IMPORT_TEMPLATE_FILE = 'ヤマト-インポート.xlsx';
+const YAMATO_DUPLICATE_ROW_FILL = 'FFF59D';
+const YAMATO_EXPORT_FIXED_VALUES = {
+  recipientSuffix: '様',
+  senderPhone: '0477277616',
+  senderPostalCode: '336-0015',
+  senderAddress: '埼玉県さいたま市南区太田窪５丁目９－８',
+  senderName: '株式会社Create Better',
+  invoiceCustomerCode: '048762991602',
+  coolType: '003',
+  deliveryType: '01',
+} as const;
+
+const YAMATO_COLUMNS = {
+  orderId: 0,
+  shipDate: 4,
+  deliveryDate: 5,
+  deliveryTimeSlot: 6,
+  phone: 8,
+  postalCode: 10,
+  address1: 11,
+  address2: 12,
+  recipientName: 15,
+  recipientSuffix: 17,
+  senderPhone: 19,
+  senderPostalCode: 21,
+  senderAddress: 22,
+  senderName: 24,
+  itemSummary: 27,
+  invoiceCustomerCode: 39,
+  coolType: 40,
+  deliveryType: 41,
+} as const;
+
 const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
 type AmazonTxtEncodingCandidate = (typeof AMAZON_TXT_ENCODING_CANDIDATES)[number];
 
@@ -448,6 +509,433 @@ export class OrdersService {
     });
 
     return { deletedCount: result.count };
+  }
+
+  async buildOverseasWarehouseYamatoImport(payload: {
+    items?: SelectedOverseasWarehouseOrderRef[];
+  }): Promise<YamatoImportFileResult> {
+    const selectedItems = Array.isArray(payload?.items) ? payload.items : [];
+    if (!selectedItems.length) {
+      throw new BadRequestException('请至少选择一条海外仓订单');
+    }
+
+    const rakutenIds = Array.from(
+      new Set(
+        selectedItems
+          .filter((item) => item?.source === 'rakuten')
+          .map((item, index) => this.parseSelectedOverseasOrderId(item?.id, `items[${index}].id`)),
+      ),
+    );
+    const amazonIds = Array.from(
+      new Set(
+        selectedItems
+          .filter((item) => item?.source === 'amazon')
+          .map((item, index) => this.parseSelectedOverseasOrderId(item?.id, `items[${index}].id`)),
+      ),
+    );
+
+    const [rakutenRows, amazonRows] = await Promise.all([
+      rakutenIds.length
+        ? this.prisma.rakutenOrderRecord.findMany({
+            where: { id: { in: rakutenIds } },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+          })
+        : Promise.resolve([] as RakutenOrderRecord[]),
+      amazonIds.length
+        ? this.prisma.amazonOrderRecord.findMany({
+            where: { id: { in: amazonIds } },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+          })
+        : Promise.resolve([] as AmazonOrderRecord[]),
+    ]);
+
+    const [enrichedRakutenRows, enrichedAmazonRows] = await Promise.all([
+      this.enrichOrderRows(rakutenRows),
+      this.enrichAmazonOrderRows(amazonRows),
+    ]);
+
+    const rakutenMap = new Map(
+      enrichedRakutenRows
+        .filter((row) => row.fulfillmentMode === 'rakuten_warehouse' && row.availableStock > 0)
+        .map((row) => [row.id.toString(), row] as const),
+    );
+    const amazonMap = new Map(
+      enrichedAmazonRows
+        .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock > 0)
+        .map((row) => [row.id.toString(), row] as const),
+    );
+
+    const exportItems: YamatoExportItem[] = [];
+    selectedItems.forEach((item, index) => {
+      const source = item?.source;
+      const id = String(item?.id ?? '').trim();
+      if (!id || (source !== 'rakuten' && source !== 'amazon')) {
+        throw new BadRequestException(`items[${index}] 缺少有效的 source 或 id`);
+      }
+
+      if (source === 'rakuten') {
+        const row = rakutenMap.get(id);
+        if (!row) {
+          throw new BadRequestException(`乐天订单 ${id} 不存在、无库存或已不在海外仓处理范围内`);
+        }
+        exportItems.push(this.mapRakutenOrderToYamatoItem(row));
+        return;
+      }
+
+      const row = amazonMap.get(id);
+      if (!row) {
+        throw new BadRequestException(`亚马逊订单 ${id} 不存在、无库存或已不在海外仓处理范围内`);
+      }
+      exportItems.push(this.mapAmazonOrderToYamatoItem(row));
+    });
+
+    const mergedRows = this.mergeYamatoExportItems(exportItems);
+    if (!mergedRows.length) {
+      throw new BadRequestException('没有可生成打单导入文件的订单');
+    }
+
+    const workbook = await this.loadYamatoTemplateWorkbook();
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) {
+      throw new NotFoundException(`模板文件缺少工作表：${YAMATO_IMPORT_TEMPLATE_FILE}`);
+    }
+    const sheet = workbook.Sheets[sheetName];
+    const templateRowIndex = 1;
+    const startRowIndex = 1;
+    const maxColumnIndex = YAMATO_COLUMNS.deliveryType;
+    const currentDate = this.formatCurrentYamatoDate();
+
+    mergedRows.forEach((row, rowOffset) => {
+      const targetRowIndex = startRowIndex + rowOffset;
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.orderId, row.orderId, templateRowIndex);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.shipDate, currentDate, templateRowIndex);
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.deliveryDate,
+        row.deliveryDate || '-',
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.deliveryTimeSlot,
+        row.deliveryTimeSlot || '-',
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.phone, row.phone, templateRowIndex);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.postalCode, row.postalCode, templateRowIndex);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.address1, row.address1, templateRowIndex);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.address2, row.address2, templateRowIndex);
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.recipientName,
+        row.recipientName,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.recipientSuffix,
+        YAMATO_EXPORT_FIXED_VALUES.recipientSuffix,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.senderPhone,
+        YAMATO_EXPORT_FIXED_VALUES.senderPhone,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.senderPostalCode,
+        YAMATO_EXPORT_FIXED_VALUES.senderPostalCode,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.senderAddress,
+        YAMATO_EXPORT_FIXED_VALUES.senderAddress,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.senderName,
+        YAMATO_EXPORT_FIXED_VALUES.senderName,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.itemSummary,
+        row.itemSummary,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.invoiceCustomerCode,
+        YAMATO_EXPORT_FIXED_VALUES.invoiceCustomerCode,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.coolType,
+        YAMATO_EXPORT_FIXED_VALUES.coolType,
+        templateRowIndex,
+      );
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.deliveryType,
+        YAMATO_EXPORT_FIXED_VALUES.deliveryType,
+        templateRowIndex,
+      );
+
+      if (row.isMergedDuplicate) {
+        this.highlightYamatoRow(sheet, targetRowIndex, maxColumnIndex, templateRowIndex);
+      }
+    });
+
+    this.extendSheetRange(sheet, startRowIndex + mergedRows.length - 1, maxColumnIndex);
+
+    const content = XLSX.write(workbook, {
+      type: 'buffer',
+      bookType: 'xlsx',
+      cellStyles: true,
+    }) as Buffer;
+    const timestamp = this.formatYamatoFileNameStamp();
+    return {
+      fileName: `ヤマト-インポート_${timestamp}.xlsx`,
+      content,
+    };
+  }
+
+  private parseSelectedOverseasOrderId(value: string | number | undefined, fieldName: string): bigint {
+    const text = String(value ?? '').trim();
+    if (!text) {
+      throw new BadRequestException(`${fieldName} 不能为空`);
+    }
+    return parseId(text, fieldName);
+  }
+
+  private mapRakutenOrderToYamatoItem(row: OrderListItem): YamatoExportItem {
+    return {
+      source: 'rakuten',
+      id: row.id.toString(),
+      orderId: String(row.orderId ?? '').trim(),
+      productId: String(row.resolvedProductId ?? '').trim() || '-',
+      quantity: Number(row.orderQuantity ?? 0) || 0,
+      deliveryDate: String(
+        this.getJsonField(row.rawPayload, RAKUTEN_ORDER_HEADERS.deliveryDateRaw) ?? row.deliveryDateRaw ?? '',
+      ).trim(),
+      deliveryTimeSlot: String(
+        this.getJsonField(row.rawPayload, RAKUTEN_ORDER_HEADERS.deliveryTimeSlot) ?? row.deliveryTimeSlot ?? '',
+      ).trim(),
+      phone: String(row.shippingPhone ?? '').trim() || '-',
+      postalCode: String(row.shippingPostalCode ?? '').trim() || '-',
+      address1: this.concatAddress([row.shippingPrefecture, row.shippingCity]),
+      address2: String(row.shippingAddress ?? '').trim() || '-',
+      recipientName: String(row.shippingName ?? '').trim() || '-',
+    };
+  }
+
+  private mapAmazonOrderToYamatoItem(row: AmazonEnrichedOrderListItem): YamatoExportItem {
+    return {
+      source: 'amazon',
+      id: row.id.toString(),
+      orderId: String(row.orderId ?? '').trim(),
+      productId: String(row.resolvedProductId ?? '').trim() || '-',
+      quantity: Number(row.quantityPurchased ?? 0) || 0,
+      deliveryDate: '-',
+      deliveryTimeSlot: '-',
+      phone: String(row.buyerPhoneNumber ?? '').trim() || '-',
+      postalCode: String(row.shipPostalCode ?? '').trim() || '-',
+      address1: this.concatAddress([row.shipState, row.shipAddress1]),
+      address2: this.concatAddress([row.shipAddress2, row.shipAddress3]),
+      recipientName: String(row.recipientName ?? '').trim() || '-',
+    };
+  }
+
+  private mergeYamatoExportItems(items: YamatoExportItem[]): Array<
+    Omit<YamatoExportItem, 'source' | 'id' | 'productId' | 'quantity'> & {
+      itemSummary: string;
+      isMergedDuplicate: boolean;
+    }
+  > {
+    const mergedByOrderId = new Map<
+      string,
+      Omit<YamatoExportItem, 'source' | 'id' | 'productId' | 'quantity'> & {
+        itemParts: string[];
+        lineCount: number;
+      }
+    >();
+
+    items.forEach((item) => {
+      const key = item.orderId || `${item.source}:${item.id}`;
+      const itemPart = `${item.productId}*${item.quantity}個`;
+      const existing = mergedByOrderId.get(key);
+      if (!existing) {
+        mergedByOrderId.set(key, {
+          orderId: item.orderId || key,
+          deliveryDate: item.deliveryDate || '-',
+          deliveryTimeSlot: item.deliveryTimeSlot || '-',
+          phone: item.phone || '-',
+          postalCode: item.postalCode || '-',
+          address1: item.address1 || '-',
+          address2: item.address2 || '-',
+          recipientName: item.recipientName || '-',
+          itemParts: [itemPart],
+          lineCount: 1,
+        });
+        return;
+      }
+
+      existing.itemParts.push(itemPart);
+      existing.lineCount += 1;
+    });
+
+    return Array.from(mergedByOrderId.values()).map((row) => ({
+      orderId: row.orderId,
+      deliveryDate: row.deliveryDate,
+      deliveryTimeSlot: row.deliveryTimeSlot,
+      phone: row.phone,
+      postalCode: row.postalCode,
+      address1: row.address1,
+      address2: row.address2,
+      recipientName: row.recipientName,
+      itemSummary: `DGAZ ${row.itemParts.join(' / ')}`,
+      isMergedDuplicate: row.lineCount > 1,
+    }));
+  }
+
+  private async loadYamatoTemplateWorkbook(): Promise<XLSX.WorkBook> {
+    const cwd = process.cwd();
+    const candidates = [
+      join(cwd, 'docs', YAMATO_IMPORT_TEMPLATE_FILE),
+      join(cwd, 'apps', 'api', 'docs', YAMATO_IMPORT_TEMPLATE_FILE),
+      join(cwd, '..', '..', 'docs', YAMATO_IMPORT_TEMPLATE_FILE),
+    ];
+
+    for (const templatePath of candidates) {
+      try {
+        const content = await readFile(templatePath);
+        return XLSX.read(content, { type: 'buffer', cellStyles: true });
+      } catch {
+        // continue
+      }
+    }
+
+    throw new NotFoundException(`模板文件不存在：${YAMATO_IMPORT_TEMPLATE_FILE}`);
+  }
+
+  private writeYamatoRowCell(
+    sheet: XLSX.WorkSheet,
+    rowIndex: number,
+    columnIndex: number,
+    value: string,
+    templateRowIndex: number,
+  ): void {
+    const ref = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+    const templateRef = XLSX.utils.encode_cell({ r: templateRowIndex, c: columnIndex });
+    const templateCell = sheet[templateRef] as XLSX.CellObject | undefined;
+    const existingCell = sheet[ref] as XLSX.CellObject | undefined;
+    const cell: XLSX.CellObject = {
+      ...(existingCell ?? {}),
+      t: 's',
+      v: value,
+      w: value,
+    };
+
+    if (templateCell?.s) {
+      cell.s = this.cloneXlsxStyle(templateCell.s);
+    }
+
+    sheet[ref] = cell;
+  }
+
+  private highlightYamatoRow(
+    sheet: XLSX.WorkSheet,
+    rowIndex: number,
+    maxColumnIndex: number,
+    templateRowIndex: number,
+  ): void {
+    for (let columnIndex = 0; columnIndex <= maxColumnIndex; columnIndex += 1) {
+      const ref = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
+      const templateRef = XLSX.utils.encode_cell({ r: templateRowIndex, c: columnIndex });
+      const templateCell = sheet[templateRef] as XLSX.CellObject | undefined;
+      const existingCell = sheet[ref] as XLSX.CellObject | undefined;
+      const cell: XLSX.CellObject = existingCell ?? {
+        t: 's',
+        v: '',
+        w: '',
+      };
+      cell.s = {
+        ...(templateCell?.s ? this.cloneXlsxStyle(templateCell.s) : {}),
+        fill: {
+          patternType: 'solid',
+          fgColor: { rgb: YAMATO_DUPLICATE_ROW_FILL },
+          bgColor: { rgb: YAMATO_DUPLICATE_ROW_FILL },
+        },
+      };
+      sheet[ref] = cell;
+    }
+  }
+
+  private extendSheetRange(sheet: XLSX.WorkSheet, maxRowIndex: number, maxColumnIndex: number): void {
+    const currentRange = sheet['!ref']
+      ? XLSX.utils.decode_range(sheet['!ref'])
+      : XLSX.utils.decode_range(`A1:${XLSX.utils.encode_cell({ r: maxRowIndex, c: maxColumnIndex })}`);
+    if (maxRowIndex > currentRange.e.r) {
+      currentRange.e.r = maxRowIndex;
+    }
+    if (maxColumnIndex > currentRange.e.c) {
+      currentRange.e.c = maxColumnIndex;
+    }
+    sheet['!ref'] = XLSX.utils.encode_range(currentRange);
+  }
+
+  private cloneXlsxStyle(style: unknown): Record<string, unknown> | undefined {
+    if (!style || typeof style !== 'object') {
+      return undefined;
+    }
+    return JSON.parse(JSON.stringify(style)) as Record<string, unknown>;
+  }
+
+  private getJsonField(payload: Prisma.JsonValue | null | undefined, key: string): string | null {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return null;
+    }
+    const value = (payload as Record<string, Prisma.JsonValue | null | undefined>)[key];
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const text = String(value).trim();
+    return text || null;
+  }
+
+  private concatAddress(parts: Array<string | null | undefined>): string {
+    const text = parts
+      .map((part) => String(part ?? '').trim())
+      .filter((part) => part.length > 0)
+      .join('');
+    return text || '-';
+  }
+
+  private formatCurrentYamatoDate(date: Date = new Date()): string {
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `${parts.year}/${parts.month}/${parts.day}`;
+  }
+
+  private formatYamatoFileNameStamp(date: Date = new Date()): string {
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}`;
   }
 
   async importUploadedCsv(

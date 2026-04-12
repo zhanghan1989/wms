@@ -679,11 +679,13 @@
               <h3>待处理订单汇总</h3>
               <p id="overseasOrderProcessingSummary" class="muted order-import-note">自动归结当前有库存的乐天与亚马逊订单。</p>
             </div>
+            <button id="overseasBatchPrintBtn" type="button" disabled>批量打单</button>
           </div>
           <div id="overseasOrderProcessingTableWrap" class="master-product-table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th><input id="overseasOrderProcessingSelectAll" type="checkbox" /></th>
                   <th>导入时间</th>
                   <th>平台</th>
                   <th>订单号</th>
