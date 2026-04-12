@@ -11044,13 +11044,13 @@ function bindDelegates() {
     }
   });
 
-  $("brandManageModal").addEventListener("click", (event) => {
+  $("brandManageModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("brandManageModal");
     }
   });
 
-  $("skuTypeManageModal").addEventListener("click", (event) => {
+  $("skuTypeManageModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("skuTypeManageModal");
     }
