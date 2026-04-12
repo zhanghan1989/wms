@@ -3120,9 +3120,22 @@ function openResetUserPasswordModal(userId, username, passwordInitialized) {
   openModal("resetUserPasswordModal");
 }
 
-async function getSkuInventoryRows(skuId) {
+function resolveSkuProductId(skuOrId) {
+  if (skuOrId && typeof skuOrId === "object") {
+    const productId = String(skuOrId.productId || "").trim();
+    return productId || "";
+  }
+  const sku = findSkuById(skuOrId);
+  return String(sku?.productId || "").trim();
+}
+
+async function getSkuInventoryRows(skuOrId) {
+  const productId = resolveSkuProductId(skuOrId);
+  if (!productId) {
+    return [];
+  }
   try {
-    return await request(`/inventory/product-boxes?skuId=${skuId}`);
+    return await request(`/inventory/master-product-boxes?productId=${encodeURIComponent(productId)}`);
   } catch {
     return [];
   }
@@ -4504,7 +4517,7 @@ async function searchInventoryProducts(keyword, { append = false } = {}) {
     nextSkus.push(...pageSkus);
 
     const locationEntries = await Promise.all(
-      pageSkus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku.id)]),
+      pageSkus.map(async (sku) => [String(sku.id), await getSkuInventoryRows(sku)]),
     );
     const nextLocationMap = append ? new Map(state.inventorySearchLocationMap) : new Map();
     locationEntries.forEach(([skuId, rows]) => {
@@ -4547,7 +4560,15 @@ async function searchInventoryProducts(keyword, { append = false } = {}) {
 }
 
 function findSkuById(skuId) {
-  return state.inventorySkus.find((sku) => Number(sku.id) === Number(skuId));
+  return (
+    (Array.isArray(state.inventorySkus) ? state.inventorySkus : []).find(
+      (sku) => Number(sku.id) === Number(skuId),
+    ) ||
+    (Array.isArray(state.inventorySearchSkus) ? state.inventorySearchSkus : []).find(
+      (sku) => Number(sku.id) === Number(skuId),
+    ) ||
+    null
+  );
 }
 
 function ensureSkuReadyForFbaReplenishment(skuId) {
@@ -5219,9 +5240,6 @@ function renderBoxesManageTable() {
         const archiveReleaseAction = item?.canArchiveRelease
           ? `<button class="tiny-btn secondary" data-action="archiveReleaseBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">归档释放</button>`
           : "";
-        const deleteAction = item?.canDelete
-          ? `<button class="tiny-btn danger" data-action="deleteBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">删除</button>`
-          : "";
         return `
       <tr>
         <td>
@@ -5246,7 +5264,6 @@ function renderBoxesManageTable() {
           <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>
           ${archiveReleaseAction}
           <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
-          ${deleteAction}
         </td>
       </tr>
     `;
@@ -5261,15 +5278,9 @@ function collectBoxBlockedReasonLines(box) {
   const archiveReleaseBlockedReasons = Array.isArray(box?.archiveReleaseBlockedReasons)
     ? box.archiveReleaseBlockedReasons.map((reason) => String(reason || "").trim()).filter((reason) => Boolean(reason))
     : [];
-  const deleteBlockedReasons = Array.isArray(box?.deleteBlockedReasons)
-    ? box.deleteBlockedReasons.map((reason) => String(reason || "").trim()).filter((reason) => Boolean(reason))
-    : [];
 
   if (!box?.canArchiveRelease && archiveReleaseBlockedReasons.length) {
     lines.push(`不可归档释放：${archiveReleaseBlockedReasons.join("；")}`);
-  }
-  if (!box?.canDelete && deleteBlockedReasons.length) {
-    lines.push(`不可删除：${deleteBlockedReasons.join("；")}`);
   }
 
   return lines;
@@ -9817,23 +9828,6 @@ function bindDelegates() {
         });
         state.boxEditingIds.delete(String(id));
         showToast("箱号已变更");
-        await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
-      } else if (action === "deleteBoxManage") {
-        const boxCode = button.dataset.code || id;
-        const deleteCheck = await request(`/boxes/${id}/delete-check`);
-        if (!deleteCheck?.canDelete) {
-          showToast(buildDeleteBlockedMessage("箱号", deleteCheck?.reasons), true);
-          return;
-        }
-        const ok = await openActionConfirmModal(
-          `确认删除箱号 ${boxCode} ？`,
-          "确认操作",
-          "确认删除",
-        );
-        if (!ok) return;
-        await request(`/boxes/${id}`, { method: "DELETE" });
-        state.boxEditingIds.delete(String(id));
-        showToast("箱号已删除");
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
       }
     } catch (error) {

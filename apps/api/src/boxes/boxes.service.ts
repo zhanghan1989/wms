@@ -62,8 +62,6 @@ export class BoxesService {
     const boxIds = boxes.map((box) => box.id);
     const boxCodes = boxes.map((box) => box.boxCode);
     const [
-      inventorySums,
-      inventoryCounts,
       masterInventorySums,
       masterInventoryCounts,
       itemCodeCounts,
@@ -77,16 +75,6 @@ export class BoxesService {
       pendingBatchInboundCounts,
       lockingOrders,
     ] = await Promise.all([
-      this.prisma.inventoryBoxSku.groupBy({
-        by: ['boxId'],
-        where: { boxId: { in: boxIds } },
-        _sum: { qty: true },
-      }),
-      this.prisma.inventoryBoxSku.groupBy({
-        by: ['boxId'],
-        where: { boxId: { in: boxIds } },
-        _count: { _all: true },
-      }),
       this.prisma.masterProductBoxInventory.groupBy({
         by: ['boxId'],
         where: { boxId: { in: boxIds } },
@@ -166,12 +154,6 @@ export class BoxesService {
       }),
     ]);
 
-    const inventorySumByBoxId = new Map(
-      inventorySums.map((row) => [row.boxId.toString(), Number(row._sum.qty ?? 0)]),
-    );
-    const inventoryCountByBoxId = new Map(
-      inventoryCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
-    );
     const masterInventorySumByBoxId = new Map(
       masterInventorySums.map((row) => [row.boxId.toString(), Number(row._sum.qty ?? 0)]),
     );
@@ -218,10 +200,10 @@ export class BoxesService {
 
     return boxes.map((box) => {
       const boxId = box.id.toString();
-      const totalStock =
-        (masterInventorySumByBoxId.get(boxId) ?? 0) + (inventorySumByBoxId.get(boxId) ?? 0);
-      const inventoryRows =
-        (masterInventoryCountByBoxId.get(boxId) ?? 0) + (inventoryCountByBoxId.get(boxId) ?? 0);
+      const masterProductStock = masterInventorySumByBoxId.get(boxId) ?? 0;
+      const totalStock = masterProductStock;
+      const masterInventoryRows = masterInventoryCountByBoxId.get(boxId) ?? 0;
+      const totalInventoryRows = masterInventoryRows;
       const itemCodeRows = itemCodeCountByBoxId.get(boxId) ?? 0;
       const inboundRows = inboundCountByBoxId.get(boxId) ?? 0;
       const outboundRows = outboundCountByBoxId.get(boxId) ?? 0;
@@ -244,8 +226,8 @@ export class BoxesService {
         deleteBlockedReasons.push(message);
         archiveReleaseBlockedReasons.push(message);
       }
-      if (inventoryRows > 0) {
-        deleteBlockedReasons.push(`存在 ${inventoryRows} 条库存记录`);
+      if (totalInventoryRows > 0) {
+        deleteBlockedReasons.push(`存在 ${totalInventoryRows} 条库存记录`);
       }
       if (itemCodeRows > 0) {
         deleteBlockedReasons.push(`存在 ${itemCodeRows} 条 item code 记录`);
@@ -268,8 +250,8 @@ export class BoxesService {
       if (fbaRows > 0) {
         deleteBlockedReasons.push(`存在 ${fbaRows} 条 FBA 历史记录`);
       }
-      if (totalStock > 0) {
-        archiveReleaseBlockedReasons.push(`当前库存数量 ${totalStock}`);
+      if (masterProductStock > 0) {
+        archiveReleaseBlockedReasons.push(`当前主商品库存数量 ${masterProductStock}`);
       }
       if (activeFbaRows > 0) {
         archiveReleaseBlockedReasons.push(`存在 ${activeFbaRows} 条进行中的 FBA 记录`);
@@ -278,7 +260,7 @@ export class BoxesService {
       const canDelete =
         !lockingOrderNo &&
         pendingBatchInboundRows <= 0 &&
-        inventoryRows <= 0 &&
+        totalInventoryRows <= 0 &&
         itemCodeRows <= 0 &&
         inboundRows <= 0 &&
         outboundRows <= 0 &&
@@ -288,7 +270,7 @@ export class BoxesService {
         fbaRows <= 0;
       const canArchiveRelease =
         !canDelete &&
-        totalStock <= 0 &&
+        masterProductStock <= 0 &&
         activeFbaRows <= 0 &&
         !lockingOrderNo &&
         pendingBatchInboundRows <= 0;
@@ -305,7 +287,7 @@ export class BoxesService {
   }
 
   async listEmpty(): Promise<unknown[]> {
-    const [boxes, skuInventoryRows, masterProductInventoryRows] = await Promise.all([
+    const [boxes, masterProductInventoryRows] = await Promise.all([
       this.prisma.box.findMany({
         where: {
           status: 1,
@@ -326,10 +308,6 @@ export class BoxesService {
         },
         orderBy: { boxCode: 'asc' },
       }),
-      this.prisma.inventoryBoxSku.groupBy({
-        by: ['boxId'],
-        _sum: { qty: true },
-      }),
       this.prisma.masterProductBoxInventory.groupBy({
         by: ['boxId'],
         _sum: { qty: true },
@@ -337,12 +315,9 @@ export class BoxesService {
     ]);
 
     const inventoryByBox = new Map<string, number>();
-    skuInventoryRows.forEach((row) => {
-      inventoryByBox.set(row.boxId.toString(), Number(row._sum.qty ?? 0));
-    });
     masterProductInventoryRows.forEach((row) => {
       const key = row.boxId.toString();
-      inventoryByBox.set(key, (inventoryByBox.get(key) ?? 0) + Number(row._sum.qty ?? 0));
+      inventoryByBox.set(key, Number(row._sum.qty ?? 0));
     });
 
     return boxes
@@ -644,22 +619,17 @@ export class BoxesService {
     throw new ConflictException(`无法为箱号 ${boxCode} 生成可用的归档编号`);
   }
 
-  async sumBoxInventoryQty(boxId: bigint): Promise<number> {
-    const [masterProductInventorySummary, skuInventorySummary] = await Promise.all([
-      this.prisma.masterProductBoxInventory.aggregate({
-        where: { boxId },
-        _sum: { qty: true },
-      }),
-      this.prisma.inventoryBoxSku.aggregate({
-        where: { boxId },
-        _sum: { qty: true },
-      }),
-    ]);
+  async sumBoxMasterProductInventoryQty(boxId: bigint): Promise<number> {
+    const masterProductInventorySummary = await this.prisma.masterProductBoxInventory.aggregate({
+      where: { boxId },
+      _sum: { qty: true },
+    });
 
-    return (
-      Number(masterProductInventorySummary._sum.qty ?? 0) +
-      Number(skuInventorySummary._sum.qty ?? 0)
-    );
+    return Number(masterProductInventorySummary._sum.qty ?? 0);
+  }
+
+  async sumBoxInventoryQty(boxId: bigint): Promise<number> {
+    return this.sumBoxMasterProductInventoryQty(boxId);
   }
 
   async countPendingBatchInboundItemsByBoxCode(boxCode: string): Promise<number> {
@@ -715,7 +685,6 @@ async function getDeleteCheckByProduct(
   if (!box) throw new NotFoundException('箱号不存在');
 
   const [
-    inventoryRows,
     masterInventoryRows,
     itemCodeRows,
     inboundRows,
@@ -726,7 +695,6 @@ async function getDeleteCheckByProduct(
     fbaRows,
     pendingBatchInboundRows,
   ] = await Promise.all([
-    this.prisma.inventoryBoxSku.count({ where: { boxId: id } }),
     this.prisma.masterProductBoxInventory.count({ where: { boxId: id } }),
     this.prisma.itemCode.count({ where: { boxId: id } }),
     this.prisma.inboundOrderItem.count({ where: { boxId: id } }),
@@ -740,7 +708,7 @@ async function getDeleteCheckByProduct(
 
   const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
   const reasons: string[] = [];
-  const totalInventoryRows = inventoryRows + masterInventoryRows;
+  const totalInventoryRows = masterInventoryRows;
 
   if (lockingOrderNo) {
     reasons.push(`箱号被批量入库单 ${lockingOrderNo} 占用，请先处理该入库单`);
@@ -792,9 +760,9 @@ async function archiveAndReleaseByProduct(
     throw new BadRequestException('只有启用中的箱号才能执行归档释放');
   }
 
-  const totalQty = await this.sumBoxInventoryQty(id);
+  const totalQty = await this.sumBoxMasterProductInventoryQty(id);
   if (totalQty > 0) {
-    throw new BadRequestException(`箱号仍有库存，不能归档释放。当前库存数量：${totalQty}`);
+    throw new BadRequestException(`箱号仍有主商品库存，不能归档释放。当前主商品库存数量：${totalQty}`);
   }
 
   await this.ensureBoxNotUnderActiveFba(id, box.boxCode, '归档释放');

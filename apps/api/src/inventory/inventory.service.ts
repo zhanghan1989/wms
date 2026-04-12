@@ -876,75 +876,6 @@ export class InventoryService {
     productTypes?: string[];
   }): Promise<{ fileName: string; content: Buffer }> {
     return this.buildBossStockAdjustmentCsvByProduct(filters);
-
-    const [skus, inventoryRows, pendingRows] = await Promise.all([
-      this.prisma.sku.findMany({
-        select: {
-          id: true,
-          sku: true,
-        },
-      }),
-      this.prisma.inventoryBoxSku.groupBy({
-        by: ['skuId'],
-        _sum: {
-          qty: true,
-        },
-      }),
-      this.prisma.fbaReplenishment.findMany({
-        where: {
-          status: { in: ['pending_confirm', 'pending_outbound'] },
-        },
-        select: {
-          skuId: true,
-          status: true,
-          requestedQty: true,
-          actualQty: true,
-        },
-      }),
-    ]);
-
-    const inventoryBySku = new Map<string, number>();
-    inventoryRows.forEach((row) => {
-      inventoryBySku.set(row.skuId.toString(), Number(row._sum.qty ?? 0));
-    });
-
-    const pendingBySku = new Map<string, number>();
-    pendingRows.forEach((row) => {
-      const qty = Number(
-        row.status === 'pending_outbound'
-          ? (row.actualQty ?? row.requestedQty)
-          : row.requestedQty,
-      );
-      if (qty <= 0) return;
-      const key = row.skuId.toString();
-      pendingBySku.set(key, (pendingBySku.get(key) ?? 0) + qty);
-    });
-
-    const lines: string[] = [
-      ['SKU编码', '仓库ID', '实际库存数', '差分指定']
-        .map((cell) => this.escapeCsvCell(cell))
-        .join(','),
-    ];
-
-    const sortedSkus = [...skus].sort((a, b) =>
-      String(a.sku || '').localeCompare(String(b.sku || ''), 'en', { numeric: true }),
-    );
-
-    sortedSkus.forEach((sku) => {
-      const skuKey = sku.id.toString();
-      const totalQty = inventoryBySku.get(skuKey) ?? 0;
-      const pendingQty = pendingBySku.get(skuKey) ?? 0;
-      const actualQty = totalQty - pendingQty;
-      const row = [sku.sku || '', STOCK_ADJUSTMENT_WAREHOUSE_ID, actualQty, ''];
-      lines.push(row.map((cell) => this.escapeCsvCell(cell)).join(','));
-    });
-
-    const csvText = `${lines.join('\r\n')}\r\n`;
-    const fileName = `stock_ajustment_${this.formatDateForFilename(new Date())}.csv`;
-    return {
-      fileName,
-      content: iconv.encode(csvText, 'shift_jis'),
-    };
   }
 
   async buildBossMappingCsv(): Promise<{
@@ -1357,7 +1288,7 @@ export class InventoryService {
       }),
       tx.sku.findMany({
         where: { id: { in: uniqueSkuIds } },
-        select: { id: true },
+        select: { id: true, productId: true },
       }),
     ]);
 
@@ -1366,6 +1297,9 @@ export class InventoryService {
     }
     if (skus.length !== uniqueSkuIds.length) {
       throw new NotFoundException('调整单明细中存在不存在的 SKU');
+    }
+    if (skus.some((sku) => !String(sku.productId || '').trim())) {
+      throw new BadRequestException('调整单中的 SKU 未绑定产品 ID，无法写入主商品库存');
     }
   }
 
@@ -1405,56 +1339,84 @@ export class InventoryService {
       throw new UnprocessableEntityException('调整单没有明细，无法确认');
     }
 
-    const currentInventoryRows = await tx.inventoryBoxSku.findMany({
+    const skuRows = await tx.sku.findMany({
       where: {
-        OR: order.items.map((item) => ({
-          boxId: item.boxId,
-          skuId: item.skuId,
-        })),
+        id: {
+          in: Array.from(new Set(order.items.map((item) => item.skuId.toString()))).map((id) =>
+            BigInt(id),
+          ),
+        },
+      },
+      select: {
+        id: true,
+        productId: true,
+        sku: true,
+        masterProduct: {
+          select: {
+            id: true,
+            productId: true,
+            productName: true,
+            stockQty: true,
+          },
+        },
+      },
+    });
+    const skuById = new Map(skuRows.map((row) => [row.id.toString(), row]));
+    const inventoryPairs = order.items.map((item) => {
+      const sku = skuById.get(item.skuId.toString());
+      const productId = String(sku?.productId || '').trim();
+      if (!sku || !productId || !sku.masterProduct) {
+        throw new BadRequestException(
+          `SKU ${item.skuId.toString()} 未绑定主商品，无法确认调整单`,
+        );
+      }
+      return {
+        boxId: item.boxId,
+        productId,
+      };
+    });
+
+    const currentInventoryRows = await findMasterProductBoxInventoryByPairs(tx, inventoryPairs, {
+      select: {
+        boxId: true,
+        productId: true,
+        qty: true,
       },
     });
     const currentQtyMap = new Map<string, number>();
-    const existingInventoryKeys = new Set<string>();
     currentInventoryRows.forEach((row) => {
-      const key = this.inventoryKey(row.boxId, row.skuId);
-      currentQtyMap.set(key, row.qty);
-      existingInventoryKeys.add(key);
+      const key = getBoxProductInventoryKey(row.boxId, row.productId);
+      currentQtyMap.set(key, Number(row.qty ?? 0));
     });
 
+    const productAuditBeforeById = new Map<
+      string,
+      { entityId: bigint; productId: string; productName: string | null; stockQty: number }
+    >();
+
     for (const item of order.items) {
-      const key = this.inventoryKey(item.boxId, item.skuId);
+      const sku = skuById.get(item.skuId.toString())!;
+      const productId = String(sku.productId || '').trim();
+      const key = getBoxProductInventoryKey(item.boxId, productId);
       const beforeQty = currentQtyMap.get(key) ?? 0;
       const afterQty = beforeQty + item.qtyDelta;
       if (afterQty < 0) {
         throw new ConflictException(
-          `库存不足，箱号ID ${item.boxId.toString()}、SKU ID ${item.skuId.toString()}`,
+          `库存不足，箱号ID ${item.boxId.toString()}、产品ID ${productId}`,
         );
       }
 
-      if (existingInventoryKeys.has(key)) {
-        await tx.inventoryBoxSku.update({
-          where: {
-            boxId_skuId: {
-              boxId: item.boxId,
-              skuId: item.skuId,
-            },
-          },
-          data: {
-            qty: afterQty,
-          },
-        });
-      } else {
-        await tx.inventoryBoxSku.create({
-          data: {
-            boxId: item.boxId,
-            skuId: item.skuId,
-            qty: afterQty,
-          },
-        });
-        existingInventoryKeys.add(key);
-      }
-
+      await upsertMasterProductBoxInventoryQty(tx, item.boxId, productId, afterQty);
       currentQtyMap.set(key, afterQty);
+
+      if (!productAuditBeforeById.has(productId)) {
+        productAuditBeforeById.set(productId, {
+          entityId: sku.masterProduct!.id,
+          productId,
+          productName: sku.masterProduct!.productName,
+          stockQty: Number(sku.masterProduct!.stockQty ?? 0),
+        });
+      }
 
       await tx.stockMovement.create({
         data: {
@@ -1477,14 +1439,42 @@ export class InventoryService {
             ? AuditEventType.BOX_STOCK_INCREASED
             : AuditEventType.BOX_STOCK_OUTBOUND,
         beforeData: {
+          scope: 'master_product',
           boxId: item.boxId,
+          productId,
           skuId: item.skuId,
           qty: beforeQty,
         },
         afterData: {
+          scope: 'master_product',
           boxId: item.boxId,
+          productId,
           skuId: item.skuId,
           qty: afterQty,
+        },
+        operatorId,
+        requestId,
+        remark: `adjust order ${order.adjustNo}`,
+      });
+    }
+
+    for (const productAuditBefore of productAuditBeforeById.values()) {
+      const totalQty = await this.recalculateMasterProductStockQty(tx, productAuditBefore.productId);
+      await createMasterProductInventoryAdjustAudit({
+        auditService: this.auditService,
+        tx,
+        entityId: productAuditBefore.entityId,
+        beforeData: {
+          productId: productAuditBefore.productId,
+          productName: productAuditBefore.productName,
+          stockQty: productAuditBefore.stockQty,
+        },
+        afterData: {
+          productId: productAuditBefore.productId,
+          productName: productAuditBefore.productName,
+          stockQty: totalQty,
+          by: 'adjust_order',
+          adjustNo: order.adjustNo,
         },
         operatorId,
         requestId,
@@ -1781,10 +1771,6 @@ export class InventoryService {
           }
         : null,
     };
-  }
-
-  private inventoryKey(boxId: bigint, skuId: bigint): string {
-    return `${boxId.toString()}-${skuId.toString()}`;
   }
 
   async recalculateMasterProductStockQty(

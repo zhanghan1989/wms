@@ -505,7 +505,6 @@ export class SkusService {
   private async getSkuDeleteBlockingRelations(skuId: bigint): Promise<Array<{ label: string; count: number }>> {
     const [
       itemCodeCount,
-      inventoryCount,
       outboundItemCount,
       stocktakeRecordCount,
       stockMovementCount,
@@ -514,7 +513,6 @@ export class SkusService {
       productEditRequestCount,
     ] = await Promise.all([
       this.prisma.itemCode.count({ where: { skuId } }),
-      this.prisma.inventoryBoxSku.count({ where: { skuId } }),
       this.prisma.outboundOrderItem.count({ where: { skuId } }),
       this.prisma.stocktakeRecord.count({ where: { skuId } }),
       this.prisma.stockMovement.count({ where: { skuId } }),
@@ -525,7 +523,6 @@ export class SkusService {
 
     return [
       { label: '条码', count: itemCodeCount },
-      { label: '箱内库存', count: inventoryCount },
       { label: '出库明细', count: outboundItemCount },
       { label: '盘点记录', count: stocktakeRecordCount },
       { label: '库存流水', count: stockMovementCount },

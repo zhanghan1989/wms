@@ -247,14 +247,13 @@ model Sku {
   status            Int                        @default(1) @db.TinyInt
   createdAt         DateTime                   @default(now()) @map("created_at")
   updatedAt         DateTime                   @updatedAt @map("updated_at")
-  itemCodes         ItemCode[]
-  inventories       InventoryBoxSku[]
-  outboundItems     OutboundOrderItem[]
-  stocktakeRecords  StocktakeRecord[]
-  stockMovements    StockMovement[]
-  adjustItems       InventoryAdjustOrderItem[]
-  fbaReplenishments FbaReplenishment[]
-  masterProduct     MasterProduct?             @relation(fields: [productId], references: [productId])
+  itemCodes           ItemCode[]
+  outboundItems       OutboundOrderItem[]
+  stocktakeRecords    StocktakeRecord[]
+  stockMovements      StockMovement[]
+  adjustItems         InventoryAdjustOrderItem[]
+  fbaReplenishments   FbaReplenishment[]
+  masterProduct       MasterProduct?             @relation(fields: [productId], references: [productId])
   productEditRequests ProductEditRequest[]
 
   @@index([productId], map: "idx_skus_product_id")
@@ -313,7 +312,6 @@ model Box {
   updatedAt         DateTime                   @updatedAt @map("updated_at")
   shelf             Shelf                      @relation(fields: [shelfId], references: [id])
   itemCodes         ItemCode[]
-  inventories       InventoryBoxSku[]
   masterProductInventories MasterProductBoxInventory[]
   inboundItems      InboundOrderItem[]
   outboundItems     OutboundOrderItem[]
@@ -338,20 +336,6 @@ model ItemCode {
 
   @@index([boxId, status])
   @@map("item_codes")
-}
-
-model InventoryBoxSku {
-  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  boxId     BigInt   @map("box_id") @db.UnsignedBigInt
-  skuId     BigInt   @map("sku_id") @db.UnsignedBigInt
-  qty       Int      @default(0)
-  updatedAt DateTime @updatedAt @map("updated_at")
-  box       Box      @relation(fields: [boxId], references: [id])
-  sku       Sku      @relation(fields: [skuId], references: [id])
-
-  @@unique([boxId, skuId])
-  @@index([skuId])
-  @@map("inventory_box_sku")
 }
 
 model MasterProductBoxInventory {
