@@ -208,24 +208,39 @@ export class OrdersService {
 
     const skuRows = skuCodes.length
       ? await this.prisma.sku.findMany({
-          where: { sku: { in: skuCodes } },
+          where: {
+            OR: [
+              { sku: { in: skuCodes } },
+              { rbSku: { in: skuCodes } },
+              { fbmSku: { in: skuCodes } },
+              { asin: { in: skuCodes } },
+              { fnsku: { in: skuCodes } },
+            ],
+          },
           select: {
             sku: true,
+            rbSku: true,
+            fbmSku: true,
+            asin: true,
+            fnsku: true,
             productId: true,
             shop: true,
           },
         })
       : [];
 
-    const skuMetaByCode = new Map(
-      skuRows.map((row) => [
-        String(row.sku ?? '').trim(),
-        {
-          productId: String(row.productId ?? '').trim() || null,
-          shopName: String(row.shop ?? '').trim() || null,
-        },
-      ]),
-    );
+    const skuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
+    skuRows.forEach((row) => {
+      const meta = {
+        productId: String(row.productId ?? '').trim() || null,
+        shopName: String(row.shop ?? '').trim() || null,
+      };
+      [row.sku, row.rbSku, row.fbmSku, row.asin, row.fnsku].forEach((candidate) => {
+        const key = String(candidate ?? '').trim();
+        if (!key || skuMetaByCode.has(key)) return;
+        skuMetaByCode.set(key, meta);
+      });
+    });
 
     return rows.map((row) => {
       const skuCode = String(row.sku ?? '').trim();
