@@ -236,6 +236,27 @@ interface AmazonOrderListItem extends AmazonOrderRecord {
   resolvedShopName: string | null;
 }
 
+type AmazonFulfillmentMode = 'overseas_warehouse' | 'xiya_api';
+
+interface AmazonEnrichedOrderListItem extends AmazonOrderListItem {
+  availableStock: number;
+  fulfillmentMode: AmazonFulfillmentMode;
+}
+
+interface OverseasWarehouseOrderListItem {
+  source: 'rakuten' | 'amazon';
+  sourceLabel: string;
+  csvImportedAt: Date;
+  createdAt: Date;
+  orderId: string | null;
+  skuCode: string | null;
+  resolvedProductId: string | null;
+  orderQuantity: number | null;
+  shopName: string | null;
+  shippingName: string | null;
+  availableStock: number;
+}
+
 const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
 type AmazonTxtEncodingCandidate = (typeof AMAZON_TXT_ENCODING_CANDIDATES)[number];
 
@@ -267,50 +288,73 @@ export class OrdersService {
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
     });
+    return this.enrichAmazonOrderRows(rows);
+  }
 
-    const skuRows = await this.prisma.sku.findMany({
-      where: {
-        productId: { not: null },
-      },
-      select: {
-        sku: true,
-        rbSku: true,
-        fbmSku: true,
-        productId: true,
-        shop: true,
-      },
-    });
+  async listOverseasWarehouse(limitParam?: string): Promise<OverseasWarehouseOrderListItem[]> {
+    const parsedLimit = Number(limitParam);
+    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
 
-    const skuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
-    const normalizedSkuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
-    skuRows.forEach((row) => {
-      const meta = {
-        productId: String(row.productId ?? '').trim() || null,
-        shopName: String(row.shop ?? '').trim() || null,
-      };
-      [row.rbSku, row.fbmSku, row.sku].forEach((candidate) => {
-        const key = String(candidate ?? '').trim();
-        if (key && !skuMetaByCode.has(key)) {
-          skuMetaByCode.set(key, meta);
-        }
-        const normalizedKey = normalizeAmazonSkuLookupKey(candidate);
-        if (!normalizedKey || normalizedSkuMetaByCode.has(normalizedKey)) return;
-        normalizedSkuMetaByCode.set(normalizedKey, meta);
-      });
-    });
+    const [rakutenRows, amazonRows] = await Promise.all([
+      this.prisma.rakutenOrderRecord.findMany({
+        where: {
+          sendStatus: OrderSendStatus.unsent,
+        },
+        orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+      }),
+      this.prisma.amazonOrderRecord.findMany({
+        where: {
+          OR: [{ shipmentNo: null }, { shipmentNo: '' }],
+        },
+        orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+      }),
+    ]);
 
-    return rows.map((row) => {
-      const skuCode = String(row.sku ?? '').trim();
-      const skuMeta =
-        skuMetaByCode.get(skuCode) ??
-        normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(skuCode)) ??
-        null;
-      return {
-        ...row,
-        resolvedProductId: skuMeta?.productId ?? null,
-        resolvedShopName: skuMeta?.shopName ?? null,
-      };
-    });
+    const [enrichedRakutenRows, enrichedAmazonRows] = await Promise.all([
+      this.enrichOrderRows(rakutenRows),
+      this.enrichAmazonOrderRows(amazonRows),
+    ]);
+
+    return [
+      ...enrichedRakutenRows
+        .filter((row) => row.fulfillmentMode === 'rakuten_warehouse' && row.availableStock > 0)
+        .map((row) => ({
+          source: 'rakuten' as const,
+          sourceLabel: '乐天',
+          csvImportedAt: row.csvImportedAt,
+          createdAt: row.createdAt,
+          orderId: row.orderId,
+          skuCode: row.skuCode,
+          resolvedProductId: row.resolvedProductId,
+          orderQuantity: row.orderQuantity,
+          shopName: row.shopName,
+          shippingName: row.shippingName,
+          availableStock: row.availableStock,
+        })),
+      ...enrichedAmazonRows
+        .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock > 0)
+        .map((row) => ({
+          source: 'amazon' as const,
+          sourceLabel: '亚马逊',
+          csvImportedAt: row.csvImportedAt,
+          createdAt: row.createdAt,
+          orderId: row.orderId,
+          skuCode: row.sku,
+          resolvedProductId: row.resolvedProductId,
+          orderQuantity: row.quantityPurchased,
+          shopName: row.resolvedShopName || row.shopName,
+          shippingName: row.recipientName,
+          availableStock: row.availableStock,
+        })),
+    ]
+      .sort((a, b) => {
+        const timeDiff = new Date(b.csvImportedAt).getTime() - new Date(a.csvImportedAt).getTime();
+        if (timeDiff !== 0) return timeDiff;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      })
+      .slice(0, limit);
   }
 
   async deleteAmazonBatch(payload: {
@@ -474,6 +518,99 @@ export class OrdersService {
         resolvedProductId: productId,
         availableStock,
         fulfillmentMode: availableStock > 0 ? 'rakuten_warehouse' : 'xiya_api',
+      };
+    });
+  }
+
+  private async enrichAmazonOrderRows(rows: AmazonOrderRecord[]): Promise<AmazonEnrichedOrderListItem[]> {
+    if (!rows.length) {
+      return [];
+    }
+
+    const lookupCodes = Array.from(
+      new Set(
+        rows
+          .map((row) => String(row.sku ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    if (!lookupCodes.length) {
+      return rows.map((row) => ({
+        ...row,
+        resolvedProductId: null,
+        resolvedShopName: null,
+        availableStock: 0,
+        fulfillmentMode: 'xiya_api',
+      }));
+    }
+
+    const skuRows = await this.prisma.sku.findMany({
+      where: {
+        productId: { not: null },
+        OR: [{ sku: { in: lookupCodes } }, { rbSku: { in: lookupCodes } }, { fbmSku: { in: lookupCodes } }],
+      },
+      select: {
+        sku: true,
+        rbSku: true,
+        fbmSku: true,
+        productId: true,
+        shop: true,
+      },
+    });
+
+    const skuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
+    const normalizedSkuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
+    skuRows.forEach((row) => {
+      const meta = {
+        productId: String(row.productId ?? '').trim() || null,
+        shopName: String(row.shop ?? '').trim() || null,
+      };
+      [row.rbSku, row.fbmSku, row.sku].forEach((candidate) => {
+        const key = String(candidate ?? '').trim();
+        if (key && !skuMetaByCode.has(key)) {
+          skuMetaByCode.set(key, meta);
+        }
+        const normalizedKey = normalizeAmazonSkuLookupKey(candidate);
+        if (!normalizedKey || normalizedSkuMetaByCode.has(normalizedKey)) return;
+        normalizedSkuMetaByCode.set(normalizedKey, meta);
+      });
+    });
+
+    const productIds = Array.from(
+      new Set(
+        skuRows
+          .map((row) => String(row.productId ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+
+    const productRows = productIds.length
+      ? await this.prisma.masterProduct.findMany({
+          where: { productId: { in: productIds } },
+          select: { productId: true, stockQty: true },
+        })
+      : [];
+
+    const stockQtyByProductId = new Map(
+      productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
+    );
+
+    return rows.map((row) => {
+      const skuCode = String(row.sku ?? '').trim();
+      const skuMeta =
+        skuMetaByCode.get(skuCode) ??
+        normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(skuCode)) ??
+        null;
+      const productId = skuMeta?.productId ?? null;
+      const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+
+      return {
+        ...row,
+        resolvedProductId: productId,
+        resolvedShopName: skuMeta?.shopName ?? null,
+        availableStock,
+        fulfillmentMode: availableStock > 0 ? 'overseas_warehouse' : 'xiya_api',
       };
     });
   }

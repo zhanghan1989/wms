@@ -33,6 +33,12 @@ export class OrdersController {
     return this.ordersService.listAmazon(limit);
   }
 
+  @Get('overseas-warehouse')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async listOverseasWarehouse(@Query('limit') limit?: string): Promise<unknown[]> {
+    return this.ordersService.listOverseasWarehouse(limit);
+  }
+
   @Post('amazon/delete-batch')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async deleteAmazonBatch(

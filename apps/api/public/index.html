@@ -618,6 +618,43 @@
         </article>
       </section>
 
+      <section class="panel" id="overseasOrderProcessing">
+        <div class="panel-head">
+          <h2>海外仓订单处理一览</h2>
+          <div class="panel-tools">
+            <button id="refreshOverseasOrderProcessing" class="ghost">刷新</button>
+            <button id="backToOrderProcessingFromOverseasBtn" class="ghost">返回订单处理</button>
+          </div>
+        </div>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>待处理订单汇总</h3>
+              <p id="overseasOrderProcessingSummary" class="muted order-import-note">自动归结当前有库存的乐天与亚马逊订单。</p>
+            </div>
+          </div>
+          <div id="overseasOrderProcessingTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>导入时间</th>
+                  <th>平台</th>
+                  <th>订单号</th>
+                  <th>SKU</th>
+                  <th>产品ID</th>
+                  <th>数量</th>
+                  <th>店铺</th>
+                  <th>收件人</th>
+                  <th>可用库存</th>
+                </tr>
+              </thead>
+              <tbody id="overseasOrderProcessingBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
       <section class="panel" id="rakutenOrderImport">
         <div class="panel-head">
           <h2>乐天订单处理</h2>

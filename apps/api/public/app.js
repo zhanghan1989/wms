@@ -223,6 +223,7 @@ const state = {
   ordersVisibleCount: 0,
   amazonOrders: [],
   amazonOrdersVisibleCount: 0,
+  overseasOrderProcessingOrders: [],
   fbaReplenishments: [],
   fbaReplenishmentsVisibleCount: 0,
   fbaPendingCount: 0,
@@ -2334,6 +2335,10 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
   }
   if (targetId === "amazonOrderImport" && state.token && !state.amazonOrders.length) {
     loadAmazonOrders().catch((error) => showToast(error.message, true));
+    return;
+  }
+  if (targetId === "overseasOrderProcessing" && state.token && !state.overseasOrderProcessingOrders.length) {
+    loadOverseasOrderProcessingOrders().catch((error) => showToast(error.message, true));
     return;
   }
   if (targetId === "overview" && !state.overviewDashboard) {
@@ -7784,6 +7789,54 @@ async function loadAmazonOrders() {
   renderAmazonOrdersTable();
 }
 
+function renderOverseasOrderProcessingTable() {
+  const tbody = $("overseasOrderProcessingBody");
+  const summary = $("overseasOrderProcessingSummary");
+  if (!tbody) return;
+
+  const list = Array.isArray(state.overseasOrderProcessingOrders) ? state.overseasOrderProcessingOrders : [];
+  const rakutenCount = list.filter((item) => item.source === "rakuten").length;
+  const amazonCount = list.filter((item) => item.source === "amazon").length;
+  if (summary) {
+    summary.textContent = `共 ${list.length} 条待处理订单，其中 乐天 ${rakutenCount} 条，亚马逊 ${amazonCount} 条。`;
+  }
+
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">暂无可归结的海外仓订单</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = list
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
+        <td>${escapeHtml(displayText(item.sourceLabel))}</td>
+        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td>${escapeHtml(displayText(item.skuCode))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
+        <td>${escapeHtml(displayText(item.orderQuantity))}</td>
+        <td>${escapeHtml(displayText(item.shopName))}</td>
+        <td>${escapeHtml(displayText(item.shippingName))}</td>
+        <td>${escapeHtml(displayText(item.availableStock))}</td>
+      </tr>
+    `,
+    )
+    .join("");
+}
+
+async function loadOverseasOrderProcessingOrders() {
+  if (!state.token) {
+    state.overseasOrderProcessingOrders = [];
+    renderOverseasOrderProcessingTable();
+    return;
+  }
+
+  const list = await request("/orders/overseas-warehouse");
+  state.overseasOrderProcessingOrders = Array.isArray(list) ? list : [];
+  renderOverseasOrderProcessingTable();
+}
+
 async function importAmazonOrdersFile(file) {
   const formData = new FormData();
   formData.append("file", file);
@@ -8476,6 +8529,7 @@ async function reloadAll() {
     state.ordersVisibleCount = 0;
     state.amazonOrders = [];
     state.amazonOrdersVisibleCount = 0;
+    state.overseasOrderProcessingOrders = [];
     state.selectedAmazonOrderIds = new Set();
     state.inventoryHomeProducts = [];
     state.inventoryHomePage = 1;
@@ -8537,6 +8591,7 @@ async function reloadAll() {
     renderEmptyBoxManageTable();
     renderOrdersTable();
     renderAmazonOrdersTable();
+    renderOverseasOrderProcessingTable();
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
     updateFbaSelectAll();
@@ -8636,6 +8691,7 @@ function bindForms() {
         }
         const result = await importOrdersFile(file);
         await loadOrders();
+        await loadOverseasOrderProcessingOrders();
         form.reset();
         showToast(
           `乐天订单导入完成，新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条，来源文件 ${result.sourceFileName}`,
@@ -8660,6 +8716,7 @@ function bindForms() {
         }
         const result = await importAmazonOrdersFile(file);
         await loadAmazonOrders();
+        await loadOverseasOrderProcessingOrders();
         form.reset();
         showToast(
           `亚马逊订单导入完成：新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条（文件 ${result.sourceFileName}）`,
@@ -8687,6 +8744,7 @@ function bindForms() {
         const result = await deleteAmazonOrders(ids);
         state.selectedAmazonOrderIds = new Set();
         await loadAmazonOrders();
+        await loadOverseasOrderProcessingOrders();
         showToast(`已删除 ${Number(result?.deletedCount || 0)} 条亚马逊订单记录`);
       });
     } catch (error) {
@@ -9515,11 +9573,19 @@ function bindForms() {
 
   $("openOverseasOrderProcessingPanel")?.addEventListener("click", async () => {
     try {
-      switchPanel("overseasWarehouse");
-      await Promise.all([loadShelves(), loadBoxes(), loadInventory()]);
+      switchPanel("overseasOrderProcessing");
+      await loadOverseasOrderProcessingOrders();
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("refreshOverseasOrderProcessing")?.addEventListener("click", () =>
+    loadOverseasOrderProcessingOrders().catch((error) => showToast(error.message, true)),
+  );
+
+  $("backToOrderProcessingFromOverseasBtn")?.addEventListener("click", () => {
+    switchPanel("orderProcessing");
   });
 
   $("openRakutenOrderImportModal").addEventListener("click", () => {
