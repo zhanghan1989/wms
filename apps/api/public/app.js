@@ -7651,6 +7651,14 @@ function formatOrderFulfillmentMode(mode) {
   return mode;
 }
 
+function formatAmazonShippingOriginAsMode(origin) {
+  const value = String(origin || "").trim();
+  if (!value) return "-";
+  if (value.includes("日本")) return "日本发货";
+  if (value.includes("中国")) return "中国发货";
+  return value;
+}
+
 function renderOrdersPanels() {
   const tbodies = [$("ordersBody"), $("amazonOrdersBody")].filter(Boolean);
   if (!tbodies.length) return;
@@ -7726,7 +7734,7 @@ function renderAmazonOrdersTable() {
   const list = state.amazonOrders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="muted">暂无亚马逊订单数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无亚马逊订单数据</td></tr>';
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
     return;
@@ -7742,12 +7750,11 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td>${escapeHtml(displayText(item.orderId))}</td>
         <td>${escapeHtml(displayText(item.sku))}</td>
-        <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
         <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
-        <td>${escapeHtml(displayText(item.mallName))}</td>
+        <td>${escapeHtml(displayText(item.mallName || "亚马逊"))}</td>
+        <td>${escapeHtml(displayText(formatAmazonShippingOriginAsMode(item.shippingOrigin)))}</td>
         <td>${escapeHtml(displayText(item.resolvedShopName || item.shopName))}</td>
         <td>${escapeHtml(displayText(item.recipientName))}</td>
-        <td>${escapeHtml(displayText(item.shippingOrigin))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
