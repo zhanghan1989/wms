@@ -2514,15 +2514,8 @@ function ensureOverseasWarehouseQueryUi() {
     const createBtn = $("openCreateShelfFromManage");
     shelfManageForm.insertBefore(shelfQueryBtn, createBtn || null);
   } else if (actionRow && shelfQueryBtn && !shelfQueryBtn.parentElement) {
-  actionRow.insertBefore(shelfQueryBtn, $("downloadStockAdjustmentCsvBtn") || null);
-}
-
-function ensureOrderProcessingLandingUi() {
-  const legacyOrdersWrap = $("ordersTableWrap");
-  if (!legacyOrdersWrap) return;
-  legacyOrdersWrap.innerHTML =
-    '<div class="muted order-import-note">请使用上方按钮进入乐天或亚马逊订单页面分别处理导入与发货。</div>';
-}
+    actionRow.insertBefore(shelfQueryBtn, $("downloadStockAdjustmentCsvBtn") || null);
+  }
 
   if (!$("boxContentQueryModal")) {
     document.body.insertAdjacentHTML(
