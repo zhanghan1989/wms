@@ -392,7 +392,8 @@ function renderAuthGateMessage(message = "") {
 
 function expireAuthSession(message = "未授权，请重新登录", sourcePath = "") {
   const authMessage = normalizeErrorMessage(message || "未授权，请重新登录");
-  const loginGateMessage = sourcePath ? `${sourcePath} 返回 401\n${authMessage}` : authMessage;
+  const loginGateMessage =
+    sourcePath && sourcePath !== "/auth/deploy-version" ? `${sourcePath} 返回 401\n${authMessage}` : authMessage;
   hasUserNavigatedSinceBootstrap = false;
   state.token = "";
   state.authDeployVersion = "";
@@ -7331,11 +7332,13 @@ function renderOrdersTable() {
   if (!tbodies.length) return;
 
   if (!state.orders.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="muted">暂无订单数据</td></tr>';
+    tbodies.forEach((tbody) => {
+      tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无订单数据</td></tr>';
+    });
     return;
   }
 
-  tbody.innerHTML = state.orders
+  const html = state.orders
     .map(
       (item) => `
       <tr>
@@ -7354,6 +7357,10 @@ function renderOrdersTable() {
     `,
     )
     .join("");
+
+  tbodies.forEach((tbody) => {
+    tbody.innerHTML = html;
+  });
 }
 
 function renderOrdersPanels() {
