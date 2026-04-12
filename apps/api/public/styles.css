@@ -788,6 +788,7 @@ button.ghost {
   margin-top: 10px;
   max-height: 70vh;
   overflow: auto;
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fbfefd;
@@ -804,12 +805,13 @@ button.ghost {
   margin: 0;
   border-collapse: separate;
   border-spacing: 0;
+  overflow: visible;
+  border-radius: 0;
+  border: 0;
 }
 
 .overview-table-wrap thead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  position: static;
 }
 
 .overview-table-wrap thead th {
@@ -990,6 +992,7 @@ td {
 .master-product-table-wrap {
   max-height: 70vh;
   overflow: auto;
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: #fbfefd;
@@ -1031,12 +1034,13 @@ td {
   margin: 0;
   border-collapse: separate;
   border-spacing: 0;
+  overflow: visible;
+  border-radius: 0;
+  border: 0;
 }
 
 .master-product-table-wrap thead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
+  position: static;
 }
 
 .master-product-table-wrap thead th {
@@ -1474,6 +1478,7 @@ pre {
   min-height: 0;
   overflow-y: auto;
   overflow-x: auto;
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 12px;
 }
@@ -1482,6 +1487,7 @@ pre {
   border: 0;
   border-radius: 0;
   margin: 0;
+  overflow: visible;
 }
 
 .modal-card.modal-wide.modal-manage.modal-manage-scroll .manage-table-scroll thead th {
