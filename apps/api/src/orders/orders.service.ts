@@ -383,6 +383,32 @@ export class OrdersService {
     return { deletedCount: result.count };
   }
 
+  async deleteRakutenBatch(payload: {
+    ids?: Array<string | number>;
+  }): Promise<{ deletedCount: number }> {
+    const rawIds = Array.isArray(payload?.ids) ? payload.ids : [];
+    const ids = Array.from(
+      new Set(
+        rawIds
+          .map((id, index) => {
+            const text = String(id ?? '').trim();
+            return text ? parseId(text, `ids[${index}]`) : null;
+          })
+          .filter((id): id is bigint => id !== null),
+      ),
+    );
+
+    if (!ids.length) {
+      throw new BadRequestException('请至少选择一条乐天订单记录');
+    }
+
+    const result = await this.prisma.rakutenOrderRecord.deleteMany({
+      where: { id: { in: ids } },
+    });
+
+    return { deletedCount: result.count };
+  }
+
   async importUploadedCsv(
     fileBuffer: Buffer,
     originalName?: string,

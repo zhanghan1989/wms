@@ -47,6 +47,14 @@ export class OrdersController {
     return this.ordersService.deleteAmazonBatch(payload);
   }
 
+  @Post('delete-batch')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async deleteRakutenBatch(
+    @Body() payload: { ids?: Array<string | number> },
+  ): Promise<{ deletedCount: number }> {
+    return this.ordersService.deleteRakutenBatch(payload);
+  }
+
   @Post('import-csv')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @UseInterceptors(FileInterceptor('file'))

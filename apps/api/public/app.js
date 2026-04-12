@@ -235,6 +235,7 @@ const state = {
   selectedProductEditRequestIds: new Set(),
   selectedEditUserId: null,
   selectedResetPasswordUserId: null,
+  selectedRakutenOrderIds: new Set(),
   selectedAmazonOrderIds: new Set(),
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
@@ -7624,11 +7625,14 @@ async function loadProductEditPendingSummary() {
 function renderOrdersTable() {
   const tbody = $("rakutenOrdersBody");
   if (!tbody) return;
+  syncSelectedRakutenOrderIds();
   const visibleCount = Math.max(state.inventoryPageSize, Number(state.ordersVisibleCount || 0));
   const list = state.orders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无订单数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无订单数据</td></tr>';
+    updateRakutenOrdersSelectAll();
+    updateRakutenBatchDeleteButtonState();
     return;
   }
 
@@ -7636,6 +7640,9 @@ function renderOrdersTable() {
     .map(
       (item) => `
       <tr>
+        <td><input type="checkbox" data-action="rakutenOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
+          state.selectedRakutenOrderIds.has(String(item.id)) ? "checked" : ""
+        } /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td>${escapeHtml(displayText(item.orderId))}</td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
@@ -7651,6 +7658,8 @@ function renderOrdersTable() {
     `,
     )
     .join("");
+  updateRakutenOrdersSelectAll();
+  updateRakutenBatchDeleteButtonState();
 }
 
 function formatOrderFulfillmentMode(mode) {
@@ -7707,6 +7716,7 @@ async function loadOrders() {
   if (!state.token) {
     state.orders = [];
     state.ordersVisibleCount = 0;
+    state.selectedRakutenOrderIds = new Set();
     renderOrdersTable();
     return;
   }
@@ -7843,6 +7853,13 @@ async function importAmazonOrdersFile(file) {
   return request("/orders/amazon/import-txt", {
     method: "POST",
     body: formData,
+  });
+}
+
+async function deleteRakutenOrders(ids) {
+  return request("/orders/delete-batch", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
   });
 }
 
@@ -8108,6 +8125,35 @@ function syncSelectedAmazonOrderIds() {
   state.selectedAmazonOrderIds = new Set(
     Array.from(state.selectedAmazonOrderIds).filter((id) => selectableIds.has(String(id))),
   );
+}
+
+function syncSelectedRakutenOrderIds() {
+  const selectableIds = new Set(state.orders.map((item) => String(item.id)));
+  state.selectedRakutenOrderIds = new Set(
+    Array.from(state.selectedRakutenOrderIds).filter((id) => selectableIds.has(String(id))),
+  );
+}
+
+function updateRakutenOrdersSelectAll() {
+  const selectAll = $("rakutenOrdersSelectAll");
+  if (!selectAll) return;
+  if (!state.orders.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+
+  const selectedCount = state.orders.filter((item) => state.selectedRakutenOrderIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === state.orders.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.orders.length;
+}
+
+function updateRakutenBatchDeleteButtonState() {
+  const button = $("rakutenBatchDeleteBtn");
+  if (!button) return;
+  const count = state.selectedRakutenOrderIds.size;
+  button.disabled = count <= 0;
+  button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
 }
 
 function updateAmazonOrdersSelectAll() {
@@ -8704,6 +8750,29 @@ function bindForms() {
     }
   });
 
+  $("rakutenBatchDeleteBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "删除中...", async () => {
+        const ids = Array.from(state.selectedRakutenOrderIds)
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0);
+        if (!ids.length) {
+          throw new Error("请先选择要删除的乐天订单");
+        }
+        const ok = await openDeleteConfirmModal(`确认批量删除 ${ids.length} 条乐天订单记录？`);
+        if (!ok) return;
+        const result = await deleteRakutenOrders(ids);
+        state.selectedRakutenOrderIds = new Set();
+        await loadOrders();
+        await loadOverseasOrderProcessingOrders();
+        showToast(`已删除 ${Number(result?.deletedCount || 0)} 条乐天订单记录`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("importOrdersForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
@@ -8757,6 +8826,13 @@ function bindForms() {
     const selectableIds = state.amazonOrders.map((item) => String(item.id));
     state.selectedAmazonOrderIds = checked ? new Set(selectableIds) : new Set();
     renderAmazonOrdersTable();
+  });
+
+  $("rakutenOrdersSelectAll").addEventListener("change", (event) => {
+    const checked = Boolean(event.target.checked);
+    const selectableIds = state.orders.map((item) => String(item.id));
+    state.selectedRakutenOrderIds = checked ? new Set(selectableIds) : new Set();
+    renderOrdersTable();
   });
 
   $("openCreateUserModal")?.addEventListener("click", async () => {
@@ -10939,6 +11015,21 @@ function bindDelegates() {
     }
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
+  });
+
+  $("rakutenOrdersBody").addEventListener("change", (event) => {
+    const checkbox = event.target.closest("input[data-action='rakutenOrderToggleRow']");
+    if (!checkbox) return;
+
+    const id = String(checkbox.dataset.id || "");
+    if (!id) return;
+    if (checkbox.checked) {
+      state.selectedRakutenOrderIds.add(id);
+    } else {
+      state.selectedRakutenOrderIds.delete(id);
+    }
+    updateRakutenOrdersSelectAll();
+    updateRakutenBatchDeleteButtonState();
   });
 
   const openAdjustByAction = async (event) => {
