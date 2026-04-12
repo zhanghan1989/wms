@@ -2321,9 +2321,9 @@ function ensureOverseasWarehouseQueryUi() {
             </form>
             <div class="manage-table-scroll">
               <table>
-                <thead><tr><th>箱号</th><th>货架号</th><th>产品ID</th><th>产品名称</th><th>数量</th></tr></thead>
+                <thead><tr><th>箱号</th><th>货架号</th><th>产品ID</th><th>产品名称</th><th>数量</th><th>操作</th></tr></thead>
                 <tbody id="boxContentQueryBody">
-                  <tr><td colspan="5" class="muted">请输入箱号后查询。</td></tr>
+                  <tr><td colspan="6" class="muted">请输入箱号后查询。</td></tr>
                 </tbody>
               </table>
             </div>
@@ -3187,7 +3187,7 @@ function resetBoxContentQueryResult() {
     summary.classList.remove("is-error");
   }
   if (body) {
-    body.innerHTML = '<tr><td colspan="5" class="muted">请输入箱号后查询。</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="muted">请输入箱号后查询。</td></tr>';
   }
 }
 
@@ -3199,7 +3199,7 @@ function renderBoxContentQueryNotFound(boxCode = "") {
     summary.classList.add("is-error");
   }
   if (body) {
-    body.innerHTML = '<tr><td colspan="5" class="muted">请输入箱号后查询。</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="muted">请输入箱号后查询。</td></tr>';
   }
 }
 
@@ -3293,6 +3293,21 @@ async function openShelfBoxQueryModalForShelfCode(shelfCode, preferredShelfId = 
   openModal("shelfBoxQueryModal");
 }
 
+function renderBoxContentQueryActions(box) {
+  const actions = [];
+  if (box?.canArchiveRelease) {
+    actions.push(
+      `<button class="tiny-btn secondary" data-action="archiveReleaseBoxQuery" data-id="${escapeHtml(box?.id || "")}" data-code="${escapeHtml(box?.boxCode || "")}">归档释放</button>`,
+    );
+  }
+  if (Number(box?.status ?? 1) === 1) {
+    actions.push(
+      `<button class="tiny-btn" data-action="editBoxQuery" data-id="${escapeHtml(box?.id || "")}" data-code="${escapeHtml(box?.boxCode || "")}">变更</button>`,
+    );
+  }
+  return actions.join(" ");
+}
+
 function renderBoxContentQueryResult(box, rows) {
   const summary = $("boxContentQuerySummary");
   const body = $("boxContentQueryBody");
@@ -3316,6 +3331,7 @@ function renderBoxContentQueryResult(box, rows) {
         <td class="muted">-</td>
         <td class="muted">-</td>
         <td class="muted">0</td>
+        <td>${renderBoxContentQueryActions(box) || '<span class="muted">-</span>'}</td>
       </tr>
     `;
     return;
@@ -3324,17 +3340,61 @@ function renderBoxContentQueryResult(box, rows) {
   summary.textContent = summaryText(`箱号 ${boxCode} 共 ${sortedRows.length} 个主商品。`);
   body.innerHTML = sortedRows
     .map(
-      (row) => `
+      (row, index) => `
         <tr>
           <td>${escapeHtml(boxCode)}</td>
           <td>${escapeHtml(shelfCode)}</td>
           <td>${renderMasterProductDetailLink(displayText(row?.product?.productId))}</td>
           <td>${escapeHtml(displayText(row?.product?.productName))}</td>
           <td>${escapeHtml(displayText(row?.qty))}</td>
+          <td>${index === 0 ? (renderBoxContentQueryActions(box) || '<span class="muted">-</span>') : ""}</td>
         </tr>
       `,
     )
     .join("");
+}
+
+async function archiveReleaseBox(boxId, boxCode) {
+  const ok = await openActionConfirmModal(
+    `确认归档旧箱并释放箱号 ${boxCode} ？`,
+    "旧箱会保留历史审计并隐藏，原箱号将重新可用。",
+    "归档释放",
+  );
+  if (!ok) return null;
+
+  const result = await request(`/boxes/${boxId}/archive-release`, { method: "POST" });
+  state.boxEditingIds.delete(String(boxId));
+  showToast(
+    `箱号 ${result?.releasedBoxCode || boxCode} 已释放，旧箱已归档为 ${result?.archivedBoxCode || "-"}`,
+  );
+  await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+  return result;
+}
+
+async function openBoxManageModalForEdit(boxId) {
+  const targetId = String(boxId || "").trim();
+  if (!targetId) return;
+
+  state.boxEditingIds = new Set([targetId]);
+  await Promise.all([loadShelves(), loadBoxes()]);
+  const rows = getBoxesSortedForManage();
+  const targetIndex = rows.findIndex((item) => String(item?.id || "") === targetId);
+  state.boxManageVisibleCount = Math.max(
+    state.manageModalInitialPageSize,
+    targetIndex >= 0 ? targetIndex + 1 : state.manageModalInitialPageSize,
+  );
+
+  renderBoxesManageTable();
+  openModal("boxManageModal");
+  setupBoxManageLoadObserver();
+  maybeAutoLoadBoxesManage();
+
+  const focusInput = $(`boxCodeManage-${targetId}`);
+  if (focusInput) {
+    focusInput.scrollIntoView({ block: "center", behavior: "smooth" });
+    focusInput.focus();
+    focusInput.select?.();
+  }
 }
 
 async function getShelfBoxQueryRows(shelf) {
@@ -9763,19 +9823,7 @@ function bindDelegates() {
       if (action === "queryBoxManage") {
         await openBoxContentQueryModalForBoxCode(button.dataset.code || id, id);
       } else if (action === "archiveReleaseBoxManage") {
-        const boxCode = button.dataset.code || id;
-        const ok = await openActionConfirmModal(
-          `确认归档旧箱并释放箱号 ${boxCode} ？`,
-          "旧箱会保留历史审计并隐藏，原箱号将重新可用。",
-          "归档释放",
-        );
-        if (!ok) return;
-        const result = await request(`/boxes/${id}/archive-release`, { method: "POST" });
-        state.boxEditingIds.delete(String(id));
-        showToast(
-          `箱号 ${result?.releasedBoxCode || boxCode} 已释放，旧箱已归档为 ${result?.archivedBoxCode || "-"}`,
-        );
-        await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+        await archiveReleaseBox(id, button.dataset.code || id);
       } else if (action === "editBoxManage") {
         const codeInput = $(`boxCodeManage-${id}`);
         const shelfSelect = $(`boxShelfManage-${id}`);
@@ -9829,6 +9877,28 @@ function bindDelegates() {
         state.boxEditingIds.delete(String(id));
         showToast("箱号已变更");
         await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("boxContentQueryBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const action = String(button.dataset.action || "");
+    const id = String(button.dataset.id || "").trim();
+    if (!id) return;
+
+    try {
+      if (action === "archiveReleaseBoxQuery") {
+        const boxCode = button.dataset.code || id;
+        const result = await archiveReleaseBox(id, boxCode);
+        if (!result) return;
+        await openBoxContentQueryModalForBoxCode(result?.releasedBoxCode || boxCode);
+      } else if (action === "editBoxQuery") {
+        closeModal("boxContentQueryModal");
+        await openBoxManageModalForEdit(id);
       }
     } catch (error) {
       showToast(error.message, true);
