@@ -7736,13 +7736,8 @@ function buildRakutenOrderDetailFields(item) {
     joinRakutenParts([item?.shippingPrefecture, item?.shippingCity]) ||
     "";
   const address2 = getRakutenRawValue(item, "送付先住所それ以降の住所") || item?.shippingAddress || "";
-  const delivery = joinRakutenParts(
-    [
-      getRakutenRawValue(item, "お届け日指定") || item?.deliveryDateRaw,
-      getRakutenRawValue(item, "お届け時間帯") || item?.deliveryTimeSlot,
-    ],
-    " ",
-  );
+  const deliveryDate = getRakutenRawValue(item, "お届け日指定") || item?.deliveryDateRaw || "";
+  const deliveryTimeSlot = getRakutenRawValue(item, "お届け時間帯") || item?.deliveryTimeSlot || "";
 
   return [
     ["注文番号", orderNo],
@@ -7755,7 +7750,8 @@ function buildRakutenOrderDetailFields(item) {
     ["邮编", postalCode],
     ["地址1", address1],
     ["地址2", address2],
-    ["指定配送", delivery],
+    ["お届け日指定", deliveryDate],
+    ["お届け時間帯", deliveryTimeSlot],
   ];
 }
 
@@ -7821,7 +7817,8 @@ function buildAmazonOrderDetailFields(item) {
     ["邮编", postalCode],
     ["地址1", address1],
     ["地址2", address2],
-    ["指定配送", "-"],
+    ["お届け日指定", "-"],
+    ["お届け時間帯", "-"],
   ];
 }
 
