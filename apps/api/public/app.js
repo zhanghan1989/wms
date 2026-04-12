@@ -1,7 +1,10 @@
 const AUTH_STORAGE_KEY = "wms_token";
 const AUTH_COOKIE_KEY = "wms_token";
+const AUTH_SESSION_STORAGE_KEY = "wms_token_session";
 const AUTH_DEPLOY_VERSION_STORAGE_KEY = "wms_auth_deploy_version";
 const AUTH_DEPLOY_VERSION_COOKIE_KEY = "wms_auth_deploy_version";
+const AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY = "wms_auth_deploy_version_session";
+const AUTH_DEPLOY_VERSION_HASH_PARAM = "wmsDeployVersion";
 
 function readCookieValue(name) {
   const target = `${String(name || "").trim()}=`;
@@ -26,6 +29,9 @@ function persistAuthToken(token) {
     return "";
   }
   try {
+    sessionStorage.setItem(AUTH_SESSION_STORAGE_KEY, value);
+  } catch {}
+  try {
     localStorage.setItem(AUTH_STORAGE_KEY, value);
     const storedValue = String(localStorage.getItem(AUTH_STORAGE_KEY) || "").trim();
     if (storedValue !== value) {
@@ -42,6 +48,13 @@ function persistAuthToken(token) {
 
 function persistAuthDeployVersion(version) {
   const value = String(version || "").trim();
+  try {
+    if (value) {
+      sessionStorage.setItem(AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY, value);
+    } else {
+      sessionStorage.removeItem(AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY);
+    }
+  } catch {}
   try {
     if (value) {
       localStorage.setItem(AUTH_DEPLOY_VERSION_STORAGE_KEY, value);
@@ -67,6 +80,10 @@ function persistAuthDeployVersion(version) {
 
 function clearPersistedAuthToken() {
   try {
+    sessionStorage.removeItem(AUTH_SESSION_STORAGE_KEY);
+    sessionStorage.removeItem(AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY);
+  } catch {}
+  try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
     localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
   } catch {}
@@ -75,6 +92,15 @@ function clearPersistedAuthToken() {
 }
 
 function readPersistedAuthToken() {
+  let sessionValue = "";
+  try {
+    sessionValue = String(sessionStorage.getItem(AUTH_SESSION_STORAGE_KEY) || "").trim();
+  } catch {}
+  if (sessionValue) {
+    persistAuthToken(sessionValue);
+    return sessionValue;
+  }
+
   let storageValue = "";
   try {
     storageValue = String(localStorage.getItem(AUTH_STORAGE_KEY) || "").trim();
@@ -96,6 +122,15 @@ function readPersistedAuthToken() {
 }
 
 function readPersistedAuthDeployVersion() {
+  let sessionValue = "";
+  try {
+    sessionValue = String(sessionStorage.getItem(AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY) || "").trim();
+  } catch {}
+  if (sessionValue) {
+    persistAuthDeployVersion(sessionValue);
+    return sessionValue;
+  }
+
   let storageValue = "";
   try {
     storageValue = String(localStorage.getItem(AUTH_DEPLOY_VERSION_STORAGE_KEY) || "").trim();
@@ -4295,8 +4330,13 @@ function buildMasterProductDetailUrl(productId) {
   url.searchParams.set("view", "master-product-detail");
   url.searchParams.set("productId", value);
   const token = String(state.token || "").trim();
+  const deployVersion = String(state.authDeployVersion || state.currentDeployVersion || "").trim();
   if (token) {
-    url.hash = new URLSearchParams([[AUTH_HASH_PARAM, token]]).toString();
+    const hashParams = new URLSearchParams([[AUTH_HASH_PARAM, token]]);
+    if (deployVersion) {
+      hashParams.set(AUTH_DEPLOY_VERSION_HASH_PARAM, deployVersion);
+    }
+    url.hash = hashParams.toString();
   }
   return url.toString();
 }
@@ -4322,9 +4362,15 @@ function bootstrapAuthTokenFromLocationHash() {
   if (!hash) return false;
   const params = new URLSearchParams(hash);
   const token = String(params.get(AUTH_HASH_PARAM) || "").trim();
+  const deployVersion = String(params.get(AUTH_DEPLOY_VERSION_HASH_PARAM) || "").trim();
   if (!token) return false;
   state.token = persistAuthToken(token);
+  if (deployVersion) {
+    state.authDeployVersion = persistAuthDeployVersion(deployVersion);
+    state.currentDeployVersion = deployVersion;
+  }
   params.delete(AUTH_HASH_PARAM);
+  params.delete(AUTH_DEPLOY_VERSION_HASH_PARAM);
   const url = new URL(window.location.href);
   const nextHash = params.toString();
   url.hash = nextHash ? `#${nextHash}` : "";
