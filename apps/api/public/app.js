@@ -11202,7 +11202,7 @@ function bindRefresh() {
       showToast(error.message, true);
     }
   });
-  $("refreshInventory").addEventListener("click", () =>
+  $("refreshInventory")?.addEventListener("click", () =>
     (state.inventorySearchMode && state.inventoryHomeSelectedDetail
       ? loadInventoryHomeProductDetail(state.inventoryHomeSelectedDetail?.product?.productId || "")
       : loadInventoryHomeProducts({ reset: true })
