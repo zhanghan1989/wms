@@ -177,6 +177,13 @@ interface AmazonOrderListItem extends AmazonOrderRecord {
 const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
 type AmazonTxtEncodingCandidate = (typeof AMAZON_TXT_ENCODING_CANDIDATES)[number];
 
+function normalizeAmazonSkuLookupKey(value: string | null | undefined): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/\s+/g, '')
+    .toLowerCase();
+}
+
 @Injectable()
 export class OrdersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -198,53 +205,43 @@ export class OrdersService {
       take: limit,
     });
 
-    const skuCodes = Array.from(
-      new Set(
-        rows
-          .map((row) => String(row.sku ?? '').trim())
-          .filter(Boolean),
-      ),
-    );
-
-    const skuRows = skuCodes.length
-      ? await this.prisma.sku.findMany({
-          where: {
-            OR: [
-              { sku: { in: skuCodes } },
-              { rbSku: { in: skuCodes } },
-              { fbmSku: { in: skuCodes } },
-              { asin: { in: skuCodes } },
-              { fnsku: { in: skuCodes } },
-            ],
-          },
-          select: {
-            sku: true,
-            rbSku: true,
-            fbmSku: true,
-            asin: true,
-            fnsku: true,
-            productId: true,
-            shop: true,
-          },
-        })
-      : [];
+    const skuRows = await this.prisma.sku.findMany({
+      where: {
+        productId: { not: null },
+      },
+      select: {
+        sku: true,
+        rbSku: true,
+        fbmSku: true,
+        productId: true,
+        shop: true,
+      },
+    });
 
     const skuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
+    const normalizedSkuMetaByCode = new Map<string, { productId: string | null; shopName: string | null }>();
     skuRows.forEach((row) => {
       const meta = {
         productId: String(row.productId ?? '').trim() || null,
         shopName: String(row.shop ?? '').trim() || null,
       };
-      [row.sku, row.rbSku, row.fbmSku, row.asin, row.fnsku].forEach((candidate) => {
+      [row.rbSku, row.fbmSku, row.sku].forEach((candidate) => {
         const key = String(candidate ?? '').trim();
-        if (!key || skuMetaByCode.has(key)) return;
-        skuMetaByCode.set(key, meta);
+        if (key && !skuMetaByCode.has(key)) {
+          skuMetaByCode.set(key, meta);
+        }
+        const normalizedKey = normalizeAmazonSkuLookupKey(candidate);
+        if (!normalizedKey || normalizedSkuMetaByCode.has(normalizedKey)) return;
+        normalizedSkuMetaByCode.set(normalizedKey, meta);
       });
     });
 
     return rows.map((row) => {
       const skuCode = String(row.sku ?? '').trim();
-      const skuMeta = skuMetaByCode.get(skuCode);
+      const skuMeta =
+        skuMetaByCode.get(skuCode) ??
+        normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(skuCode)) ??
+        null;
       return {
         ...row,
         resolvedProductId: skuMeta?.productId ?? null,
