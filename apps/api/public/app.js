@@ -2948,6 +2948,14 @@ async function loadMe() {
       applyRoleView();
       throw error;
     }
+    if (String(error?.path || "").trim() === "/auth/deploy-version") {
+      state.me = null;
+      $("sessionInfo").textContent = "登录失效";
+      setAuthGate(false);
+      applyRoleView();
+      renderAuthGateMessage(readPersistedAuthGateMessage());
+      return;
+    }
     expireAuthSession(error?.responseMessage || error?.message || "未授权，请重新登录", "/auth/me");
   }
 }
