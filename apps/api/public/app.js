@@ -7721,10 +7721,10 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td>${escapeHtml(displayText(item.orderId))}</td>
         <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
         <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
         <td>${escapeHtml(displayText(item.mallName))}</td>
-        <td>${escapeHtml(displayText(item.shopName))}</td>
-        <td>${escapeHtml(displayText(item.orderItemId))}</td>
+        <td>${escapeHtml(displayText(item.resolvedShopName || item.shopName))}</td>
         <td>${escapeHtml(displayText(item.recipientName))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>

@@ -169,6 +169,11 @@ interface AmazonOrderImportResult {
   existingDuplicateCount: number;
 }
 
+interface AmazonOrderListItem extends AmazonOrderRecord {
+  resolvedProductId: string | null;
+  resolvedShopName: string | null;
+}
+
 const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
 type AmazonTxtEncodingCandidate = (typeof AMAZON_TXT_ENCODING_CANDIDATES)[number];
 
@@ -185,12 +190,51 @@ export class OrdersService {
     });
   }
 
-  async listAmazon(limitParam?: string): Promise<AmazonOrderRecord[]> {
+  async listAmazon(limitParam?: string): Promise<AmazonOrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
-    return this.prisma.amazonOrderRecord.findMany({
+    const rows = await this.prisma.amazonOrderRecord.findMany({
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
+    });
+
+    const skuCodes = Array.from(
+      new Set(
+        rows
+          .map((row) => String(row.sku ?? '').trim())
+          .filter(Boolean),
+      ),
+    );
+
+    const skuRows = skuCodes.length
+      ? await this.prisma.sku.findMany({
+          where: { sku: { in: skuCodes } },
+          select: {
+            sku: true,
+            productId: true,
+            shop: true,
+          },
+        })
+      : [];
+
+    const skuMetaByCode = new Map(
+      skuRows.map((row) => [
+        String(row.sku ?? '').trim(),
+        {
+          productId: String(row.productId ?? '').trim() || null,
+          shopName: String(row.shop ?? '').trim() || null,
+        },
+      ]),
+    );
+
+    return rows.map((row) => {
+      const skuCode = String(row.sku ?? '').trim();
+      const skuMeta = skuMetaByCode.get(skuCode);
+      return {
+        ...row,
+        resolvedProductId: skuMeta?.productId ?? null,
+        resolvedShopName: skuMeta?.shopName ?? null,
+      };
     });
   }
 
