@@ -4,7 +4,53 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>库存管理系统</title>
-  <link rel="stylesheet" href="/styles.css" />
+  <script>
+    (function () {
+      function appendStylesheet(href) {
+        var link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = href;
+        document.head.appendChild(link);
+      }
+
+      function appendModuleScript(src) {
+        var script = document.createElement("script");
+        script.type = "module";
+        script.src = src;
+        document.head.appendChild(script);
+      }
+
+      async function loadVersionedAssets() {
+        var deployVersion = "";
+        try {
+          var response = await fetch("/api/auth/deploy-version", {
+            cache: "no-store",
+            headers: {
+              "cache-control": "no-store",
+              pragma: "no-cache"
+            }
+          });
+          var payload = await response.json();
+          if (response.ok) {
+            deployVersion = String(
+              (payload && payload.data && payload.data.deployVersion) ||
+              payload.deployVersion ||
+              ""
+            ).trim();
+          }
+        } catch (error) {
+          console.warn("failed to fetch deploy version for static assets", error);
+        }
+
+        var assetVersion = deployVersion || String(Date.now());
+        window.__WMS_DEPLOY_VERSION__ = deployVersion;
+        appendStylesheet("/styles.css?v=" + encodeURIComponent(assetVersion));
+        appendModuleScript("/app.js?v=" + encodeURIComponent(assetVersion));
+      }
+
+      loadVersionedAssets();
+    })();
+  </script>
 </head>
 <body>
   <div class="bg-shape bg-shape-a"></div>
@@ -1770,6 +1816,5 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="/app.js"></script>
 </body>
 </html>
