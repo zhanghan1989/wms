@@ -2628,6 +2628,17 @@ function ensureOrderProcessingLandingUi() {
   }
 }
 
+function ensureOrderProcessingLandingUi() {
+  const legacyOrdersWrap = $("ordersTableWrap");
+  if (!legacyOrdersWrap) return;
+  legacyOrdersWrap.textContent = "";
+  const note = document.createElement("div");
+  note.className = "muted order-import-note";
+  note.textContent =
+    "\u8BF7\u4F7F\u7528\u4E0A\u65B9\u6309\u94AE\u8FDB\u5165\u4E50\u5929\u6216\u4E9A\u9A6C\u900A\u8BA2\u5355\u9875\u9762\u5206\u522B\u5904\u7406\u5BFC\u5165\u4E0E\u53D1\u8D27\u3002";
+  legacyOrdersWrap.appendChild(note);
+}
+
 function getSubmitButton(form, event) {
   if (event?.submitter instanceof HTMLButtonElement) {
     return event.submitter;
