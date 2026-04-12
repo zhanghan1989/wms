@@ -45,10 +45,18 @@ function persistAuthDeployVersion(version) {
   try {
     if (value) {
       localStorage.setItem(AUTH_DEPLOY_VERSION_STORAGE_KEY, value);
+      const storedValue = String(localStorage.getItem(AUTH_DEPLOY_VERSION_STORAGE_KEY) || "").trim();
+      if (storedValue !== value) {
+        localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
+      }
     } else {
       localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
     }
-  } catch {}
+  } catch {
+    try {
+      localStorage.removeItem(AUTH_DEPLOY_VERSION_STORAGE_KEY);
+    } catch {}
+  }
   if (value) {
     document.cookie = `${AUTH_DEPLOY_VERSION_COOKIE_KEY}=${encodeURIComponent(value)}; Path=/; SameSite=Lax`;
     return value;
@@ -88,19 +96,24 @@ function readPersistedAuthToken() {
 }
 
 function readPersistedAuthDeployVersion() {
-  let value = "";
+  let storageValue = "";
   try {
-    value = String(localStorage.getItem(AUTH_DEPLOY_VERSION_STORAGE_KEY) || "").trim();
+    storageValue = String(localStorage.getItem(AUTH_DEPLOY_VERSION_STORAGE_KEY) || "").trim();
   } catch {}
-  if (value) {
-    persistAuthDeployVersion(value);
-    return value;
+  const cookieValue = String(readCookieValue(AUTH_DEPLOY_VERSION_COOKIE_KEY) || "").trim();
+  if (cookieValue && cookieValue !== storageValue) {
+    persistAuthDeployVersion(cookieValue);
+    return cookieValue;
   }
-  value = String(readCookieValue(AUTH_DEPLOY_VERSION_COOKIE_KEY) || "").trim();
-  if (value) {
-    persistAuthDeployVersion(value);
+  if (storageValue) {
+    persistAuthDeployVersion(storageValue);
+    return storageValue;
   }
-  return value;
+  if (cookieValue) {
+    persistAuthDeployVersion(cookieValue);
+    return cookieValue;
+  }
+  return "";
 }
 
 const state = {
