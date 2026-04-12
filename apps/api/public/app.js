@@ -5,6 +5,7 @@ const AUTH_DEPLOY_VERSION_STORAGE_KEY = "wms_auth_deploy_version";
 const AUTH_DEPLOY_VERSION_COOKIE_KEY = "wms_auth_deploy_version";
 const AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY = "wms_auth_deploy_version_session";
 const AUTH_DEPLOY_VERSION_HASH_PARAM = "wmsDeployVersion";
+const DEPLOY_RELOGIN_MESSAGE = "系统已更新，请重新登录后继续操作。";
 
 function readCookieValue(name) {
   const target = `${String(name || "").trim()}=`;
@@ -272,6 +273,7 @@ let skuManagementLoadObserver = null;
 let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let skuProductLookupToken = 0;
+let hasUserNavigatedSinceBootstrap = false;
 const AUTH_ERROR_STORAGE_KEY = "wms_auth_error_message";
 const AUTH_HASH_PARAM = "wmsToken";
 
@@ -391,6 +393,7 @@ function renderAuthGateMessage(message = "") {
 function expireAuthSession(message = "未授权，请重新登录", sourcePath = "") {
   const authMessage = normalizeErrorMessage(message || "未授权，请重新登录");
   const loginGateMessage = sourcePath ? `${sourcePath} 返回 401\n${authMessage}` : authMessage;
+  hasUserNavigatedSinceBootstrap = false;
   state.token = "";
   state.authDeployVersion = "";
   state.currentDeployVersion = "";
@@ -446,19 +449,19 @@ async function ensureAuthDeployVersion() {
   const currentDeployVersion = await fetchDeployVersion();
   const authDeployVersion = String(state.authDeployVersion || readPersistedAuthDeployVersion() || "").trim();
   if (!authDeployVersion) {
-    expireAuthSession("系统已升级，请重新登录", "/auth/deploy-version");
+    expireAuthSession(DEPLOY_RELOGIN_MESSAGE, "/auth/deploy-version");
     const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
     silentAuthError.status = 401;
     silentAuthError.path = "/auth/deploy-version";
-    silentAuthError.responseMessage = "系统已升级，请重新登录";
+    silentAuthError.responseMessage = DEPLOY_RELOGIN_MESSAGE;
     throw silentAuthError;
   }
   if (authDeployVersion !== currentDeployVersion) {
-    expireAuthSession("系统已升级，请重新登录", "/auth/deploy-version");
+    expireAuthSession(DEPLOY_RELOGIN_MESSAGE, "/auth/deploy-version");
     const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
     silentAuthError.status = 401;
     silentAuthError.path = "/auth/deploy-version";
-    silentAuthError.responseMessage = "系统已升级，请重新登录";
+    silentAuthError.responseMessage = DEPLOY_RELOGIN_MESSAGE;
     throw silentAuthError;
   }
 
@@ -2248,8 +2251,8 @@ function focusInventorySearch() {
   setTimeout(() => input.focus(), 0);
 }
 
-async function openInventoryHomeDefault() {
-  switchPanel("inventory");
+async function openInventoryHomeDefault({ markAsUserNavigation = false } = {}) {
+  switchPanel("inventory", { markAsUserNavigation });
   const keywordInput = $("inventoryKeyword");
   if (keywordInput) {
     keywordInput.value = "";
@@ -2271,11 +2274,16 @@ async function openInventoryHomeDefault() {
 
 async function openInventoryStartupView() {
   if (!state.token) return;
+  if (hasUserNavigatedSinceBootstrap) return;
   if (await openPendingMasterProductDetailFromUrl()) return;
+  if (hasUserNavigatedSinceBootstrap) return;
   await openInventoryHomeDefault();
 }
 
-function switchPanel(targetId) {
+function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
+  if (markAsUserNavigation && state.token) {
+    hasUserNavigatedSinceBootstrap = true;
+  }
   document.querySelectorAll(".nav-btn").forEach((button) => button.classList.remove("active"));
   document.querySelectorAll(".panel").forEach((panel) => panel.classList.remove("active"));
 
@@ -8130,6 +8138,7 @@ function bindForms() {
             password: $("gatePassword").value,
           }),
         });
+        hasUserNavigatedSinceBootstrap = false;
         state.token = persistAuthToken(data.accessToken);
         state.authDeployVersion = persistAuthDeployVersion(data.deployVersion);
         state.currentDeployVersion = String(data.deployVersion || "").trim();
@@ -8142,6 +8151,7 @@ function bindForms() {
   });
 
   const handleLogout = async () => {
+    hasUserNavigatedSinceBootstrap = false;
     state.token = "";
     state.authDeployVersion = "";
     state.currentDeployVersion = "";
@@ -8902,7 +8912,7 @@ function bindForms() {
 
   $("openInventoryHome").addEventListener("click", async () => {
     try {
-      await openInventoryHomeDefault();
+      await openInventoryHomeDefault({ markAsUserNavigation: true });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -11259,7 +11269,7 @@ bindRefresh();
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
 bootstrapAuthTokenFromLocationHash();
-switchPanel("inventory");
+switchPanel("inventory", { markAsUserNavigation: false });
 reloadAll()
   .then(() => openInventoryStartupView())
   .catch((error) => showToast(error.message, true));
