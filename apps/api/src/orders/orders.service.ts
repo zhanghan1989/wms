@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AmazonOrderRecord, OrderRecord, OrderSendStatus, Prisma } from '@prisma/client';
+import { AmazonOrderRecord, OrderSendStatus, Prisma, RakutenOrderRecord } from '@prisma/client';
 import * as iconv from 'iconv-lite';
 import * as XLSX from 'xlsx';
 import { parseId } from '../common/utils';
@@ -135,7 +135,7 @@ interface OrderImportResult {
 
 type OrderFulfillmentMode = 'rakuten_warehouse' | 'xiya_api';
 
-interface OrderListItem extends OrderRecord {
+interface OrderListItem extends RakutenOrderRecord {
   resolvedProductId: string | null;
   availableStock: number;
   fulfillmentMode: OrderFulfillmentMode;
@@ -253,7 +253,7 @@ export class OrdersService {
   async list(limitParam?: string): Promise<OrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
-    const rows = await this.prisma.orderRecord.findMany({
+    const rows = await this.prisma.rakutenOrderRecord.findMany({
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
     });
@@ -360,7 +360,7 @@ export class OrdersService {
     total: number;
     rows: Record<string, unknown>[];
   }> {
-    const rows = await this.prisma.orderRecord.findMany({
+    const rows = await this.prisma.rakutenOrderRecord.findMany({
       where: {
         sendStatus: OrderSendStatus.unsent,
       },
@@ -376,7 +376,7 @@ export class OrdersService {
     };
   }
 
-  private async enrichOrderRows(rows: OrderRecord[]): Promise<OrderListItem[]> {
+  private async enrichOrderRows(rows: RakutenOrderRecord[]): Promise<OrderListItem[]> {
     if (!rows.length) {
       return [];
     }
@@ -493,7 +493,7 @@ export class OrdersService {
 
     const uniqueRows = Array.from(uniqueRowsMap.values());
     const importedAt = new Date();
-    const createManyInput: Prisma.OrderRecordCreateManyInput[] = uniqueRows.map((row) => ({
+    const createManyInput: Prisma.RakutenOrderRecordCreateManyInput[] = uniqueRows.map((row) => ({
       rowHash: row.rowHash,
       orderId: row.orderId,
       itemDetailStatus: row.itemDetailStatus,
@@ -528,7 +528,7 @@ export class OrdersService {
       csvImportedAt: importedAt,
     }));
 
-    const result = await this.prisma.orderRecord.createMany({
+    const result = await this.prisma.rakutenOrderRecord.createMany({
       data: createManyInput,
       skipDuplicates: true,
     });
@@ -1013,7 +1013,7 @@ export class OrdersService {
     return createHash('sha1').update(hashBase).digest('hex');
   }
 
-  private toThirdPartyRow(row: OrderRecord): Record<string, unknown> {
+  private toThirdPartyRow(row: RakutenOrderRecord): Record<string, unknown> {
     return {
       id: row.id.toString(),
       rowHash: row.rowHash,

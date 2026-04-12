@@ -574,7 +574,7 @@ model BackupRecord {
   @@map("backup_records")
 }
 
-model OrderRecord {
+model RakutenOrderRecord {
   id                  BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   rowHash             String   @unique @map("row_hash") @db.Char(40)
   orderId             String?  @map("order_id") @db.VarChar(64)
@@ -616,7 +616,7 @@ model OrderRecord {
   @@index([skuCode])
   @@index([csvImportedAt])
   @@index([createdAt])
-  @@map("order_records")
+  @@map("rakuten_order_records")
 }
 
 model AmazonOrderRecord {
