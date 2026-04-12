@@ -220,7 +220,9 @@ const state = {
   selectedBatchInboundOrderId: "",
   selectedBatchInboundOrderDetail: null,
   orders: [],
+  ordersVisibleCount: 0,
   amazonOrders: [],
+  amazonOrdersVisibleCount: 0,
   fbaReplenishments: [],
   fbaReplenishmentsVisibleCount: 0,
   fbaPendingCount: 0,
@@ -248,6 +250,7 @@ const state = {
   auditFbaRequestNoById: {},
   overviewDashboard: null,
   dataBackups: [],
+  dataBackupsVisibleCount: 0,
   pendingPrintLabel: null,
   stocktakeTasks: [],
   stocktakeVisibleCount: 0,
@@ -271,6 +274,12 @@ let errorModalAutoAction = null;
 let inventoryHomeLoadObserver = null;
 let productEditRequestLoadObserver = null;
 let skuManagementLoadObserver = null;
+let ordersLoadObserver = null;
+let amazonOrdersLoadObserver = null;
+let fbaReplenishmentLoadObserver = null;
+let batchInboundLoadObserver = null;
+let stocktakePlannerLoadObserver = null;
+let dataBackupLoadObserver = null;
 let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let skuProductLookupToken = 0;
@@ -2108,8 +2117,10 @@ function renderDataBackupTable() {
   const body = $("dataBackupBody");
   if (!body) return;
   const rows = Array.isArray(state.dataBackups) ? state.dataBackups : [];
+  const visibleCount = Math.max(state.inventoryPageSize, Number(state.dataBackupsVisibleCount || 0));
+  const visibleRows = rows.slice(0, visibleCount);
   body.innerHTML =
-    rows
+    visibleRows
       .map((item) => {
         const fileName = String(item?.fileName || "");
         const hasFile = Boolean(item?.hasFile);
@@ -2131,6 +2142,15 @@ function renderDataBackupTable() {
 async function loadDataBackups() {
   const rows = await request("/backups");
   state.dataBackups = Array.isArray(rows) ? rows : [];
+  state.dataBackupsVisibleCount = state.inventoryPageSize;
+  renderDataBackupTable();
+}
+
+function loadMoreDataBackupsIfNeeded() {
+  const panel = $("dataBackup");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.dataBackupsVisibleCount >= state.dataBackups.length) return;
+  state.dataBackupsVisibleCount += state.inventoryPageSize;
   renderDataBackupTable();
 }
 
@@ -3701,7 +3721,7 @@ function getEligibleStocktakeShelves() {
 async function loadStocktakeTasks() {
   const items = await request("/stocktake-planner/tasks");
   state.stocktakeTasks = Array.isArray(items) ? items : [];
-  state.stocktakeVisibleCount = Math.min(30, state.stocktakeTasks.length);
+  state.stocktakeVisibleCount = Math.min(state.inventoryPageSize, state.stocktakeTasks.length);
 }
 
 function buildStocktakeTaskStatusText(task) {
@@ -3717,7 +3737,10 @@ async function generateStocktakeTasks() {
     body: "{}",
   });
   state.stocktakeTasks = Array.isArray(items) ? items : [];
-  state.stocktakeVisibleCount = Math.min(Math.max(state.stocktakeVisibleCount || 0, 30), state.stocktakeTasks.length);
+  state.stocktakeVisibleCount = Math.min(
+    Math.max(state.stocktakeVisibleCount || 0, state.inventoryPageSize),
+    state.stocktakeTasks.length,
+  );
 }
 
 async function confirmStocktakeTask(taskId) {
@@ -3770,7 +3793,7 @@ function renderStocktakePlanner() {
   const tasks = [...(Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : [])].sort((a, b) =>
     String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""), "en", { numeric: true }),
   );
-  const visibleTasks = tasks.slice(0, Math.max(state.stocktakeVisibleCount || 0, 30));
+  const visibleTasks = tasks.slice(0, Math.max(state.stocktakeVisibleCount || 0, state.inventoryPageSize));
 
   if (!tasks.length) {
     summary.textContent = "点击“生成库存盘点任务”后，会按规则生成盘点任务。";
@@ -3813,8 +3836,89 @@ function loadMoreStocktakeTasksIfNeeded() {
   const panel = $("stocktakePlanner");
   if (!panel || !panel.classList.contains("active")) return;
   if (state.stocktakeVisibleCount >= state.stocktakeTasks.length) return;
-  state.stocktakeVisibleCount = Math.min(state.stocktakeTasks.length, state.stocktakeVisibleCount + 30);
+  state.stocktakeVisibleCount = Math.min(
+    state.stocktakeTasks.length,
+    state.stocktakeVisibleCount + state.inventoryPageSize,
+  );
   renderStocktakePlanner();
+}
+
+function maybeAutoLoadStocktakeTasks() {
+  const panel = $("stocktakePlanner");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("stocktakePlannerTableWrap");
+  if (!tableWrap) return;
+  if (state.stocktakeVisibleCount >= state.stocktakeTasks.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreStocktakeTasksIfNeeded();
+}
+
+function maybeAutoLoadDataBackups() {
+  const panel = $("dataBackup");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("dataBackupTableWrap");
+  if (!tableWrap) return;
+  if (state.dataBackupsVisibleCount >= state.dataBackups.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreDataBackupsIfNeeded();
+}
+
+function setupStocktakePlannerLoadObserver() {
+  if (stocktakePlannerLoadObserver) {
+    stocktakePlannerLoadObserver.disconnect();
+    stocktakePlannerLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("stocktakePlannerTableWrap");
+  const sentinel = $("stocktakePlannerLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  stocktakePlannerLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreStocktakeTasksIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  stocktakePlannerLoadObserver.observe(sentinel);
+}
+
+function setupDataBackupLoadObserver() {
+  if (dataBackupLoadObserver) {
+    dataBackupLoadObserver.disconnect();
+    dataBackupLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("dataBackupTableWrap");
+  const sentinel = $("dataBackupLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  dataBackupLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreDataBackupsIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  dataBackupLoadObserver.observe(sentinel);
 }
 
 function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
@@ -6910,6 +7014,84 @@ function loadMoreBatchInboundOrdersIfNeeded() {
   renderBatchInboundOrders();
 }
 
+function maybeAutoLoadOrders() {
+  const panel = $("orderProcessing");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("ordersTableWrap");
+  if (!tableWrap) return;
+  if (state.ordersVisibleCount >= state.orders.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreOrdersIfNeeded();
+}
+
+function maybeAutoLoadBatchInboundOrders() {
+  const panel = $("batchInbound");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("batchInboundTableWrap");
+  if (!tableWrap) return;
+  if (state.batchInboundVisibleCount >= state.batchInboundOrders.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreBatchInboundOrdersIfNeeded();
+}
+
+function setupOrdersLoadObserver() {
+  if (ordersLoadObserver) {
+    ordersLoadObserver.disconnect();
+    ordersLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("ordersTableWrap");
+  const sentinel = $("ordersLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  ordersLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreOrdersIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  ordersLoadObserver.observe(sentinel);
+}
+
+function setupBatchInboundLoadObserver() {
+  if (batchInboundLoadObserver) {
+    batchInboundLoadObserver.disconnect();
+    batchInboundLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("batchInboundTableWrap");
+  const sentinel = $("batchInboundLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  batchInboundLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreBatchInboundOrdersIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  batchInboundLoadObserver.observe(sentinel);
+}
+
 function renderBatchInboundDetail(detail) {
   const container = $("batchInboundDetail");
   if (!container) return;
@@ -7337,17 +7519,17 @@ async function loadProductEditPendingSummary() {
 }
 
 function renderOrdersTable() {
-  const tbodies = [$("ordersBody"), $("amazonOrdersBody")].filter(Boolean);
-  if (!tbodies.length) return;
+  const tbody = $("ordersBody");
+  if (!tbody) return;
+  const visibleCount = Math.max(state.inventoryPageSize, Number(state.ordersVisibleCount || 0));
+  const list = state.orders.slice(0, visibleCount);
 
-  if (!state.orders.length) {
-    tbodies.forEach((tbody) => {
-      tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无订单数据</td></tr>';
-    });
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无订单数据</td></tr>';
     return;
   }
 
-  const html = state.orders
+  tbody.innerHTML = list
     .map(
       (item) => `
       <tr>
@@ -7366,10 +7548,6 @@ function renderOrdersTable() {
     `,
     )
     .join("");
-
-  tbodies.forEach((tbody) => {
-    tbody.innerHTML = html;
-  });
 }
 
 function renderOrdersPanels() {
@@ -7411,12 +7589,22 @@ function renderOrdersPanels() {
 async function loadOrders() {
   if (!state.token) {
     state.orders = [];
+    state.ordersVisibleCount = 0;
     renderOrdersTable();
     return;
   }
 
   const list = await request("/orders");
   state.orders = Array.isArray(list) ? list : [];
+  state.ordersVisibleCount = state.inventoryPageSize;
+  renderOrdersTable();
+}
+
+function loadMoreOrdersIfNeeded() {
+  const panel = $("orderProcessing");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.ordersVisibleCount >= state.orders.length) return;
+  state.ordersVisibleCount += state.inventoryPageSize;
   renderOrdersTable();
 }
 
@@ -7433,15 +7621,17 @@ function renderAmazonOrdersTable() {
   const tbody = $("amazonOrdersBody");
   if (!tbody) return;
   syncSelectedAmazonOrderIds();
+  const visibleCount = Math.max(state.inventoryPageSize, Number(state.amazonOrdersVisibleCount || 0));
+  const list = state.amazonOrders.slice(0, visibleCount);
 
-  if (!state.amazonOrders.length) {
+  if (!list.length) {
     tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无亚马逊订单数据</td></tr>';
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
     return;
   }
 
-  tbody.innerHTML = state.amazonOrders
+  tbody.innerHTML = list
     .map(
       (item) => `
       <tr>
@@ -7470,6 +7660,7 @@ function renderAmazonOrdersTable() {
 async function loadAmazonOrders() {
   if (!state.token) {
     state.amazonOrders = [];
+    state.amazonOrdersVisibleCount = 0;
     state.selectedAmazonOrderIds = new Set();
     renderAmazonOrdersTable();
     return;
@@ -7477,6 +7668,7 @@ async function loadAmazonOrders() {
 
   const list = await request("/orders/amazon");
   state.amazonOrders = Array.isArray(list) ? list : [];
+  state.amazonOrdersVisibleCount = state.inventoryPageSize;
   renderAmazonOrdersTable();
 }
 
@@ -7494,6 +7686,14 @@ async function deleteAmazonOrders(ids) {
     method: "POST",
     body: JSON.stringify({ ids }),
   });
+}
+
+function loadMoreAmazonOrdersIfNeeded() {
+  const panel = $("amazonOrderImport");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.amazonOrdersVisibleCount >= state.amazonOrders.length) return;
+  state.amazonOrdersVisibleCount += state.inventoryPageSize;
+  renderAmazonOrdersTable();
 }
 
 function renderFbaReplenishmentList() {
@@ -7583,6 +7783,84 @@ function loadMoreFbaReplenishmentsIfNeeded() {
   if (state.fbaReplenishmentsVisibleCount >= state.fbaReplenishments.length) return;
   state.fbaReplenishmentsVisibleCount += state.inventoryPageSize;
   renderFbaReplenishmentList();
+}
+
+function maybeAutoLoadAmazonOrders() {
+  const panel = $("amazonOrderImport");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("amazonOrdersTableWrap");
+  if (!tableWrap) return;
+  if (state.amazonOrdersVisibleCount >= state.amazonOrders.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreAmazonOrdersIfNeeded();
+}
+
+function maybeAutoLoadFbaReplenishments() {
+  const panel = $("fbaReplenishment");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("fbaReplenishmentTableWrap");
+  if (!tableWrap) return;
+  if (state.fbaReplenishmentsVisibleCount >= state.fbaReplenishments.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreFbaReplenishmentsIfNeeded();
+}
+
+function setupAmazonOrdersLoadObserver() {
+  if (amazonOrdersLoadObserver) {
+    amazonOrdersLoadObserver.disconnect();
+    amazonOrdersLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("amazonOrdersTableWrap");
+  const sentinel = $("amazonOrdersLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  amazonOrdersLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreAmazonOrdersIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  amazonOrdersLoadObserver.observe(sentinel);
+}
+
+function setupFbaReplenishmentLoadObserver() {
+  if (fbaReplenishmentLoadObserver) {
+    fbaReplenishmentLoadObserver.disconnect();
+    fbaReplenishmentLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("fbaReplenishmentTableWrap");
+  const sentinel = $("fbaReplenishmentLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  fbaReplenishmentLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreFbaReplenishmentsIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  fbaReplenishmentLoadObserver.observe(sentinel);
 }
 
 async function loadFbaReplenishments() {
@@ -8083,7 +8361,9 @@ async function reloadAll() {
     state.inventorySkus = [];
     state.emptyBoxes = [];
     state.orders = [];
+    state.ordersVisibleCount = 0;
     state.amazonOrders = [];
+    state.amazonOrdersVisibleCount = 0;
     state.selectedAmazonOrderIds = new Set();
     state.inventoryHomeProducts = [];
     state.inventoryHomePage = 1;
@@ -8107,6 +8387,7 @@ async function reloadAll() {
     state.skuManagementKeyword = "";
     state.skuManagementVisibleCount = 0;
     state.dataBackups = [];
+    state.dataBackupsVisibleCount = 0;
     state.inventoryVisibleCount = 0;
     state.usersVisibleCount = 0;
     state.auditVisibleCount = 0;
@@ -8115,6 +8396,7 @@ async function reloadAll() {
     state.skuEditRequestsHasMore = false;
     state.skuEditRequestsLoading = false;
     state.batchInboundVisibleCount = 0;
+    state.stocktakeVisibleCount = 0;
     state.fbaReplenishmentsVisibleCount = 0;
     state.fbaPendingCount = 0;
     state.productEditPendingCount = 0;
@@ -9119,7 +9401,7 @@ function bindForms() {
   $("openStocktakePlannerPanel").addEventListener("click", async () => {
     try {
       await Promise.all([loadShelves(), loadBoxes(), loadStocktakeTasks()]);
-      state.stocktakeVisibleCount = Math.min(30, state.stocktakeTasks.length);
+      state.stocktakeVisibleCount = Math.min(state.inventoryPageSize, state.stocktakeTasks.length);
       renderStocktakePlanner();
       switchPanel("stocktakePlanner");
     } catch (error) {
@@ -11263,11 +11545,8 @@ function bindScrollLoad() {
     loadMoreInventorySearchIfNeeded();
     loadMoreSkuManagementIfNeeded();
     loadMoreProductEditRequestsIfNeeded();
-    loadMoreBatchInboundOrdersIfNeeded();
-    loadMoreFbaReplenishmentsIfNeeded();
     loadMoreUsersIfNeeded();
     loadMoreAuditIfNeeded();
-    loadMoreStocktakeTasksIfNeeded();
   });
 
   const inventoryHomeTableWrap = $("inventoryHomeTableWrap");
@@ -11281,6 +11560,48 @@ function bindScrollLoad() {
   if (skuManagementTableWrap) {
     skuManagementTableWrap.addEventListener("scroll", () => {
       maybeAutoLoadSkuManagement();
+    });
+  }
+
+  const amazonOrdersTableWrap = $("amazonOrdersTableWrap");
+  if (amazonOrdersTableWrap) {
+    amazonOrdersTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadAmazonOrders();
+    });
+  }
+
+  const ordersTableWrap = $("ordersTableWrap");
+  if (ordersTableWrap) {
+    ordersTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadOrders();
+    });
+  }
+
+  const batchInboundTableWrap = $("batchInboundTableWrap");
+  if (batchInboundTableWrap) {
+    batchInboundTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadBatchInboundOrders();
+    });
+  }
+
+  const fbaReplenishmentTableWrap = $("fbaReplenishmentTableWrap");
+  if (fbaReplenishmentTableWrap) {
+    fbaReplenishmentTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadFbaReplenishments();
+    });
+  }
+
+  const stocktakePlannerTableWrap = $("stocktakePlannerTableWrap");
+  if (stocktakePlannerTableWrap) {
+    stocktakePlannerTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadStocktakeTasks();
+    });
+  }
+
+  const dataBackupTableWrap = $("dataBackupTableWrap");
+  if (dataBackupTableWrap) {
+    dataBackupTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadDataBackups();
     });
   }
 
@@ -11363,6 +11684,12 @@ ensureBrandingUi();
 ensureInventoryPanelUi();
 setupInventoryHomeLoadObserver();
 setupProductEditRequestLoadObserver();
+setupOrdersLoadObserver();
+setupAmazonOrdersLoadObserver();
+setupBatchInboundLoadObserver();
+setupFbaReplenishmentLoadObserver();
+setupStocktakePlannerLoadObserver();
+setupDataBackupLoadObserver();
 ensureOverseasWarehouseQueryUi();
 renderStocktakePlanner();
 bindTabs();

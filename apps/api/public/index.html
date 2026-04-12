@@ -591,8 +591,10 @@
         </article>
 
         <article class="card">
-          <h3>订单列表</h3>
-          <div class="overview-table-wrap">
+          <div class="card-head">
+            <h3>订单列表</h3>
+          </div>
+          <div id="ordersTableWrap" class="master-product-table-wrap">
             <table>
               <thead>
                 <tr>
@@ -611,6 +613,7 @@
               </thead>
               <tbody id="ordersBody"></tbody>
             </table>
+            <div id="ordersLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
           </div>
         </article>
       </section>
@@ -619,7 +622,6 @@
         <div class="panel-head">
           <h2>亚马逊订单导入</h2>
           <div class="panel-tools">
-            <button id="amazonBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
             <button id="refreshOrders" class="ghost">刷新</button>
             <button id="backToOrderProcessingBtn" class="ghost">返回订单处理</button>
           </div>
@@ -644,8 +646,11 @@
         </article>
 
         <article class="card">
-          <h3>亚马逊订单列表一览</h3>
-          <div class="overview-table-wrap">
+          <div class="card-head">
+            <h3>亚马逊订单列表一览</h3>
+            <button id="amazonBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
+          </div>
+          <div id="amazonOrdersTableWrap" class="master-product-table-wrap">
             <table>
               <thead>
                 <tr>
@@ -665,6 +670,7 @@
               </thead>
               <tbody id="amazonOrdersBody"></tbody>
             </table>
+            <div id="amazonOrdersLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
           </div>
         </article>
       </section>
@@ -726,53 +732,66 @@
           </article>
         </div>
 
-        <div class="card">
-          <h3>批量入库单列表</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>单号</th>
-                <th>状态</th>
-                <th>采集箱号范围</th>
-                <th>国内单号</th>
-                <th>海运单号</th>
-                <th>明细进度</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody id="batchInboundBody"></tbody>
-          </table>
-        </div>
+        <article class="card">
+          <div class="card-head">
+            <h3>批量入库单列表</h3>
+          </div>
+          <div id="batchInboundTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>单号</th>
+                  <th>状态</th>
+                  <th>采集箱号范围</th>
+                  <th>国内单号</th>
+                  <th>海运单号</th>
+                  <th>明细进度</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="batchInboundBody"></tbody>
+            </table>
+            <div id="batchInboundLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
 
       </section>
 
       <section class="panel" id="fbaReplenishment">
         <div class="panel-head">
           <h2>FBA补货申请一览</h2>
-          <div class="panel-tools">
-            <button id="fbaBatchOutboundBtn" type="button">出库</button>
-            <button id="downloadFbaOutboundExcelBtn" type="button">下载</button>
-            <button id="refreshFbaReplenishment" class="ghost">刷新</button>
-          </div>
+          <button id="refreshFbaReplenishment" class="ghost">刷新</button>
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th><input id="fbaSelectAll" type="checkbox" /></th>
-              <th>申请单号</th>
-              <th>状态</th>
-              <th>SKU</th>
-              <th>产品ID</th>
-              <th>产品名称</th>
-              <th>箱号</th>
-              <th>货架号</th>
-              <th>申请数量</th>
-              <th>实际数量</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="fbaReplenishmentBody"></tbody>
-        </table>
+        <article class="card">
+          <div class="card-head">
+            <h3>FBA补货申请一览</h3>
+            <div class="action-row">
+              <button id="fbaBatchOutboundBtn" type="button">出库</button>
+              <button id="downloadFbaOutboundExcelBtn" type="button">下载</button>
+            </div>
+          </div>
+          <div id="fbaReplenishmentTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th><input id="fbaSelectAll" type="checkbox" /></th>
+                  <th>申请单号</th>
+                  <th>状态</th>
+                  <th>SKU</th>
+                  <th>产品ID</th>
+                  <th>产品名称</th>
+                  <th>箱号</th>
+                  <th>货架号</th>
+                  <th>申请数量</th>
+                  <th>实际数量</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="fbaReplenishmentBody"></tbody>
+            </table>
+            <div id="fbaReplenishmentLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
       </section>
 
       <section class="panel" id="overview">
@@ -931,22 +950,30 @@
         <article class="card">
           <p id="stocktakePlannerSummary" class="muted">点击“生成库存盘点任务”后，会按规则生成盘点任务。</p>
         </article>
-        <table>
-          <thead>
-            <tr>
-              <th>任务日期</th>
-              <th>任务编号</th>
-              <th>货架号</th>
-              <th>状态</th>
-              <th>确认日期</th>
-              <th>确认人</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="stocktakePlannerBody">
-            <tr><td colspan="7" class="muted">暂无盘点任务。</td></tr>
-          </tbody>
-        </table>
+        <article class="card">
+          <div class="card-head">
+            <h3>库存盘点任务一览</h3>
+          </div>
+          <div id="stocktakePlannerTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>任务日期</th>
+                  <th>任务编号</th>
+                  <th>货架号</th>
+                  <th>状态</th>
+                  <th>确认日期</th>
+                  <th>确认人</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="stocktakePlannerBody">
+                <tr><td colspan="7" class="muted">暂无盘点任务。</td></tr>
+              </tbody>
+            </table>
+            <div id="stocktakePlannerLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
       </section>
       <section class="panel" id="dataBackup">
         <div class="panel-head">
@@ -959,17 +986,25 @@
         <article class="card">
           <p class="muted">系统会在每周日 23:59 自动执行数据库备份。仅保留最近 5 个 ZIP 文件，历史备份仅保留记录不可下载。</p>
         </article>
-        <table>
-          <thead>
-            <tr>
-              <th>备份时间</th>
-              <th>文件名</th>
-              <th>文件大小</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="dataBackupBody"></tbody>
-        </table>
+        <article class="card">
+          <div class="card-head">
+            <h3>数据备份记录一览</h3>
+          </div>
+          <div id="dataBackupTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>备份时间</th>
+                  <th>文件名</th>
+                  <th>文件大小</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="dataBackupBody"></tbody>
+            </table>
+            <div id="dataBackupLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
       </section>
 
       <section class="panel" id="users">
