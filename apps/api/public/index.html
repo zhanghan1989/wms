@@ -1019,10 +1019,18 @@
             <button type="button" id="openDepartmentManageModal">部门管理</button>
           </div>
         </article>
-        <table>
-          <thead><tr><th>用户名</th><th>部门</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
-          <tbody id="usersBody"></tbody>
-        </table>
+        <article class="card">
+          <div class="card-head">
+            <h3>用户列表一览</h3>
+          </div>
+          <div id="usersTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead><tr><th>用户名</th><th>部门</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+              <tbody id="usersBody"></tbody>
+            </table>
+            <div id="usersLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
       </section>
 
       <section class="panel" id="shelves">
@@ -1037,10 +1045,17 @@
           <label>名称<input id="newShelfName" /></label>
           <button type="submit">新增货架</button>
         </form>
-        <table>
-          <thead><tr><th>货架号</th><th>名称</th><th>状态</th></tr></thead>
-          <tbody id="shelvesBody"></tbody>
-        </table>
+        <article class="card">
+          <div class="card-head">
+            <h3>货架列表一览</h3>
+          </div>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead><tr><th>货架号</th><th>名称</th><th>状态</th></tr></thead>
+              <tbody id="shelvesBody"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
 
       <section class="panel" id="boxes">
@@ -1057,10 +1072,17 @@
           </label>
           <button type="submit">新增箱号</button>
         </form>
-        <table>
-          <thead><tr><th>箱号</th><th>货架号</th><th>状态</th></tr></thead>
-          <tbody id="boxesBody"></tbody>
-        </table>
+        <article class="card">
+          <div class="card-head">
+            <h3>箱号列表一览</h3>
+          </div>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead><tr><th>箱号</th><th>货架号</th><th>状态</th></tr></thead>
+              <tbody id="boxesBody"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
 
       <section class="panel" id="audit">
@@ -1068,10 +1090,18 @@
           <h2>操作日志</h2>
           <button id="refreshAudit" class="ghost">刷新</button>
         </div>
-        <table>
-          <thead><tr><th>时间</th><th>实体</th><th>事件</th><th>操作人</th></tr></thead>
-          <tbody id="auditBody"></tbody>
-        </table>
+        <article class="card">
+          <div class="card-head">
+            <h3>操作日志一览</h3>
+          </div>
+          <div id="auditTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>实体</th><th>事件</th><th>操作人</th></tr></thead>
+              <tbody id="auditBody"></tbody>
+            </table>
+            <div id="auditLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
       </section>
     </section>
   </main>
@@ -1238,10 +1268,12 @@
         <div></div>
         <button id="refreshMyAudit" class="ghost" type="button">刷新</button>
       </div>
-      <table>
-        <thead><tr><th>时间</th><th>实体</th><th>事件</th></tr></thead>
-        <tbody id="myAuditBody"></tbody>
-      </table>
+      <div id="myAuditTableWrap" class="manage-table-scroll">
+        <table>
+          <thead><tr><th>时间</th><th>实体</th><th>事件</th></tr></thead>
+          <tbody id="myAuditBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -1463,7 +1495,7 @@
   </div>
 
   <div id="shopManageModal" class="modal hidden">
-    <div class="modal-card modal-wide modal-manage">
+    <div class="modal-card modal-wide modal-manage modal-manage-scroll">
       <div class="modal-head">
         <h3>店铺管理</h3>
         <button type="button" class="ghost" data-action="closeShopManageModal">关闭</button>
@@ -1472,10 +1504,12 @@
         <input id="shopNameInput" maxlength="128" placeholder="请输入店铺名称" required />
         <button type="submit" class="small-btn manage-create-btn">新增店铺</button>
       </form>
-      <table>
-        <thead><tr><th>店铺</th><th>操作</th></tr></thead>
-        <tbody id="shopsBody"></tbody>
-      </table>
+      <div class="manage-table-scroll">
+        <table>
+          <thead><tr><th>店铺</th><th>操作</th></tr></thead>
+          <tbody id="shopsBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -1539,7 +1573,7 @@
   </div>
 
   <div id="departmentManageModal" class="modal hidden">
-    <div class="modal-card modal-wide modal-manage">
+    <div class="modal-card modal-wide modal-manage modal-manage-scroll">
       <div class="modal-head">
         <h3>部门管理</h3>
         <button type="button" class="ghost" data-action="closeDepartmentManageModal">关闭</button>
@@ -1553,15 +1587,17 @@
         />
         <button type="submit" class="small-btn manage-create-btn">&#26032;&#22686;&#37096;&#38376;</button>
       </form>
-      <table>
-        <thead>
-          <tr>
-            <th>部门</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="departmentOptionsBody"></tbody>
-      </table>
+      <div class="manage-table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>部门</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="departmentOptionsBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 

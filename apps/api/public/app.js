@@ -278,6 +278,8 @@ let ordersLoadObserver = null;
 let amazonOrdersLoadObserver = null;
 let fbaReplenishmentLoadObserver = null;
 let batchInboundLoadObserver = null;
+let usersLoadObserver = null;
+let auditLoadObserver = null;
 let stocktakePlannerLoadObserver = null;
 let dataBackupLoadObserver = null;
 let shelfManageLoadObserver = null;
@@ -3260,6 +3262,45 @@ function loadMoreUsersIfNeeded() {
   if (state.usersVisibleCount >= state.users.length) return;
   state.usersVisibleCount += state.inventoryPageSize;
   renderUsersTable();
+}
+
+function maybeAutoLoadUsers() {
+  const panel = $("users");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("usersTableWrap");
+  if (!tableWrap) return;
+  if (state.usersVisibleCount >= state.users.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreUsersIfNeeded();
+}
+
+function setupUsersLoadObserver() {
+  if (usersLoadObserver) {
+    usersLoadObserver.disconnect();
+    usersLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("usersTableWrap");
+  const sentinel = $("usersLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  usersLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreUsersIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  usersLoadObserver.observe(sentinel);
 }
 
 function findUserById(userId) {
@@ -7421,6 +7462,45 @@ function loadMoreAuditIfNeeded() {
   renderAuditTable();
 }
 
+function maybeAutoLoadAudit() {
+  const panel = $("audit");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("auditTableWrap");
+  if (!tableWrap) return;
+  if (state.auditVisibleCount >= state.auditLogs.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreAuditIfNeeded();
+}
+
+function setupAuditLoadObserver() {
+  if (auditLoadObserver) {
+    auditLoadObserver.disconnect();
+    auditLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("auditTableWrap");
+  const sentinel = $("auditLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  auditLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreAuditIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  auditLoadObserver.observe(sentinel);
+}
+
 async function loadAudit() {
   await refreshAuditFbaRequestNoMap();
   const result = await request("/audit-logs?page=1&pageSize=2000");
@@ -7450,10 +7530,10 @@ function renderMyAuditTable() {
 function loadMoreMyAuditIfNeeded() {
   const modal = $("myAuditModal");
   if (!modal || modal.classList.contains("hidden")) return;
-  const card = modal.querySelector(".modal-card");
-  if (!card) return;
+  const tableWrap = $("myAuditTableWrap");
+  if (!tableWrap) return;
   const threshold = 80;
-  const nearBottom = card.scrollTop + card.clientHeight >= card.scrollHeight - threshold;
+  const nearBottom = tableWrap.scrollTop + tableWrap.clientHeight >= tableWrap.scrollHeight - threshold;
   if (!nearBottom) return;
   if (state.myAuditVisibleCount >= state.myAuditLogs.length) return;
   state.myAuditVisibleCount += state.inventoryPageSize;
@@ -11577,6 +11657,13 @@ function bindScrollLoad() {
     });
   }
 
+  const usersTableWrap = $("usersTableWrap");
+  if (usersTableWrap) {
+    usersTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadUsers();
+    });
+  }
+
   const batchInboundTableWrap = $("batchInboundTableWrap");
   if (batchInboundTableWrap) {
     batchInboundTableWrap.addEventListener("scroll", () => {
@@ -11605,9 +11692,16 @@ function bindScrollLoad() {
     });
   }
 
-  const myAuditCard = document.querySelector("#myAuditModal .modal-card");
-  if (myAuditCard) {
-    myAuditCard.addEventListener("scroll", () => {
+  const auditTableWrap = $("auditTableWrap");
+  if (auditTableWrap) {
+    auditTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadAudit();
+    });
+  }
+
+  const myAuditTableWrap = $("myAuditTableWrap");
+  if (myAuditTableWrap) {
+    myAuditTableWrap.addEventListener("scroll", () => {
       loadMoreMyAuditIfNeeded();
     });
   }
@@ -11687,6 +11781,8 @@ setupProductEditRequestLoadObserver();
 setupOrdersLoadObserver();
 setupAmazonOrdersLoadObserver();
 setupBatchInboundLoadObserver();
+setupUsersLoadObserver();
+setupAuditLoadObserver();
 setupFbaReplenishmentLoadObserver();
 setupStocktakePlannerLoadObserver();
 setupDataBackupLoadObserver();

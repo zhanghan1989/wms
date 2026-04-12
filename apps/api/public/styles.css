@@ -802,12 +802,20 @@ button.ghost {
 
 .overview-table-wrap table {
   margin: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.overview-table-wrap thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .overview-table-wrap thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   background: #eef5f0;
 }
 
@@ -1021,12 +1029,20 @@ td {
 
 .master-product-table-wrap table {
   margin: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.master-product-table-wrap thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .master-product-table-wrap thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   background: #eef5f0;
 }
 
