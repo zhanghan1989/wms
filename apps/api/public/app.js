@@ -375,7 +375,7 @@ function expireAuthSession(message = "未授权，请重新登录", sourcePath =
 async function fetchDeployVersion() {
   let res;
   try {
-    res = await fetch("/api/auth/deploy-version");
+    res = await fetch("/api/auth/deploy-version", { cache: "no-store" });
   } catch (error) {
     const requestError = new Error(normalizeErrorMessage(error?.message || "Failed to fetch"));
     requestError.status = 0;
@@ -2708,6 +2708,12 @@ async function request(path, options = {}) {
 }
 
 async function fetchAuthorizedResponse(path, options = {}) {
+  const normalizedPath = String(path || "").trim();
+  const shouldSkipDeployVersionCheck = Boolean(options.skipDeployVersionCheck);
+  if (state.token && !shouldSkipDeployVersionCheck) {
+    await ensureAuthDeployVersion();
+  }
+
   const headers = { ...(options.headers || {}) };
   const isFormData = options.body instanceof FormData;
   if (!isFormData && options.body !== undefined && !headers["Content-Type"]) {
@@ -2733,7 +2739,16 @@ async function fetchAuthorizedResponse(path, options = {}) {
         message = payload.message;
       }
     } catch {}
-    throw new Error(normalizeErrorMessage(message));
+    const normalizedMessage = normalizeErrorMessage(message);
+    if (response.status === 401 && state.token) {
+      expireAuthSession(normalizedMessage, normalizedPath);
+      const silentAuthError = new Error(SILENT_AUTH_ERROR_MESSAGE);
+      silentAuthError.status = 401;
+      silentAuthError.path = normalizedPath;
+      silentAuthError.responseMessage = normalizedMessage;
+      throw silentAuthError;
+    }
+    throw new Error(normalizedMessage);
   }
 
   return response;

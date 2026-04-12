@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Response } from 'express';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthUser } from '../common/types/auth-user.type';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -11,7 +12,8 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Get('deploy-version')
-  async deployVersion(): Promise<{ deployVersion: string }> {
+  async deployVersion(@Res({ passthrough: true }) res: Response): Promise<{ deployVersion: string }> {
+    res.setHeader('Cache-Control', 'no-store');
     return {
       deployVersion: this.authService.getDeploySessionVersion(),
     };
