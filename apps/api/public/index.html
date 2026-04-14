@@ -6,6 +6,40 @@
   <title>库存管理系统</title>
   <script>
     (function () {
+      var AUTH_DEPLOY_VERSION_STORAGE_KEY = "wms_auth_deploy_version";
+      var AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY = "wms_auth_deploy_version_session";
+      var AUTH_DEPLOY_VERSION_COOKIE_KEY = "wms_auth_deploy_version";
+
+      function readCookieValue(name) {
+        var target = String(name || "").trim() + "=";
+        if (!target) return "";
+        var parts = String(document.cookie || "").split(";");
+        for (var i = 0; i < parts.length; i += 1) {
+          var item = String(parts[i] || "").trim();
+          if (!item || item.indexOf(target) !== 0) continue;
+          try {
+            return decodeURIComponent(item.slice(target.length));
+          } catch (error) {
+            return item.slice(target.length);
+          }
+        }
+        return "";
+      }
+
+      function readPersistedDeployVersion() {
+        try {
+          var sessionValue = String(sessionStorage.getItem(AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY) || "").trim();
+          if (sessionValue) return sessionValue;
+        } catch (error) {}
+
+        try {
+          var storageValue = String(localStorage.getItem(AUTH_DEPLOY_VERSION_STORAGE_KEY) || "").trim();
+          if (storageValue) return storageValue;
+        } catch (error) {}
+
+        return String(readCookieValue(AUTH_DEPLOY_VERSION_COOKIE_KEY) || "").trim();
+      }
+
       function appendStylesheet(href) {
         var link = document.createElement("link");
         link.rel = "stylesheet";
@@ -20,8 +54,13 @@
         document.head.appendChild(script);
       }
 
-      async function loadVersionedAssets() {
-        var deployVersion = "";
+      function appendVersionedAssets(version) {
+        var assetVersion = String(version || "").trim() || String(Date.now());
+        appendStylesheet("/styles.css?v=" + encodeURIComponent(assetVersion));
+        appendModuleScript("/app.js?v=" + encodeURIComponent(assetVersion));
+      }
+
+      async function fetchDeployVersion() {
         try {
           var response = await fetch("/api/auth/deploy-version", {
             cache: "no-store",
@@ -32,7 +71,7 @@
           });
           var payload = await response.json();
           if (response.ok) {
-            deployVersion = String(
+            return String(
               (payload && payload.data && payload.data.deployVersion) ||
               payload.deployVersion ||
               ""
@@ -41,11 +80,18 @@
         } catch (error) {
           console.warn("failed to fetch deploy version for static assets", error);
         }
+        return "";
+      }
 
-        var assetVersion = deployVersion || String(Date.now());
-        window.__WMS_DEPLOY_VERSION__ = deployVersion;
-        appendStylesheet("/styles.css?v=" + encodeURIComponent(assetVersion));
-        appendModuleScript("/app.js?v=" + encodeURIComponent(assetVersion));
+      async function loadVersionedAssets() {
+        var initialVersion = readPersistedDeployVersion();
+        window.__WMS_DEPLOY_VERSION__ = initialVersion;
+        appendVersionedAssets(initialVersion);
+
+        var latestVersion = await fetchDeployVersion();
+        if (latestVersion) {
+          window.__WMS_DEPLOY_VERSION__ = latestVersion;
+        }
       }
 
       loadVersionedAssets();
