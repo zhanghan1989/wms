@@ -15,9 +15,11 @@
     "check:text": "node scripts/check-text-encoding.mjs",
     "prisma:generate:api": "npm run -w api prisma:generate && bash scripts/ensure-prisma-client-link.sh",
     "ci:verify": "npm run lint && npm run build && npm run test",
+    "branch:sync-develop": "bash scripts/wms-sync-develop.sh",
     "work:start": "bash scripts/wms-work-start.sh",
     "work:stop": "bash scripts/wms-work-stop.sh",
     "push:branch": "bash scripts/wms-push.sh",
+    "release:main": "bash scripts/wms-release-main.sh",
     "deploy:main": "bash scripts/wms-deploy-main.sh"
   },
   "keywords": [],

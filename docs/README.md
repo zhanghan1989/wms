@@ -8,6 +8,7 @@
 ## 部署
 - 阿里云部署：`DEPLOY_ALIYUN.md`
 - 本地开发：`LOCAL_DEV.md`
+- 分支与发布流程：见 `LOCAL_DEV.md`
 
 ## 设计与规范
 - `AI_DEV_SPEC.md`

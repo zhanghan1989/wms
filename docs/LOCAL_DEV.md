@@ -2,19 +2,27 @@
 
 ## 推荐流程
 
-1. 确认当前分支不是 `main`
-2. 运行 `npm run work:start`
+1. 先运行 `npm run branch:sync-develop`
+2. 在 `develop` 分支运行 `npm run work:start`
 3. 开发并本地验证
 4. 提交代码
 5. 运行 `npm run push:branch`
-6. 需要正式部署时，再切到 `main` 并运行 `npm run deploy:main`
+6. 需要正式发布时，在 `develop` 分支运行 `npm run release:main`
+
+## 分支约定
+
+- `develop`：日常开发分支
+- `main`：正式发布分支，push 后会触发 GitHub Actions 部署
+- 如果 `main` 有热修复或其他更新，先运行 `npm run branch:sync-develop` 再继续开发
 
 ## 常用命令
 
+- 同步最新 `main` 到 `develop`：`npm run branch:sync-develop`
 - 开工作业：`npm run work:start`
 - 结束作业：`npm run work:stop`
 - 推送当前开发分支：`npm run push:branch`
-- 推送 `main` 并触发部署：`npm run deploy:main`
+- 从 `develop` 发布到 `main`：`npm run release:main`
+- 直接推送 `main` 并触发部署：`npm run deploy:main`
 
 ## 当前本地环境
 
@@ -53,6 +61,15 @@
 
 ## 发布脚本
 
+### `npm run branch:sync-develop`
+
+- 要求工作区干净
+- 自动 `fetch origin`
+- 自动切到 `develop`
+- 先快进到最新 `origin/develop`
+- 再把最新 `origin/main` merge 到 `develop`
+- 适合每天开工前先执行一次
+
 ### `npm run push:branch`
 
 - 禁止在 `main` 上使用
@@ -64,6 +81,22 @@
 如果只是临时快速推送，可加：
 
 - `bash scripts/wms-push.sh --skip-checks`
+
+### `npm run release:main`
+
+- 只允许在 `develop` 上执行
+- 要求工作区干净
+- 要求本地 `develop` 与远程 `origin/develop` 同步
+- 要求当前 `develop` 已包含最新 `origin/main`
+- 默认执行 `npm run prisma:generate:api`
+- 然后执行 `lint`、`build`、`test`
+- 二次确认后将 `main` 快进到当前 `develop`
+- 自动 `git push origin main`
+- 该动作会触发 GitHub Actions 部署
+
+快速确认模式：
+
+- `bash scripts/wms-release-main.sh --yes`
 
 ### `npm run deploy:main`
 
@@ -77,6 +110,8 @@
 快速确认模式：
 
 - `bash scripts/wms-deploy-main.sh --yes`
+
+这个命令更适合紧急情况下你已经明确在 `main` 上处理热修复时使用。
 
 ## 数据库说明
 

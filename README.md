@@ -31,10 +31,12 @@ WMS 项目第一个正式版（`v1.0.0`）代码仓库。
 `http://<server-ip>:3000/`
 
 ## 推荐开发命令
+- 同步 `main` 到 `develop`：`npm run branch:sync-develop`
 - 开工作业：`npm run work:start`
 - 结束作业：`npm run work:stop`
 - 推送当前开发分支：`npm run push:branch`
-- 推送 `main` 并触发部署：`npm run deploy:main`
+- 从 `develop` 发布到 `main`：`npm run release:main`
+- 直接推送 `main` 并触发部署：`npm run deploy:main`
 
 详细说明见：`docs/LOCAL_DEV.md`
 
@@ -61,3 +63,4 @@ WMS 项目第一个正式版（`v1.0.0`）代码仓库。
 ## CI/CD
 - Workflow: `.github/workflows/deploy-ecs.yml`
 - 触发方式：push `main` 或手动 `workflow_dispatch`
+- 日常开发建议在 `develop`，`main` 只用于正式发布
