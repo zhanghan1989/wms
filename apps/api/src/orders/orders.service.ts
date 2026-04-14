@@ -3,6 +3,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { readFile } from 'fs/promises';
 import { AmazonOrderRecord, OrderSendStatus, Prisma, RakutenOrderRecord } from '@prisma/client';
 import * as iconv from 'iconv-lite';
+import * as JSZip from 'jszip';
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
@@ -303,8 +304,30 @@ interface YamatoExportItem {
   recipientName: string;
 }
 
+interface YamatoMergedExportRow {
+  orderId: string;
+  deliveryDate: string;
+  deliveryTimeSlot: string;
+  phone: string;
+  postalCode: string;
+  address1: string;
+  address2: string;
+  recipientName: string;
+  itemSummary: string;
+  isMergedDuplicate: boolean;
+}
+
+interface YamatoTemplateRowCell {
+  column: string;
+  styleId: string | null;
+}
+
+interface YamatoTemplateRow {
+  rowAttributes: string;
+  cells: YamatoTemplateRowCell[];
+}
+
 const YAMATO_IMPORT_TEMPLATE_FILE = 'ヤマト-インポート.xlsx';
-const YAMATO_DUPLICATE_ROW_FILL = 'FFF59D';
 const YAMATO_EXPORT_FIXED_VALUES = {
   recipientSuffix: '様',
   senderPhone: '0477277616',
@@ -594,128 +617,8 @@ export class OrdersService {
       throw new BadRequestException('没有可生成打单导入文件的订单');
     }
 
-    const workbook = await this.loadYamatoTemplateWorkbook();
-    const sheetName = workbook.SheetNames[0];
-    if (!sheetName) {
-      throw new NotFoundException(`模板文件缺少工作表：${YAMATO_IMPORT_TEMPLATE_FILE}`);
-    }
-    const sheet = workbook.Sheets[sheetName];
-    const templateRowIndex = 1;
-    const startRowIndex = 1;
-    const maxColumnIndex = YAMATO_COLUMNS.deliveryType;
     const currentDate = this.formatCurrentYamatoDate();
-
-    mergedRows.forEach((row, rowOffset) => {
-      const targetRowIndex = startRowIndex + rowOffset;
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.orderId, row.orderId, templateRowIndex);
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.shipDate, currentDate, templateRowIndex);
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.deliveryDate,
-        this.normalizeYamatoOptionalCellValue(row.deliveryDate),
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.deliveryTimeSlot,
-        this.normalizeYamatoOptionalCellValue(row.deliveryTimeSlot),
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.phone, row.phone, templateRowIndex);
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.postalCode, row.postalCode, templateRowIndex);
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.address1, row.address1, templateRowIndex);
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.address2,
-        this.normalizeYamatoOptionalCellValue(row.address2),
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.recipientName,
-        row.recipientName,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.recipientSuffix,
-        YAMATO_EXPORT_FIXED_VALUES.recipientSuffix,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.senderPhone,
-        YAMATO_EXPORT_FIXED_VALUES.senderPhone,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.senderPostalCode,
-        YAMATO_EXPORT_FIXED_VALUES.senderPostalCode,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.senderAddress,
-        YAMATO_EXPORT_FIXED_VALUES.senderAddress,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.senderName,
-        YAMATO_EXPORT_FIXED_VALUES.senderName,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.itemSummary,
-        row.itemSummary,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.invoiceCustomerCode,
-        YAMATO_EXPORT_FIXED_VALUES.invoiceCustomerCode,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.coolType,
-        YAMATO_EXPORT_FIXED_VALUES.coolType,
-        templateRowIndex,
-      );
-      this.writeYamatoRowCell(
-        sheet,
-        targetRowIndex,
-        YAMATO_COLUMNS.deliveryType,
-        YAMATO_EXPORT_FIXED_VALUES.deliveryType,
-        templateRowIndex,
-      );
-
-      if (row.isMergedDuplicate) {
-        this.highlightYamatoRow(sheet, targetRowIndex, maxColumnIndex, templateRowIndex);
-      }
-    });
-
-    this.extendSheetRange(sheet, startRowIndex + mergedRows.length - 1, maxColumnIndex);
-
-    const content = XLSX.write(workbook, {
-      type: 'buffer',
-      bookType: 'xlsx',
-      cellStyles: true,
-    }) as Buffer;
+    const content = await this.buildYamatoWorkbookBuffer(mergedRows, currentDate);
     const timestamp = this.formatYamatoFileNameStamp();
     return {
       fileName: `ヤマト-インポート_${timestamp}.xlsx`,
@@ -771,12 +674,7 @@ export class OrdersService {
     };
   }
 
-  private mergeYamatoExportItems(items: YamatoExportItem[]): Array<
-    Omit<YamatoExportItem, 'source' | 'id' | 'productId' | 'quantity'> & {
-      itemSummary: string;
-      isMergedDuplicate: boolean;
-    }
-  > {
+  private mergeYamatoExportItems(items: YamatoExportItem[]): YamatoMergedExportRow[] {
     const mergedByOrderId = new Map<
       string,
       Omit<YamatoExportItem, 'source' | 'id' | 'productId' | 'quantity'> & {
@@ -823,7 +721,7 @@ export class OrdersService {
     }));
   }
 
-  private async loadYamatoTemplateWorkbook(): Promise<XLSX.WorkBook> {
+  private async loadYamatoTemplateBuffer(): Promise<Buffer> {
     const cwd = process.cwd();
     const candidates = [
       join(cwd, 'docs', YAMATO_IMPORT_TEMPLATE_FILE),
@@ -833,8 +731,7 @@ export class OrdersService {
 
     for (const templatePath of candidates) {
       try {
-        const content = await readFile(templatePath);
-        return XLSX.read(content, { type: 'buffer', cellStyles: true });
+        return await readFile(templatePath);
       } catch {
         // continue
       }
@@ -843,77 +740,192 @@ export class OrdersService {
     throw new NotFoundException(`模板文件不存在：${YAMATO_IMPORT_TEMPLATE_FILE}`);
   }
 
-  private writeYamatoRowCell(
-    sheet: XLSX.WorkSheet,
-    rowIndex: number,
-    columnIndex: number,
-    value: string,
-    templateRowIndex: number,
-  ): void {
-    const ref = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
-    const templateRef = XLSX.utils.encode_cell({ r: templateRowIndex, c: columnIndex });
-    const templateCell = sheet[templateRef] as XLSX.CellObject | undefined;
-    const existingCell = sheet[ref] as XLSX.CellObject | undefined;
-    const cell: XLSX.CellObject = {
-      ...(existingCell ?? {}),
-      t: 's',
-      v: value,
-      w: value,
+  private async buildYamatoWorkbookBuffer(
+    rows: YamatoMergedExportRow[],
+    currentDate: string,
+  ): Promise<Buffer> {
+    const templateBuffer = await this.loadYamatoTemplateBuffer();
+    const zip = await JSZip.loadAsync(templateBuffer);
+    const sheetPath = 'xl/worksheets/sheet1.xml';
+    const sheetFile = zip.file(sheetPath);
+    if (!sheetFile) {
+      throw new NotFoundException(`模板缺少工作表文件：${sheetPath}`);
+    }
+
+    const originalSheetXml = await sheetFile.async('string');
+    const originalRows = this.extractYamatoSheetRows(originalSheetXml);
+    const headerRowXml = originalRows.get(1);
+    if (!headerRowXml) {
+      throw new NotFoundException('模板缺少第 1 行表头');
+    }
+
+    const dimensionMatch = originalSheetXml.match(/<dimension[^>]*ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"\s*\/>/);
+    const lastTemplateRow = dimensionMatch ? Number.parseInt(dimensionMatch[4], 10) : 80;
+    const finalColumn = dimensionMatch?.[3] ?? 'CQ';
+    const baseTemplateRowNumber = originalRows.has(2) ? 2 : 1;
+    const maxRow = Math.max(lastTemplateRow, rows.length + 1);
+    const builtRows: string[] = [headerRowXml];
+
+    for (let rowNumber = 2; rowNumber <= maxRow; rowNumber += 1) {
+      const sourceRowNumber = originalRows.has(rowNumber) ? rowNumber : baseTemplateRowNumber;
+      const templateRowXml = originalRows.get(sourceRowNumber);
+      if (!templateRowXml) {
+        throw new NotFoundException(`模板缺少第 ${sourceRowNumber} 行`);
+      }
+
+      const exportRow = rows[rowNumber - 2];
+      if (!exportRow && originalRows.has(rowNumber)) {
+        builtRows.push(originalRows.get(rowNumber) as string);
+        continue;
+      }
+
+      builtRows.push(
+        this.buildYamatoSheetRowXml(
+          rowNumber,
+          this.parseYamatoTemplateRow(templateRowXml, sourceRowNumber),
+          exportRow ?? null,
+          currentDate,
+        ),
+      );
+    }
+
+    const nextSheetXml = originalSheetXml
+      .replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${builtRows.join('')}</sheetData>`)
+      .replace(
+        /<dimension[^>]*ref="[A-Z]+\d+:[A-Z]+\d+"\s*\/>/,
+        `<dimension ref="A1:${finalColumn}${maxRow}"/>`,
+      );
+
+    zip.file(sheetPath, nextSheetXml);
+    return zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+    });
+  }
+
+  private extractYamatoSheetRows(sheetXml: string): Map<number, string> {
+    const rows = new Map<number, string>();
+    const matches = sheetXml.match(/<row\b[^>]*r="\d+"[^>]*>[\s\S]*?<\/row>/g) ?? [];
+    matches.forEach((rowXml) => {
+      const rowNumberMatch = rowXml.match(/<row\b[^>]*r="(\d+)"/);
+      const rowNumber = Number.parseInt(rowNumberMatch?.[1] ?? '', 10);
+      if (Number.isInteger(rowNumber) && rowNumber > 0) {
+        rows.set(rowNumber, rowXml);
+      }
+    });
+    return rows;
+  }
+
+  private parseYamatoTemplateRow(rowXml: string, sourceRowNumber: number): YamatoTemplateRow {
+    const rowMatch = rowXml.match(/^<row\b([^>]*)>([\s\S]*?)<\/row>$/);
+    if (!rowMatch) {
+      throw new NotFoundException(`模板第 ${sourceRowNumber} 行格式无效`);
+    }
+
+    const rowAttributes = rowMatch[1].replace(/\s+r="\d+"/, '');
+    const cells: YamatoTemplateRowCell[] = [];
+    const cellMatches = rowMatch[2].match(/<c\b[^>]*\/>|<c\b[^>]*>[\s\S]*?<\/c>/g) ?? [];
+    cellMatches.forEach((cellXml) => {
+      const refMatch = cellXml.match(/\br="([A-Z]+)\d+"/);
+      if (!refMatch?.[1]) {
+        return;
+      }
+      const styleMatch = cellXml.match(/\bs="([^"]+)"/);
+      cells.push({
+        column: refMatch[1],
+        styleId: styleMatch?.[1] ?? null,
+      });
+    });
+
+    return {
+      rowAttributes,
+      cells,
     };
-
-    if (templateCell?.s) {
-      cell.s = this.cloneXlsxStyle(templateCell.s);
-    }
-
-    sheet[ref] = cell;
   }
 
-  private highlightYamatoRow(
-    sheet: XLSX.WorkSheet,
-    rowIndex: number,
-    maxColumnIndex: number,
-    templateRowIndex: number,
-  ): void {
-    for (let columnIndex = 0; columnIndex <= maxColumnIndex; columnIndex += 1) {
-      const ref = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
-      const templateRef = XLSX.utils.encode_cell({ r: templateRowIndex, c: columnIndex });
-      const templateCell = sheet[templateRef] as XLSX.CellObject | undefined;
-      const existingCell = sheet[ref] as XLSX.CellObject | undefined;
-      const cell: XLSX.CellObject = existingCell ?? {
-        t: 's',
-        v: '',
-        w: '',
-      };
-      cell.s = {
-        ...(templateCell?.s ? this.cloneXlsxStyle(templateCell.s) : {}),
-        fill: {
-          patternType: 'solid',
-          fgColor: { rgb: YAMATO_DUPLICATE_ROW_FILL },
-          bgColor: { rgb: YAMATO_DUPLICATE_ROW_FILL },
-        },
-      };
-      sheet[ref] = cell;
-    }
+  private buildYamatoSheetRowXml(
+    rowNumber: number,
+    template: YamatoTemplateRow,
+    row: YamatoMergedExportRow | null,
+    currentDate: string,
+  ): string {
+    const values = row ? this.buildYamatoRowValueMap(row, currentDate) : new Map<string, string>();
+    const cellsXml = template.cells
+      .map((cell) => this.buildYamatoCellXml(cell, rowNumber, values.get(cell.column) ?? ''))
+      .join('');
+    return `<row r="${rowNumber}"${template.rowAttributes}>${cellsXml}</row>`;
   }
 
-  private extendSheetRange(sheet: XLSX.WorkSheet, maxRowIndex: number, maxColumnIndex: number): void {
-    const currentRange = sheet['!ref']
-      ? XLSX.utils.decode_range(sheet['!ref'])
-      : XLSX.utils.decode_range(`A1:${XLSX.utils.encode_cell({ r: maxRowIndex, c: maxColumnIndex })}`);
-    if (maxRowIndex > currentRange.e.r) {
-      currentRange.e.r = maxRowIndex;
-    }
-    if (maxColumnIndex > currentRange.e.c) {
-      currentRange.e.c = maxColumnIndex;
-    }
-    sheet['!ref'] = XLSX.utils.encode_range(currentRange);
+  private buildYamatoRowValueMap(row: YamatoMergedExportRow, currentDate: string): Map<string, string> {
+    const values = new Map<string, string>();
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.orderId), row.orderId);
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.shipDate), currentDate);
+    values.set(
+      XLSX.utils.encode_col(YAMATO_COLUMNS.deliveryDate),
+      this.normalizeYamatoOptionalCellValue(row.deliveryDate),
+    );
+    values.set(
+      XLSX.utils.encode_col(YAMATO_COLUMNS.deliveryTimeSlot),
+      this.normalizeYamatoOptionalCellValue(row.deliveryTimeSlot),
+    );
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.phone), row.phone);
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.postalCode), row.postalCode);
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.address1), row.address1);
+    values.set(
+      XLSX.utils.encode_col(YAMATO_COLUMNS.address2),
+      this.normalizeYamatoOptionalCellValue(row.address2),
+    );
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.recipientName), row.recipientName);
+    values.set(
+      XLSX.utils.encode_col(YAMATO_COLUMNS.recipientSuffix),
+      YAMATO_EXPORT_FIXED_VALUES.recipientSuffix,
+    );
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.senderPhone), YAMATO_EXPORT_FIXED_VALUES.senderPhone);
+    values.set(
+      XLSX.utils.encode_col(YAMATO_COLUMNS.senderPostalCode),
+      YAMATO_EXPORT_FIXED_VALUES.senderPostalCode,
+    );
+    values.set(
+      XLSX.utils.encode_col(YAMATO_COLUMNS.senderAddress),
+      YAMATO_EXPORT_FIXED_VALUES.senderAddress,
+    );
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.senderName), YAMATO_EXPORT_FIXED_VALUES.senderName);
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.itemSummary), row.itemSummary);
+    values.set(
+      XLSX.utils.encode_col(YAMATO_COLUMNS.invoiceCustomerCode),
+      YAMATO_EXPORT_FIXED_VALUES.invoiceCustomerCode,
+    );
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.coolType), YAMATO_EXPORT_FIXED_VALUES.coolType);
+    values.set(
+      XLSX.utils.encode_col(YAMATO_COLUMNS.deliveryType),
+      YAMATO_EXPORT_FIXED_VALUES.deliveryType,
+    );
+    return values;
   }
 
-  private cloneXlsxStyle(style: unknown): Record<string, unknown> | undefined {
-    if (!style || typeof style !== 'object') {
-      return undefined;
+  private buildYamatoCellXml(cell: YamatoTemplateRowCell, rowNumber: number, value: string): string {
+    const attrs = [`r="${cell.column}${rowNumber}"`];
+    if (cell.styleId) {
+      attrs.push(`s="${cell.styleId}"`);
     }
-    return JSON.parse(JSON.stringify(style)) as Record<string, unknown>;
+    const normalizedValue = String(value ?? '');
+    if (!normalizedValue) {
+      return `<c ${attrs.join(' ')}/>`;
+    }
+    const preserveSpace = /^\s|\s$|\n/.test(normalizedValue);
+    const escaped = this.escapeXmlText(normalizedValue);
+    return `<c ${attrs.join(' ')} t="inlineStr"><is><t${
+      preserveSpace ? ' xml:space="preserve"' : ''
+    }>${escaped}</t></is></c>`;
+  }
+
+  private escapeXmlText(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
   }
 
   private getJsonField(payload: Prisma.JsonValue | null | undefined, key: string): string | null {
