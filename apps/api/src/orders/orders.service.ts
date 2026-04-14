@@ -3,7 +3,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { readFile } from 'fs/promises';
 import { AmazonOrderRecord, OrderSendStatus, Prisma, RakutenOrderRecord } from '@prisma/client';
 import * as iconv from 'iconv-lite';
-import JSZip from 'jszip';
+import * as JSZip from 'jszip';
 import { join } from 'path';
 import * as XLSX from 'xlsx';
 import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
