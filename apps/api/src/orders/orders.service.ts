@@ -304,7 +304,6 @@ interface YamatoExportItem {
 }
 
 const YAMATO_IMPORT_TEMPLATE_FILE = 'ヤマト-インポート.xlsx';
-const YAMATO_DUPLICATE_ROW_FILL = 'FFF59D';
 const YAMATO_EXPORT_FIXED_VALUES = {
   recipientSuffix: '様',
   senderPhone: '0477277616',
@@ -600,113 +599,95 @@ export class OrdersService {
       throw new NotFoundException(`模板文件缺少工作表：${YAMATO_IMPORT_TEMPLATE_FILE}`);
     }
     const sheet = workbook.Sheets[sheetName];
-    const templateRowIndex = 1;
     const startRowIndex = 1;
     const maxColumnIndex = YAMATO_COLUMNS.deliveryType;
     const currentDate = this.formatCurrentYamatoDate();
 
     mergedRows.forEach((row, rowOffset) => {
       const targetRowIndex = startRowIndex + rowOffset;
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.orderId, row.orderId, templateRowIndex);
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.shipDate, currentDate, templateRowIndex);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.orderId, row.orderId);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.shipDate, currentDate);
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.deliveryDate,
         this.normalizeYamatoOptionalCellValue(row.deliveryDate),
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.deliveryTimeSlot,
         this.normalizeYamatoOptionalCellValue(row.deliveryTimeSlot),
-        templateRowIndex,
       );
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.phone, row.phone, templateRowIndex);
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.postalCode, row.postalCode, templateRowIndex);
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.address1, row.address1, templateRowIndex);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.phone, row.phone);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.postalCode, row.postalCode);
+      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.address1, row.address1);
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.address2,
         this.normalizeYamatoOptionalCellValue(row.address2),
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.recipientName,
         row.recipientName,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.recipientSuffix,
         YAMATO_EXPORT_FIXED_VALUES.recipientSuffix,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.senderPhone,
         YAMATO_EXPORT_FIXED_VALUES.senderPhone,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.senderPostalCode,
         YAMATO_EXPORT_FIXED_VALUES.senderPostalCode,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.senderAddress,
         YAMATO_EXPORT_FIXED_VALUES.senderAddress,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.senderName,
         YAMATO_EXPORT_FIXED_VALUES.senderName,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.itemSummary,
         row.itemSummary,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.invoiceCustomerCode,
         YAMATO_EXPORT_FIXED_VALUES.invoiceCustomerCode,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.coolType,
         YAMATO_EXPORT_FIXED_VALUES.coolType,
-        templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.deliveryType,
         YAMATO_EXPORT_FIXED_VALUES.deliveryType,
-        templateRowIndex,
       );
-
-      if (row.isMergedDuplicate) {
-        this.highlightYamatoRow(sheet, targetRowIndex, maxColumnIndex, templateRowIndex);
-      }
     });
 
     this.extendSheetRange(sheet, startRowIndex + mergedRows.length - 1, maxColumnIndex);
@@ -714,7 +695,6 @@ export class OrdersService {
     const content = XLSX.write(workbook, {
       type: 'buffer',
       bookType: 'xlsx',
-      cellStyles: true,
     }) as Buffer;
     const timestamp = this.formatYamatoFileNameStamp();
     return {
@@ -834,7 +814,7 @@ export class OrdersService {
     for (const templatePath of candidates) {
       try {
         const content = await readFile(templatePath);
-        return XLSX.read(content, { type: 'buffer', cellStyles: true });
+        return XLSX.read(content, { type: 'buffer' });
       } catch {
         // continue
       }
@@ -848,52 +828,20 @@ export class OrdersService {
     rowIndex: number,
     columnIndex: number,
     value: string,
-    templateRowIndex: number,
   ): void {
     const ref = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
-    const templateRef = XLSX.utils.encode_cell({ r: templateRowIndex, c: columnIndex });
-    const templateCell = sheet[templateRef] as XLSX.CellObject | undefined;
     const existingCell = sheet[ref] as XLSX.CellObject | undefined;
     const cell: XLSX.CellObject = {
       ...(existingCell ?? {}),
       t: 's',
       v: value,
-      w: value,
     };
-
-    if (templateCell?.s) {
-      cell.s = this.cloneXlsxStyle(templateCell.s);
-    }
+    delete (cell as XLSX.CellObject & { w?: string }).w;
+    delete (cell as XLSX.CellObject & { r?: string }).r;
+    delete (cell as XLSX.CellObject & { h?: string }).h;
+    delete (cell as XLSX.CellObject & { s?: unknown }).s;
 
     sheet[ref] = cell;
-  }
-
-  private highlightYamatoRow(
-    sheet: XLSX.WorkSheet,
-    rowIndex: number,
-    maxColumnIndex: number,
-    templateRowIndex: number,
-  ): void {
-    for (let columnIndex = 0; columnIndex <= maxColumnIndex; columnIndex += 1) {
-      const ref = XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex });
-      const templateRef = XLSX.utils.encode_cell({ r: templateRowIndex, c: columnIndex });
-      const templateCell = sheet[templateRef] as XLSX.CellObject | undefined;
-      const existingCell = sheet[ref] as XLSX.CellObject | undefined;
-      const cell: XLSX.CellObject = existingCell ?? {
-        t: 's',
-        v: '',
-        w: '',
-      };
-      cell.s = {
-        ...(templateCell?.s ? this.cloneXlsxStyle(templateCell.s) : {}),
-        fill: {
-          patternType: 'solid',
-          fgColor: { rgb: YAMATO_DUPLICATE_ROW_FILL },
-          bgColor: { rgb: YAMATO_DUPLICATE_ROW_FILL },
-        },
-      };
-      sheet[ref] = cell;
-    }
   }
 
   private extendSheetRange(sheet: XLSX.WorkSheet, maxRowIndex: number, maxColumnIndex: number): void {
@@ -907,13 +855,6 @@ export class OrdersService {
       currentRange.e.c = maxColumnIndex;
     }
     sheet['!ref'] = XLSX.utils.encode_range(currentRange);
-  }
-
-  private cloneXlsxStyle(style: unknown): Record<string, unknown> | undefined {
-    if (!style || typeof style !== 'object') {
-      return undefined;
-    }
-    return JSON.parse(JSON.stringify(style)) as Record<string, unknown>;
   }
 
   private getJsonField(payload: Prisma.JsonValue | null | undefined, key: string): string | null {
