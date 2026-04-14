@@ -8078,6 +8078,49 @@ async function downloadOverseasYamatoImport(items) {
   );
 }
 
+function focusOverseasYamatoScanInput() {
+  const input = $("overseasYamatoScanInput");
+  if (!input) return;
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
+function getOverseasOrdersByOrderId(orderId) {
+  const normalized = String(orderId || "").trim();
+  if (!normalized) return [];
+  return state.overseasOrderProcessingOrders.filter(
+    (item) => String(item?.orderId || "").trim() === normalized && item?.id,
+  );
+}
+
+async function submitOverseasYamatoScan() {
+  const input = $("overseasYamatoScanInput");
+  const rawValue = String(input?.value || "").trim();
+  if (!rawValue) {
+    throw new Error("请先扫码或输入订单号");
+  }
+
+  const matchedOrders = getOverseasOrdersByOrderId(rawValue);
+  if (!matchedOrders.length) {
+    throw new Error(`未找到订单号 ${rawValue} 对应的海外仓订单`);
+  }
+
+  const fileName = await downloadOverseasYamatoImport(
+    matchedOrders.map((item) => ({
+      source: item.source,
+      id: item.id,
+    })),
+  );
+
+  if (input) {
+    input.value = "";
+  }
+  showToast(`已下载 ${fileName}`);
+  focusOverseasYamatoScanInput();
+}
+
 async function deleteAmazonOrders(ids) {
   return request("/orders/amazon/delete-batch", {
     method: "POST",
@@ -9933,14 +9976,43 @@ function bindForms() {
     try {
       switchPanel("overseasOrderProcessing");
       await loadOverseasOrderProcessingOrders();
+      focusOverseasYamatoScanInput();
     } catch (error) {
       showToast(error.message, true);
     }
   });
 
   $("refreshOverseasOrderProcessing")?.addEventListener("click", () =>
-    loadOverseasOrderProcessingOrders().catch((error) => showToast(error.message, true)),
+    loadOverseasOrderProcessingOrders()
+      .then(() => focusOverseasYamatoScanInput())
+      .catch((error) => showToast(error.message, true)),
   );
+
+  $("overseasYamatoScanSubmitBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "出单中...", async () => {
+        await submitOverseasYamatoScan();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+      focusOverseasYamatoScanInput();
+    }
+  });
+
+  $("overseasYamatoScanInput")?.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const button = $("overseasYamatoScanSubmitBtn");
+    try {
+      await withBusyButton(button, "出单中...", async () => {
+        await submitOverseasYamatoScan();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+      focusOverseasYamatoScanInput();
+    }
+  });
 
   $("backToOrderProcessingFromOverseasBtn")?.addEventListener("click", () => {
     switchPanel("orderProcessing");

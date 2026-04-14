@@ -720,6 +720,30 @@ button.ghost {
   align-items: end;
 }
 
+.overseas-scan-row {
+  align-items: end;
+  justify-content: flex-start;
+  margin: 6px 0 14px;
+  gap: 10px;
+}
+
+.overseas-scan-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: min(520px, 100%);
+}
+
+.overseas-scan-field label {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.overseas-scan-field input {
+  width: min(520px, 100%);
+}
+
 .overseas-form.overseas-form-three {
   grid-template-columns: repeat(3, minmax(140px, 1fr));
 }

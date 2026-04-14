@@ -613,20 +613,26 @@ export class OrdersService {
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.deliveryDate,
-        row.deliveryDate || '-',
+        this.normalizeYamatoOptionalCellValue(row.deliveryDate),
         templateRowIndex,
       );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
         YAMATO_COLUMNS.deliveryTimeSlot,
-        row.deliveryTimeSlot || '-',
+        this.normalizeYamatoOptionalCellValue(row.deliveryTimeSlot),
         templateRowIndex,
       );
       this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.phone, row.phone, templateRowIndex);
       this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.postalCode, row.postalCode, templateRowIndex);
       this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.address1, row.address1, templateRowIndex);
-      this.writeYamatoRowCell(sheet, targetRowIndex, YAMATO_COLUMNS.address2, row.address2, templateRowIndex);
+      this.writeYamatoRowCell(
+        sheet,
+        targetRowIndex,
+        YAMATO_COLUMNS.address2,
+        this.normalizeYamatoOptionalCellValue(row.address2),
+        templateRowIndex,
+      );
       this.writeYamatoRowCell(
         sheet,
         targetRowIndex,
@@ -726,6 +732,7 @@ export class OrdersService {
   }
 
   private mapRakutenOrderToYamatoItem(row: OrderListItem): YamatoExportItem {
+    const normalizedPhone = this.normalizeYamatoPhone(String(row.shippingPhone ?? '').trim());
     return {
       source: 'rakuten',
       id: row.id.toString(),
@@ -738,7 +745,7 @@ export class OrdersService {
       deliveryTimeSlot: String(
         this.getJsonField(row.rawPayload, RAKUTEN_ORDER_HEADERS.deliveryTimeSlot) ?? row.deliveryTimeSlot ?? '',
       ).trim(),
-      phone: String(row.shippingPhone ?? '').trim() || '-',
+      phone: normalizedPhone || '-',
       postalCode: String(row.shippingPostalCode ?? '').trim() || '-',
       address1: this.concatAddress([row.shippingPrefecture, row.shippingCity]),
       address2: String(row.shippingAddress ?? '').trim() || '-',
@@ -747,6 +754,7 @@ export class OrdersService {
   }
 
   private mapAmazonOrderToYamatoItem(row: AmazonEnrichedOrderListItem): YamatoExportItem {
+    const normalizedPhone = this.normalizeYamatoPhone(String(row.buyerPhoneNumber ?? '').trim());
     return {
       source: 'amazon',
       id: row.id.toString(),
@@ -755,7 +763,7 @@ export class OrdersService {
       quantity: Number(row.quantityPurchased ?? 0) || 0,
       deliveryDate: '-',
       deliveryTimeSlot: '-',
-      phone: String(row.buyerPhoneNumber ?? '').trim() || '-',
+      phone: normalizedPhone || '-',
       postalCode: String(row.shipPostalCode ?? '').trim() || '-',
       address1: this.concatAddress([row.shipState, row.shipAddress1]),
       address2: this.concatAddress([row.shipAddress2, row.shipAddress3]),
@@ -926,6 +934,21 @@ export class OrdersService {
       .filter((part) => part.length > 0)
       .join('');
     return text || '-';
+  }
+
+  private normalizeYamatoPhone(value: string | null | undefined): string {
+    const normalized = String(value ?? '')
+      .normalize('NFKC')
+      .replace(/[^\d]/g, '');
+    return normalized.trim();
+  }
+
+  private normalizeYamatoOptionalCellValue(value: string | null | undefined): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized || normalized === '-') {
+      return '';
+    }
+    return normalized;
   }
 
   private formatCurrentYamatoDate(date: Date = new Date()): string {
