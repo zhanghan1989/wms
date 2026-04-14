@@ -57,7 +57,8 @@
 
 - 禁止在 `main` 上使用
 - 要求工作区干净
-- 默认执行 `lint`、`build`、`test`
+- 默认执行 `npm run prisma:generate:api`
+- 然后执行 `lint`、`build`、`test`
 - 通过后推送当前分支
 
 如果只是临时快速推送，可加：
@@ -68,7 +69,8 @@
 
 - 只允许在 `main` 上执行
 - 要求工作区干净
-- 默认执行 `lint`、`build`、`test`
+- 默认执行 `npm run prisma:generate:api`
+- 然后执行 `lint`、`build`、`test`
 - 二次确认后执行 `git push origin main`
 - 该动作会触发 GitHub Actions 部署
 

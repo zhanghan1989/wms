@@ -32,9 +32,8 @@ fi
 
 if [[ "$RUN_CHECKS" -eq 1 ]]; then
   cd "$ROOT_DIR"
-  npm run lint
-  npm run build
-  npm run test
+  npm run prisma:generate:api
+  npm run ci:verify
 fi
 
 if git -C "$ROOT_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then

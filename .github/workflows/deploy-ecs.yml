@@ -1,6 +1,9 @@
 name: Deploy ECS
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -16,17 +19,62 @@ on:
           - "false"
 
 concurrency:
-  group: deploy-main
+  group: deploy-main-${{ github.event_name }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
-  deploy:
+  validate:
+    name: Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate:api
+
+      - name: Run verification checks
+        run: npm run ci:verify
+
+  deploy:
+    name: Deploy
+    needs: validate
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+    env:
+      DEPLOY_REF: ${{ github.sha }}
+      RUN_MIGRATIONS: ${{ github.event.inputs.run_migrations || 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Deployment Summary
+        run: |
+          {
+            echo "## Deployment plan"
+            echo ""
+            echo "- Ref: \`${DEPLOY_REF}\`"
+            echo "- Run migrations: \`${RUN_MIGRATIONS}\`"
+            echo "- Trigger: \`${{ github.event_name }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Deploy to ECS by SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -37,6 +85,7 @@ jobs:
           key: ${{ secrets.ECS_SSH_KEY }}
           command_timeout: 30m
           script_stop: true
+          envs: DEPLOY_REF,RUN_MIGRATIONS
           script: |
             set -eu
             JOB_START_TS="$(date +%s)"
@@ -82,15 +131,19 @@ jobs:
             cd ~/wms
             timed "git_fetch" git fetch --all --prune
             timed "git_checkout_main" git checkout main
-            timed "git_reset_origin_main" git reset --hard origin/main
+            timed "git_reset_deploy_ref" git reset --hard "${DEPLOY_REF}"
             DEPLOY_SESSION_VERSION="$(git rev-parse HEAD)"
             export DEPLOY_SESSION_VERSION
             echo "Using DEPLOY_SESSION_VERSION=${DEPLOY_SESSION_VERSION}"
-            timed "git_show_head" git rev-parse --short HEAD
+            timed "git_show_head" git show -s --format="%H %s" HEAD
             timed_retry "compose_up_db_redis" 3 docker compose up -d db redis
             timed_retry "compose_build_api_once" 3 docker compose build api
-            echo "Running prisma migrate deploy..."
-            timed_retry "prisma_migrate_deploy" 3 docker compose run --rm --no-deps api npm run -w api prisma:migrate:deploy
+            if [ "${RUN_MIGRATIONS}" = "true" ]; then
+              echo "Running prisma migrate deploy..."
+              timed_retry "prisma_migrate_deploy" 3 docker compose run --rm --no-deps api npm run -w api prisma:migrate:deploy
+            else
+              echo "Skipping prisma migrate deploy."
+            fi
             timed_retry "compose_up_api_recreate" 3 docker compose up -d --force-recreate api
             timed "compose_ps" docker compose ps
             timed "api_logs_tail_120" sh -c "docker compose logs --tail=120 api || true"
