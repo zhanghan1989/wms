@@ -122,6 +122,11 @@ function readPersistedAuthToken() {
   return "";
 }
 
+function applyInitialAuthStateAttribute(isLoggedIn) {
+  if (typeof document === "undefined" || !document.documentElement) return;
+  document.documentElement.setAttribute("data-wms-auth-state", isLoggedIn ? "logged-in" : "logged-out");
+}
+
 function readPersistedAuthDeployVersion() {
   let sessionValue = "";
   try {
@@ -2245,6 +2250,7 @@ function applyRoleView() {
 }
 
 function setAuthGate(isLoggedIn) {
+  applyInitialAuthStateAttribute(Boolean(isLoggedIn));
   $("loginGate").classList.toggle("hidden", isLoggedIn);
   $("appTopbar").classList.toggle("hidden", !isLoggedIn);
   $("appLayout").classList.toggle("hidden", !isLoggedIn);
