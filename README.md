@@ -30,6 +30,14 @@ WMS 项目第一个正式版（`v1.0.0`）代码仓库。
 5. 访问系统  
 `http://<server-ip>:3000/`
 
+## 推荐开发命令
+- 开工作业：`npm run work:start`
+- 结束作业：`npm run work:stop`
+- 推送当前开发分支：`npm run push:branch`
+- 推送 `main` 并触发部署：`npm run deploy:main`
+
+详细说明见：`docs/LOCAL_DEV.md`
+
 ## 默认账号（仅用于初始化）
 - `admin / Admin@123`
 - `employee / Employee@123`
@@ -38,6 +46,7 @@ WMS 项目第一个正式版（`v1.0.0`）代码仓库。
 
 ## 文档索引
 - 文档总览：`docs/README.md`
+- 本地开发：`docs/LOCAL_DEV.md`
 - 发布说明：`docs/RELEASE_v1.0.0.md`
 - GitHub Release 文案：`docs/GITHUB_RELEASE_v1.0.0.md`
 - 部署文档：`docs/DEPLOY_ALIYUN.md`
