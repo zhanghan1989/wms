@@ -4,8 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>库存管理系统</title>
+  <style>
+    .hidden {
+      display: none !important;
+    }
+
+    html[data-wms-auth-state="logged-in"] #loginGate {
+      display: none !important;
+    }
+
+    html[data-wms-auth-state="logged-out"] #appTopbar,
+    html[data-wms-auth-state="logged-out"] #appLayout {
+      display: none !important;
+    }
+  </style>
   <script>
     (function () {
+      var AUTH_STORAGE_KEY = "wms_token";
+      var AUTH_SESSION_STORAGE_KEY = "wms_token_session";
+      var AUTH_COOKIE_KEY = "wms_token";
       var AUTH_DEPLOY_VERSION_STORAGE_KEY = "wms_auth_deploy_version";
       var AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY = "wms_auth_deploy_version_session";
       var AUTH_DEPLOY_VERSION_COOKIE_KEY = "wms_auth_deploy_version";
@@ -38,6 +55,20 @@
         } catch (error) {}
 
         return String(readCookieValue(AUTH_DEPLOY_VERSION_COOKIE_KEY) || "").trim();
+      }
+
+      function readPersistedAuthToken() {
+        try {
+          var sessionValue = String(sessionStorage.getItem(AUTH_SESSION_STORAGE_KEY) || "").trim();
+          if (sessionValue) return sessionValue;
+        } catch (error) {}
+
+        try {
+          var storageValue = String(localStorage.getItem(AUTH_STORAGE_KEY) || "").trim();
+          if (storageValue) return storageValue;
+        } catch (error) {}
+
+        return String(readCookieValue(AUTH_COOKIE_KEY) || "").trim();
       }
 
       function appendStylesheet(href) {
@@ -84,6 +115,12 @@
       }
 
       async function loadVersionedAssets() {
+        var authToken = readPersistedAuthToken();
+        document.documentElement.setAttribute(
+          "data-wms-auth-state",
+          authToken ? "logged-in" : "logged-out"
+        );
+
         var initialVersion = readPersistedDeployVersion();
         window.__WMS_DEPLOY_VERSION__ = initialVersion;
         appendVersionedAssets(initialVersion);
