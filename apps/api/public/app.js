@@ -8093,11 +8093,20 @@ function focusOverseasYamatoScanInput() {
   });
 }
 
-function getOverseasOrdersByOrderId(orderId) {
-  const normalized = String(orderId || "").trim();
+function getOverseasOrdersByScanValue(scanValue) {
+  const normalized = String(scanValue || "").trim();
   if (!normalized) return [];
+
+  const normalizedUpper = normalized.toUpperCase();
+  const matchByProductId = state.overseasOrderProcessingOrders.filter(
+    (item) => String(item?.resolvedProductId || "").trim().toUpperCase() === normalizedUpper && item?.id,
+  );
+  if (matchByProductId.length) {
+    return matchByProductId;
+  }
+
   return state.overseasOrderProcessingOrders.filter(
-    (item) => String(item?.orderId || "").trim() === normalized && item?.id,
+    (item) => String(item?.orderId || "").trim().toUpperCase() === normalizedUpper && item?.id,
   );
 }
 
@@ -8105,12 +8114,12 @@ async function submitOverseasYamatoScan() {
   const input = $("overseasYamatoScanInput");
   const rawValue = String(input?.value || "").trim();
   if (!rawValue) {
-    throw new Error("请先扫码或输入订单号");
+    throw new Error("请先扫码或输入产品ID");
   }
 
-  const matchedOrders = getOverseasOrdersByOrderId(rawValue);
+  const matchedOrders = getOverseasOrdersByScanValue(rawValue);
   if (!matchedOrders.length) {
-    throw new Error(`未找到订单号 ${rawValue} 对应的海外仓订单`);
+    throw new Error(`未找到产品ID ${rawValue} 对应的海外仓订单`);
   }
 
   const fileName = await downloadOverseasYamatoImport(
