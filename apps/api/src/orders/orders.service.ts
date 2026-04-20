@@ -4143,7 +4143,7 @@ export class OrdersService {
       return [];
     }
 
-    const lookupCodes = Array.from(
+    const lookupProductIds = Array.from(
       new Set(
         rows
           .flatMap((row) => [row.skuCode, row.setComponentSkuCode])
@@ -4152,7 +4152,7 @@ export class OrdersService {
       ),
     );
 
-    if (!lookupCodes.length) {
+    if (!lookupProductIds.length) {
       return rows.map((row) => ({
         ...row,
         resolvedProductId: null,
@@ -4161,74 +4161,25 @@ export class OrdersService {
       }));
     }
 
-    const skuRows = await this.prisma.sku.findMany({
+    const productRows = await this.prisma.masterProduct.findMany({
       where: {
-        productId: { not: null },
-        OR: [{ sku: { in: lookupCodes } }, { rbSku: { in: lookupCodes } }, { fbmSku: { in: lookupCodes } }],
+        productId: { in: lookupProductIds },
       },
       select: {
-        sku: true,
-        rbSku: true,
-        fbmSku: true,
         productId: true,
+        stockQty: true,
       },
     });
-
-    const productIds = Array.from(
-      new Set(
-        skuRows
-          .map((row) => String(row.productId ?? '').trim())
-          .filter((value) => value.length > 0),
-      ),
-    );
-
-    const productRows = productIds.length
-      ? await this.prisma.masterProduct.findMany({
-          where: {
-            productId: { in: productIds },
-          },
-          select: {
-            productId: true,
-            stockQty: true,
-          },
-        })
-      : [];
 
     const stockQtyByProductId = new Map(
       productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
     );
 
-    const productIdBySkuCode = new Map<string, string>();
-    const normalizedProductIdBySkuCode = new Map<string, string>();
-    skuRows.forEach((row) => {
-      const productId = String(row.productId ?? '').trim();
-      if (!productId) return;
-
-      [row.sku, row.rbSku, row.fbmSku].forEach((candidate) => {
-        const rawKey = String(candidate ?? '').trim();
-        if (rawKey && !productIdBySkuCode.has(rawKey)) {
-          productIdBySkuCode.set(rawKey, productId);
-        }
-
-        const normalizedKey = normalizeAmazonSkuLookupKey(candidate);
-        if (normalizedKey && !normalizedProductIdBySkuCode.has(normalizedKey)) {
-          normalizedProductIdBySkuCode.set(normalizedKey, productId);
-        }
-      });
-    });
-
-    const resolveProductId = (value: string | null): string | null => {
-      const rawKey = String(value ?? '').trim();
-      if (!rawKey) return null;
-      return (
-        productIdBySkuCode.get(rawKey) ??
-        normalizedProductIdBySkuCode.get(normalizeAmazonSkuLookupKey(rawKey)) ??
-        null
-      );
-    };
-
     return rows.map((row) => {
-      const productId = resolveProductId(row.skuCode) ?? resolveProductId(row.setComponentSkuCode);
+      const productId =
+        String(row.skuCode ?? '').trim() ||
+        String(row.setComponentSkuCode ?? '').trim() ||
+        null;
       const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
 
       return {
