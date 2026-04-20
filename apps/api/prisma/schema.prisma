@@ -474,14 +474,17 @@ model StockMovement {
   refType      String       @map("ref_type") @db.VarChar(32)
   refId        BigInt       @map("ref_id") @db.UnsignedBigInt
   boxId        BigInt       @map("box_id") @db.UnsignedBigInt
-  skuId        BigInt       @map("sku_id") @db.UnsignedBigInt
+  productId    String?      @map("product_id") @db.VarChar(128)
+  skuId        BigInt?      @map("sku_id") @db.UnsignedBigInt
   qtyDelta     Int          @map("qty_delta")
   operatorId   BigInt       @map("operator_id") @db.UnsignedBigInt
   createdAt    DateTime     @default(now()) @map("created_at")
   box          Box          @relation(fields: [boxId], references: [id])
-  sku          Sku          @relation(fields: [skuId], references: [id])
+  product      MasterProduct? @relation(fields: [productId], references: [productId])
+  sku          Sku?         @relation(fields: [skuId], references: [id])
   operator     User         @relation(fields: [operatorId], references: [id])
 
+  @@index([productId, createdAt])
   @@index([skuId, createdAt])
   @@index([boxId, createdAt])
   @@map("stock_movements")
@@ -802,6 +805,7 @@ model MasterProduct {
   updatedAt       DateTime @updatedAt @map("updated_at")
   skus            Sku[]
   boxInventories  MasterProductBoxInventory[]
+  stockMovements  StockMovement[]
   inboundItems    InboundOrderItem[]
   syncRecords     MasterProductSyncRecord[]
 

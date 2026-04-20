@@ -1424,6 +1424,7 @@ export class InventoryService {
           refType: 'inventory_adjust_order',
           refId: order.id,
           boxId: item.boxId,
+          productId,
           skuId: item.skuId,
           qtyDelta: item.qtyDelta,
           operatorId,
@@ -2305,7 +2306,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       _sum: { qty: true },
     }),
     service.prisma.stockMovement.groupBy({
-      by: ['skuId'],
+      by: ['productId'],
       where: {
         ...outboundWhereBase,
         createdAt: { gte: from30d },
@@ -2313,7 +2314,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       _sum: { qtyDelta: true },
     }),
     service.prisma.stockMovement.groupBy({
-      by: ['skuId'],
+      by: ['productId'],
       where: {
         ...outboundWhereBase,
         createdAt: { gte: from14d },
@@ -2321,7 +2322,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       _sum: { qtyDelta: true },
     }),
     service.prisma.stockMovement.groupBy({
-      by: ['skuId'],
+      by: ['productId'],
       where: {
         ...outboundWhereBase,
         createdAt: { gte: from7d },
@@ -2329,7 +2330,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       _sum: { qtyDelta: true },
     }),
     service.prisma.stockMovement.groupBy({
-      by: ['skuId'],
+      by: ['productId'],
       where: {
         ...outboundWhereBase,
         createdAt: { gte: from90d },
@@ -2337,7 +2338,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       _sum: { qtyDelta: true },
     }),
     service.prisma.stockMovement.groupBy({
-      by: ['skuId'],
+      by: ['productId'],
       where: {
         ...outboundWhereBase,
         createdAt: { gte: from270d },
@@ -2363,12 +2364,10 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     activeProductIdSet.add(productId);
   });
 
-  const skuIdToProductId = new Map<string, string>();
   const skuCodeToProductId = new Map<string, string>();
   activeSkus.forEach((item) => {
     const productId = String(item.productId || '').trim();
     if (!productId) return;
-    skuIdToProductId.set(item.id.toString(), productId);
     const skuCode = String(item.sku || '').trim();
     if (skuCode) {
       skuCodeToProductId.set(skuCode, productId);
@@ -2396,10 +2395,10 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     inTransitByProduct.set(productId, (inTransitByProduct.get(productId) ?? 0) + qty);
   });
 
-  const toOutboundMap = (rows: Array<{ skuId: bigint; _sum: { qtyDelta: number | null } }>) => {
+  const toOutboundMap = (rows: Array<{ productId: string | null; _sum: { qtyDelta: number | null } }>) => {
     const map = new Map<string, number>();
     rows.forEach((row) => {
-      const productId = skuIdToProductId.get(row.skuId.toString());
+      const productId = String(row.productId || '').trim();
       if (!productId) return;
       const qty = Math.max(0, -Number(row._sum.qtyDelta ?? 0));
       if (qty <= 0) return;
@@ -3062,6 +3061,7 @@ async function manualAdjustByProduct(
           refType: 'inventory_adjust_order',
           refId: adjustOrder.id,
           boxId: box.id,
+          productId,
           skuId: sku.id,
           qtyDelta,
           operatorId,
@@ -3613,6 +3613,7 @@ async function outboundFbaReplenishmentsByProduct(
           refType: 'fba_replenishment',
           refId: row.id,
           boxId: row.boxId,
+          productId: String(row.sku.productId || '').trim(),
           skuId: row.skuId,
           qtyDelta,
           operatorId,

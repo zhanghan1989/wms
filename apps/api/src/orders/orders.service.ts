@@ -1605,8 +1605,6 @@ export class OrdersService {
         }
       }
 
-      const skuIdByItemId = await this.resolveOverseasPickingBatchItemSkuIds(tx, normalizedItems);
-
       for (const item of normalizedItems) {
         const qty = item.actualQty;
         if (item.dispatchMode !== OVERSEAS_DISPATCH_MODE.OVERSEAS) {
@@ -1625,10 +1623,6 @@ export class OrdersService {
           qty,
           item.productId,
         );
-        const skuId = skuIdByItemId.get(item.id.toString());
-        if (!skuId) {
-          throw new ConflictException(`产品 ${item.productId} 未找到可记录出库流水的 SKU`);
-        }
 
         for (const allocation of allocations) {
           await tx.masterProductBoxInventory.update({
@@ -1648,7 +1642,7 @@ export class OrdersService {
               refType: 'overseas_picking_batch',
               refId: batch.id,
               boxId: allocation.boxId,
-              skuId,
+              productId: item.productId,
               qtyDelta: -allocation.qty,
               operatorId,
             },
@@ -2733,77 +2727,6 @@ export class OrdersService {
       shelfCode: nextItem.shelfCode,
       boxCode: nextItem.boxCode,
     };
-  }
-
-  private async resolveOverseasPickingBatchItemSkuIds(
-    tx: Prisma.TransactionClient,
-    items: Array<{
-      id: bigint;
-      source: string;
-      skuCode: string | null;
-      productId: string;
-    }>,
-  ): Promise<Map<string, bigint | null>> {
-    const lookupCodes = Array.from(
-      new Set(
-        items
-          .map((item) => String(item.skuCode ?? '').trim())
-          .filter((value) => value.length > 0),
-      ),
-    );
-    const productIds = Array.from(
-      new Set(
-        items
-          .map((item) => String(item.productId ?? '').trim())
-          .filter((value) => value.length > 0),
-      ),
-    );
-
-    const skuWhereOr: Prisma.SkuWhereInput[] = [];
-    if (lookupCodes.length) {
-      skuWhereOr.push({
-        OR: [{ sku: { in: lookupCodes } }, { rbSku: { in: lookupCodes } }, { fbmSku: { in: lookupCodes } }],
-      });
-    }
-    if (productIds.length) {
-      skuWhereOr.push({ productId: { in: productIds } });
-    }
-
-    const skuRows = await tx.sku.findMany({
-      where: skuWhereOr.length ? { OR: skuWhereOr } : undefined,
-      select: {
-        id: true,
-        sku: true,
-        rbSku: true,
-        fbmSku: true,
-        productId: true,
-      },
-      orderBy: [{ id: 'asc' }],
-    });
-
-    const skuIdByCode = new Map<string, bigint>();
-    const firstSkuIdByProductId = new Map<string, bigint>();
-    skuRows.forEach((row) => {
-      const productId = String(row.productId ?? '').trim();
-      if (productId && !firstSkuIdByProductId.has(productId)) {
-        firstSkuIdByProductId.set(productId, row.id);
-      }
-      [row.sku, row.rbSku, row.fbmSku].forEach((candidate) => {
-        const key = String(candidate ?? '').trim();
-        if (key && !skuIdByCode.has(key)) {
-          skuIdByCode.set(key, row.id);
-        }
-      });
-    });
-
-    return new Map(
-      items.map((item) => {
-        const skuCode = String(item.skuCode ?? '').trim();
-        const directSkuId = skuCode ? skuIdByCode.get(skuCode) ?? null : null;
-        const fallbackSkuId = firstSkuIdByProductId.get(item.productId) ?? null;
-        return [item.id.toString(), directSkuId ?? fallbackSkuId] as const;
-      }),
-    );
   }
 
   private allocateOverseasPickingQtyAcrossBoxes(
