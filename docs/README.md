@@ -14,6 +14,9 @@
 - `AI_DEV_SPEC.md`
 - `UTF8_TEXT_COMMANDS.md`
 
+## 开发交接
+- `订单管理续开发交接_20260416.md`
+
 ## 模板文件
 - `批量上传产品.xlsx`
 - `批量入库.xlsx`

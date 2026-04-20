@@ -8,3 +8,4 @@ dist/
 .wms-dev/
 *.log
 coverage/
+apps/api/data/

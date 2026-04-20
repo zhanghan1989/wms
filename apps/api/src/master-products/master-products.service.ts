@@ -20,6 +20,7 @@ import { CreateMasterProductFbaReplenishmentDto } from './dto/create-master-prod
 import { CreateMasterProductOutboundOneDto } from './dto/create-master-product-outbound-one.dto';
 import { ExportMasterProductsDto } from './dto/export-master-products.dto';
 import { ManualAdjustMasterProductBoxDto } from './dto/manual-adjust-master-product-box.dto';
+import { UpdateMasterProductPrintSettingsDto } from './dto/update-master-product-print-settings.dto';
 
 type MasterProductListResult = {
   items: unknown[];
@@ -52,6 +53,7 @@ type MasterProductImportRow = {
   width: string | null;
   patternType: string | null;
   size: string | null;
+  yamatoPrinterName: string | null;
   stockQty: number | null;
 };
 
@@ -116,6 +118,7 @@ const MASTER_PRODUCT_EXPORT_COLUMNS: Array<[keyof MasterProductImportRow, string
   ['width', '宽度'],
   ['patternType', '花纹类型'],
   ['size', '尺寸'],
+  ['yamatoPrinterName', 'Yamato打印机'],
   ['stockQty', '在库数'],
 ];
 
@@ -148,6 +151,7 @@ const MASTER_PRODUCT_COLUMN_ALIASES = {
   width: ['width', '宽度'],
   patternType: ['patternType', 'pattern type', '花纹类型'],
   size: ['size', '尺寸'],
+  yamatoPrinterName: ['yamatoPrinterName', 'yamato printer', 'Yamato打印机', '打印机', '打印机名称'],
   stockQty: ['stockQty', 'stock qty', '在库数', '库存数'],
 } as const;
 
@@ -675,6 +679,29 @@ export class MasterProductsService {
       product,
       skus: skuItems,
       boxes,
+    };
+  }
+
+  async updatePrintSettings(
+    productIdRaw: string,
+    payload: UpdateMasterProductPrintSettingsDto,
+  ): Promise<unknown> {
+    const productId = String(productIdRaw || '').trim();
+    if (!productId) {
+      throw new BadRequestException('产品ID不能为空');
+    }
+
+    const yamatoPrinterName = this.toNullableText(String(payload?.yamatoPrinterName ?? ''));
+    const product = await this.prisma.masterProduct.update({
+      where: { productId },
+      data: {
+        yamatoPrinterName,
+      },
+    });
+
+    return {
+      productId: product.productId,
+      yamatoPrinterName: product.yamatoPrinterName ?? null,
     };
   }
 
@@ -1426,6 +1453,9 @@ export class MasterProductsService {
           this.pickField(normalized, MASTER_PRODUCT_COLUMN_ALIASES.patternType),
         ),
         size: this.toNullableText(this.pickField(normalized, MASTER_PRODUCT_COLUMN_ALIASES.size)),
+        yamatoPrinterName: this.toNullableText(
+          this.pickField(normalized, MASTER_PRODUCT_COLUMN_ALIASES.yamatoPrinterName),
+        ),
         stockQty,
       });
     });
@@ -1531,6 +1561,7 @@ export class MasterProductsService {
         width: this.toNullableText(pickProperty(MASTER_PRODUCT_COLUMN_ALIASES.width)),
         patternType: this.toNullableText(pickProperty(MASTER_PRODUCT_COLUMN_ALIASES.patternType)),
         size: this.toNullableText(pickProperty(MASTER_PRODUCT_COLUMN_ALIASES.size)),
+        yamatoPrinterName: null,
         stockQty: null,
       });
     });
@@ -1596,6 +1627,7 @@ export class MasterProductsService {
         this.buildCaseUpdateSql('width', chunk, (row) => row.width),
         this.buildCaseUpdateSql('pattern_type', chunk, (row) => row.patternType),
         this.buildCaseUpdateSql('size', chunk, (row) => row.size),
+        this.buildCaseUpdateSql('yamato_printer_name', chunk, (row) => row.yamatoPrinterName),
         Prisma.sql`status = 1`,
       ];
 
@@ -1701,6 +1733,7 @@ export class MasterProductsService {
           width: true,
           patternType: true,
           size: true,
+          yamatoPrinterName: true,
           stockQty: true,
         },
       });
@@ -1722,6 +1755,7 @@ export class MasterProductsService {
           width: row.width,
           patternType: row.patternType,
           size: row.size,
+          yamatoPrinterName: row.yamatoPrinterName,
           stockQty: Number(row.stockQty ?? 0),
         }),
       );
@@ -1749,6 +1783,7 @@ export class MasterProductsService {
       'width',
       'patternType',
       'size',
+      'yamatoPrinterName',
     ];
     if (comparableFields.some((field) => existingRow[field] !== nextRow[field])) {
       return true;
@@ -1777,6 +1812,7 @@ export class MasterProductsService {
       width: row.width,
       patternType: row.patternType,
       size: row.size,
+      yamatoPrinterName: row.yamatoPrinterName,
       stockQty: row.stockQty ?? 0,
       status: 1,
     };
@@ -1959,5 +1995,3 @@ export class MasterProductsService {
     );
   }
 }
-
-

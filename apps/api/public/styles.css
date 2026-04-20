@@ -744,6 +744,63 @@ button.ghost {
   width: min(520px, 100%);
 }
 
+.overseas-picking-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.overseas-picking-detail-main {
+  display: grid;
+  gap: 6px;
+}
+
+.overseas-picking-detail-main h3 {
+  margin: 0;
+}
+
+.overseas-picking-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.overseas-picking-meta-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f7fbf8;
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.overseas-picking-subsection {
+  margin-top: 18px;
+  padding-top: 2px;
+}
+
+.overseas-confirm-row {
+  margin-top: 24px;
+  margin-bottom: 6px;
+}
+
+.overseas-yamato-actions {
+  margin-top: 8px;
+}
+
+.picking-plan-pick-qty {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .overseas-form.overseas-form-three {
   grid-template-columns: repeat(3, minmax(140px, 1fr));
 }
@@ -1037,6 +1094,14 @@ td {
   background: #fbfefd;
 }
 
+#ordersTableWrap.order-processing-landing-wrap {
+  max-height: none;
+  overflow: visible;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
 .master-product-table {
   min-width: 1600px;
 }
@@ -1087,6 +1152,92 @@ td {
   top: 0;
   z-index: 3;
   background: #eef5f0;
+}
+
+#orderProcessing .card,
+#overseasOrderProcessing .card,
+#chinaOrderProcessing .card,
+#overseasPickingBatchManagement .card,
+#rakutenOrderImport .card,
+#amazonOrderImport .card {
+  overflow: hidden;
+}
+
+#ordersTableWrap.order-processing-landing-wrap .order-import-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 12px;
+  width: 100%;
+}
+
+#ordersTableWrap.order-processing-landing-wrap .order-import-actions button {
+  min-height: 56px;
+  padding: 14px 16px;
+  font-weight: 700;
+}
+
+#ordersTableWrap.order-processing-landing-wrap .order-processing-exit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  width: auto;
+}
+
+#ordersTableWrap.order-processing-landing-wrap .order-processing-exit-actions button {
+  min-width: 220px;
+  width: auto;
+  flex: 0 0 auto;
+}
+
+#overseasOrderProcessingTableWrap,
+#chinaOrderProcessingPendingTableWrap,
+#chinaOrderProcessingExportedTableWrap,
+#overseasPickingBatchListWrap,
+#overseasPickingBatchItemsWrap,
+#overseasPickingBatchOrdersWrap,
+#rakutenOrdersTableWrap,
+#amazonOrdersTableWrap {
+  -webkit-overflow-scrolling: touch;
+}
+
+#overseasOrderProcessingTableWrap table {
+  min-width: 980px;
+}
+
+#chinaOrderProcessingPendingTableWrap table,
+#chinaOrderProcessingExportedTableWrap table {
+  min-width: 960px;
+}
+
+#overseasPickingBatchListWrap table {
+  min-width: 860px;
+}
+
+#overseasPickingBatchItemsWrap table {
+  min-width: 1120px;
+}
+
+#overseasPickingBatchOrdersWrap table {
+  min-width: 1080px;
+}
+
+#rakutenOrdersTableWrap table,
+#amazonOrdersTableWrap table {
+  min-width: 1240px;
+}
+
+#overseasOrderProcessing td,
+#chinaOrderProcessing td,
+#overseasPickingBatchManagement td,
+#rakutenOrderImport td,
+#amazonOrderImport td,
+#overseasOrderProcessing th,
+#chinaOrderProcessing th,
+#overseasPickingBatchManagement th,
+#rakutenOrderImport th,
+#amazonOrderImport th {
+  white-space: nowrap;
 }
 
 .master-product-related-row td {
@@ -1314,6 +1465,54 @@ td {
 
   .master-product-detail-layout {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  #orderProcessing .card-head,
+  #overseasOrderProcessing .card-head,
+  #chinaOrderProcessing .card-head,
+  #overseasPickingBatchManagement .card-head,
+  #rakutenOrderImport .card-head,
+  #amazonOrderImport .card-head,
+  #overseasPickingBatchManagement .overseas-picking-detail-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #overseasOrderProcessing .card-head > .action-row,
+  #overseasPickingBatchManagement .card-head > .action-row,
+  #overseasPickingBatchManagement .overseas-scan-row {
+    width: 100%;
+  }
+
+  #ordersTableWrap.order-processing-landing-wrap .order-import-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #ordersTableWrap.order-processing-landing-wrap .order-processing-exit-actions {
+    display: grid;
+    width: 100%;
+  }
+
+  #ordersTableWrap.order-processing-landing-wrap .order-processing-exit-actions button {
+    min-width: 0;
+    width: 100%;
+  }
+
+  #overseasPickingBatchManagement .overseas-scan-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  #overseasPickingBatchManagement .overseas-scan-field,
+  #overseasPickingBatchManagement .overseas-scan-field input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  #overseasPickingBatchManagement .overseas-scan-row > button,
+  #overseasPickingBatchManagement .overseas-scan-row > .ghost {
+    width: 100%;
   }
 
 }
@@ -1806,6 +2005,55 @@ button.danger-solid {
   .modal-actions {
     justify-content: stretch;
   }
+
+  #orderProcessing .card,
+  #overseasOrderProcessing .card,
+  #chinaOrderProcessing .card,
+  #overseasPickingBatchManagement .card,
+  #rakutenOrderImport .card,
+  #amazonOrderImport .card {
+    padding: 12px;
+  }
+
+  #overseasOrderProcessing .panel-tools,
+  #chinaOrderProcessing .panel-tools,
+  #overseasPickingBatchManagement .panel-tools,
+  #rakutenOrderImport .panel-tools,
+  #amazonOrderImport .panel-tools {
+    gap: 10px;
+  }
+
+  #overseasOrderProcessing .panel-tools button,
+  #chinaOrderProcessing .panel-tools button,
+  #overseasPickingBatchManagement .panel-tools button,
+  #rakutenOrderImport .panel-tools button,
+  #amazonOrderImport .panel-tools button {
+    flex: 1 1 calc(50% - 10px);
+    min-width: 180px;
+  }
+
+  #overseasOrderProcessing .card-head > .action-row,
+  #orderProcessing .order-import-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  #overseasOrderProcessing .card-head > .action-row button,
+  #orderProcessing .order-import-actions button {
+    width: 100%;
+  }
+
+  #overseasOrderProcessingTableWrap,
+  #chinaOrderProcessingPendingTableWrap,
+  #chinaOrderProcessingExportedTableWrap,
+  #overseasPickingBatchListWrap,
+  #overseasPickingBatchItemsWrap,
+  #overseasPickingBatchOrdersWrap,
+  #rakutenOrdersTableWrap,
+  #amazonOrdersTableWrap {
+    max-height: 62vh;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1945,6 +2193,57 @@ button.danger-solid {
     white-space: nowrap;
   }
 
+  #overseasOrderProcessing .panel-tools,
+  #chinaOrderProcessing .panel-tools,
+  #overseasPickingBatchManagement .panel-tools,
+  #rakutenOrderImport .panel-tools,
+  #amazonOrderImport .panel-tools,
+  #overseasOrderProcessing .card-head > .action-row,
+  #overseasPickingBatchManagement .card-head > .action-row {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+
+  #overseasOrderProcessing .panel-tools button,
+  #chinaOrderProcessing .panel-tools button,
+  #overseasPickingBatchManagement .panel-tools button,
+  #rakutenOrderImport .panel-tools button,
+  #amazonOrderImport .panel-tools button,
+  #overseasOrderProcessing .card-head > .action-row button,
+  #overseasPickingBatchManagement .card-head > .action-row button {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+  }
+
+  #ordersTableWrap.order-processing-landing-wrap .order-import-actions,
+  #overseasOrderProcessing .card-head > .action-row {
+    grid-template-columns: 1fr;
+  }
+
+  #ordersTableWrap.order-processing-landing-wrap .order-processing-exit-actions {
+    display: grid;
+  }
+
+  #orderProcessing .card,
+  #overseasOrderProcessing .card,
+  #chinaOrderProcessing .card,
+  #overseasPickingBatchManagement .card,
+  #rakutenOrderImport .card,
+  #amazonOrderImport .card {
+    padding: 10px;
+  }
+
+  #ordersTableWrap.order-processing-landing-wrap .order-import-actions button {
+    min-height: 50px;
+    padding: 12px 14px;
+  }
+
+  #overseasPickingBatchManagement .overseas-picking-meta {
+    flex-direction: column;
+    gap: 6px;
+  }
+
   .master-product-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px 10px;
@@ -1981,6 +2280,19 @@ button.danger-solid {
   .product-edit-request-table-wrap,
   .overview-table-wrap {
     max-height: 58vh;
+  }
+
+  #overseasOrderProcessingTableWrap,
+  #chinaOrderProcessingPendingTableWrap,
+  #chinaOrderProcessingExportedTableWrap,
+  #overseasPickingBatchListWrap,
+  #overseasPickingBatchItemsWrap,
+  #overseasPickingBatchOrdersWrap,
+  #rakutenOrdersTableWrap,
+  #amazonOrdersTableWrap {
+    max-height: 56vh;
+    margin: 0 -2px;
+    border-radius: 10px;
   }
 
   .master-product-sku-table {
@@ -2200,6 +2512,32 @@ button.danger-solid {
   #amazonOrderImport .overview-table-wrap table,
   #overview .overview-table-wrap table {
     min-width: 760px;
+  }
+
+  #overseasOrderProcessingTableWrap table {
+    min-width: 920px;
+  }
+
+  #chinaOrderProcessingPendingTableWrap table,
+  #chinaOrderProcessingExportedTableWrap table {
+    min-width: 900px;
+  }
+
+  #overseasPickingBatchListWrap table {
+    min-width: 780px;
+  }
+
+  #overseasPickingBatchItemsWrap table {
+    min-width: 1040px;
+  }
+
+  #overseasPickingBatchOrdersWrap table {
+    min-width: 980px;
+  }
+
+  #rakutenOrdersTableWrap table,
+  #amazonOrdersTableWrap table {
+    min-width: 1160px;
   }
 
 #fbaReplenishment > table {

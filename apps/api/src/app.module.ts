@@ -11,6 +11,7 @@ import { InboundModule } from './inbound/inbound.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { MasterProductsModule } from './master-products/master-products.module';
 import { OrdersModule } from './orders/orders.module';
+import { PrintAgentModule } from './print-agent/print-agent.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ShelvesModule } from './shelves/shelves.module';
 import { ShopsModule } from './shops/shops.module';
@@ -45,6 +46,7 @@ import { UsersModule } from './users/users.module';
     InventoryModule,
     MasterProductsModule,
     OrdersModule,
+    PrintAgentModule,
     AuditModule,
   ],
 })

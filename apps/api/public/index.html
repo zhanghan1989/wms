@@ -580,6 +580,14 @@
             <div class="master-product-detail-layout">
               <article class="card master-product-detail-card">
                 <h4>主商品操作</h4>
+                <form id="masterProductPrintSettingsForm" class="form-grid">
+                  <label>
+                    Yamato打印机
+                    <input id="masterProductYamatoPrinterName" maxlength="128" placeholder="例如：Yamato-A-Printer" />
+                  </label>
+                  <button type="submit" id="submitMasterProductPrintSettingsBtn">保存打印设置</button>
+                </form>
+
                 <form id="masterProductManualAdjustForm" class="form-grid">
                   <label>
                     入库箱号
@@ -762,20 +770,10 @@
               <h3>待处理订单汇总</h3>
               <p id="overseasOrderProcessingSummary" class="muted order-import-note">自动归结当前有库存的乐天与亚马逊订单。</p>
             </div>
-            <button id="overseasBatchPrintBtn" type="button" disabled>批量打单</button>
-          </div>
-          <div class="action-row overseas-scan-row">
-            <div class="overseas-scan-field">
-              <label for="overseasYamatoScanInput">扫码打单</label>
-              <input
-                id="overseasYamatoScanInput"
-                type="text"
-                inputmode="text"
-                autocomplete="off"
-                placeholder="扫描产品ID后按回车，按产品匹配待处理订单并生成ヤマト打单文件"
-              />
+            <div class="action-row">
+              <button id="openOverseasPickingBatchManagementBtn" type="button" class="ghost">批次管理</button>
+              <button id="overseasCreatePickingBatchBtn" type="button" disabled>批次生成</button>
             </div>
-            <button id="overseasYamatoScanSubmitBtn" type="button">扫码出单</button>
           </div>
           <div id="overseasOrderProcessingTableWrap" class="master-product-table-wrap">
             <table>
@@ -791,10 +789,200 @@
                   <th>店铺</th>
                   <th>收件人</th>
                   <th>可用库存</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody id="overseasOrderProcessingBody"></tbody>
             </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel" id="chinaOrderProcessing">
+        <div class="panel-head">
+          <h2>中国订单处理一览</h2>
+          <div class="panel-tools">
+            <button id="refreshChinaOrderProcessing" class="ghost">刷新</button>
+            <button id="backToOrderProcessingFromChinaBtn" class="ghost">返回订单处理</button>
+          </div>
+        </div>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>待 Xiya 拉取订单</h3>
+              <p id="chinaOrderProcessingPendingSummary" class="muted order-import-note">自动归结系统无库存与拣货缺货切换后的乐天、亚马逊订单。</p>
+            </div>
+          </div>
+          <div id="chinaOrderProcessingPendingTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>导入时间</th>
+                  <th>平台</th>
+                  <th>订单号</th>
+                  <th>SKU</th>
+                  <th>产品ID</th>
+                  <th>数量</th>
+                  <th>店铺</th>
+                  <th>收件人</th>
+                  <th>可用库存</th>
+                  <th>进入原因</th>
+                </tr>
+              </thead>
+              <tbody id="chinaOrderProcessingPendingBody"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>已同步给 Xiya</h3>
+              <p id="chinaOrderProcessingExportedSummary" class="muted order-import-note">已经成功同步给 Xiya，且 Xiya 已确认接收的中国发订单。</p>
+            </div>
+          </div>
+          <div id="chinaOrderProcessingExportedTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>导入时间</th>
+                  <th>平台</th>
+                  <th>订单号</th>
+                  <th>SKU</th>
+                  <th>产品ID</th>
+                  <th>数量</th>
+                  <th>店铺</th>
+                  <th>收件人</th>
+                  <th>进入原因</th>
+                  <th>回执时间</th>
+                </tr>
+              </thead>
+              <tbody id="chinaOrderProcessingExportedBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel" id="overseasPickingBatchManagement">
+        <div class="panel-head">
+          <h2>批次管理一览</h2>
+          <div class="panel-tools">
+            <button id="backToOverseasPickingBatchListBtn" class="hidden">返回批次列表</button>
+            <button id="backToOverseasOrderProcessingBtn">返回订单聚合</button>
+          </div>
+        </div>
+
+        <article class="card" id="overseasPickingBatchListSection">
+          <div class="card-head">
+            <div>
+              <h3 class="hidden">拣货批次一览</h3>
+              <p id="overseasPickingBatchListSummary" class="muted order-import-note hidden"></p>
+            </div>
+          </div>
+          <div id="overseasPickingBatchListWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>批次号</th>
+                  <th>状态</th>
+                  <th>订单数</th>
+                  <th>明细数</th>
+                  <th>总数量</th>
+                  <th>Yamato 批次</th>
+                  <th>创建时间</th>
+                  <th>确认时间</th>
+                </tr>
+              </thead>
+              <tbody id="overseasPickingBatchListBody"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card hidden" id="overseasPickingBatchDetailSection">
+          <div class="overseas-picking-detail-head">
+            <div class="overseas-picking-detail-main">
+              <h3 id="overseasPickingBatchTitle" class="hidden">拣货批次详情</h3>
+              <p id="overseasPickingBatchSummary" class="muted order-import-note"></p>
+            </div>
+          </div>
+          <div id="overseasPickingBatchMeta" class="overseas-picking-meta"></div>
+          <div class="action-row overseas-scan-row">
+            <button id="overseasPickingScanSubmitBtn" type="button">1.扫码拣货</button>
+            <div class="overseas-scan-field">
+              <input
+                id="overseasPickingScanInput"
+                type="text"
+                inputmode="text"
+                autocomplete="off"
+                placeholder="必须按当前列表顺序拣货，扫描产品ID后自动累加已拣数量"
+              />
+            </div>
+          </div>
+          <div id="overseasPickingBatchItemsWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>货架号</th>
+                  <th>箱号</th>
+                  <th>该箱库存数</th>
+                  <th>产品ID</th>
+                  <th>产品名称</th>
+                  <th>在库数</th>
+                  <th>应拣</th>
+                  <th>已拣</th>
+                  <th>剩余</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="overseasPickingBatchItemsBody"></tbody>
+            </table>
+          </div>
+          <div class="action-row overseas-scan-row overseas-confirm-row">
+            <button id="overseasCompletePickingBtn" type="button">2.确认拣货并生成 Yamato Excel</button>
+          </div>
+          <div class="overseas-picking-subsection overseas-yamato-actions">
+            <div class="action-row overseas-scan-row">
+              <input id="overseasYamatoPdfFile" type="file" class="hidden" />
+              <button id="overseasUploadYamatoPdfBtn" type="button">3.上传 Yamato PDF</button>
+            </div>
+            <div class="action-row overseas-scan-row">
+              <button id="overseasYamatoScanSubmitBtn" type="button">4.扫码打印</button>
+              <div class="overseas-scan-field">
+                <input
+                  id="overseasYamatoScanInput"
+                  type="text"
+                  inputmode="text"
+                  autocomplete="off"
+                  placeholder="上传 PDF 后，扫描产品ID自动匹配对应面单页并打印"
+                />
+              </div>
+            </div>
+            <div class="card-head">
+              <div>
+                <h3>当前批次订单信息</h3>
+                <p id="overseasPickingBatchOrdersSummary" class="muted order-import-note">扫码打印后，这里会更新对应订单的面单状态。</p>
+              </div>
+            </div>
+            <div id="overseasPickingBatchOrdersWrap" class="master-product-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>平台</th>
+                    <th>订单号</th>
+                    <th>SKU</th>
+                    <th>产品ID</th>
+                    <th>数量</th>
+                    <th>店铺</th>
+                    <th>收件人</th>
+                    <th>快递单号</th>
+                    <th>当前状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="overseasPickingBatchOrdersBody"></tbody>
+              </table>
+            </div>
           </div>
         </article>
       </section>

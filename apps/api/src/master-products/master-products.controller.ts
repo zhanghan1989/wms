@@ -22,6 +22,7 @@ import { CreateMasterProductFbaReplenishmentDto } from './dto/create-master-prod
 import { CreateMasterProductOutboundOneDto } from './dto/create-master-product-outbound-one.dto';
 import { ExportMasterProductsDto } from './dto/export-master-products.dto';
 import { ManualAdjustMasterProductBoxDto } from './dto/manual-adjust-master-product-box.dto';
+import { UpdateMasterProductPrintSettingsDto } from './dto/update-master-product-print-settings.dto';
 import { MasterProductsService } from './master-products.service';
 
 @Controller('master-products')
@@ -116,6 +117,14 @@ export class MasterProductsController {
       user.id,
       req.requestId,
     );
+  }
+
+  @Post(':productId/print-settings')
+  async updatePrintSettings(
+    @Param('productId') productId: string,
+    @Body() payload: UpdateMasterProductPrintSettingsDto,
+  ): Promise<unknown> {
+    return this.masterProductsService.updatePrintSettings(productId, payload);
   }
 
   @Post(':productId/fba-replenishments')

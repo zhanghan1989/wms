@@ -229,6 +229,14 @@ const state = {
   amazonOrders: [],
   amazonOrdersVisibleCount: 0,
   overseasOrderProcessingOrders: [],
+  chinaOrderProcessingOrders: [],
+  overseasPickingBatches: [],
+  overseasPickingBatchView: "list",
+  selectedOverseasPickingBatchId: "",
+  selectedOverseasPickingBatchDetail: null,
+  yamatoShipmentBatches: [],
+  yamatoPrintConfig: { mode: "browser", printerName: "" },
+  selectedYamatoShipmentBatchId: "",
   selectedOverseasOrderKeys: new Set(),
   fbaReplenishments: [],
   fbaReplenishmentsVisibleCount: 0,
@@ -2345,8 +2353,20 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
     loadAmazonOrders().catch((error) => showToast(error.message, true));
     return;
   }
-  if (targetId === "overseasOrderProcessing" && state.token && !state.overseasOrderProcessingOrders.length) {
-    loadOverseasOrderProcessingOrders().catch((error) => showToast(error.message, true));
+  if (targetId === "overseasOrderProcessing" && state.token) {
+    Promise.all([
+      state.overseasOrderProcessingOrders.length ? Promise.resolve() : loadOverseasOrderProcessingOrders(),
+    ]).catch((error) => showToast(error.message, true));
+    return;
+  }
+  if (targetId === "chinaOrderProcessing" && state.token) {
+    Promise.all([
+      state.chinaOrderProcessingOrders.length ? Promise.resolve() : loadChinaOrderProcessingOrders(),
+    ]).catch((error) => showToast(error.message, true));
+    return;
+  }
+  if (targetId === "overseasPickingBatchManagement" && state.token) {
+    Promise.all([loadOverseasPickingBatches(), loadYamatoShipmentBatches()]).catch((error) => showToast(error.message, true));
     return;
   }
   if (targetId === "overview" && !state.overviewDashboard) {
@@ -2638,13 +2658,19 @@ function ensureOrderProcessingLandingUi() {
   const legacyOrdersWrap = $("ordersTableWrap");
   if (!legacyOrdersWrap) return;
   legacyOrdersWrap.textContent = "";
+  legacyOrdersWrap.classList.add("order-processing-landing-wrap");
   const actions = document.createElement("div");
-  actions.className = "actions order-import-actions";
+  actions.className = "actions order-import-actions order-processing-exit-actions";
   const overseasBtn = document.createElement("button");
   overseasBtn.type = "button";
   overseasBtn.id = "openOverseasOrderProcessingPanel";
   overseasBtn.textContent = "\u6D77\u5916\u4ED3\u8BA2\u5355\u5904\u7406";
   actions.appendChild(overseasBtn);
+  const chinaBtn = document.createElement("button");
+  chinaBtn.type = "button";
+  chinaBtn.id = "openChinaOrderProcessingPanel";
+  chinaBtn.textContent = "\u4E2D\u56FD\u8BA2\u5355\u5904\u7406";
+  actions.appendChild(chinaBtn);
   legacyOrdersWrap.appendChild(actions);
 }
 
@@ -4494,6 +4520,7 @@ function renderProductSummaryMeta(containerId, product) {
     ["宽度", product.width],
     ["花纹类型", product.patternType],
     ["尺寸", product.size],
+    ["Yamato打印机", product.yamatoPrinterName],
     ["在库数", product.stockQty],
   ];
   meta.innerHTML = fields
@@ -6435,6 +6462,10 @@ function renderMasterProductDetail(detail) {
   renderMasterProductSkuTable(detail);
   renderMasterProductBoxTable(detail);
   resetMasterProductDetailForms();
+  const printerInput = $("masterProductYamatoPrinterName");
+  if (printerInput) {
+    printerInput.value = String(detail?.product?.yamatoPrinterName || "").trim();
+  }
 }
 
 async function loadMasterProductDetail(productId) {
@@ -6442,6 +6473,13 @@ async function loadMasterProductDetail(productId) {
   renderMasterProductDetail(detail);
   setMasterProductView("detail");
   return detail;
+}
+
+async function updateMasterProductPrintSettings(productId, payload) {
+  return request(`/master-products/${encodeURIComponent(productId)}/print-settings`, {
+    method: "POST",
+    body: JSON.stringify(payload || {}),
+  });
 }
 
 function renderMasterProductSyncRecords() {
@@ -7672,7 +7710,7 @@ function renderOrdersTable() {
 }
 
 function formatOrderFulfillmentMode(mode) {
-  if (mode === "rakuten_warehouse") return "日本発";
+  if (mode === "overseas_warehouse") return "日本発";
   if (mode === "xiya_api") return "中国発";
   return mode;
 }
@@ -7924,7 +7962,7 @@ function loadMoreOrdersIfNeeded() {
 async function importOrdersFile(file) {
   const formData = new FormData();
   formData.append("file", file);
-  return request("/orders/import-csv", {
+  return request("/orders/rakuten/import-csv", {
     method: "POST",
     body: formData,
   });
@@ -7987,6 +8025,113 @@ async function loadAmazonOrders() {
   renderAmazonOrdersTable();
 }
 
+function buildChinaOrderProcessingOrderLink(item) {
+  if (item.source === "rakuten") {
+    return `<button type="button" class="inline-link-btn" data-action="openChinaRakutenOrderDetail" data-id="${escapeHtml(
+      item.id || "",
+    )}">${escapeHtml(displayText(item.orderId))}</button>`;
+  }
+  if (item.source === "amazon") {
+    return `<button type="button" class="inline-link-btn" data-action="openChinaAmazonOrderDetail" data-id="${escapeHtml(
+      item.id || "",
+    )}">${escapeHtml(displayText(item.orderId))}</button>`;
+  }
+  return escapeHtml(displayText(item.orderId));
+}
+
+function summarizeChinaOrderProcessingList(list) {
+  const rakutenCount = list.filter((item) => item.source === "rakuten").length;
+  const amazonCount = list.filter((item) => item.source === "amazon").length;
+  const switchedCount = list.filter((item) => item.dispatchMode === "china_pending").length;
+  const noStockCount = Math.max(list.length - switchedCount, 0);
+  return {
+    rakutenCount,
+    amazonCount,
+    switchedCount,
+    noStockCount,
+  };
+}
+
+function renderChinaOrderProcessingTable() {
+  const pendingBody = $("chinaOrderProcessingPendingBody");
+  const pendingSummary = $("chinaOrderProcessingPendingSummary");
+  const exportedBody = $("chinaOrderProcessingExportedBody");
+  const exportedSummary = $("chinaOrderProcessingExportedSummary");
+  if (!pendingBody || !exportedBody) return;
+
+  const list = Array.isArray(state.chinaOrderProcessingOrders) ? state.chinaOrderProcessingOrders : [];
+  const pendingList = list.filter((item) => !item.xiyaExportedAt);
+  const exportedList = list.filter((item) => Boolean(item.xiyaExportedAt));
+  const pendingStats = summarizeChinaOrderProcessingList(pendingList);
+  const exportedStats = summarizeChinaOrderProcessingList(exportedList);
+
+  if (pendingSummary) {
+    pendingSummary.textContent = `共 ${pendingList.length} 条待 Xiya 拉取订单，其中 乐天 ${pendingStats.rakutenCount} 条，亚马逊 ${pendingStats.amazonCount} 条，系统无库存 ${pendingStats.noStockCount} 条，拣货缺货切换 ${pendingStats.switchedCount} 条。`;
+  }
+  if (exportedSummary) {
+    exportedSummary.textContent = `共 ${exportedList.length} 条已同步给 Xiya 的订单，其中 乐天 ${exportedStats.rakutenCount} 条，亚马逊 ${exportedStats.amazonCount} 条，系统无库存 ${exportedStats.noStockCount} 条，拣货缺货切换 ${exportedStats.switchedCount} 条。`;
+  }
+
+  if (!pendingList.length) {
+    pendingBody.innerHTML = '<tr><td colspan="10" class="muted">暂无待 Xiya 拉取的中国发订单</td></tr>';
+  } else {
+    pendingBody.innerHTML = pendingList
+      .map(
+        (item) => `
+        <tr>
+          <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
+          <td>${escapeHtml(displayText(item.sourceLabel))}</td>
+          <td>${buildChinaOrderProcessingOrderLink(item)}</td>
+          <td>${escapeHtml(displayText(item.skuCode))}</td>
+          <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
+          <td>${escapeHtml(displayText(item.orderQuantity))}</td>
+          <td>${escapeHtml(displayText(item.shopName))}</td>
+          <td>${escapeHtml(displayText(item.shippingName))}</td>
+          <td>${escapeHtml(displayText(item.availableStock))}</td>
+          <td>${escapeHtml(displayText(item.chinaDispatchReason || (item.dispatchMode === "china_pending" ? "拣货缺货切中国发" : "系统无库存")))}</td>
+        </tr>
+      `,
+      )
+      .join("");
+  }
+
+  if (!exportedList.length) {
+    exportedBody.innerHTML = '<tr><td colspan="10" class="muted">暂无已同步给 Xiya 的中国发订单</td></tr>';
+    return;
+  }
+
+  exportedBody.innerHTML = exportedList
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
+        <td>${escapeHtml(displayText(item.sourceLabel))}</td>
+        <td>${buildChinaOrderProcessingOrderLink(item)}</td>
+        <td>${escapeHtml(displayText(item.skuCode))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
+        <td>${escapeHtml(displayText(item.orderQuantity))}</td>
+        <td>${escapeHtml(displayText(item.shopName))}</td>
+        <td>${escapeHtml(displayText(item.shippingName))}</td>
+        <td>${escapeHtml(displayText(item.chinaDispatchReason || (item.dispatchMode === "china_pending" ? "拣货缺货切中国发" : "系统无库存")))}</td>
+        <td>${escapeHtml(formatDate(item.xiyaExportedAt))}</td>
+      </tr>
+    `,
+    )
+    .join("");
+}
+
+async function loadChinaOrderProcessingOrders() {
+  if (!state.token) {
+    state.chinaOrderProcessingOrders = [];
+    renderChinaOrderProcessingTable();
+    return;
+  }
+
+  const list = await request("/orders/china-orders?scope=all");
+  state.chinaOrderProcessingOrders = Array.isArray(list) ? list : [];
+  renderChinaOrderProcessingTable();
+}
+
 function renderOverseasOrderProcessingTable() {
   const tbody = $("overseasOrderProcessingBody");
   const summary = $("overseasOrderProcessingSummary");
@@ -8001,9 +8146,9 @@ function renderOverseasOrderProcessingTable() {
   }
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="muted">暂无可归结的海外仓订单</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无可归结的海外仓订单</td></tr>';
     updateOverseasOrderProcessingSelectAll();
-    updateOverseasBatchPrintButtonState();
+    updateOverseasCreatePickingBatchButtonState();
     return;
   }
 
@@ -8033,12 +8178,22 @@ function renderOverseasOrderProcessingTable() {
         <td>${escapeHtml(displayText(item.shopName))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>
         <td>${escapeHtml(displayText(item.availableStock))}</td>
+        <td>
+          <button
+            type="button"
+            class="tiny-btn danger"
+            data-action="switchOverseasPendingOrderToChina"
+            data-source="${escapeHtml(item.source || "")}"
+            data-id="${escapeHtml(item.id || "")}"
+            data-order-id="${escapeHtml(item.orderId || "")}"
+          >切中国发</button>
+        </td>
       </tr>
     `,
     )
     .join("");
   updateOverseasOrderProcessingSelectAll();
-  updateOverseasBatchPrintButtonState();
+  updateOverseasCreatePickingBatchButtonState();
 }
 
 async function loadOverseasOrderProcessingOrders() {
@@ -8052,6 +8207,545 @@ async function loadOverseasOrderProcessingOrders() {
   const list = await request("/orders/overseas-warehouse");
   state.overseasOrderProcessingOrders = Array.isArray(list) ? list : [];
   renderOverseasOrderProcessingTable();
+}
+
+async function switchOverseasPendingOrderToChina(source, id) {
+  return request(
+    `/orders/overseas-warehouse/${encodeURIComponent(String(source || "").trim())}/${encodeURIComponent(
+      String(id || "").trim(),
+    )}/switch-to-china`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+function getSelectedOverseasPickingBatch() {
+  const targetId = String(state.selectedOverseasPickingBatchId || "").trim();
+  if (!targetId) return null;
+  return state.overseasPickingBatches.find((item) => String(item?.id || "") === targetId) || null;
+}
+
+function getOverseasPickingBatchStatusText(status) {
+  if (status === "created") return "待确认";
+  if (status === "picked") return "已扣库存";
+  if (status === "yamato_exported") return "已生成 Yamato";
+  return displayText(status);
+}
+
+function renderOverseasPickingBatchList() {
+  const tbody = $("overseasPickingBatchListBody");
+  const summary = $("overseasPickingBatchListSummary");
+  if (!tbody) return;
+
+  const list = Array.isArray(state.overseasPickingBatches) ? state.overseasPickingBatches : [];
+
+  if (summary) {
+    summary.textContent = "";
+  }
+
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">暂无拣货批次</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = list
+    .map(
+      (item) => `
+      <tr>
+        <td><button type="button" class="inline-link-btn" data-action="openOverseasPickingBatchDetail" data-id="${escapeHtml(
+          String(item.id || ""),
+        )}">${escapeHtml(displayText(item.batchNo))}</button></td>
+        <td>${escapeHtml(getOverseasPickingBatchStatusText(item.status))}</td>
+        <td>${escapeHtml(displayText(item.orderCount))}</td>
+        <td>${escapeHtml(displayText(item.itemCount))}</td>
+        <td>${escapeHtml(displayText(item.totalQty))}</td>
+        <td>${escapeHtml(item.yamatoShipmentBatchId ? `#${item.yamatoShipmentBatchId}` : "-")}</td>
+        <td>${escapeHtml(formatDate(item.createdAt))}</td>
+        <td>${escapeHtml(formatDate(item.confirmedAt))}</td>
+      </tr>
+    `,
+    )
+    .join("");
+}
+
+function renderOverseasPickingBatchItems() {
+  const tbody = $("overseasPickingBatchItemsBody");
+  if (!tbody) return;
+
+  const detail = state.selectedOverseasPickingBatchDetail;
+  const list = Array.isArray(detail?.items) ? detail.items : [];
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">当前批次暂无待拣货产品</td></tr>';
+    return;
+  }
+
+  const isCreated = String(detail?.status || "") === "created";
+  const orderedList = list
+    .map((item, index) => ({
+      item,
+      index,
+      isCompleted: Number(item.actualQty || 0) >= Number(item.requestedQty || 0),
+    }))
+    .sort((left, right) => {
+      if (left.isCompleted !== right.isCompleted) {
+        return left.isCompleted ? 1 : -1;
+      }
+      return left.index - right.index;
+    })
+    .map(({ item }) => item);
+
+  tbody.innerHTML = orderedList
+    .map((item) => {
+      const pickedQty = Number(item.actualQty || 0);
+      const canChange = isCreated && pickedQty > 0;
+      const pickPlans = Array.isArray(item.pickPlans) ? item.pickPlans : [];
+      const shelfLines = pickPlans.length
+        ? pickPlans.map((plan) => `<div>${escapeHtml(displayText(plan.shelfCode))}</div>`).join("")
+        : '<div>-</div>';
+      const boxLines = pickPlans.length
+        ? pickPlans.map((plan) => `<div>${escapeHtml(displayText(plan.boxCode))}</div>`).join("")
+        : '<div>-</div>';
+      const qtyLines = pickPlans.length
+        ? pickPlans
+            .map(
+              (plan) =>
+                `<div>${escapeHtml(displayText(plan.boxQty))}-<span class="picking-plan-pick-qty">${escapeHtml(
+                  displayText(plan.pickQty),
+                )}</span></div>`,
+            )
+            .join("")
+        : '<div>-</div>';
+      return `
+      <tr>
+        <td>${shelfLines}</td>
+        <td>${boxLines}</td>
+        <td>${qtyLines}</td>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
+        <td>${escapeHtml(displayText(item.stockQty))}</td>
+        <td>${escapeHtml(displayText(item.requestedQty))}</td>
+        <td>${escapeHtml(displayText(item.actualQty))}</td>
+        <td>${escapeHtml(displayText(item.remainingQty))}</td>
+        <td>
+          ${
+            canChange
+              ? `<button type="button" class="tiny-btn" data-action="resetOverseasPickedItem" data-product-id="${escapeHtml(item.productId)}">变更</button>`
+              : '<span class="muted">-</span>'
+          }
+        </td>
+      </tr>
+    `;
+    })
+    .join("");
+}
+
+function renderOverseasPickingBatchOrders() {
+  const tbody = $("overseasPickingBatchOrdersBody");
+  const summary = $("overseasPickingBatchOrdersSummary");
+  if (!tbody) return;
+
+  const detail = state.selectedOverseasPickingBatchDetail;
+  const list = Array.isArray(detail?.orders) ? detail.orders : [];
+  if (summary) {
+    if (!detail) {
+      summary.textContent = "扫码打印后，这里会更新对应订单的面单状态。";
+    } else {
+      const printedCount = list.filter((item) => item.yamatoPrintedAt).length;
+      const chinaCount = list.filter((item) => item.dispatchMode === "china_pending").length;
+      const waitingPrintCount = list.filter(
+        (item) => item.dispatchMode !== "china_pending" && item.shipmentTrackingNo && !item.yamatoPrintedAt,
+      ).length;
+      const pendingLabelCount = list.filter(
+        (item) => item.dispatchMode !== "china_pending" && !item.shipmentTrackingNo,
+      ).length;
+      summary.textContent = `当前批次共 ${list.length} 条订单，已打印 ${printedCount} 条，待打印 ${waitingPrintCount} 条，待生成/上传面单 ${pendingLabelCount} 条，中国发 ${chinaCount} 条。`;
+    }
+  }
+
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">当前批次暂无订单信息</td></tr>';
+    return;
+  }
+
+  const isCreated = String(detail?.status || "") === "created";
+  tbody.innerHTML = list
+    .map((item) => {
+      const canRemoveFromBatch = isCreated;
+      const actionButtons = [];
+      if (canRemoveFromBatch) {
+        actionButtons.push(`<button type="button" class="tiny-btn" data-action="removeOverseasOrderFromBatch" data-item-id="${escapeHtml(
+          item.itemId,
+        )}" data-order-id="${escapeHtml(item.orderId || "")}" data-product-id="${escapeHtml(item.productId || "")}">踢出本批次发货</button>`);
+      }
+      const orderCell =
+        item.source === "rakuten"
+          ? `<button type="button" class="inline-link-btn" data-action="openPickingBatchRakutenOrderDetail" data-item-id="${escapeHtml(
+              item.itemId || "",
+            )}">${escapeHtml(displayText(item.orderId))}</button>`
+          : item.source === "amazon"
+            ? `<button type="button" class="inline-link-btn" data-action="openPickingBatchAmazonOrderDetail" data-item-id="${escapeHtml(
+                item.itemId || "",
+              )}">${escapeHtml(displayText(item.orderId))}</button>`
+            : escapeHtml(displayText(item.orderId));
+      return `
+        <tr>
+          <td>${escapeHtml(displayText(item.sourceLabel))}</td>
+          <td>${orderCell}</td>
+          <td>${escapeHtml(displayText(item.skuCode))}</td>
+          <td>${escapeHtml(displayText(item.productId))}</td>
+          <td>${escapeHtml(displayText(item.orderQuantity))}</td>
+          <td>${escapeHtml(displayText(item.shopName))}</td>
+          <td>${escapeHtml(displayText(item.shippingName))}</td>
+          <td>${escapeHtml(displayText(item.shipmentTrackingNo))}</td>
+          <td>${escapeHtml(displayText(item.orderStatusText))}</td>
+          <td>${actionButtons.length ? actionButtons.join(" ") : '<span class="muted">-</span>'}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function updateOverseasPickingBatchActionButtons() {
+  const completeBtn = $("overseasCompletePickingBtn");
+  const scanBtn = $("overseasPickingScanSubmitBtn");
+  const scanInput = $("overseasPickingScanInput");
+  const detail = state.selectedOverseasPickingBatchDetail;
+  const status = String(detail?.status || "").trim();
+  const canComplete = Boolean(detail && detail.orders?.length && status === "created");
+  const canPick = Boolean(detail && detail.items?.length && status === "created");
+
+  if (completeBtn) {
+    completeBtn.disabled = !canComplete;
+    completeBtn.textContent =
+      detail && detail.yamatoShipmentBatchId
+        ? `2.已生成 Yamato 批次 #${detail.yamatoShipmentBatchId}`
+        : "2.确认拣货并生成 Yamato Excel";
+  }
+  if (scanBtn) {
+    scanBtn.disabled = !canPick;
+  }
+  if (scanInput) {
+    scanInput.disabled = !canPick;
+  }
+}
+
+function renderOverseasPickingBatchControls() {
+  const listSection = $("overseasPickingBatchListSection");
+  const detailSection = $("overseasPickingBatchDetailSection");
+  const backToListBtn = $("backToOverseasPickingBatchListBtn");
+  const title = $("overseasPickingBatchTitle");
+  const summary = $("overseasPickingBatchSummary");
+  const meta = $("overseasPickingBatchMeta");
+  const batches = Array.isArray(state.overseasPickingBatches) ? state.overseasPickingBatches : [];
+  const isDetailView = state.overseasPickingBatchView === "detail";
+
+  if (listSection) listSection.classList.toggle("hidden", isDetailView);
+  if (detailSection) detailSection.classList.toggle("hidden", !isDetailView);
+  if (backToListBtn) backToListBtn.classList.toggle("hidden", !isDetailView);
+
+  renderOverseasPickingBatchList();
+
+  const detail = state.selectedOverseasPickingBatchDetail;
+  if (title) {
+    title.textContent = detail
+      ? `批次号：${detail.batchNo}（状态：${getOverseasPickingBatchStatusText(detail.status)}）`
+      : "拣货批次详情";
+    title.classList.toggle("hidden", !detail);
+  }
+  if (meta) {
+    meta.innerHTML = "";
+  }
+  if (summary) {
+    summary.textContent = "";
+  }
+
+  renderOverseasPickingBatchItems();
+  renderOverseasPickingBatchOrders();
+  updateOverseasPickingBatchActionButtons();
+}
+
+async function loadOverseasPickingBatchDetail(batchId) {
+  if (!state.token || !String(batchId || "").trim()) {
+    state.selectedOverseasPickingBatchDetail = null;
+    renderOverseasPickingBatchControls();
+    return;
+  }
+  const detail = await request(`/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}`);
+  state.selectedOverseasPickingBatchDetail = detail || null;
+  if (detail?.yamatoShipmentBatchId) {
+    state.selectedYamatoShipmentBatchId = String(detail.yamatoShipmentBatchId || "").trim();
+  }
+  renderOverseasPickingBatchControls();
+}
+
+async function loadOverseasPickingBatches() {
+  if (!state.token) {
+    state.overseasPickingBatches = [];
+    state.overseasPickingBatchView = "list";
+    state.selectedOverseasPickingBatchId = "";
+    state.selectedOverseasPickingBatchDetail = null;
+    renderOverseasPickingBatchControls();
+    return;
+  }
+
+  const list = await request("/orders/overseas-warehouse/picking-batches");
+  state.overseasPickingBatches = Array.isArray(list) ? list : [];
+  const selected = getSelectedOverseasPickingBatch();
+  if (!selected) {
+    state.selectedOverseasPickingBatchId = "";
+    if (state.overseasPickingBatchView === "detail") {
+      state.overseasPickingBatchView = "list";
+      state.selectedOverseasPickingBatchDetail = null;
+    }
+  }
+  if (state.overseasPickingBatchView === "detail" && state.selectedOverseasPickingBatchId) {
+    await loadOverseasPickingBatchDetail(state.selectedOverseasPickingBatchId);
+    return;
+  }
+  if (state.overseasPickingBatchView !== "detail") {
+    state.selectedOverseasPickingBatchDetail = null;
+  }
+  renderOverseasPickingBatchControls();
+}
+
+async function openOverseasPickingBatchDetail(batchId, options = {}) {
+  const targetId = String(batchId || "").trim();
+  if (!targetId) {
+    throw new Error("缺少拣货批次ID");
+  }
+  state.selectedOverseasPickingBatchId = targetId;
+  state.overseasPickingBatchView = "detail";
+  await loadOverseasPickingBatchDetail(targetId);
+  renderYamatoShipmentBatchControls();
+  if (options.focusScan !== false) {
+    focusOverseasPickingScanInput();
+  }
+}
+
+async function createOverseasPickingBatch(items) {
+  return request("/orders/overseas-warehouse/picking-batches", {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  });
+}
+
+async function confirmOverseasPickingBatch(batchId, items) {
+  return request(`/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  });
+}
+
+async function scanOverseasPickingBatchProduct(batchId, productId) {
+  return request(`/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}/scan`, {
+    method: "POST",
+    body: JSON.stringify({ productId }),
+  });
+}
+
+async function switchOverseasPickingBatchProductToChina(batchId, productId) {
+  return request(
+    `/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}/products/${encodeURIComponent(productId)}/switch-to-china`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+async function switchOverseasPickingBatchItemToChina(batchId, itemId) {
+  return request(
+    `/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/switch-to-china`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+async function removeOverseasPickingBatchItem(batchId, itemId) {
+  return request(
+    `/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}/items/${encodeURIComponent(itemId)}/remove`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+async function resetOverseasPickingBatchProductPicking(batchId, productId) {
+  return request(
+    `/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}/products/${encodeURIComponent(productId)}/reset-picking`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+async function downloadOverseasPickingBatchYamatoImport(batchId) {
+  const response = await fetchAuthorizedResponse(
+    `/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}/yamato-export`,
+    {
+      method: "POST",
+    },
+  );
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = resolveDownloadFileName(response, "ヤマト-インポート.xlsx");
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  return {
+    fileName: link.download,
+    batchId: String(response.headers.get("x-yamato-batch-id") || "").trim(),
+  };
+}
+
+function focusOverseasPickingScanInput() {
+  const input = $("overseasPickingScanInput");
+  if (!input) return;
+  requestAnimationFrame(() => {
+    input.focus();
+    input.select();
+  });
+}
+
+function scrollOverseasPickingBatchItemsToTop() {
+  const wrap = $("overseasPickingBatchItemsWrap");
+  if (!wrap) return;
+  requestAnimationFrame(() => {
+    wrap.scrollTop = 0;
+  });
+}
+
+function getOverseasPickingScanRequest() {
+  const input = $("overseasPickingScanInput");
+  const rawValue = String(input?.value || "").trim();
+  if (!rawValue) {
+    throw new Error("请先扫码或输入产品ID");
+  }
+  const detail = state.selectedOverseasPickingBatchDetail;
+  if (!detail?.id) {
+    throw new Error("请先选择一个拣货批次");
+  }
+  if (String(detail.status || "") !== "created") {
+    throw new Error(`批次 ${detail.batchNo || detail.id} 已确认，不能继续拣货扫码`);
+  }
+  return { input, rawValue, detail };
+}
+
+async function submitOverseasPickingScan(scanRequest = null) {
+  const { input, rawValue, detail } = scanRequest || getOverseasPickingScanRequest();
+  const result = await scanOverseasPickingBatchProduct(detail.id, rawValue);
+  if (input) {
+    input.value = "";
+  }
+  await loadOverseasPickingBatchDetail(detail.id);
+  scrollOverseasPickingBatchItemsToTop();
+  showToast(
+    `产品ID ${result.productId || rawValue} 已拣 ${result.pickedQty}/${result.requestedQty}`,
+  );
+  focusOverseasPickingScanInput();
+}
+
+function getSelectedYamatoShipmentBatch() {
+  const detailBatchId = String(state.selectedOverseasPickingBatchDetail?.yamatoShipmentBatchId || "").trim();
+  if (!detailBatchId) return null;
+  return state.yamatoShipmentBatches.find((item) => String(item?.id || "") === detailBatchId) || null;
+}
+
+function normalizeYamatoPrintConfig(config) {
+  const rawMode = String(config?.mode || "").trim().toLowerCase();
+  const mode = rawMode === "direct" || rawMode === "agent" ? rawMode : "browser";
+  return {
+    mode,
+    printerName: String(config?.printerName || "").trim(),
+  };
+}
+
+function getYamatoPrintModeSummary() {
+  const config = normalizeYamatoPrintConfig(state.yamatoPrintConfig);
+  if (config.mode === "direct") {
+    return config.printerName
+      ? `打印方式：直打到 ${config.printerName}`
+      : "打印方式：直打到系统默认打印机";
+  }
+  if (config.mode === "agent") {
+    return "打印方式：打印代理队列";
+  }
+  return "打印方式：浏览器预览打印";
+}
+
+function renderYamatoShipmentBatchControls() {
+  const summary = $("overseasYamatoBatchSummary");
+  const meta = $("overseasYamatoBatchMeta");
+  const uploadBtn = $("overseasUploadYamatoPdfBtn");
+  const scanBtn = $("overseasYamatoScanSubmitBtn");
+  const scanInput = $("overseasYamatoScanInput");
+  const currentBatch = getSelectedYamatoShipmentBatch();
+  const canUploadPdf = Boolean(currentBatch);
+  const canScanPrint = Boolean(currentBatch && currentBatch.status === "pdf_ready");
+
+  if (meta) {
+    if (!currentBatch) {
+      meta.innerHTML = '<span class="overseas-picking-meta-tag">Yamato：尚未生成</span>';
+    } else {
+      const tags = [
+        `批次：#${currentBatch.id}`,
+        `状态：${currentBatch.status === "pdf_ready" ? "已上传PDF" : "待上传PDF"}`,
+        `总页数：${displayText(currentBatch.pageCount)}`,
+      ];
+      if (currentBatch.status === "pdf_ready") {
+        tags.push(`未打印：${displayText(currentBatch.pendingPageCount)}`);
+        tags.push(`已打印：${displayText(currentBatch.printedPageCount)}`);
+      }
+      meta.innerHTML = tags.map((item) => `<span class="overseas-picking-meta-tag">${escapeHtml(item)}</span>`).join("");
+    }
+  }
+
+  if (uploadBtn) {
+    uploadBtn.disabled = !canUploadPdf;
+    uploadBtn.textContent =
+      currentBatch?.status === "pdf_ready" ? "3.重新上传 Yamato PDF" : "3.上传 Yamato PDF";
+  }
+  if (scanBtn) {
+    scanBtn.disabled = !canScanPrint;
+    scanBtn.textContent = "4.扫码打印";
+  }
+  if (scanInput) {
+    scanInput.disabled = !canScanPrint;
+  }
+
+  if (summary) {
+    if (!currentBatch) {
+      summary.textContent = "";
+    } else if (currentBatch.status !== "pdf_ready") {
+      summary.textContent =
+        `当前拣货批次对应的 Yamato 批次 #${currentBatch.id} 已生成 Excel，尚未上传 PDF。共 ${currentBatch.pageCount} 页。${getYamatoPrintModeSummary()}`;
+    } else {
+      summary.textContent =
+        `当前拣货批次对应的 Yamato 批次 #${currentBatch.id} 已上传 PDF：共 ${currentBatch.pageCount} 页，未打印 ${currentBatch.pendingPageCount} 页，已打印 ${currentBatch.printedPageCount} 页。${getYamatoPrintModeSummary()}`;
+    }
+  }
+}
+
+async function loadYamatoShipmentBatches() {
+  if (!state.token) {
+    state.yamatoShipmentBatches = [];
+    state.yamatoPrintConfig = normalizeYamatoPrintConfig(null);
+    state.selectedYamatoShipmentBatchId = "";
+    renderYamatoShipmentBatchControls();
+    return;
+  }
+
+  const [list, printConfig] = await Promise.all([
+    request("/orders/overseas-warehouse/yamato-batches"),
+    request("/orders/overseas-warehouse/yamato-print-config"),
+  ]);
+  state.yamatoShipmentBatches = Array.isArray(list) ? list : [];
+  state.yamatoPrintConfig = normalizeYamatoPrintConfig(printConfig);
+  renderYamatoShipmentBatchControls();
 }
 
 async function importAmazonOrdersFile(file) {
@@ -8071,17 +8765,26 @@ async function deleteRakutenOrders(ids) {
 }
 
 async function downloadOverseasYamatoImport(items) {
-  return downloadAuthorizedFile(
-    "/orders/overseas-warehouse/yamato-export",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ items }),
+  const response = await fetchAuthorizedResponse("/orders/overseas-warehouse/yamato-export", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
     },
-    "ヤマト-インポート.xlsx",
-  );
+    body: JSON.stringify({ items }),
+  });
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = resolveDownloadFileName(response, "ヤマト-インポート.xlsx");
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  return {
+    fileName: link.download,
+    batchId: String(response.headers.get("x-yamato-batch-id") || "").trim(),
+  };
 }
 
 function focusOverseasYamatoScanInput() {
@@ -8093,46 +8796,220 @@ function focusOverseasYamatoScanInput() {
   });
 }
 
-function getOverseasOrdersByScanValue(scanValue) {
-  const normalized = String(scanValue || "").trim();
-  if (!normalized) return [];
+async function uploadYamatoShipmentBatchPdf(batchId, file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request(`/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/upload-pdf`, {
+    method: "POST",
+    body: formData,
+  });
+}
 
-  const normalizedUpper = normalized.toUpperCase();
-  const matchByProductId = state.overseasOrderProcessingOrders.filter(
-    (item) => String(item?.resolvedProductId || "").trim().toUpperCase() === normalizedUpper && item?.id,
-  );
-  if (matchByProductId.length) {
-    return matchByProductId;
-  }
-
-  return state.overseasOrderProcessingOrders.filter(
-    (item) => String(item?.orderId || "").trim().toUpperCase() === normalizedUpper && item?.id,
+async function directPrintYamatoShipmentLabelByProductId(batchId, productId) {
+  return request(
+    `/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/direct-print-by-product`,
+    {
+      method: "POST",
+      body: JSON.stringify({ productId }),
+    },
   );
 }
 
-async function submitOverseasYamatoScan() {
+async function queueYamatoShipmentLabelByProductId(batchId, productId) {
+  return request(
+    `/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/queue-print-by-product`,
+    {
+      method: "POST",
+      body: JSON.stringify({ productId }),
+    },
+  );
+}
+
+function openYamatoPrintPlaceholderWindow(title = "Yamato 面单打印") {
+  const popup = window.open("", "_blank");
+  if (!popup) {
+    throw new Error("打印窗口被浏览器阻止，请允许弹窗后重试");
+  }
+
+  popup.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f4f7f5;
+        color: #18322a;
+      }
+      body {
+        display: grid;
+        place-items: center;
+      }
+      .yamato-print-loading {
+        display: grid;
+        gap: 12px;
+        justify-items: center;
+        padding: 24px;
+        text-align: center;
+      }
+      .yamato-print-loading__spinner {
+        width: 28px;
+        height: 28px;
+        border: 3px solid rgba(24, 50, 42, 0.18);
+        border-top-color: #198754;
+        border-radius: 999px;
+        animation: yamato-print-spin 0.9s linear infinite;
+      }
+      @keyframes yamato-print-spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="yamato-print-loading">
+      <div class="yamato-print-loading__spinner"></div>
+      <div>Yamato 面单准备中，请稍候...</div>
+    </div>
+  </body>
+</html>`);
+  popup.document.close();
+  return popup;
+}
+
+function openYamatoPdfPrintWindow(blob, title = "Yamato 面单打印", popup = null) {
+  const href = URL.createObjectURL(blob);
+  const targetWindow = popup && !popup.closed ? popup : window.open("", "_blank");
+  if (!targetWindow) {
+    URL.revokeObjectURL(href);
+    throw new Error("打印窗口被浏览器阻止，请允许弹窗后重试");
+  }
+
+  targetWindow.document.open();
+  targetWindow.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #111; }
+      iframe { width: 100%; height: 100%; border: 0; }
+    </style>
+  </head>
+  <body>
+    <iframe id="yamatoPdfFrame" src="${href}#toolbar=0&navpanes=0&scrollbar=0"></iframe>
+    <script>
+      const iframe = document.getElementById('yamatoPdfFrame');
+      const doPrint = () => {
+        setTimeout(() => {
+          try {
+            iframe.contentWindow.focus();
+            iframe.contentWindow.print();
+          } catch (error) {
+            try { window.print(); } catch (_) {}
+          }
+        }, 600);
+      };
+      iframe.addEventListener('load', doPrint, { once: true });
+      window.addEventListener('afterprint', () => setTimeout(() => window.close(), 200));
+    <\/script>
+  </body>
+</html>`);
+  targetWindow.document.close();
+  setTimeout(() => URL.revokeObjectURL(href), 60_000);
+}
+
+async function printYamatoShipmentLabelByProductId(batchId, productId, popup = null) {
+  const response = await fetchAuthorizedResponse(
+    `/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/print-by-product`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ productId }),
+    },
+  );
+  const blob = await response.blob();
+  const meta = {
+    batchId: String(response.headers.get("x-yamato-batch-id") || "").trim(),
+    pageNo: Number(response.headers.get("x-yamato-page-no") || 0),
+    trackingNo: String(response.headers.get("x-yamato-tracking-no") || "").trim(),
+    productId: String(response.headers.get("x-yamato-product-id") || "").trim(),
+    remainingMatchCount: Number(response.headers.get("x-yamato-remaining-match-count") || 0),
+  };
+  openYamatoPdfPrintWindow(
+    blob,
+    `Yamato 面单 ${meta.productId || productId}${meta.pageNo > 0 ? ` 第${meta.pageNo}页` : ""}`,
+    popup,
+  );
+  return meta;
+}
+
+function getOverseasYamatoScanRequest() {
   const input = $("overseasYamatoScanInput");
   const rawValue = String(input?.value || "").trim();
   if (!rawValue) {
     throw new Error("请先扫码或输入产品ID");
   }
 
-  const matchedOrders = getOverseasOrdersByScanValue(rawValue);
-  if (!matchedOrders.length) {
-    throw new Error(`未找到产品ID ${rawValue} 对应的海外仓订单`);
+  const detail = state.selectedOverseasPickingBatchDetail;
+  if (!detail?.id) {
+    throw new Error("请先打开一个拣货批次详情");
   }
+  const batch = getSelectedYamatoShipmentBatch();
+  if (!batch) {
+    throw new Error("当前拣货批次还没有生成 Yamato 批次");
+  }
+  if (batch.status !== "pdf_ready") {
+    throw new Error(`批次 #${batch.id} 尚未上传 Yamato PDF`);
+  }
+  return { input, rawValue, batch };
+}
 
-  const fileName = await downloadOverseasYamatoImport(
-    matchedOrders.map((item) => ({
-      source: item.source,
-      id: item.id,
-    })),
-  );
+async function submitOverseasYamatoScan(options = {}) {
+  const { popup = null, scanRequest = null } = options;
+  const { input, rawValue, batch } = scanRequest || getOverseasYamatoScanRequest();
+  const printConfig = normalizeYamatoPrintConfig(state.yamatoPrintConfig);
+  const isDirectMode = printConfig.mode === "direct";
+  const isAgentMode = printConfig.mode === "agent";
+  const result = isAgentMode
+    ? await queueYamatoShipmentLabelByProductId(batch.id, rawValue)
+    : isDirectMode
+      ? await directPrintYamatoShipmentLabelByProductId(batch.id, rawValue)
+      : await printYamatoShipmentLabelByProductId(batch.id, rawValue, popup);
 
   if (input) {
     input.value = "";
   }
-  showToast(`已下载 ${fileName}`);
+  await loadYamatoShipmentBatches();
+  if (state.selectedOverseasPickingBatchId) {
+    await loadOverseasPickingBatchDetail(state.selectedOverseasPickingBatchId);
+  }
+  if (isAgentMode) {
+    const printerText = String(result?.printerName || "").trim() || "默认打印机";
+    showToast(
+      result.trackingNo
+        ? `已加入打印队列：产品ID ${result.productId || rawValue}，目标打印机 ${printerText}，运单号 ${result.trackingNo}`
+        : `已加入打印队列：产品ID ${result.productId || rawValue}，目标打印机 ${printerText}`,
+    );
+  } else if (isDirectMode) {
+    const printerText = String(result?.printerName || "").trim() || "系统默认打印机";
+    showToast(
+      result.trackingNo
+        ? `已直打到 ${printerText}：产品ID ${result.productId || rawValue}，运单号 ${result.trackingNo}`
+        : `已直打到 ${printerText}：产品ID ${result.productId || rawValue}`,
+    );
+  } else {
+    showToast(
+      result.trackingNo
+        ? `已发送打印：产品ID ${result.productId || rawValue}，运单号 ${result.trackingNo}`
+        : `已发送打印：产品ID ${result.productId || rawValue}`,
+    );
+  }
   focusOverseasYamatoScanInput();
 }
 
@@ -8457,12 +9334,12 @@ function updateOverseasOrderProcessingSelectAll() {
   selectAll.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
 }
 
-function updateOverseasBatchPrintButtonState() {
-  const button = $("overseasBatchPrintBtn");
+function updateOverseasCreatePickingBatchButtonState() {
+  const button = $("overseasCreatePickingBatchBtn");
   if (!button) return;
   const count = state.selectedOverseasOrderKeys.size;
   button.disabled = count <= 0;
-  button.textContent = count > 0 ? `批量打单（${count}）` : "批量打单";
+  button.textContent = count > 0 ? `批次生成（${count}）` : "批次生成";
 }
 
 function updateAmazonOrdersSelectAll() {
@@ -8845,6 +9722,10 @@ async function reloadAll() {
     $("inventoryBody").innerHTML = "";
     $("batchInboundBody").innerHTML = "";
     $("fbaReplenishmentBody").innerHTML = "";
+    if ($("chinaOrderProcessingPendingBody")) $("chinaOrderProcessingPendingBody").innerHTML = "";
+    if ($("chinaOrderProcessingExportedBody")) $("chinaOrderProcessingExportedBody").innerHTML = "";
+    if ($("chinaOrderProcessingPendingSummary")) $("chinaOrderProcessingPendingSummary").textContent = "";
+    if ($("chinaOrderProcessingExportedSummary")) $("chinaOrderProcessingExportedSummary").textContent = "";
     renderBatchInboundDetail(null);
     if ($("inventoryDetailMeta")) $("inventoryDetailMeta").innerHTML = "";
     if ($("inventoryDetailSkuBody")) $("inventoryDetailSkuBody").innerHTML = "";
@@ -8885,6 +9766,13 @@ async function reloadAll() {
     state.amazonOrders = [];
     state.amazonOrdersVisibleCount = 0;
     state.overseasOrderProcessingOrders = [];
+    state.chinaOrderProcessingOrders = [];
+    state.overseasPickingBatches = [];
+    state.overseasPickingBatchView = "list";
+    state.selectedOverseasPickingBatchId = "";
+    state.selectedOverseasPickingBatchDetail = null;
+    state.yamatoShipmentBatches = [];
+    state.selectedYamatoShipmentBatchId = "";
     state.selectedAmazonOrderIds = new Set();
     state.inventoryHomeProducts = [];
     state.inventoryHomePage = 1;
@@ -8947,6 +9835,8 @@ async function reloadAll() {
     renderOrdersTable();
     renderAmazonOrdersTable();
     renderOverseasOrderProcessingTable();
+    renderOverseasPickingBatchControls();
+    renderYamatoShipmentBatchControls();
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
     updateFbaSelectAll();
@@ -9046,7 +9936,7 @@ function bindForms() {
         }
         const result = await importOrdersFile(file);
         await loadOrders();
-        await loadOverseasOrderProcessingOrders();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
         form.reset();
         showToast(
           `乐天订单导入完成，新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条，来源文件 ${result.sourceFileName}`,
@@ -9074,7 +9964,7 @@ function bindForms() {
         const result = await deleteRakutenOrders(ids);
         state.selectedRakutenOrderIds = new Set();
         await loadOrders();
-        await loadOverseasOrderProcessingOrders();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
         showToast(`已删除 ${Number(result?.deletedCount || 0)} 条乐天订单记录`);
       });
     } catch (error) {
@@ -9082,7 +9972,7 @@ function bindForms() {
     }
   });
 
-  $("overseasBatchPrintBtn").addEventListener("click", async (event) => {
+  $("overseasCreatePickingBatchBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
       await withBusyButton(button, "生成中...", async () => {
@@ -9096,8 +9986,77 @@ function bindForms() {
         if (!items.length) {
           throw new Error("请先选择要批量打单的订单");
         }
-        const fileName = await downloadOverseasYamatoImport(items);
-        showToast(`已下载 ${fileName}`);
+        const result = await createOverseasPickingBatch(items);
+        state.selectedOverseasOrderKeys = new Set();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches()]);
+        switchPanel("overseasPickingBatchManagement");
+        if (result?.id) {
+          await openOverseasPickingBatchDetail(String(result.id || ""), { focusScan: true });
+        }
+        showToast(
+          result?.batchNo
+            ? `已创建拣货批次 ${result.batchNo}，请按货架顺序扫码拣货`
+            : "拣货批次已创建",
+        );
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("overseasPickingScanSubmitBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      const scanRequest = getOverseasPickingScanRequest();
+      await withBusyButton(button, "拣货中...", async () => {
+        await submitOverseasPickingScan(scanRequest);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+      focusOverseasPickingScanInput();
+    }
+  });
+
+  $("overseasPickingScanInput")?.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const button = $("overseasPickingScanSubmitBtn");
+    try {
+      const scanRequest = getOverseasPickingScanRequest();
+      await withBusyButton(button, "拣货中...", async () => {
+        await submitOverseasPickingScan(scanRequest);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+      focusOverseasPickingScanInput();
+    }
+  });
+
+  $("overseasCompletePickingBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "确认中...", async () => {
+        const detail = state.selectedOverseasPickingBatchDetail;
+        if (!detail?.id) {
+          throw new Error("请先选择一个拣货批次");
+        }
+        if (detail.yamatoShipmentBatchId) {
+          throw new Error(`当前批次已生成 Yamato 批次 #${detail.yamatoShipmentBatchId}`);
+        }
+        await confirmOverseasPickingBatch(detail.id, []);
+        const result = await downloadOverseasPickingBatchYamatoImport(detail.id);
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches()]);
+        await loadOverseasPickingBatchDetail(detail.id);
+        if (result.batchId) {
+          state.selectedYamatoShipmentBatchId = result.batchId;
+          renderYamatoShipmentBatchControls();
+        }
+        showToast(
+          result.batchId
+            ? `拣货确认完成，已下载 ${result.fileName}，Yamato 批次 #${result.batchId} 已创建，请上传 PDF`
+            : `已下载 ${result.fileName}`,
+        );
+        focusOverseasYamatoScanInput();
       });
     } catch (error) {
       showToast(error.message, true);
@@ -9116,7 +10075,7 @@ function bindForms() {
         }
         const result = await importAmazonOrdersFile(file);
         await loadAmazonOrders();
-        await loadOverseasOrderProcessingOrders();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
         form.reset();
         showToast(
           `亚马逊订单导入完成：新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条（文件 ${result.sourceFileName}）`,
@@ -9144,7 +10103,7 @@ function bindForms() {
         const result = await deleteAmazonOrders(ids);
         state.selectedAmazonOrderIds = new Set();
         await loadAmazonOrders();
-        await loadOverseasOrderProcessingOrders();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
         showToast(`已删除 ${Number(result?.deletedCount || 0)} 条亚马逊订单记录`);
       });
     } catch (error) {
@@ -9557,6 +10516,27 @@ function bindForms() {
 
   $("resetMasterProductExportBtn").addEventListener("click", () => {
     resetMasterProductExportForm();
+  });
+
+  $("masterProductPrintSettingsForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      const productId = String(state.selectedMasterProductId || "").trim();
+      if (!productId) {
+        throw new Error("请先选择主商品");
+      }
+      const payload = {
+        yamatoPrinterName: String($("masterProductYamatoPrinterName").value || "").trim() || undefined,
+      };
+      await withBusyButton(submitButton, "保存中...", async () => {
+        await updateMasterProductPrintSettings(productId, payload);
+        showToast("Yamato 打印设置已保存");
+        await loadMasterProductDetail(productId);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   $("masterProductManualAdjustForm").addEventListener("submit", async (event) => {
@@ -9991,25 +10971,123 @@ function bindForms() {
     try {
       switchPanel("overseasOrderProcessing");
       await loadOverseasOrderProcessingOrders();
-      focusOverseasYamatoScanInput();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openChinaOrderProcessingPanel")?.addEventListener("click", async () => {
+    try {
+      switchPanel("chinaOrderProcessing");
+      await loadChinaOrderProcessingOrders();
     } catch (error) {
       showToast(error.message, true);
     }
   });
 
   $("refreshOverseasOrderProcessing")?.addEventListener("click", () =>
-    loadOverseasOrderProcessingOrders()
-      .then(() => focusOverseasYamatoScanInput())
+    Promise.all([loadOverseasOrderProcessingOrders()])
       .catch((error) => showToast(error.message, true)),
   );
 
-  $("overseasYamatoScanSubmitBtn")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
+  $("refreshChinaOrderProcessing")?.addEventListener("click", () =>
+    Promise.all([loadChinaOrderProcessingOrders()])
+      .catch((error) => showToast(error.message, true)),
+  );
+
+  $("openOverseasPickingBatchManagementBtn")?.addEventListener("click", async () => {
     try {
-      await withBusyButton(button, "出单中...", async () => {
-        await submitOverseasYamatoScan();
+      state.overseasPickingBatchView = "list";
+      switchPanel("overseasPickingBatchManagement");
+      await Promise.all([loadOverseasPickingBatches(), loadYamatoShipmentBatches()]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("backToOverseasPickingBatchListBtn")?.addEventListener("click", async () => {
+    try {
+      state.overseasPickingBatchView = "list";
+      renderOverseasPickingBatchControls();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("backToOverseasOrderProcessingBtn")?.addEventListener("click", async () => {
+    try {
+      state.overseasPickingBatchView = "list";
+      switchPanel("overseasOrderProcessing");
+      await loadOverseasOrderProcessingOrders();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("backToOrderProcessingFromChinaBtn")?.addEventListener("click", async () => {
+    try {
+      switchPanel("orderProcessing");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("overseasUploadYamatoPdfBtn")?.addEventListener("click", () => {
+    const input = $("overseasYamatoPdfFile");
+    if (!input) return;
+    input.value = "";
+    input.click();
+  });
+
+  $("overseasYamatoPdfFile")?.addEventListener("change", async (event) => {
+    const input = event.currentTarget;
+    const file = input?.files?.[0];
+    if (!file) return;
+    const batch = getSelectedYamatoShipmentBatch();
+    if (!batch) {
+      showToast("当前拣货批次还没有生成 Yamato 批次", true);
+      input.value = "";
+      return;
+    }
+    const button = $("overseasUploadYamatoPdfBtn");
+    try {
+      await withBusyButton(button, "上传解析中...", async () => {
+        await uploadYamatoShipmentBatchPdf(batch.id, file);
+        await Promise.all([loadYamatoShipmentBatches(), loadOverseasPickingBatches()]);
+        if (state.selectedOverseasPickingBatchId) {
+          await loadOverseasPickingBatchDetail(state.selectedOverseasPickingBatchId);
+        }
+        state.selectedYamatoShipmentBatchId = batch.id;
+        renderYamatoShipmentBatchControls();
+        showToast(`批次 #${batch.id} PDF 上传完成，现在可以扫码打印`);
+        focusOverseasYamatoScanInput();
       });
     } catch (error) {
+      showToast(error.message, true);
+    } finally {
+      input.value = "";
+    }
+  });
+
+  $("overseasYamatoScanSubmitBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    let popup = null;
+    try {
+      const scanRequest = getOverseasYamatoScanRequest();
+      if (normalizeYamatoPrintConfig(state.yamatoPrintConfig).mode === "browser") {
+        popup = openYamatoPrintPlaceholderWindow(
+          `Yamato 面单 ${scanRequest.rawValue}`,
+        );
+      }
+      await withBusyButton(button, "出单中...", async () => {
+        await submitOverseasYamatoScan({ popup, scanRequest });
+      });
+    } catch (error) {
+      if (popup && !popup.closed) {
+        try {
+          popup.close();
+        } catch (_) {}
+      }
       showToast(error.message, true);
       focusOverseasYamatoScanInput();
     }
@@ -10019,11 +11097,23 @@ function bindForms() {
     if (event.key !== "Enter") return;
     event.preventDefault();
     const button = $("overseasYamatoScanSubmitBtn");
+    let popup = null;
     try {
+      const scanRequest = getOverseasYamatoScanRequest();
+      if (normalizeYamatoPrintConfig(state.yamatoPrintConfig).mode === "browser") {
+        popup = openYamatoPrintPlaceholderWindow(
+          `Yamato 面单 ${scanRequest.rawValue}`,
+        );
+      }
       await withBusyButton(button, "出单中...", async () => {
-        await submitOverseasYamatoScan();
+        await submitOverseasYamatoScan({ popup, scanRequest });
       });
     } catch (error) {
+      if (popup && !popup.closed) {
+        try {
+          popup.close();
+        } catch (_) {}
+      }
       showToast(error.message, true);
       focusOverseasYamatoScanInput();
     }
@@ -11413,7 +12503,7 @@ function bindDelegates() {
       state.selectedOverseasOrderKeys.delete(key);
     }
     updateOverseasOrderProcessingSelectAll();
-    updateOverseasBatchPrintButtonState();
+    updateOverseasCreatePickingBatchButtonState();
   });
 
   $("rakutenOrdersBody").addEventListener("click", (event) => {
@@ -11427,7 +12517,7 @@ function bindDelegates() {
     }
   });
 
-  $("overseasOrderProcessingBody").addEventListener("click", (event) => {
+  $("overseasOrderProcessingBody").addEventListener("click", async (event) => {
     try {
       const rakutenTrigger = event.target.closest("button[data-action='openOverseasRakutenOrderDetail']");
       if (rakutenTrigger) {
@@ -11439,11 +12529,188 @@ function bindDelegates() {
       }
 
       const amazonTrigger = event.target.closest("button[data-action='openOverseasAmazonOrderDetail']");
+      if (amazonTrigger) {
+        const item = state.overseasOrderProcessingOrders.find(
+          (row) => row?.source === "amazon" && String(row?.id || "") === String(amazonTrigger.dataset.id || ""),
+        );
+        openAmazonOrderDetailModalFromItem(item);
+        return;
+      }
+
+      const switchTrigger = event.target.closest("button[data-action='switchOverseasPendingOrderToChina']");
+      if (!switchTrigger) return;
+      const source = String(switchTrigger.dataset.source || "").trim();
+      const id = String(switchTrigger.dataset.id || "").trim();
+      const orderId = String(switchTrigger.dataset.orderId || "").trim();
+      if (!source || !id) {
+        throw new Error("缺少订单标识");
+      }
+      const ok = await openDeleteConfirmModal(
+        `确认将订单 ${orderId || id} 切换为中国发？切换后该订单会从海外仓待处理移到中国发待处理。`,
+      );
+      if (!ok) return;
+      await switchOverseasPendingOrderToChina(source, id);
+      state.selectedOverseasOrderKeys.delete(`${source}:${id}`);
+      await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
+      showToast(`订单 ${orderId || id} 已切换为中国发`);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  const handleChinaOrderProcessingClick = (event) => {
+    try {
+      const rakutenTrigger = event.target.closest("button[data-action='openChinaRakutenOrderDetail']");
+      if (rakutenTrigger) {
+        const item = state.chinaOrderProcessingOrders.find(
+          (row) => row?.source === "rakuten" && String(row?.id || "") === String(rakutenTrigger.dataset.id || ""),
+        );
+        openRakutenOrderDetailModalFromItem(item);
+        return;
+      }
+
+      const amazonTrigger = event.target.closest("button[data-action='openChinaAmazonOrderDetail']");
       if (!amazonTrigger) return;
-      const item = state.overseasOrderProcessingOrders.find(
+      const item = state.chinaOrderProcessingOrders.find(
         (row) => row?.source === "amazon" && String(row?.id || "") === String(amazonTrigger.dataset.id || ""),
       );
       openAmazonOrderDetailModalFromItem(item);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+
+  $("chinaOrderProcessingPendingBody")?.addEventListener("click", handleChinaOrderProcessingClick);
+  $("chinaOrderProcessingExportedBody")?.addEventListener("click", handleChinaOrderProcessingClick);
+
+  $("overseasPickingBatchListBody")?.addEventListener("click", async (event) => {
+    const trigger = event.target.closest("button[data-action='openOverseasPickingBatchDetail']");
+    if (!trigger) return;
+
+    try {
+      await openOverseasPickingBatchDetail(String(trigger.dataset.id || "").trim(), { focusScan: false });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("overseasPickingBatchItemsBody")?.addEventListener("click", async (event) => {
+    const resetTrigger = event.target.closest("button[data-action='resetOverseasPickedItem']");
+    if (resetTrigger) {
+      try {
+        const detail = state.selectedOverseasPickingBatchDetail;
+        if (!detail?.id) {
+          throw new Error("请先选择一个拣货批次");
+        }
+        const productId = String(resetTrigger.dataset.productId || "").trim();
+        if (!productId) {
+          throw new Error("缺少产品ID");
+        }
+        const ok = await openDeleteConfirmModal(
+          `确认将产品 ${productId} 变更回未拣货状态？`,
+        );
+        if (!ok) return;
+        await resetOverseasPickingBatchProductPicking(detail.id, productId);
+        await Promise.all([loadOverseasPickingBatches(), loadOverseasPickingBatchDetail(detail.id)]);
+        showToast(`产品 ${productId} 已恢复为未拣货状态`);
+        focusOverseasPickingScanInput();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+      return;
+    }
+
+    const trigger = event.target.closest("button[data-action='switchOverseasItemToChina']");
+    if (!trigger) return;
+
+    try {
+      const detail = state.selectedOverseasPickingBatchDetail;
+      if (!detail?.id) {
+        throw new Error("请先选择一个拣货批次");
+      }
+      const productId = String(trigger.dataset.productId || "").trim();
+      if (!productId) {
+        throw new Error("缺少产品ID");
+      }
+      const ok = await openDeleteConfirmModal(
+        `确认将产品 ${productId} 切换为中国发？该产品关联订单将不再参与当前海外仓 Yamato 出单。`,
+      );
+      if (!ok) return;
+      const result = await switchOverseasPickingBatchProductToChina(detail.id, productId);
+      await Promise.all([
+        loadOverseasOrderProcessingOrders(),
+        loadChinaOrderProcessingOrders(),
+        loadOverseasPickingBatches(),
+      ]);
+      if (result?.batchDeleted) {
+        state.selectedOverseasPickingBatchId = "";
+        state.selectedOverseasPickingBatchDetail = null;
+        state.overseasPickingBatchView = "list";
+        renderOverseasPickingBatchControls();
+        showToast(`产品 ${productId} 已移出当前批次并进入中国发待处理，当前批次已清空`);
+        return;
+      }
+      await loadOverseasPickingBatchDetail(detail.id);
+      showToast(`产品 ${productId} 已移出当前批次并进入中国发待处理`);
+      focusOverseasPickingScanInput();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("overseasPickingBatchOrdersBody")?.addEventListener("click", async (event) => {
+    try {
+      const detail = state.selectedOverseasPickingBatchDetail;
+      const orders = Array.isArray(detail?.orders) ? detail.orders : [];
+
+      const rakutenTrigger = event.target.closest("button[data-action='openPickingBatchRakutenOrderDetail']");
+      if (rakutenTrigger) {
+        const itemId = String(rakutenTrigger.dataset.itemId || "").trim();
+        const item = orders.find((row) => String(row?.itemId || "") === itemId);
+        openRakutenOrderDetailModalFromItem(item);
+        return;
+      }
+
+      const amazonTrigger = event.target.closest("button[data-action='openPickingBatchAmazonOrderDetail']");
+      if (amazonTrigger) {
+        const itemId = String(amazonTrigger.dataset.itemId || "").trim();
+        const item = orders.find((row) => String(row?.itemId || "") === itemId);
+        openAmazonOrderDetailModalFromItem(item);
+        return;
+      }
+
+      const removeTrigger = event.target.closest("button[data-action='removeOverseasOrderFromBatch']");
+      if (!removeTrigger) return;
+      if (!detail?.id) {
+        throw new Error("请先选择一个拣货批次");
+      }
+      const itemId = String(removeTrigger.dataset.itemId || "").trim();
+      const orderId = String(removeTrigger.dataset.orderId || "").trim();
+      const productId = String(removeTrigger.dataset.productId || "").trim();
+      if (!itemId) {
+        throw new Error("缺少拣货明细ID");
+      }
+      const ok = await openDeleteConfirmModal(
+        `确认将订单 ${orderId || itemId} 踢出本批次发货？该订单会退回海外仓待处理订单列表。`,
+      );
+      if (!ok) return;
+      const result = await removeOverseasPickingBatchItem(detail.id, itemId);
+      await Promise.all([
+        loadOverseasOrderProcessingOrders(),
+        loadChinaOrderProcessingOrders(),
+        loadOverseasPickingBatches(),
+      ]);
+      if (result?.batchDeleted) {
+        state.selectedOverseasPickingBatchId = "";
+        state.selectedOverseasPickingBatchDetail = null;
+        state.overseasPickingBatchView = "list";
+        renderOverseasPickingBatchControls();
+        showToast(`订单 ${orderId || productId || itemId} 已踢出本批次，当前批次已清空`);
+        return;
+      }
+      await loadOverseasPickingBatchDetail(detail.id);
+      showToast(`订单 ${orderId || productId || itemId} 已踢出本批次发货`);
+      focusOverseasPickingScanInput();
     } catch (error) {
       showToast(error.message, true);
     }
@@ -12511,6 +13778,9 @@ ensureBossNewItemDownloadUi();
 bindDelegates();
 bindScrollLoad();
 bindRefresh();
+renderOverseasPickingBatchControls();
+renderYamatoShipmentBatchControls();
+updateOverseasCreatePickingBatchButtonState();
 updateAmazonBatchDeleteButtonState();
 updateAmazonOrdersSelectAll();
 updateFbaOutboundButtonState();
