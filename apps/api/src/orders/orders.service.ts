@@ -475,6 +475,7 @@ interface YamatoExportItem {
   id: string;
   orderId: string;
   productId: string;
+  printerValue: string;
   quantity: number;
   deliveryDate: string;
   deliveryTimeSlot: string;
@@ -487,6 +488,7 @@ interface YamatoExportItem {
 
 interface YamatoMergedExportRow {
   orderId: string;
+  printerValue: string;
   deliveryDate: string;
   deliveryTimeSlot: string;
   phone: string;
@@ -609,6 +611,7 @@ const YAMATO_EXPORT_FIXED_VALUES = {
 
 const YAMATO_COLUMNS = {
   orderId: 0,
+  printerValue: 1,
   shipDate: 4,
   deliveryDate: 5,
   deliveryTimeSlot: 6,
@@ -2771,8 +2774,15 @@ export class OrdersService {
     const amazonIds = items
       .filter((item) => item.source === 'amazon')
       .map((item) => item.sourceRecordId);
+    const productIds = Array.from(
+      new Set(
+        items
+          .map((item) => String(item.productId ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
 
-    const [rakutenRows, amazonRows] = await Promise.all([
+    const [rakutenRows, amazonRows, productRows] = await Promise.all([
       rakutenIds.length
         ? this.prisma.rakutenOrderRecord.findMany({
             where: { id: { in: rakutenIds } },
@@ -2783,10 +2793,22 @@ export class OrdersService {
             where: { id: { in: amazonIds } },
           })
         : Promise.resolve([] as AmazonOrderRecord[]),
+      productIds.length
+        ? this.prisma.masterProduct.findMany({
+            where: { productId: { in: productIds } },
+            select: {
+              productId: true,
+              yamatoPrinterName: true,
+            },
+          })
+        : Promise.resolve([] as Array<{ productId: string; yamatoPrinterName: string | null }>),
     ]);
 
     const rakutenMap = new Map(rakutenRows.map((row) => [row.id.toString(), row] as const));
     const amazonMap = new Map(amazonRows.map((row) => [row.id.toString(), row] as const));
+    const printerValueByProductId = new Map(
+      productRows.map((row) => [row.productId, String(row.yamatoPrinterName ?? '').trim() || '0'] as const),
+    );
 
     return items.map((item) => {
       const quantity = Number(item.actualQty ?? 0);
@@ -2805,6 +2827,7 @@ export class OrdersService {
           id: item.sourceRecordId.toString(),
           orderId: String(row.orderId ?? '').trim(),
           productId: item.productId,
+          printerValue: printerValueByProductId.get(item.productId) ?? '0',
           quantity,
           deliveryDate: String(
             this.getJsonField(row.rawPayload, RAKUTEN_ORDER_HEADERS.deliveryDateRaw) ?? row.deliveryDateRaw ?? '',
@@ -2814,8 +2837,8 @@ export class OrdersService {
           ).trim(),
           phone: normalizedPhone || '-',
           postalCode: String(row.shippingPostalCode ?? '').trim() || '-',
-          address1: this.concatAddress([row.shippingPrefecture, row.shippingCity]),
-          address2: String(row.shippingAddress ?? '').trim() || '-',
+          address1: this.buildRakutenFullShippingAddress(row.shippingPrefecture, row.shippingCity, row.shippingAddress),
+          address2: '-',
           recipientName: String(row.shippingName ?? '').trim() || '-',
         };
       }
@@ -2830,6 +2853,7 @@ export class OrdersService {
         id: item.sourceRecordId.toString(),
         orderId: String(row.orderId ?? '').trim(),
         productId: item.productId,
+        printerValue: printerValueByProductId.get(item.productId) ?? '0',
         quantity,
         deliveryDate: '-',
         deliveryTimeSlot: '-',
@@ -2958,6 +2982,7 @@ export class OrdersService {
       id: row.id.toString(),
       orderId: String(row.orderId ?? '').trim(),
       productId: String(row.resolvedProductId ?? '').trim() || '-',
+      printerValue: '0',
       quantity: Number(row.orderQuantity ?? 0) || 0,
       deliveryDate: String(
         this.getJsonField(row.rawPayload, RAKUTEN_ORDER_HEADERS.deliveryDateRaw) ?? row.deliveryDateRaw ?? '',
@@ -2967,8 +2992,8 @@ export class OrdersService {
       ).trim(),
       phone: normalizedPhone || '-',
       postalCode: String(row.shippingPostalCode ?? '').trim() || '-',
-      address1: this.concatAddress([row.shippingPrefecture, row.shippingCity]),
-      address2: String(row.shippingAddress ?? '').trim() || '-',
+      address1: this.buildRakutenFullShippingAddress(row.shippingPrefecture, row.shippingCity, row.shippingAddress),
+      address2: '-',
       recipientName: String(row.shippingName ?? '').trim() || '-',
     };
   }
@@ -2980,6 +3005,7 @@ export class OrdersService {
       id: row.id.toString(),
       orderId: String(row.orderId ?? '').trim(),
       productId: String(row.resolvedProductId ?? '').trim() || '-',
+      printerValue: '0',
       quantity: Number(row.quantityPurchased ?? 0) || 0,
       deliveryDate: '-',
       deliveryTimeSlot: '-',
@@ -3008,6 +3034,7 @@ export class OrdersService {
       if (!existing) {
         mergedByOrderId.set(key, {
           orderId: item.orderId || key,
+          printerValue: item.printerValue || '0',
           deliveryDate: item.deliveryDate || '-',
           deliveryTimeSlot: item.deliveryTimeSlot || '-',
           phone: item.phone || '-',
@@ -3025,10 +3052,14 @@ export class OrdersService {
       existing.itemParts.push(itemPart);
       existing.productIds.push(item.productId);
       existing.lineCount += 1;
+      if ((!existing.printerValue || existing.printerValue === '0') && item.printerValue && item.printerValue !== '0') {
+        existing.printerValue = item.printerValue;
+      }
     });
 
     return Array.from(mergedByOrderId.values()).map((row) => ({
       orderId: row.orderId,
+      printerValue: row.printerValue || '0',
       deliveryDate: row.deliveryDate,
       deliveryTimeSlot: row.deliveryTimeSlot,
       phone: row.phone,
@@ -3749,6 +3780,7 @@ export class OrdersService {
   private buildYamatoRowValueMap(row: YamatoMergedExportRow, currentDate: string): Map<string, string> {
     const values = new Map<string, string>();
     values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.orderId), row.orderId);
+    values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.printerValue), row.printerValue || '0');
     values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.shipDate), currentDate);
     values.set(
       XLSX.utils.encode_col(YAMATO_COLUMNS.deliveryDate),
@@ -3836,6 +3868,14 @@ export class OrdersService {
       .filter((part) => part.length > 0)
       .join('');
     return text || '-';
+  }
+
+  private buildRakutenFullShippingAddress(
+    prefecture: string | null | undefined,
+    city: string | null | undefined,
+    address: string | null | undefined,
+  ): string {
+    return this.concatAddress([prefecture, city, address]);
   }
 
   private normalizeYamatoPhone(value: string | null | undefined): string {

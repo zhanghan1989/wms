@@ -8309,10 +8309,12 @@ function renderOverseasPickingBatchItems() {
       const qtyLines = pickPlans.length
         ? pickPlans
             .map(
-              (plan) =>
-                `<div>${escapeHtml(displayText(plan.boxQty))}-<span class="picking-plan-pick-qty">${escapeHtml(
-                  displayText(plan.pickQty),
-                )}</span></div>`,
+              (plan) => {
+                const boxQty = Number(plan.boxQty || 0);
+                const pickQty = Number(plan.pickQty || 0);
+                const remainingQty = Math.max(boxQty - pickQty, 0);
+                return `<div>${escapeHtml(displayText(pickQty > 0 ? remainingQty : boxQty))}</div>`;
+              },
             )
             .join("")
         : '<div>-</div>';

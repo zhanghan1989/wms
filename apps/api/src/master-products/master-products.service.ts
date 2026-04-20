@@ -57,6 +57,13 @@ type MasterProductImportRow = {
   stockQty: number | null;
 };
 
+type ImportedMasterProductField = Exclude<keyof MasterProductImportRow, 'productId'>;
+
+type ParsedMasterProductImport = {
+  rows: MasterProductImportRow[];
+  presentFields: Set<ImportedMasterProductField>;
+};
+
 type MasterProductExportFile = {
   fileName: string;
   content: Buffer;
@@ -154,6 +161,30 @@ const MASTER_PRODUCT_COLUMN_ALIASES = {
   yamatoPrinterName: ['yamatoPrinterName', 'yamato printer', 'Yamato打印机', '打印机', '打印机名称'],
   stockQty: ['stockQty', 'stock qty', '在库数', '库存数'],
 } as const;
+
+const MASTER_PRODUCT_IMPORT_FIELDS: ImportedMasterProductField[] = [
+  'productName',
+  'productType',
+  'bagBrand',
+  'color',
+  'bagName',
+  'bagType',
+  'zipperStyle',
+  'style',
+  'pattern',
+  'buckleType',
+  'matchingBagType',
+  'length',
+  'width',
+  'patternType',
+  'size',
+  'yamatoPrinterName',
+  'stockQty',
+];
+
+const XIYA_SYNC_UPDATE_FIELDS = new Set<ImportedMasterProductField>(
+  MASTER_PRODUCT_IMPORT_FIELDS.filter((field) => field !== 'yamatoPrinterName' && field !== 'stockQty'),
+);
 
 @Injectable()
 export class MasterProductsService {
@@ -405,12 +436,13 @@ export class MasterProductsService {
         updatedCount: 0,
       });
 
-      const parsedRows = this.parseImportRows(fileBuffer);
+      const parsedImport = this.parseImportRows(fileBuffer);
+      const parsedRows = parsedImport.rows;
       if (!parsedRows.length) {
         throw new BadRequestException('Excel 中没有可导入的产品主表数据');
       }
 
-      const importResult = await this.upsertImportRows(parsedRows);
+      const importResult = await this.upsertImportRows(parsedRows, parsedImport.presentFields);
       await this.finishSyncRecord(recordId, {
         status: MasterProductSyncStatus.success,
         fetchedCount: parsedRows.length,
@@ -476,7 +508,7 @@ export class MasterProductsService {
       };
     }
 
-    const result = await this.upsertImportRows(rows);
+    const result = await this.upsertImportRows(rows, XIYA_SYNC_UPDATE_FIELDS);
     return {
       totalRows: rows.length,
       importedCount: rows.length,
@@ -1365,7 +1397,7 @@ export class MasterProductsService {
     return totalQty;
   }
 
-  private parseImportRows(fileBuffer: Buffer): MasterProductImportRow[] {
+  private parseImportRows(fileBuffer: Buffer): ParsedMasterProductImport {
     let workbook: XLSX.WorkBook;
     try {
       workbook = XLSX.read(fileBuffer, { type: 'buffer' });
@@ -1384,6 +1416,7 @@ export class MasterProductsService {
       throw new BadRequestException('Excel 中没有数据');
     }
 
+    const presentFields = this.resolvePresentImportFields(rawRows);
     const resultByProductId = new Map<string, MasterProductImportRow>();
     const errors: string[] = [];
 
@@ -1464,7 +1497,10 @@ export class MasterProductsService {
       throw new BadRequestException(errors.slice(0, 10).join('；'));
     }
 
-    return Array.from(resultByProductId.values());
+    return {
+      rows: Array.from(resultByProductId.values()),
+      presentFields,
+    };
   }
 
   private async fetchXiyaImportRows(days: number): Promise<MasterProductImportRow[]> {
@@ -1575,6 +1611,7 @@ export class MasterProductsService {
 
   private async upsertImportRows(
     rows: MasterProductImportRow[],
+    presentFields: Set<ImportedMasterProductField>,
   ): Promise<{ createdCount: number; updatedCount: number }> {
     const existingRows = await this.loadExistingMasterProducts(rows.map((row) => row.productId));
     const createRows: MasterProductImportRow[] = [];
@@ -1582,7 +1619,7 @@ export class MasterProductsService {
 
     rows.forEach((row) => {
       const existingRow = existingRows.get(row.productId);
-      if (existingRow && this.hasMasterProductChanges(existingRow, row)) {
+      if (existingRow && this.hasMasterProductChanges(existingRow, row, presentFields)) {
         updateRows.push(row);
         return;
       }
@@ -1601,7 +1638,7 @@ export class MasterProductsService {
       createdCount += Number(result.count ?? 0);
     }
 
-    await this.updateExistingMasterProducts(updateRows);
+    await this.updateExistingMasterProducts(updateRows, presentFields);
 
     return {
       createdCount,
@@ -1609,32 +1646,47 @@ export class MasterProductsService {
     };
   }
 
-  private async updateExistingMasterProducts(rows: MasterProductImportRow[]): Promise<void> {
+  private async updateExistingMasterProducts(
+    rows: MasterProductImportRow[],
+    presentFields: Set<ImportedMasterProductField>,
+  ): Promise<void> {
     for (const chunk of this.chunkRows(rows, UPDATE_CHUNK_SIZE)) {
-      const assignments: Prisma.Sql[] = [
-        this.buildCaseUpdateSql('product_name', chunk, (row) => row.productName),
-        this.buildCaseUpdateSql('product_type', chunk, (row) => row.productType),
-        this.buildCaseUpdateSql('bag_brand', chunk, (row) => row.bagBrand),
-        this.buildCaseUpdateSql('color', chunk, (row) => row.color),
-        this.buildCaseUpdateSql('bag_name', chunk, (row) => row.bagName),
-        this.buildCaseUpdateSql('bag_type', chunk, (row) => row.bagType),
-        this.buildCaseUpdateSql('zipper_style', chunk, (row) => row.zipperStyle),
-        this.buildCaseUpdateSql('style', chunk, (row) => row.style),
-        this.buildCaseUpdateSql('pattern', chunk, (row) => row.pattern),
-        this.buildCaseUpdateSql('buckle_type', chunk, (row) => row.buckleType),
-        this.buildCaseUpdateSql('matching_bag_type', chunk, (row) => row.matchingBagType),
-        this.buildCaseUpdateSql('length', chunk, (row) => row.length),
-        this.buildCaseUpdateSql('width', chunk, (row) => row.width),
-        this.buildCaseUpdateSql('pattern_type', chunk, (row) => row.patternType),
-        this.buildCaseUpdateSql('size', chunk, (row) => row.size),
-        this.buildCaseUpdateSql('yamato_printer_name', chunk, (row) => row.yamatoPrinterName),
-        Prisma.sql`status = 1`,
-      ];
+      const assignments: Prisma.Sql[] = [];
+      const addAssignment = (
+        field: ImportedMasterProductField,
+        column: string,
+        selector: (row: MasterProductImportRow) => string | number | null,
+      ): void => {
+        if (presentFields.has(field)) {
+          assignments.push(this.buildCaseUpdateSql(column, chunk, selector));
+        }
+      };
 
-      const stockRows = chunk.filter((row) => row.stockQty !== null);
-      if (stockRows.length) {
+      addAssignment('productName', 'product_name', (row) => row.productName);
+      addAssignment('productType', 'product_type', (row) => row.productType);
+      addAssignment('bagBrand', 'bag_brand', (row) => row.bagBrand);
+      addAssignment('color', 'color', (row) => row.color);
+      addAssignment('bagName', 'bag_name', (row) => row.bagName);
+      addAssignment('bagType', 'bag_type', (row) => row.bagType);
+      addAssignment('zipperStyle', 'zipper_style', (row) => row.zipperStyle);
+      addAssignment('style', 'style', (row) => row.style);
+      addAssignment('pattern', 'pattern', (row) => row.pattern);
+      addAssignment('buckleType', 'buckle_type', (row) => row.buckleType);
+      addAssignment('matchingBagType', 'matching_bag_type', (row) => row.matchingBagType);
+      addAssignment('length', 'length', (row) => row.length);
+      addAssignment('width', 'width', (row) => row.width);
+      addAssignment('patternType', 'pattern_type', (row) => row.patternType);
+      addAssignment('size', 'size', (row) => row.size);
+      addAssignment('yamatoPrinterName', 'yamato_printer_name', (row) => row.yamatoPrinterName);
+
+      if (presentFields.has('stockQty')) {
+        const stockRows = chunk.filter((row) => row.stockQty !== null);
+        if (stockRows.length) {
         assignments.push(this.buildCaseUpdateSql('stock_qty', stockRows, (row) => row.stockQty));
+        }
       }
+
+      assignments.push(Prisma.sql`status = 1`);
       assignments.push(Prisma.sql`updated_at = CURRENT_TIMESTAMP(3)`);
 
       await this.prisma.$executeRaw(
@@ -1766,8 +1818,9 @@ export class MasterProductsService {
   private hasMasterProductChanges(
     existingRow: MasterProductImportRow,
     nextRow: MasterProductImportRow,
+    presentFields: Set<ImportedMasterProductField>,
   ): boolean {
-    const comparableFields: Array<keyof MasterProductImportRow> = [
+    const comparableFields: ImportedMasterProductField[] = [
       'productName',
       'productType',
       'bagBrand',
@@ -1785,10 +1838,18 @@ export class MasterProductsService {
       'size',
       'yamatoPrinterName',
     ];
-    if (comparableFields.some((field) => existingRow[field] !== nextRow[field])) {
+    if (
+      comparableFields.some(
+        (field) => presentFields.has(field) && existingRow[field] !== nextRow[field],
+      )
+    ) {
       return true;
     }
-    if (nextRow.stockQty !== null && Number(existingRow.stockQty ?? 0) !== nextRow.stockQty) {
+    if (
+      presentFields.has('stockQty') &&
+      nextRow.stockQty !== null &&
+      Number(existingRow.stockQty ?? 0) !== nextRow.stockQty
+    ) {
       return true;
     }
     return false;
@@ -1835,6 +1896,27 @@ export class MasterProductsService {
       .replace(/[繝ｻ繝ｻ]/g, ')')
       .replace(/[\s_-]+/g, '')
       .toLowerCase();
+  }
+
+  private resolvePresentImportFields(
+    rawRows: Array<Record<string, unknown>>,
+  ): Set<ImportedMasterProductField> {
+    const normalizedHeaders = new Set<string>();
+    rawRows.forEach((row) => {
+      Object.keys(row).forEach((key) => {
+        normalizedHeaders.add(this.normalizeHeader(key));
+      });
+    });
+
+    const presentFields = new Set<ImportedMasterProductField>();
+    MASTER_PRODUCT_IMPORT_FIELDS.forEach((field) => {
+      const aliases = MASTER_PRODUCT_COLUMN_ALIASES[field];
+      if (aliases.some((alias) => normalizedHeaders.has(this.normalizeHeader(alias)))) {
+        presentFields.add(field);
+      }
+    });
+
+    return presentFields;
   }
 
   private pickField(normalized: Record<string, string>, keys: readonly string[]): string {
