@@ -179,7 +179,6 @@ const MASTER_PRODUCT_IMPORT_FIELDS: ImportedMasterProductField[] = [
   'patternType',
   'size',
   'yamatoPrinterName',
-  'stockQty',
 ];
 
 const XIYA_SYNC_UPDATE_FIELDS = new Set<ImportedMasterProductField>(
@@ -1433,20 +1432,6 @@ export class MasterProductsService {
         return;
       }
 
-      let stockQty: number | null;
-      try {
-        stockQty = this.toNullableInt(
-          this.pickField(normalized, MASTER_PRODUCT_COLUMN_ALIASES.stockQty),
-        );
-      } catch (error) {
-        errors.push(
-          error instanceof Error
-            ? `第 ${rowNo} 行：${error.message}`
-            : `第 ${rowNo} 行在库数格式无效`,
-        );
-        return;
-      }
-
       resultByProductId.set(productId, {
         productId,
         productName: this.toNullableText(
@@ -1489,7 +1474,7 @@ export class MasterProductsService {
         yamatoPrinterName: this.toNullableText(
           this.pickField(normalized, MASTER_PRODUCT_COLUMN_ALIASES.yamatoPrinterName),
         ),
-        stockQty,
+        stockQty: null,
       });
     });
 
@@ -1679,13 +1664,6 @@ export class MasterProductsService {
       addAssignment('size', 'size', (row) => row.size);
       addAssignment('yamatoPrinterName', 'yamato_printer_name', (row) => row.yamatoPrinterName);
 
-      if (presentFields.has('stockQty')) {
-        const stockRows = chunk.filter((row) => row.stockQty !== null);
-        if (stockRows.length) {
-        assignments.push(this.buildCaseUpdateSql('stock_qty', stockRows, (row) => row.stockQty));
-        }
-      }
-
       assignments.push(Prisma.sql`status = 1`);
       assignments.push(Prisma.sql`updated_at = CURRENT_TIMESTAMP(3)`);
 
@@ -1845,13 +1823,6 @@ export class MasterProductsService {
     ) {
       return true;
     }
-    if (
-      presentFields.has('stockQty') &&
-      nextRow.stockQty !== null &&
-      Number(existingRow.stockQty ?? 0) !== nextRow.stockQty
-    ) {
-      return true;
-    }
     return false;
   }
 
@@ -1874,7 +1845,7 @@ export class MasterProductsService {
       patternType: row.patternType,
       size: row.size,
       yamatoPrinterName: row.yamatoPrinterName,
-      stockQty: row.stockQty ?? 0,
+      stockQty: 0,
       status: 1,
     };
   }
@@ -1932,18 +1903,6 @@ export class MasterProductsService {
   private toNullableText(value: string): string | null {
     const text = String(value || '').trim();
     return text ? text : null;
-  }
-
-  private toNullableInt(value: string): number | null {
-    const text = String(value || '').trim();
-    if (!text) {
-      return null;
-    }
-    const numeric = Number(text);
-    if (!Number.isFinite(numeric)) {
-      throw new BadRequestException(`库存数字格式无效：${text}`);
-    }
-    return Math.trunc(numeric);
   }
 
   private getActiveFbaReservedQty(row: {
