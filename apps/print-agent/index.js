@@ -118,6 +118,11 @@ function log(message) {
   console.log(`[print-agent] ${new Date().toISOString()} ${message}`);
 }
 
+function truncateOptionalText(value, maxLength) {
+  const text = String(value || "").trim();
+  return text ? text.slice(0, maxLength) : undefined;
+}
+
 async function listWindowsPrinters() {
   const command = [
     "-NoProfile",
@@ -222,8 +227,8 @@ async function reportComplete(job, printerName, systemJobId) {
     },
     body: JSON.stringify({
       claimToken: job.claimToken,
-      printerName: printerName || undefined,
-      systemJobId: systemJobId || undefined,
+      printerName: truncateOptionalText(printerName, 128),
+      systemJobId: truncateOptionalText(systemJobId, 128),
     }),
   });
 }
@@ -313,9 +318,12 @@ async function processOneJob() {
   const targetPrinter = String(job.printerName || "").trim() || defaultPrinterName || "(system default)";
   log(`Claimed job #${job.id} for product ${job.productId}, printer ${targetPrinter}`);
 
+  let step = "download";
   try {
     const pdfBuffer = await downloadJobFile(job.id, job.claimToken);
+    step = "print";
     const printResult = await sendPdfToPrinter(job, pdfBuffer);
+    step = "complete";
     await reportComplete(job, printResult.printerName, printResult.systemJobId);
     log(`Completed job #${job.id}${printResult.systemJobId ? ` (${printResult.systemJobId})` : ""}`);
     return true;
@@ -326,7 +334,7 @@ async function processOneJob() {
     } catch (reportError) {
       log(`Failed to report error for job #${job.id}: ${reportError instanceof Error ? reportError.message : String(reportError)}`);
     }
-    log(`Job #${job.id} failed: ${message}`);
+    log(`Job #${job.id} failed during ${step}: ${message}`);
     return true;
   }
 }

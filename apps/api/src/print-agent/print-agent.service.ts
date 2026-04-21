@@ -21,12 +21,21 @@ type FailPrintJobPayload = {
   errorMessage?: string;
 };
 
+const PRINT_JOB_AGENT_NAME_MAX_LENGTH = 128;
+const PRINT_JOB_PRINTER_NAME_MAX_LENGTH = 128;
+const PRINT_JOB_SYSTEM_JOB_ID_MAX_LENGTH = 128;
+const PRINT_JOB_ERROR_MESSAGE_MAX_LENGTH = 255;
+
+function normalizePrintJobText(value: unknown, maxLength: number): string {
+  return String(value ?? '').trim().slice(0, maxLength);
+}
+
 @Injectable()
 export class PrintAgentService {
   constructor(private readonly prisma: PrismaService) {}
 
   async claimNextJob(payload: ClaimPrintJobPayload): Promise<unknown | null> {
-    const agentName = String(payload?.agentName ?? '').trim() || 'print-agent';
+    const agentName = normalizePrintJobText(payload?.agentName, PRINT_JOB_AGENT_NAME_MAX_LENGTH) || 'print-agent';
     const printerNames = Array.isArray(payload?.printerNames)
       ? payload.printerNames
           .map((item) => String(item ?? '').trim())
@@ -148,8 +157,8 @@ export class PrintAgentService {
       throw new NotFoundException('未找到待完成的打印任务');
     }
 
-    const printerName = String(payload?.printerName ?? '').trim();
-    const systemJobId = String(payload?.systemJobId ?? '').trim();
+    const printerName = normalizePrintJobText(payload?.printerName, PRINT_JOB_PRINTER_NAME_MAX_LENGTH);
+    const systemJobId = normalizePrintJobText(payload?.systemJobId, PRINT_JOB_SYSTEM_JOB_ID_MAX_LENGTH);
 
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.printJob.updateMany({
@@ -216,7 +225,7 @@ export class PrintAgentService {
       data: {
         status: PrintJobStatus.failed,
         failedAt: new Date(),
-        errorMessage: String(payload?.errorMessage ?? '').trim().slice(0, 255) || '打印失败',
+        errorMessage: normalizePrintJobText(payload?.errorMessage, PRINT_JOB_ERROR_MESSAGE_MAX_LENGTH) || '打印失败',
       },
     });
 
