@@ -808,8 +808,35 @@ model MasterProduct {
   stockMovements  StockMovement[]
   inboundItems    InboundOrderItem[]
   syncRecords     MasterProductSyncRecord[]
+  rakutenComboItems RakutenComboProductItem[]
 
   @@map("master_products")
+}
+
+model RakutenComboProduct {
+  id        BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
+  comboName String                    @unique @map("combo_name") @db.VarChar(255)
+  createdAt DateTime                  @default(now()) @map("created_at")
+  updatedAt DateTime                  @updatedAt @map("updated_at")
+  items     RakutenComboProductItem[]
+
+  @@index([createdAt], map: "rakuten_combo_products_created_at_idx")
+  @@map("rakuten_combo_products")
+}
+
+model RakutenComboProductItem {
+  id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  comboId   BigInt              @map("combo_id") @db.UnsignedBigInt
+  productId String              @map("product_id") @db.VarChar(128)
+  position  Int
+  createdAt DateTime            @default(now()) @map("created_at")
+  combo     RakutenComboProduct @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  product   MasterProduct       @relation(fields: [productId], references: [productId])
+
+  @@unique([comboId, position], map: "uq_rakuten_combo_items_combo_position")
+  @@unique([comboId, productId], map: "uq_rakuten_combo_items_combo_product")
+  @@index([productId], map: "rakuten_combo_items_product_id_idx")
+  @@map("rakuten_combo_product_items")
 }
 
 model PrintJob {

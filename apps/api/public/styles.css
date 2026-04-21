@@ -1085,6 +1085,30 @@ td {
   justify-content: flex-end;
 }
 
+.rakuten-combo-product-items-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.rakuten-combo-product-item-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) 1fr auto;
+  gap: 8px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+
+.rakuten-combo-product-name-display {
+  min-height: 42px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f7fbf9;
+}
+
 .master-product-table-wrap {
   max-height: 70vh;
   overflow: auto;

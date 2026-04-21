@@ -187,6 +187,13 @@ const state = {
   masterProductSyncRecordsPageSize: 30,
   masterProductSyncRecordsHasMore: false,
   masterProductExportFilterOptions: null,
+  rakutenComboProducts: [],
+  rakutenComboProductsPage: 1,
+  rakutenComboProductsPageSize: 30,
+  rakutenComboProductsHasMore: false,
+  rakutenComboProductsTotal: 0,
+  rakutenComboProductKeyword: "",
+  rakutenComboProductDraftItems: [],
   inventoryLocations: new Map(),
   inventoryTotalsBySku: {},
   inventorySortedSkus: [],
@@ -6537,6 +6544,156 @@ async function loadMasterProductSyncRecords({ reset = false } = {}) {
   renderMasterProductSyncRecords();
 }
 
+function renderRakutenComboProductItems(items) {
+  if (!Array.isArray(items) || !items.length) {
+    return '<span class="muted">-</span>';
+  }
+  return items
+    .map((item) => {
+      const productId = String(item?.productId || "").trim();
+      const productName = String(item?.productName || "").trim();
+      return `${escapeHtml(productId)}：${escapeHtml(productName || "-")}`;
+    })
+    .join("<br />");
+}
+
+function renderRakutenComboProductTable() {
+  const body = $("rakutenComboProductBody");
+  const loadMoreBtn = $("loadMoreRakutenComboProductsBtn");
+  const summary = $("rakutenComboProductSummary");
+  if (!body) return;
+  const rows = Array.isArray(state.rakutenComboProducts) ? state.rakutenComboProducts : [];
+  if (summary) {
+    const shown = rows.length;
+    summary.textContent = `共 ${state.rakutenComboProductsTotal || 0} 个组合产品，已显示 ${shown} 个`;
+  }
+  body.innerHTML =
+    rows
+      .map(
+        (item) => `
+          <tr>
+            <td>${escapeHtml(displayText(item?.comboName))}</td>
+            <td>${escapeHtml(displayText(item?.itemCount ?? 0))}</td>
+            <td>${renderRakutenComboProductItems(item?.items)}</td>
+            <td>${escapeHtml(formatDate(item?.updatedAt))}</td>
+          </tr>
+        `,
+      )
+      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+  if (loadMoreBtn) {
+    loadMoreBtn.classList.toggle("hidden", !state.rakutenComboProductsHasMore);
+  }
+}
+
+async function loadRakutenComboProducts({ reset = false } = {}) {
+  const page = reset ? 1 : state.rakutenComboProductsPage + 1;
+  const keyword = String(state.rakutenComboProductKeyword || "").trim();
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(state.rakutenComboProductsPageSize),
+  });
+  if (keyword) {
+    params.set("keyword", keyword);
+  }
+  const result = await request(`/rakuten-combo-products?${params.toString()}`);
+  const items = Array.isArray(result?.items) ? result.items : [];
+  state.rakutenComboProducts = reset ? items : [...state.rakutenComboProducts, ...items];
+  state.rakutenComboProductsPage = Number(result?.page || page);
+  state.rakutenComboProductsHasMore = Boolean(result?.hasMore);
+  state.rakutenComboProductsTotal = Number(result?.total ?? state.rakutenComboProducts.length);
+  renderRakutenComboProductTable();
+}
+
+function addRakutenComboProductDraftItem(productId = "", productName = "") {
+  if (state.rakutenComboProductDraftItems.length >= 10) {
+    showToast("组合产品最多添加 10 个产品", true);
+    return;
+  }
+  state.rakutenComboProductDraftItems.push({
+    productId: String(productId || "").trim(),
+    productName: String(productName || "").trim(),
+    loading: false,
+  });
+  renderRakutenComboProductDraftItems();
+}
+
+function removeRakutenComboProductDraftItem(index) {
+  state.rakutenComboProductDraftItems.splice(index, 1);
+  if (!state.rakutenComboProductDraftItems.length) {
+    addRakutenComboProductDraftItem();
+    return;
+  }
+  renderRakutenComboProductDraftItems();
+}
+
+function renderRakutenComboProductDraftItems() {
+  const container = $("rakutenComboProductItems");
+  if (!container) return;
+  container.innerHTML = state.rakutenComboProductDraftItems
+    .map((item, index) => {
+      const productNameText = item.loading ? "查询中..." : displayText(item.productName);
+      return `
+        <div class="rakuten-combo-product-item-row" data-index="${index}">
+          <label>
+            产品ID
+            <input class="rakuten-combo-product-id-input" data-index="${index}" value="${escapeHtml(item.productId)}" placeholder="输入产品ID" />
+          </label>
+          <label>
+            产品名称
+            <div class="rakuten-combo-product-name-display">${escapeHtml(productNameText)}</div>
+          </label>
+          <button type="button" class="tiny-btn ghost" data-action="removeRakutenComboProductItem" data-index="${index}">删除</button>
+        </div>
+      `;
+    })
+    .join("");
+  const addBtn = $("addRakutenComboProductItemBtn");
+  if (addBtn) {
+    addBtn.disabled = state.rakutenComboProductDraftItems.length >= 10;
+  }
+}
+
+function openCreateRakutenComboProductModal() {
+  $("createRakutenComboProductForm")?.reset();
+  state.rakutenComboProductDraftItems = [];
+  addRakutenComboProductDraftItem();
+  openModal("createRakutenComboProductModal");
+}
+
+async function lookupRakutenComboProductDraftItem(index) {
+  const item = state.rakutenComboProductDraftItems[index];
+  if (!item) return;
+  const productId = String(item.productId || "").trim();
+  if (!productId) {
+    item.productName = "";
+    renderRakutenComboProductDraftItems();
+    return;
+  }
+  item.loading = true;
+  renderRakutenComboProductDraftItems();
+  try {
+    const detail = await request(`/master-products/${encodeURIComponent(productId)}/detail`);
+    item.productName = String(detail?.product?.productName || "").trim();
+  } catch (error) {
+    item.productName = "";
+    showToast(error.message, true);
+  } finally {
+    item.loading = false;
+    renderRakutenComboProductDraftItems();
+  }
+}
+
+function collectRakutenComboProductPayload() {
+  const comboName = String($("rakutenComboProductName")?.value || "").trim();
+  const productIds = state.rakutenComboProductDraftItems
+    .map((item) => String(item.productId || "").trim())
+    .filter(Boolean);
+  return {
+    comboName,
+    productIds,
+  };
+}
+
 function buildMasterProductExportPayload() {
   const payload = {};
   [
@@ -10508,6 +10665,146 @@ function bindForms() {
     }
   });
 
+  $("openCreateRakutenComboProductModal").addEventListener("click", () => {
+    openCreateRakutenComboProductModal();
+  });
+
+  $("openBulkRakutenComboProductUploadModal").addEventListener("click", () => {
+    $("bulkRakutenComboProductUploadForm")?.reset();
+    openModal("bulkRakutenComboProductUploadModal");
+  });
+
+  $("refreshRakutenComboProducts").addEventListener("click", async () => {
+    try {
+      await loadRakutenComboProducts({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenComboProductSearchForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      state.rakutenComboProductKeyword = String($("rakutenComboProductKeyword")?.value || "").trim();
+      await loadRakutenComboProducts({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("resetRakutenComboProductKeywordBtn").addEventListener("click", async () => {
+    try {
+      state.rakutenComboProductKeyword = "";
+      if ($("rakutenComboProductKeyword")) {
+        $("rakutenComboProductKeyword").value = "";
+      }
+      await loadRakutenComboProducts({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("loadMoreRakutenComboProductsBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "加载中...", async () => {
+        await loadRakutenComboProducts({ reset: false });
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("addRakutenComboProductItemBtn").addEventListener("click", () => {
+    addRakutenComboProductDraftItem();
+  });
+
+  $("rakutenComboProductItems").addEventListener("input", (event) => {
+    const input = event.target.closest(".rakuten-combo-product-id-input");
+    if (!input) return;
+    const index = Number(input.dataset.index);
+    if (!Number.isInteger(index) || !state.rakutenComboProductDraftItems[index]) return;
+    state.rakutenComboProductDraftItems[index].productId = String(input.value || "").trim();
+    state.rakutenComboProductDraftItems[index].productName = "";
+  });
+
+  $("rakutenComboProductItems").addEventListener("change", (event) => {
+    const input = event.target.closest(".rakuten-combo-product-id-input");
+    if (!input) return;
+    const index = Number(input.dataset.index);
+    if (!Number.isInteger(index)) return;
+    lookupRakutenComboProductDraftItem(index).catch((error) => showToast(error.message, true));
+  });
+
+  $("rakutenComboProductItems").addEventListener("click", (event) => {
+    const removeBtn = event.target.closest("button[data-action='removeRakutenComboProductItem']");
+    if (!removeBtn) return;
+    const index = Number(removeBtn.dataset.index);
+    if (!Number.isInteger(index)) return;
+    removeRakutenComboProductDraftItem(index);
+  });
+
+  $("createRakutenComboProductForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "保存中...", async () => {
+        const payload = collectRakutenComboProductPayload();
+        await request("/rakuten-combo-products", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        showToast("组合产品已新增");
+        closeModal("createRakutenComboProductModal");
+        await loadRakutenComboProducts({ reset: true });
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("downloadRakutenComboProductTemplateBtn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadAuthorizedFile(
+          "/rakuten-combo-products/upload-template",
+          {},
+          "乐天组合产品上传模板.xlsx",
+        );
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("bulkRakutenComboProductUploadForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      const file = $("bulkRakutenComboProductUploadFile").files?.[0];
+      if (!file) {
+        throw new Error("请选择组合产品 Excel 文件");
+      }
+      await withBusyButton(submitButton, "上传中...", async () => {
+        const formData = new FormData();
+        formData.append("file", file);
+        const result = await request("/rakuten-combo-products/import-excel", {
+          method: "POST",
+          body: formData,
+        });
+        showToast(
+          `组合产品上传完成：共 ${result?.importedCount || 0} 行，新增 ${result?.createdCount || 0} 行，更新 ${result?.updatedCount || 0} 行`,
+        );
+        $("bulkRakutenComboProductUploadForm").reset();
+        closeModal("bulkRakutenComboProductUploadModal");
+        await loadRakutenComboProducts({ reset: true });
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("masterProductExportForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
@@ -10930,6 +11227,15 @@ function bindForms() {
     }
   });
 
+  $("openRakutenComboProductManagementPanel").addEventListener("click", async () => {
+    try {
+      switchPanel("rakutenComboProductManagement");
+      await loadRakutenComboProducts({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openSkuManagementPanel").addEventListener("click", async () => {
     try {
       switchPanel("skuManagement");
@@ -10948,6 +11254,13 @@ function bindForms() {
     }
   });
   $("backToProductManagementFromMasterProduct").addEventListener("click", async () => {
+    try {
+      await navigateToProductManagement();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("backToProductManagementFromRakutenComboProduct").addEventListener("click", async () => {
     try {
       await navigateToProductManagement();
     } catch (error) {
@@ -13238,6 +13551,20 @@ function bindDelegates() {
       closeModal("masterProductImportModal");
       return;
     }
+    const createRakutenComboProductClose = event.target.closest(
+      "button[data-action='closeCreateRakutenComboProductModal']",
+    );
+    if (createRakutenComboProductClose) {
+      closeModal("createRakutenComboProductModal");
+      return;
+    }
+    const bulkRakutenComboProductUploadClose = event.target.closest(
+      "button[data-action='closeBulkRakutenComboProductUploadModal']",
+    );
+    if (bulkRakutenComboProductUploadClose) {
+      closeModal("bulkRakutenComboProductUploadModal");
+      return;
+    }
     const boxClose = event.target.closest("button[data-action='closeCreateBoxFromSkuModal']");
     if (boxClose) {
       closeModal("createBoxFromSkuModal");
@@ -13446,6 +13773,18 @@ function bindDelegates() {
   $("bulkInventoryUpdateModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("bulkInventoryUpdateModal");
+    }
+  });
+
+  $("createRakutenComboProductModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("createRakutenComboProductModal");
+    }
+  });
+
+  $("bulkRakutenComboProductUploadModal").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("bulkRakutenComboProductUploadModal");
     }
   });
 

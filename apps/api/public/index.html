@@ -402,6 +402,7 @@
               <button type="button" id="openSkuManagementPanel">SKU管理</button>
             </div>
             <div class="product-actions-right">
+              <button type="button" id="openRakutenComboProductManagementPanel">乐天组合产品管理</button>
               <button type="button" id="openMasterProductManagementPanel">主表产品管理</button>
             </div>
           </div>
@@ -480,6 +481,56 @@
               <tbody id="skuManagementBody"></tbody>
             </table>
             <div id="skuManagementLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel" id="rakutenComboProductManagement">
+        <div class="panel-head">
+          <h2>乐天组合产品管理</h2>
+          <button id="refreshRakutenComboProducts" class="ghost">刷新</button>
+        </div>
+
+        <article class="card">
+          <h3>基础操作</h3>
+          <div class="action-row product-actions">
+            <div class="product-actions-left">
+              <button type="button" id="openCreateRakutenComboProductModal">新增组合产品</button>
+              <button type="button" id="openBulkRakutenComboProductUploadModal">批量上传组合产品</button>
+            </div>
+            <div class="product-actions-right">
+              <button type="button" id="backToProductManagementFromRakutenComboProduct" class="ghost">返回产品管理</button>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>组合产品一览</h3>
+              <p id="rakutenComboProductSummary" class="muted">共 0 个组合产品</p>
+            </div>
+          </div>
+          <form id="rakutenComboProductSearchForm" class="form-grid inventory-search-form">
+            <label><input id="rakutenComboProductKeyword" placeholder="输入组合名 / 产品ID / 产品名称" /></label>
+            <button type="submit">检索</button>
+            <button type="button" id="resetRakutenComboProductKeywordBtn" class="ghost">重置</button>
+          </form>
+          <div id="rakutenComboProductTableWrap" class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>组合名</th>
+                  <th>产品数</th>
+                  <th>组合产品明细</th>
+                  <th>更新时间</th>
+                </tr>
+              </thead>
+              <tbody id="rakutenComboProductBody"></tbody>
+            </table>
+          </div>
+          <div class="action-row master-product-list-actions">
+            <button type="button" id="loadMoreRakutenComboProductsBtn" class="ghost hidden">加载更多组合产品</button>
           </div>
         </article>
       </section>
@@ -1644,6 +1695,55 @@
           <div class="actions">
             <button type="submit" id="submitMasterProductImportBtn">上传并更新</button>
             <button type="button" class="ghost" data-action="closeMasterProductImportModal">取消</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="createRakutenComboProductModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>新增乐天组合产品</h3>
+        <button type="button" class="ghost" data-action="closeCreateRakutenComboProductModal">关闭</button>
+      </div>
+      <form id="createRakutenComboProductForm" class="form-grid modal-grid">
+        <label class="create-sku-full-row">
+          组合名
+          <input id="rakutenComboProductName" maxlength="255" placeholder="输入任意组合名" required />
+        </label>
+        <div class="create-sku-full-row">
+          <div class="rakuten-combo-product-items-head">
+            <span>组合内产品（最多 10 个）</span>
+            <button type="button" id="addRakutenComboProductItemBtn" class="ghost">添加产品</button>
+          </div>
+          <div id="rakutenComboProductItems"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="submit" id="submitCreateRakutenComboProductBtn">保存组合产品</button>
+          <button type="button" class="ghost" data-action="closeCreateRakutenComboProductModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="bulkRakutenComboProductUploadModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>批量上传组合产品</h3>
+        <button type="button" class="ghost" data-action="closeBulkRakutenComboProductUploadModal">关闭</button>
+      </div>
+      <form id="bulkRakutenComboProductUploadForm" class="form-grid modal-grid">
+        <label class="create-sku-full-row">
+          组合产品 Excel 文件
+          <input id="bulkRakutenComboProductUploadFile" type="file" accept=".xlsx,.xls" required />
+        </label>
+        <p class="create-sku-full-row muted">格式：组合名、产品ID1、产品ID2……产品ID10；组合名已存在时会替换该组合的产品明细。</p>
+        <div class="modal-actions modal-actions-split">
+          <button id="downloadRakutenComboProductTemplateBtn" type="button" class="ghost">下载模板</button>
+          <div class="actions">
+            <button type="submit" id="submitBulkRakutenComboProductUploadBtn">上传并处理</button>
+            <button type="button" class="ghost" data-action="closeBulkRakutenComboProductUploadModal">取消</button>
           </div>
         </div>
       </form>
