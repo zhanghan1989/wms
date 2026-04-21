@@ -1347,6 +1347,18 @@ async function downloadBossMappingCsv() {
   showToast(`已下载 ${fileName}`);
 }
 
+async function downloadPrintAgentWindowsExe() {
+  if (!state.token) {
+    throw new Error("请先登录");
+  }
+  const fileName = await downloadAuthorizedFile(
+    "/inventory/print-agent-windows-exe",
+    {},
+    "wms-print-agent.exe",
+  );
+  showToast(`已生成并下载 ${fileName}`);
+}
+
 /*
 async function downloadBossNewItemZip() {
   if (!state.token) {
@@ -11759,6 +11771,20 @@ function bindForms() {
 }
 
 function bindDelegates() {
+  if (!document.body.dataset.printAgentExeDownloadBound) {
+    document.body.dataset.printAgentExeDownloadBound = "true";
+    document.body.addEventListener("click", async (event) => {
+      const button = event.target.closest("#downloadPrintAgentExeBtn");
+      if (!button) return;
+      try {
+        await withBusyButton(button, "生成中...", async () => {
+          await downloadPrintAgentWindowsExe();
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  }
   if (!document.body.dataset.bossMappingDownloadBound) {
     document.body.dataset.bossMappingDownloadBound = "true";
     document.body.addEventListener("click", async (event) => {

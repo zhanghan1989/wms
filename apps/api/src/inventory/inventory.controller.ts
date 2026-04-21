@@ -211,6 +211,16 @@ export class InventoryController {
     res.status(200).send(zip.content);
   }
 
+  @Get('print-agent-windows-exe')
+  async downloadPrintAgentWindowsExe(@Res() res: Response): Promise<void> {
+    const file = await this.inventoryService.buildPrintAgentWindowsExe();
+    res.setHeader('Content-Type', 'application/vnd.microsoft.portable-executable');
+    res.setHeader('Content-Disposition', `attachment; filename="${file.fileName}"`);
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
   @Get('bulk-update-template')
   async downloadBulkUpdateTemplate(@Res() res: Response): Promise<void> {
     const file = await this.inventoryService.getBulkUpdateTemplate();

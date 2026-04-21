@@ -3,14 +3,17 @@ import {
   ConflictException,
   HttpException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { execFile } from 'child_process';
 import { readFile } from 'fs/promises';
 import { AuditAction, BatchInboundOrderStatus, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import * as iconv from 'iconv-lite';
 import JSZip = require('jszip');
-import { join } from 'path';
+import { dirname, join, resolve } from 'path';
+import { promisify } from 'util';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
 import { buildEquivalentBoxCodes, normalizeBoxCode } from '../common/box-code';
@@ -67,6 +70,13 @@ type MasterProductBoxInventoryFindManyClient = {
     findMany(args: Prisma.MasterProductBoxInventoryFindManyArgs): Promise<MasterProductBoxInventoryPairRow[]>;
   };
 };
+
+type PrintAgentExeFile = {
+  fileName: string;
+  content: Buffer;
+};
+
+const execFileAsync = promisify(execFile);
 
 type MasterProductBoxInventoryFindUniqueClient = {
   masterProductBoxInventory: {
@@ -299,6 +309,8 @@ function extractInventoryImportRuntimeErrorMessage(error: unknown): string {
 
 @Injectable()
 export class InventoryService {
+  private printAgentExeBuildPromise: Promise<PrintAgentExeFile> | null = null;
+
   constructor(
     readonly prisma: PrismaService,
     readonly auditService: AuditService,
@@ -325,6 +337,69 @@ export class InventoryService {
       include: buildMasterProductBoxInventoryInclude(MASTER_PRODUCT_BOX_BASIC_PRODUCT_SELECT),
       orderBy: [{ productId: 'asc' }],
     });
+  }
+
+  async buildPrintAgentWindowsExe(): Promise<PrintAgentExeFile> {
+    if (!this.printAgentExeBuildPromise) {
+      this.printAgentExeBuildPromise = this.generatePrintAgentWindowsExe().finally(() => {
+        this.printAgentExeBuildPromise = null;
+      });
+    }
+    return this.printAgentExeBuildPromise;
+  }
+
+  private async generatePrintAgentWindowsExe(): Promise<PrintAgentExeFile> {
+    const repoRoot = await this.resolvePrintAgentRepoRoot();
+    const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+    try {
+      await execFileAsync(npmCommand, ['run', 'package:print-agent:exe'], {
+        cwd: repoRoot,
+        timeout: 180_000,
+        maxBuffer: 8 * 1024 * 1024,
+      });
+    } catch (error) {
+      const stderr = String((error as { stderr?: string })?.stderr ?? '').trim();
+      const stdout = String((error as { stdout?: string })?.stdout ?? '').trim();
+      const message = stderr || stdout || (error instanceof Error ? error.message : '生成打印 exe 失败');
+      throw new InternalServerErrorException(`生成打印 exe 失败：${message.slice(0, 500)}`);
+    }
+
+    const exePath = join(repoRoot, 'dist', 'print-agent-windows', 'wms-print-agent.exe');
+    try {
+      return {
+        fileName: 'wms-print-agent.exe',
+        content: await readFile(exePath),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未找到生成的 exe 文件';
+      throw new InternalServerErrorException(`生成打印 exe 后读取文件失败：${message}`);
+    }
+  }
+
+  private async resolvePrintAgentRepoRoot(): Promise<string> {
+    const candidates = [
+      process.cwd(),
+      resolve(process.cwd(), '..'),
+      resolve(process.cwd(), '..', '..'),
+      resolve(__dirname, '..', '..', '..'),
+      resolve(__dirname, '..', '..', '..', '..'),
+    ];
+
+    for (const candidate of candidates) {
+      try {
+        const packageJson = JSON.parse(await readFile(join(candidate, 'package.json'), 'utf8')) as {
+          scripts?: Record<string, string>;
+        };
+        if (packageJson.scripts?.['package:print-agent:exe']) {
+          return candidate;
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+
+    return dirname(resolve(process.cwd(), 'package.json'));
   }
 
   async createAdjustOrder(
