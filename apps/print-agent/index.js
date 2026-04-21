@@ -12,52 +12,50 @@ const execFileAsync = promisify(execFile);
 const listPrintersOnly = process.argv.includes("--list-printers");
 const runtimeDir = process.pkg ? path.dirname(process.execPath) : __dirname;
 
-const WINDOWS_PRINT_COMMAND = String.raw`
-& {
-  param(
-    [Parameter(Mandatory = $true)]
-    [string]$FilePath,
+const WINDOWS_PRINT_SCRIPT = String.raw`
+param(
+  [Parameter(Mandatory = $true)]
+  [string]$FilePath,
 
-    [Parameter(Mandatory = $false)]
-    [string]$PrinterName,
+  [Parameter(Mandatory = $false)]
+  [string]$PrinterName,
 
-    [Parameter(Mandatory = $false)]
-    [int]$TimeoutSeconds = 20
-  )
+  [Parameter(Mandatory = $false)]
+  [int]$TimeoutSeconds = 20
+)
 
-  $ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Stop"
 
-  if (-not (Test-Path -LiteralPath $FilePath)) {
-    throw "Print file not found: $FilePath"
-  }
+if (-not (Test-Path -LiteralPath $FilePath)) {
+  throw "Print file not found: $FilePath"
+}
 
-  $timeoutMs = [Math]::Max($TimeoutSeconds, 5) * 1000
-  if ([string]::IsNullOrWhiteSpace($PrinterName)) {
-    $printerName = $null
-  } else {
-    $printerName = $PrinterName.Trim()
-  }
+$timeoutMs = [Math]::Max($TimeoutSeconds, 5) * 1000
+if ([string]::IsNullOrWhiteSpace($PrinterName)) {
+  $printerName = $null
+} else {
+  $printerName = $PrinterName.Trim()
+}
 
-  if ($printerName) {
-    $process = Start-Process -FilePath $FilePath -Verb PrintTo -ArgumentList ('"{0}"' -f $printerName) -PassThru -WindowStyle Hidden
-    $verb = "printto"
-  } else {
-    $process = Start-Process -FilePath $FilePath -Verb Print -PassThru -WindowStyle Hidden
-    $verb = "print"
-  }
+if ($printerName) {
+  $process = Start-Process -FilePath $FilePath -Verb PrintTo -ArgumentList ('"{0}"' -f $printerName) -PassThru -WindowStyle Hidden
+  $verb = "printto"
+} else {
+  $process = Start-Process -FilePath $FilePath -Verb Print -PassThru -WindowStyle Hidden
+  $verb = "print"
+}
 
-  if ($process) {
-    $null = $process.WaitForExit($timeoutMs)
-    if (-not $process.HasExited) {
-      try {
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-      } catch {
-      }
+if ($process) {
+  $null = $process.WaitForExit($timeoutMs)
+  if (-not $process.HasExited) {
+    try {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+    } catch {
     }
-    Write-Output ("windows-{0}-{1}" -f $verb, $process.Id)
-  } else {
-    Write-Output ("windows-{0}" -f $verb)
   }
+  Write-Output ("windows-{0}-{1}" -f $verb, $process.Id)
+} else {
+  Write-Output ("windows-{0}" -f $verb)
 }
 `;
 
@@ -251,8 +249,10 @@ async function sendPdfToPrinter(job, pdfBuffer) {
   const tempDir = path.join(os.tmpdir(), "wms-print-agent", randomUUID());
   const fileName = String(job.fileName || "yamato-label.pdf").replace(/[^A-Za-z0-9._-]+/g, "_");
   const tempFilePath = path.join(tempDir, fileName || "yamato-label.pdf");
+  const scriptFilePath = path.join(tempDir, "print-pdf-windows.ps1");
   await mkdir(tempDir, { recursive: true });
   await writeFile(tempFilePath, pdfBuffer);
+  await writeFile(scriptFilePath, WINDOWS_PRINT_SCRIPT, "utf8");
 
   try {
     if (process.platform === "win32") {
@@ -262,12 +262,18 @@ async function sendPdfToPrinter(job, pdfBuffer) {
         "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
-        "-Command",
-        WINDOWS_PRINT_COMMAND,
+        "-File",
+        scriptFilePath,
+        "-FilePath",
         tempFilePath,
-        printerName || "",
-        String(windowsPrintTimeoutSec),
       ];
+      if (printerName) {
+        args.push("-PrinterName", printerName);
+      }
+      args.push(
+        "-TimeoutSeconds",
+        String(windowsPrintTimeoutSec),
+      );
       try {
         const { stdout, stderr } = await execFileAsync("powershell.exe", args, {
           windowsHide: true,
