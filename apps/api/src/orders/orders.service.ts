@@ -602,6 +602,7 @@ const YAMATO_DEFAULT_WINDOWS_PRINTER_NAME = 'yamato';
 const YAMATO_PRODUCT_PRINTER_ALIASES: Record<string, string> = {
   A: 'nekoposu',
 };
+const YAMATO_PRINT_JOB_STALE_MS = 5 * 60 * 1000;
 const YAMATO_EXPORT_FIXED_VALUES = {
   recipientSuffix: '様',
   senderPhone: '0477277616',
@@ -3279,6 +3280,7 @@ export class OrdersService {
     }
 
     const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
+    const printerName = await this.resolveYamatoPrinterNameForProductId(prepared.productId);
     const activeJob = await this.prisma.printJob.findFirst({
       where: {
         batchPageId: prepared.pageId,
@@ -3289,10 +3291,25 @@ export class OrdersService {
       orderBy: [{ id: 'desc' }],
     });
     if (activeJob) {
-      throw new BadRequestException('该面单已在打印队列中，请勿重复扫码');
+      const staleReason = this.getReusablePrintJobBlockReason(activeJob, printerName);
+      if (!staleReason) {
+        throw new BadRequestException('该面单已在打印队列中，请勿重复扫码');
+      }
+      await this.prisma.printJob.updateMany({
+        where: {
+          id: activeJob.id,
+          status: {
+            in: [PrintJobStatus.pending, PrintJobStatus.claimed],
+          },
+        },
+        data: {
+          status: PrintJobStatus.failed,
+          failedAt: new Date(),
+          errorMessage: staleReason,
+        },
+      });
     }
 
-    const printerName = await this.resolveYamatoPrinterNameForProductId(prepared.productId);
     const created = await this.prisma.printJob.create({
       data: {
         jobType: 'yamato_label',
@@ -3549,6 +3566,29 @@ export class OrdersService {
       return YAMATO_DEFAULT_WINDOWS_PRINTER_NAME;
     }
     return YAMATO_PRODUCT_PRINTER_ALIASES[printerValue] ?? printerValue;
+  }
+
+  private getReusablePrintJobBlockReason(
+    job: {
+      status: PrintJobStatus;
+      printerName: string | null;
+      queuedAt: Date;
+      claimedAt: Date | null;
+    },
+    currentPrinterName: string | null,
+  ): string | null {
+    const jobPrinterName = String(job.printerName ?? '').trim();
+    const nextPrinterName = String(currentPrinterName ?? '').trim();
+    if (jobPrinterName !== nextPrinterName) {
+      return `printer route changed from ${jobPrinterName || '(default)'} to ${nextPrinterName || '(default)'}`;
+    }
+
+    const activeAt = job.status === PrintJobStatus.claimed ? (job.claimedAt ?? job.queuedAt) : job.queuedAt;
+    if (activeAt.getTime() <= Date.now() - YAMATO_PRINT_JOB_STALE_MS) {
+      return 'print job timed out before retry';
+    }
+
+    return null;
   }
 
   private isTruthyEnvFlag(value: string | null | undefined): boolean {
