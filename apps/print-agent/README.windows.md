@@ -23,6 +23,8 @@ PRINT_AGENT_API_KEY=replace-with-the-same-key-as-server
 PRINT_AGENT_NAME=warehouse-win-01
 PRINT_AGENT_PRINTERS=yamato,nekoposu
 PRINT_AGENT_WINDOWS_PRINT_TIMEOUT_SEC=20
+# Recommended for stable silent PDF printing on Windows:
+# PRINT_AGENT_WINDOWS_PDF_TOOL_PATH=SumatraPDF.exe
 ```
 
 The server must use the same `PRINT_AGENT_API_KEY` and must run with:
@@ -39,13 +41,29 @@ YAMATO_PRINT_MODE=agent
 
 Confirm the output includes `yamato` and `nekoposu`.
 
-## 4. Start Manually
+## 4. Recommended PDF Printer Tool
+
+Windows Shell `PrintTo` depends on the default PDF application. Some default PDF apps cannot print silently to a specified printer.
+
+For stable label printing, put `SumatraPDF.exe` in the same folder as `wms-print-agent.exe`.
+
+The agent checks these locations automatically:
+
+- `PRINT_AGENT_WINDOWS_PDF_TOOL_PATH` from `.env`
+- `SumatraPDF.exe` next to `wms-print-agent.exe`
+- `sumatrapdf.exe` next to `wms-print-agent.exe`
+- `C:\Program Files\SumatraPDF\SumatraPDF.exe`
+- `C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe`
+
+If no SumatraPDF executable is found, the agent falls back to Windows Shell `PrintTo`.
+
+## 5. Start Manually
 
 ```powershell
 .\start-agent.ps1
 ```
 
-## 5. Start Automatically After Login
+## 6. Start Automatically After Login
 
 Run PowerShell as Administrator:
 

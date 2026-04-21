@@ -91,8 +91,8 @@ Windows notes:
 - The printer names must exactly match the names shown in Windows "Printers & scanners".
 - Run `.\list-printers.ps1` on the Windows warehouse PC to print the exact names the agent can see.
 - Before printing to a named Windows printer, the agent verifies that the name exists locally. If it does not match, the job fails with the available printer list instead of silently using the wrong printer.
-- The agent uses `powershell.exe` with the shell `Print` / `PrintTo` verbs to print PDF files.
-- The default PDF application on the warehouse PC must support shell printing. If Windows can open the PDF but cannot print from the agent, change the default PDF app to one that supports silent print verbs and test again.
+- For stable silent PDF printing, put `SumatraPDF.exe` next to `wms-print-agent.exe`, or set `PRINT_AGENT_WINDOWS_PDF_TOOL_PATH` in `.env`.
+- If no SumatraPDF executable is found, the agent falls back to `powershell.exe` with the shell `Print` / `PrintTo` verbs. That fallback depends on the default PDF application supporting shell printing.
 
 ### Windows Auto Start
 
@@ -141,6 +141,11 @@ Only use NSSM mode if the local PDF app can print from a Windows service session
   - Windows only.
   - Default: `20`
   - How long to wait for the local PDF print process before the agent closes it.
+- `PRINT_AGENT_WINDOWS_PDF_TOOL_PATH`
+  - Optional.
+  - Windows only.
+  - Example: `SumatraPDF.exe`
+  - Recommended when the default PDF app cannot handle shell `PrintTo`.
 
 ## Recommended Rollout
 
@@ -158,7 +163,8 @@ Only use NSSM mode if the local PDF app can print from a Windows service session
   - On Windows, verify the printer name exactly matches the name shown in "Printers & scanners".
   - On Linux/macOS, verify the printer name exactly matches the local `lpstat -a` queue name.
 - If Windows reports `PrintTo` or `Print` failure:
-  - Confirm the default PDF application supports shell printing.
+  - Put `SumatraPDF.exe` next to `wms-print-agent.exe`, or set `PRINT_AGENT_WINDOWS_PDF_TOOL_PATH`.
+  - If using the fallback shell mode, confirm the default PDF application supports shell printing.
 - If a product should print to `nekoposu`:
   - Confirm `yamatoPrinterName` is `A` on the master product.
 - If a product should print to `yamato`:

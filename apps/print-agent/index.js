@@ -2,7 +2,7 @@
 
 const { execFile } = require("child_process");
 const { randomUUID } = require("crypto");
-const { readFileSync } = require("fs");
+const { existsSync, readFileSync } = require("fs");
 const { mkdir, rm, writeFile } = require("fs/promises");
 const os = require("os");
 const path = require("path");
@@ -94,6 +94,7 @@ const apiKey = String(process.env.PRINT_AGENT_API_KEY || "").trim();
 const agentName = String(process.env.PRINT_AGENT_NAME || "").trim() || os.hostname() || "print-agent";
 const pollIntervalMs = Math.max(Number(process.env.PRINT_AGENT_POLL_INTERVAL_MS || 2000) || 2000, 500);
 const defaultPrinterName = String(process.env.PRINT_AGENT_DEFAULT_PRINTER_NAME || "").trim();
+const windowsPdfToolPath = String(process.env.PRINT_AGENT_WINDOWS_PDF_TOOL_PATH || "").trim();
 const printerNames = String(process.env.PRINT_AGENT_PRINTERS || "")
   .split(",")
   .map((item) => item.trim())
@@ -119,6 +120,27 @@ function log(message) {
 function truncateOptionalText(value, maxLength) {
   const text = String(value || "").trim();
   return text ? text.slice(0, maxLength) : undefined;
+}
+
+function resolveRuntimePath(filePath) {
+  if (!filePath) {
+    return "";
+  }
+  return path.isAbsolute(filePath) ? filePath : path.join(runtimeDir, filePath);
+}
+
+function getWindowsPdfToolPath() {
+  if (process.platform !== "win32") {
+    return "";
+  }
+  const candidates = [
+    resolveRuntimePath(windowsPdfToolPath),
+    path.join(runtimeDir, "SumatraPDF.exe"),
+    path.join(runtimeDir, "sumatrapdf.exe"),
+    String.raw`C:\Program Files\SumatraPDF\SumatraPDF.exe`,
+    String.raw`C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe`,
+  ].filter(Boolean);
+  return candidates.find((candidate) => existsSync(candidate)) || "";
 }
 
 async function listWindowsPrinters() {
@@ -257,6 +279,29 @@ async function sendPdfToPrinter(job, pdfBuffer) {
   try {
     if (process.platform === "win32") {
       const printerName = await resolveWindowsPrinterName(requestedPrinterName);
+      const pdfToolPath = getWindowsPdfToolPath();
+      if (pdfToolPath) {
+        const args = printerName
+          ? ["-silent", "-print-to", printerName, tempFilePath]
+          : ["-silent", "-print-to-default", tempFilePath];
+        try {
+          const { stdout, stderr } = await execFileAsync(pdfToolPath, args, {
+            windowsHide: true,
+          });
+          const output = String(stdout || stderr || "").trim();
+          return {
+            printerName: printerName || null,
+            systemJobId: output || `sumatra-${path.basename(pdfToolPath)}`,
+          };
+        } catch (error) {
+          const stderr = String(error && error.stderr ? error.stderr : "").trim();
+          const stdout = String(error && error.stdout ? error.stdout : "").trim();
+          const message = stderr || stdout || (error instanceof Error ? error.message : "SumatraPDF print failed");
+          throw new Error(
+            `SumatraPDF print failed: ${message}. Confirm PRINT_AGENT_WINDOWS_PDF_TOOL_PATH and printer name match Windows settings.`,
+          );
+        }
+      }
       const args = [
         "-NoProfile",
         "-NonInteractive",
@@ -291,7 +336,7 @@ async function sendPdfToPrinter(job, pdfBuffer) {
           throw new Error("powershell.exe not found on this Windows machine");
         }
         throw new Error(
-          `Windows PDF print failed: ${message}. Confirm the PDF default app supports shell Print/PrintTo and the printer name matches Windows settings.`,
+          `Windows PDF print failed: ${message}. Install SumatraPDF.exe next to wms-print-agent.exe or set PRINT_AGENT_WINDOWS_PDF_TOOL_PATH, then confirm the printer name matches Windows settings.`,
         );
       }
     }
@@ -351,7 +396,11 @@ async function sleep(ms) {
 
 async function main() {
   log(`Started with base URL ${baseUrl}`);
-  log(`Print platform: ${process.platform === "win32" ? "windows-shell" : "lp"}`);
+  const windowsPdfTool = getWindowsPdfToolPath();
+  log(`Print platform: ${process.platform === "win32" ? (windowsPdfTool ? "windows-sumatrapdf" : "windows-shell") : "lp"}`);
+  if (windowsPdfTool) {
+    log(`Windows PDF tool: ${windowsPdfTool}`);
+  }
   if (process.platform === "win32") {
     try {
       const printers = await listWindowsPrinters();
