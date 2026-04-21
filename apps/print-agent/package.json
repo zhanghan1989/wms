@@ -4,6 +4,7 @@
   "private": true,
   "description": "WMS local print agent",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "list-printers": "node index.js --list-printers"
   }
 }

@@ -15,6 +15,8 @@
     "check:text": "node scripts/check-text-encoding.mjs",
     "prisma:generate:api": "npm run -w api prisma:generate && bash scripts/ensure-prisma-client-link.sh",
     "ci:verify": "npm run lint && npm run build && npm run test",
+    "package:print-agent": "node scripts/package-print-agent.mjs",
+    "package:print-agent:exe": "npm run package:print-agent && npx --yes @yao-pkg/pkg@6.18.0 apps/print-agent/index.js --targets node22-win-x64 --output dist/print-agent-windows/wms-print-agent.exe --no-bytecode --public",
     "branch:sync-develop": "bash scripts/wms-sync-develop.sh",
     "work:start": "bash scripts/wms-work-start.sh",
     "work:stop": "bash scripts/wms-work-stop.sh",

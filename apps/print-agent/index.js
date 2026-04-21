@@ -2,12 +2,94 @@
 
 const { execFile } = require("child_process");
 const { randomUUID } = require("crypto");
+const { readFileSync } = require("fs");
 const { mkdir, rm, writeFile } = require("fs/promises");
 const os = require("os");
 const path = require("path");
 const { promisify } = require("util");
 
 const execFileAsync = promisify(execFile);
+const listPrintersOnly = process.argv.includes("--list-printers");
+const runtimeDir = process.pkg ? path.dirname(process.execPath) : __dirname;
+
+const WINDOWS_PRINT_COMMAND = String.raw`
+& {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$FilePath,
+
+    [Parameter(Mandatory = $false)]
+    [string]$PrinterName,
+
+    [Parameter(Mandatory = $false)]
+    [int]$TimeoutSeconds = 20
+  )
+
+  $ErrorActionPreference = "Stop"
+
+  if (-not (Test-Path -LiteralPath $FilePath)) {
+    throw "Print file not found: $FilePath"
+  }
+
+  $timeoutMs = [Math]::Max($TimeoutSeconds, 5) * 1000
+  if ([string]::IsNullOrWhiteSpace($PrinterName)) {
+    $printerName = $null
+  } else {
+    $printerName = $PrinterName.Trim()
+  }
+
+  if ($printerName) {
+    $process = Start-Process -FilePath $FilePath -Verb PrintTo -ArgumentList ('"{0}"' -f $printerName) -PassThru -WindowStyle Hidden
+    $verb = "printto"
+  } else {
+    $process = Start-Process -FilePath $FilePath -Verb Print -PassThru -WindowStyle Hidden
+    $verb = "print"
+  }
+
+  if ($process) {
+    $null = $process.WaitForExit($timeoutMs)
+    if (-not $process.HasExited) {
+      try {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      } catch {
+      }
+    }
+    Write-Output ("windows-{0}-{1}" -f $verb, $process.Id)
+  } else {
+    Write-Output ("windows-{0}" -f $verb)
+  }
+}
+`;
+
+function loadEnvFile(filePath) {
+  let content = "";
+  try {
+    content = readFileSync(filePath, "utf8");
+  } catch (_) {
+    return;
+  }
+
+  content.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      return;
+    }
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match || Object.prototype.hasOwnProperty.call(process.env, match[1])) {
+      return;
+    }
+    let value = match[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[match[1]] = value;
+  });
+}
+
+loadEnvFile(path.join(runtimeDir, ".env"));
 
 const baseUrl = String(process.env.WMS_BASE_URL || "").trim().replace(/\/+$/, "");
 const apiKey = String(process.env.PRINT_AGENT_API_KEY || "").trim();
@@ -23,17 +105,62 @@ const windowsPrintTimeoutSec = Math.max(
   5,
 );
 
-if (!baseUrl) {
+if (!baseUrl && !listPrintersOnly) {
   console.error("[print-agent] Missing WMS_BASE_URL");
   process.exit(1);
 }
-if (!apiKey) {
+if (!apiKey && !listPrintersOnly) {
   console.error("[print-agent] Missing PRINT_AGENT_API_KEY");
   process.exit(1);
 }
 
 function log(message) {
   console.log(`[print-agent] ${new Date().toISOString()} ${message}`);
+}
+
+async function listWindowsPrinters() {
+  const command = [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "Get-Printer | Sort-Object Name | ForEach-Object { $_.Name }",
+  ];
+  try {
+    const { stdout } = await execFileAsync("powershell.exe", command, {
+      windowsHide: true,
+    });
+    return String(stdout || "")
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  } catch (error) {
+    const stderr = String(error && error.stderr ? error.stderr : "").trim();
+    const stdout = String(error && error.stdout ? error.stdout : "").trim();
+    const message = stderr || stdout || (error instanceof Error ? error.message : "failed to list Windows printers");
+    throw new Error(`Unable to list Windows printers: ${message}`);
+  }
+}
+
+async function resolveWindowsPrinterName(printerName) {
+  const requestedName = String(printerName || "").trim();
+  if (!requestedName || process.platform !== "win32") {
+    return requestedName;
+  }
+
+  const printers = await listWindowsPrinters();
+  const exactMatch = printers.find((name) => name === requestedName);
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const caseInsensitiveMatch = printers.find((name) => name.toLowerCase() === requestedName.toLowerCase());
+  if (caseInsensitiveMatch) {
+    return caseInsensitiveMatch;
+  }
+
+  throw new Error(
+    `Printer "${requestedName}" was not found on this Windows machine. Available printers: ${printers.join(", ") || "(none)"}`,
+  );
 }
 
 async function requestJson(pathname, options = {}) {
@@ -115,7 +242,7 @@ async function reportFailure(job, errorMessage) {
 }
 
 async function sendPdfToPrinter(job, pdfBuffer) {
-  const printerName = String(job.printerName || "").trim() || defaultPrinterName || "";
+  const requestedPrinterName = String(job.printerName || "").trim() || defaultPrinterName || "";
   const tempDir = path.join(os.tmpdir(), "wms-print-agent", randomUUID());
   const fileName = String(job.fileName || "yamato-label.pdf").replace(/[^A-Za-z0-9._-]+/g, "_");
   const tempFilePath = path.join(tempDir, fileName || "yamato-label.pdf");
@@ -124,22 +251,18 @@ async function sendPdfToPrinter(job, pdfBuffer) {
 
   try {
     if (process.platform === "win32") {
-      const scriptPath = path.join(__dirname, "print-pdf-windows.ps1");
+      const printerName = await resolveWindowsPrinterName(requestedPrinterName);
       const args = [
         "-NoProfile",
         "-NonInteractive",
         "-ExecutionPolicy",
         "Bypass",
-        "-File",
-        scriptPath,
-        "-FilePath",
+        "-Command",
+        WINDOWS_PRINT_COMMAND,
         tempFilePath,
-        "-TimeoutSeconds",
+        printerName || "",
         String(windowsPrintTimeoutSec),
       ];
-      if (printerName) {
-        args.push("-PrinterName", printerName);
-      }
       try {
         const { stdout, stderr } = await execFileAsync("powershell.exe", args, {
           windowsHide: true,
@@ -162,6 +285,7 @@ async function sendPdfToPrinter(job, pdfBuffer) {
       }
     }
 
+    const printerName = requestedPrinterName;
     const args = ["-t", String(job.fileName || "Yamato Label")];
     if (printerName) {
       args.push("-d", printerName);
@@ -214,6 +338,21 @@ async function sleep(ms) {
 async function main() {
   log(`Started with base URL ${baseUrl}`);
   log(`Print platform: ${process.platform === "win32" ? "windows-shell" : "lp"}`);
+  if (process.platform === "win32") {
+    try {
+      const printers = await listWindowsPrinters();
+      log(`Windows printers: ${printers.join(", ") || "(none)"}`);
+      if (listPrintersOnly) {
+        return;
+      }
+    } catch (error) {
+      log(error instanceof Error ? error.message : String(error));
+      if (listPrintersOnly) {
+        process.exitCode = 1;
+        return;
+      }
+    }
+  }
   if (printerNames.length) {
     log(`Printer filter: ${printerNames.join(", ")}`);
   } else if (defaultPrinterName) {

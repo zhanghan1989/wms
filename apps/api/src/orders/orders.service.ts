@@ -598,6 +598,10 @@ const YAMATO_BATCH_STATUS = {
   EXCEL_EXPORTED: 'excel_exported',
   PDF_READY: 'pdf_ready',
 } as const;
+const YAMATO_DEFAULT_WINDOWS_PRINTER_NAME = 'ヤマト';
+const YAMATO_PRODUCT_PRINTER_ALIASES: Record<string, string> = {
+  A: 'ネコポス',
+};
 const YAMATO_EXPORT_FIXED_VALUES = {
   recipientSuffix: '様',
   senderPhone: '0477277616',
@@ -3536,8 +3540,15 @@ export class OrdersService {
         yamatoPrinterName: true,
       },
     });
-    const printerName = String(product?.yamatoPrinterName ?? '').trim();
-    return printerName || null;
+    return this.resolveYamatoWindowsPrinterName(product?.yamatoPrinterName);
+  }
+
+  private resolveYamatoWindowsPrinterName(rawPrinterValue: string | null | undefined): string {
+    const printerValue = String(rawPrinterValue ?? '').trim();
+    if (!printerValue) {
+      return YAMATO_DEFAULT_WINDOWS_PRINTER_NAME;
+    }
+    return YAMATO_PRODUCT_PRINTER_ALIASES[printerValue] ?? printerValue;
   }
 
   private isTruthyEnvFlag(value: string | null | undefined): boolean {
