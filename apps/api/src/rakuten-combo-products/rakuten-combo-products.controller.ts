@@ -3,7 +3,9 @@ import {
   Body,
   Controller,
   Get,
+  Param,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -50,6 +52,14 @@ export class RakutenComboProductsController {
   @Post()
   async create(@Body() payload: CreateRakutenComboProductDto): Promise<unknown> {
     return this.service.create(payload);
+  }
+
+  @Put(':id')
+  async update(
+    @Param('id') id: string,
+    @Body() payload: CreateRakutenComboProductDto,
+  ): Promise<unknown> {
+    return this.service.update(id, payload);
   }
 
   @Post('import-excel')

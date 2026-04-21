@@ -192,8 +192,10 @@ const state = {
   rakutenComboProductsPageSize: 30,
   rakutenComboProductsHasMore: false,
   rakutenComboProductsTotal: 0,
+  rakutenComboProductsLoading: false,
   rakutenComboProductKeyword: "",
   rakutenComboProductDraftItems: [],
+  rakutenComboProductEditingId: "",
   inventoryLocations: new Map(),
   inventoryTotalsBySku: {},
   inventorySortedSkus: [],
@@ -307,6 +309,7 @@ let stocktakePlannerLoadObserver = null;
 let dataBackupLoadObserver = null;
 let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
+let rakutenComboProductLoadObserver = null;
 let skuProductLookupToken = 0;
 let hasUserNavigatedSinceBootstrap = false;
 const AUTH_ERROR_STORAGE_KEY = "wms_auth_error_message";
@@ -6559,7 +6562,6 @@ function renderRakutenComboProductItems(items) {
 
 function renderRakutenComboProductTable() {
   const body = $("rakutenComboProductBody");
-  const loadMoreBtn = $("loadMoreRakutenComboProductsBtn");
   const summary = $("rakutenComboProductSummary");
   if (!body) return;
   const rows = Array.isArray(state.rakutenComboProducts) ? state.rakutenComboProducts : [];
@@ -6576,16 +6578,17 @@ function renderRakutenComboProductTable() {
             <td>${escapeHtml(displayText(item?.itemCount ?? 0))}</td>
             <td>${renderRakutenComboProductItems(item?.items)}</td>
             <td>${escapeHtml(formatDate(item?.updatedAt))}</td>
+            <td>
+              <button type="button" class="tiny-btn" data-action="editRakutenComboProduct" data-combo-id="${escapeHtml(String(item?.id || ""))}">更改</button>
+            </td>
           </tr>
         `,
       )
-      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
-  if (loadMoreBtn) {
-    loadMoreBtn.classList.toggle("hidden", !state.rakutenComboProductsHasMore);
-  }
+      .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
 }
 
 async function loadRakutenComboProducts({ reset = false } = {}) {
+  if (state.rakutenComboProductsLoading) return;
   const page = reset ? 1 : state.rakutenComboProductsPage + 1;
   const keyword = String(state.rakutenComboProductKeyword || "").trim();
   const params = new URLSearchParams({
@@ -6595,13 +6598,67 @@ async function loadRakutenComboProducts({ reset = false } = {}) {
   if (keyword) {
     params.set("keyword", keyword);
   }
-  const result = await request(`/rakuten-combo-products?${params.toString()}`);
-  const items = Array.isArray(result?.items) ? result.items : [];
-  state.rakutenComboProducts = reset ? items : [...state.rakutenComboProducts, ...items];
-  state.rakutenComboProductsPage = Number(result?.page || page);
-  state.rakutenComboProductsHasMore = Boolean(result?.hasMore);
-  state.rakutenComboProductsTotal = Number(result?.total ?? state.rakutenComboProducts.length);
-  renderRakutenComboProductTable();
+  state.rakutenComboProductsLoading = true;
+  try {
+    const result = await request(`/rakuten-combo-products?${params.toString()}`);
+    const items = Array.isArray(result?.items) ? result.items : [];
+    state.rakutenComboProducts = reset ? items : [...state.rakutenComboProducts, ...items];
+    state.rakutenComboProductsPage = Number(result?.page || page);
+    state.rakutenComboProductsHasMore = Boolean(result?.hasMore);
+    state.rakutenComboProductsTotal = Number(result?.total ?? state.rakutenComboProducts.length);
+    renderRakutenComboProductTable();
+    requestAnimationFrame(() => {
+      maybeAutoLoadRakutenComboProducts();
+    });
+  } finally {
+    state.rakutenComboProductsLoading = false;
+  }
+}
+
+function loadMoreRakutenComboProductsIfNeeded() {
+  const panel = $("rakutenComboProductManagement");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.rakutenComboProductsLoading || !state.rakutenComboProductsHasMore) return;
+  loadRakutenComboProducts({ reset: false }).catch((error) => showToast(error.message, true));
+}
+
+function maybeAutoLoadRakutenComboProducts() {
+  const panel = $("rakutenComboProductManagement");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("rakutenComboProductTableWrap");
+  if (!tableWrap) return;
+  if (state.rakutenComboProductsLoading || !state.rakutenComboProductsHasMore) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreRakutenComboProductsIfNeeded();
+}
+
+function setupRakutenComboProductLoadObserver() {
+  if (rakutenComboProductLoadObserver) {
+    rakutenComboProductLoadObserver.disconnect();
+    rakutenComboProductLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("rakutenComboProductTableWrap");
+  const sentinel = $("rakutenComboProductLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  rakutenComboProductLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreRakutenComboProductsIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  rakutenComboProductLoadObserver.observe(sentinel);
 }
 
 function addRakutenComboProductDraftItem(productId = "", productName = "") {
@@ -6655,8 +6712,52 @@ function renderRakutenComboProductDraftItems() {
 
 function openCreateRakutenComboProductModal() {
   $("createRakutenComboProductForm")?.reset();
+  state.rakutenComboProductEditingId = "";
+  if ($("rakutenComboProductEditingId")) {
+    $("rakutenComboProductEditingId").value = "";
+  }
+  if ($("rakutenComboProductModalTitle")) {
+    $("rakutenComboProductModalTitle").textContent = "新增乐天组合产品";
+  }
   state.rakutenComboProductDraftItems = [];
   addRakutenComboProductDraftItem();
+  openModal("createRakutenComboProductModal");
+}
+
+function openEditRakutenComboProductModal(comboId) {
+  const combo = state.rakutenComboProducts.find((item) => String(item?.id || "") === String(comboId || ""));
+  if (!combo) {
+    showToast("未找到组合产品，请刷新后重试", true);
+    return;
+  }
+  $("createRakutenComboProductForm")?.reset();
+  state.rakutenComboProductEditingId = String(combo.id || "");
+  if ($("rakutenComboProductEditingId")) {
+    $("rakutenComboProductEditingId").value = state.rakutenComboProductEditingId;
+  }
+  if ($("rakutenComboProductModalTitle")) {
+    $("rakutenComboProductModalTitle").textContent = "更改乐天组合产品";
+  }
+  if ($("rakutenComboProductName")) {
+    $("rakutenComboProductName").value = String(combo.comboName || "");
+  }
+  state.rakutenComboProductDraftItems = [];
+  const items = Array.isArray(combo.items) ? combo.items : [];
+  items.forEach((item) => {
+    state.rakutenComboProductDraftItems.push({
+      productId: String(item?.productId || "").trim(),
+      productName: String(item?.productName || "").trim(),
+      loading: false,
+    });
+  });
+  if (!state.rakutenComboProductDraftItems.length) {
+    state.rakutenComboProductDraftItems.push({
+      productId: "",
+      productName: "",
+      loading: false,
+    });
+  }
+  renderRakutenComboProductDraftItems();
   openModal("createRakutenComboProductModal");
 }
 
@@ -6689,6 +6790,7 @@ function collectRakutenComboProductPayload() {
     .map((item) => String(item.productId || "").trim())
     .filter(Boolean);
   return {
+    id: String($("rakutenComboProductEditingId")?.value || state.rakutenComboProductEditingId || "").trim(),
     comboName,
     productIds,
   };
@@ -10704,17 +10806,6 @@ function bindForms() {
     }
   });
 
-  $("loadMoreRakutenComboProductsBtn").addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      await withBusyButton(button, "加载中...", async () => {
-        await loadRakutenComboProducts({ reset: false });
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
   $("addRakutenComboProductItemBtn").addEventListener("click", () => {
     addRakutenComboProductDraftItem();
   });
@@ -10744,17 +10835,24 @@ function bindForms() {
     removeRakutenComboProductDraftItem(index);
   });
 
+  $("rakutenComboProductBody").addEventListener("click", (event) => {
+    const editBtn = event.target.closest("button[data-action='editRakutenComboProduct']");
+    if (!editBtn) return;
+    openEditRakutenComboProductModal(editBtn.dataset.comboId);
+  });
+
   $("createRakutenComboProductForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
       await withBusyButton(submitButton, "保存中...", async () => {
         const payload = collectRakutenComboProductPayload();
-        await request("/rakuten-combo-products", {
-          method: "POST",
+        const isEditing = Boolean(payload.id);
+        await request(isEditing ? `/rakuten-combo-products/${encodeURIComponent(payload.id)}` : "/rakuten-combo-products", {
+          method: isEditing ? "PUT" : "POST",
           body: JSON.stringify(payload),
         });
-        showToast("组合产品已新增");
+        showToast(isEditing ? "组合产品已更新" : "组合产品已新增");
         closeModal("createRakutenComboProductModal");
         await loadRakutenComboProducts({ reset: true });
       });
@@ -13969,6 +14067,7 @@ function bindScrollLoad() {
     loadMoreInventorySearchIfNeeded();
     loadMoreSkuManagementIfNeeded();
     loadMoreProductEditRequestsIfNeeded();
+    loadMoreRakutenComboProductsIfNeeded();
     loadMoreUsersIfNeeded();
     loadMoreAuditIfNeeded();
   });
@@ -13984,6 +14083,13 @@ function bindScrollLoad() {
   if (skuManagementTableWrap) {
     skuManagementTableWrap.addEventListener("scroll", () => {
       maybeAutoLoadSkuManagement();
+    });
+  }
+
+  const rakutenComboProductTableWrap = $("rakutenComboProductTableWrap");
+  if (rakutenComboProductTableWrap) {
+    rakutenComboProductTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadRakutenComboProducts();
     });
   }
 
@@ -14134,6 +14240,7 @@ setupAuditLoadObserver();
 setupFbaReplenishmentLoadObserver();
 setupStocktakePlannerLoadObserver();
 setupDataBackupLoadObserver();
+setupRakutenComboProductLoadObserver();
 ensureOverseasWarehouseQueryUi();
 renderStocktakePlanner();
 bindTabs();

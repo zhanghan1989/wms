@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import * as XLSX from 'xlsx';
+import { parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRakutenComboProductDto } from './dto/create-rakuten-combo-product.dto';
 
@@ -64,13 +65,7 @@ export class RakutenComboProductsService {
 
   async create(payload: CreateRakutenComboProductDto): Promise<unknown> {
     const normalized = await this.normalizePayload(payload);
-    const existing = await this.prisma.rakutenComboProduct.findUnique({
-      where: { comboName: normalized.comboName },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new BadRequestException('组合名已存在');
-    }
+    await this.assertComboNameUnique(normalized.comboName);
     const created = await this.prisma.$transaction(async (tx) => {
       const combo = await tx.rakutenComboProduct.create({
         data: {
@@ -101,6 +96,53 @@ export class RakutenComboProductsService {
       });
     });
     return this.serializeCombo(created);
+  }
+
+  async update(idRaw: string, payload: CreateRakutenComboProductDto): Promise<unknown> {
+    const id = parseId(idRaw, 'id');
+    const normalized = await this.normalizePayload(payload);
+    const existing = await this.prisma.rakutenComboProduct.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new BadRequestException('组合产品不存在');
+    }
+    await this.assertComboNameUnique(normalized.comboName, id);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.rakutenComboProductItem.deleteMany({
+        where: { comboId: id },
+      });
+      await tx.rakutenComboProduct.update({
+        where: { id },
+        data: {
+          comboName: normalized.comboName,
+          items: {
+            create: normalized.productIds.map((productId, index) => ({
+              productId,
+              position: index + 1,
+            })),
+          },
+        },
+      });
+      return tx.rakutenComboProduct.findUnique({
+        where: { id },
+        include: {
+          items: {
+            orderBy: { position: 'asc' },
+            include: {
+              product: {
+                select: {
+                  productId: true,
+                  productName: true,
+                },
+              },
+            },
+          },
+        },
+      });
+    });
+    return this.serializeCombo(updated);
   }
 
   getUploadTemplate(): { fileName: string; content: Buffer } {
@@ -227,6 +269,16 @@ export class RakutenComboProductsService {
     const missing = productIds.filter((productId) => !existing.has(productId));
     if (missing.length) {
       throw new BadRequestException(`主表产品不存在：${missing.join('、')}`);
+    }
+  }
+
+  private async assertComboNameUnique(comboName: string, excludeId?: bigint): Promise<void> {
+    const existing = await this.prisma.rakutenComboProduct.findUnique({
+      where: { comboName },
+      select: { id: true },
+    });
+    if (existing && existing.id !== excludeId) {
+      throw new BadRequestException('组合名已存在');
     }
   }
 
