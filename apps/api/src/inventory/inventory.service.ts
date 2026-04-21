@@ -77,6 +77,7 @@ type PrintAgentExeFile = {
 };
 
 const execFileAsync = promisify(execFile);
+const PRINT_AGENT_EXE_BUILD_TIMEOUT_MS = 10 * 60 * 1000;
 
 type MasterProductBoxInventoryFindUniqueClient = {
   masterProductBoxInventory: {
@@ -355,14 +356,12 @@ export class InventoryService {
     try {
       await execFileAsync(npmCommand, ['run', 'package:print-agent:exe'], {
         cwd: repoRoot,
-        timeout: 180_000,
+        timeout: PRINT_AGENT_EXE_BUILD_TIMEOUT_MS,
         maxBuffer: 8 * 1024 * 1024,
       });
     } catch (error) {
-      const stderr = String((error as { stderr?: string })?.stderr ?? '').trim();
-      const stdout = String((error as { stdout?: string })?.stdout ?? '').trim();
-      const message = stderr || stdout || (error instanceof Error ? error.message : '生成打印 exe 失败');
-      throw new InternalServerErrorException(`生成打印 exe 失败：${message.slice(0, 500)}`);
+      const details = this.formatPrintAgentExeBuildError(error);
+      throw new InternalServerErrorException(`生成打印 exe 失败：${details}`);
     }
 
     const exePath = join(repoRoot, 'dist', 'print-agent-windows', 'wms-print-agent.exe');
@@ -400,6 +399,29 @@ export class InventoryService {
     }
 
     return dirname(resolve(process.cwd(), 'package.json'));
+  }
+
+  private formatPrintAgentExeBuildError(error: unknown): string {
+    const buildError = error as {
+      code?: string | number;
+      signal?: string;
+      killed?: boolean;
+      stdout?: string;
+      stderr?: string;
+    };
+    const parts = [
+      buildError.code ? `code=${buildError.code}` : '',
+      buildError.signal ? `signal=${buildError.signal}` : '',
+      buildError.killed ? 'killed=true' : '',
+      error instanceof Error ? error.message : '',
+      String(buildError.stderr ?? '').trim(),
+      String(buildError.stdout ?? '').trim(),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const message = parts || 'unknown error';
+    return message.slice(-1200);
   }
 
   async createAdjustOrder(
