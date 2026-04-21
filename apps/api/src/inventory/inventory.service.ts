@@ -341,16 +341,23 @@ export class InventoryService {
   }
 
   async buildPrintAgentWindowsExe(): Promise<PrintAgentExeFile> {
+    const repoRoot = await this.resolvePrintAgentRepoRoot();
+    const prebuilt = await this.tryReadPrintAgentWindowsExe(
+      join(repoRoot, 'apps', 'print-agent', 'prebuilt', 'wms-print-agent.exe'),
+    );
+    if (prebuilt) {
+      return prebuilt;
+    }
+
     if (!this.printAgentExeBuildPromise) {
-      this.printAgentExeBuildPromise = this.generatePrintAgentWindowsExe().finally(() => {
+      this.printAgentExeBuildPromise = this.generatePrintAgentWindowsExe(repoRoot).finally(() => {
         this.printAgentExeBuildPromise = null;
       });
     }
     return this.printAgentExeBuildPromise;
   }
 
-  private async generatePrintAgentWindowsExe(): Promise<PrintAgentExeFile> {
-    const repoRoot = await this.resolvePrintAgentRepoRoot();
+  private async generatePrintAgentWindowsExe(repoRoot: string): Promise<PrintAgentExeFile> {
     const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
     try {
@@ -365,14 +372,22 @@ export class InventoryService {
     }
 
     const exePath = join(repoRoot, 'dist', 'print-agent-windows', 'wms-print-agent.exe');
+    const generated = await this.tryReadPrintAgentWindowsExe(exePath);
+    if (generated) {
+      return generated;
+    }
+
+    throw new InternalServerErrorException('生成打印 exe 后未找到文件：dist/print-agent-windows/wms-print-agent.exe');
+  }
+
+  private async tryReadPrintAgentWindowsExe(exePath: string): Promise<PrintAgentExeFile | null> {
     try {
       return {
         fileName: 'wms-print-agent.exe',
         content: await readFile(exePath),
       };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '未找到生成的 exe 文件';
-      throw new InternalServerErrorException(`生成打印 exe 后读取文件失败：${message}`);
+    } catch {
+      return null;
     }
   }
 

@@ -27,6 +27,15 @@ for (const [from, to] of files) {
   await copyFile(join(sourceDir, from), join(outputDir, to));
 }
 
+try {
+  await copyFile(
+    join(sourceDir, 'prebuilt', 'wms-print-agent.exe'),
+    join(outputDir, 'wms-print-agent.exe'),
+  );
+} catch {
+  // The exe is optional for source-only packages.
+}
+
 await writeFile(
   join(outputDir, 'package-info.txt'),
   [
