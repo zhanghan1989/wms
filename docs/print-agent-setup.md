@@ -32,8 +32,8 @@ Each master product now supports a `yamatoPrinterName` field.
 
 Recommended usage:
 
-- Leave it empty for products that should print to the Windows printer named `ヤマト`.
-- Set it to `A` for products that should print to the Windows printer named `ネコポス`.
+- Leave it empty for products that should print to the Windows printer named `yamato`.
+- Set it to `A` for products that should print to the Windows printer named `nekoposu`.
 - If another value is used later, WMS will treat that value as the exact printer queue name.
 - When scan printing queues a job, WMS writes the resolved real printer name into `print_jobs.printer_name`, so products can be routed to different local printers automatically.
 
@@ -70,8 +70,8 @@ cd /path/to/wms-main
 export WMS_BASE_URL="https://your-wms-domain"
 export PRINT_AGENT_API_KEY="replace-with-a-long-random-string"
 export PRINT_AGENT_NAME="warehouse-pc-01"
-export PRINT_AGENT_DEFAULT_PRINTER_NAME="Yamato-Default"
-export PRINT_AGENT_PRINTERS="Yamato-A,Yamato-B,Yamato-Default"
+export PRINT_AGENT_DEFAULT_PRINTER_NAME="yamato"
+export PRINT_AGENT_PRINTERS="yamato,nekoposu"
 npm run -w print-agent start
 ```
 
@@ -145,7 +145,7 @@ Only use NSSM mode if the local PDF app can print from a Windows service session
 ## Recommended Rollout
 
 1. Apply the latest Prisma migration on the API database.
-2. Confirm products with an empty `yamatoPrinterName` print to `ヤマト`, and products with `yamatoPrinterName=A` print to `ネコポス`.
+2. Confirm products with an empty `yamatoPrinterName` print to `yamato`, and products with `yamatoPrinterName=A` print to `nekoposu`.
 3. Start the print-agent on the warehouse computer.
 4. Upload Yamato PDF in WMS.
 5. Scan a product ID and confirm the job is printed by the expected printer.
@@ -159,7 +159,7 @@ Only use NSSM mode if the local PDF app can print from a Windows service session
   - On Linux/macOS, verify the printer name exactly matches the local `lpstat -a` queue name.
 - If Windows reports `PrintTo` or `Print` failure:
   - Confirm the default PDF application supports shell printing.
-- If a product should print to `ネコポス`:
+- If a product should print to `nekoposu`:
   - Confirm `yamatoPrinterName` is `A` on the master product.
-- If a product should print to `ヤマト`:
+- If a product should print to `yamato`:
   - Leave `yamatoPrinterName` empty on the master product.

@@ -10,8 +10,8 @@ If this folder does not contain `wms-print-agent.exe`, install Node.js LTS first
 
 Make sure the Windows printer names include:
 
-- `ヤマト`
-- `ネコポス`
+- `yamato`
+- `nekoposu`
 
 ## 2. Configure
 
@@ -21,7 +21,7 @@ Copy `.env.example` to `.env`, then edit:
 WMS_BASE_URL=https://your-wms-domain
 PRINT_AGENT_API_KEY=replace-with-the-same-key-as-server
 PRINT_AGENT_NAME=warehouse-win-01
-PRINT_AGENT_PRINTERS=ヤマト,ネコポス
+PRINT_AGENT_PRINTERS=yamato,nekoposu
 PRINT_AGENT_WINDOWS_PRINT_TIMEOUT_SEC=20
 ```
 
@@ -37,7 +37,7 @@ YAMATO_PRINT_MODE=agent
 .\list-printers.ps1
 ```
 
-Confirm the output includes `ヤマト` and `ネコポス`.
+Confirm the output includes `yamato` and `nekoposu`.
 
 ## 4. Start Manually
 

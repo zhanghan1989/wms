@@ -598,9 +598,9 @@ const YAMATO_BATCH_STATUS = {
   EXCEL_EXPORTED: 'excel_exported',
   PDF_READY: 'pdf_ready',
 } as const;
-const YAMATO_DEFAULT_WINDOWS_PRINTER_NAME = 'ヤマト';
+const YAMATO_DEFAULT_WINDOWS_PRINTER_NAME = 'yamato';
 const YAMATO_PRODUCT_PRINTER_ALIASES: Record<string, string> = {
-  A: 'ネコポス',
+  A: 'nekoposu',
 };
 const YAMATO_EXPORT_FIXED_VALUES = {
   recipientSuffix: '様',
