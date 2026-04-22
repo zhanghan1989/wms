@@ -8237,6 +8237,9 @@ function buildAmazonOrderDetailFields(item) {
   const orderNo = getAmazonRawValue(item, "order-id") || item?.orderId || "";
   const orderCreatedAt = getAmazonRawValue(item, "purchase-date") || item?.purchaseDateRaw || "";
   const productName = getAmazonRawValue(item, "product-name") || item?.productName || "";
+  const resolvedProductId = item?.resolvedProductId || "";
+  const resolvedProductName = item?.resolvedProductName || "";
+  const skuInfo = getAmazonRawValue(item, "sku") || item?.sku || "";
   const quantity = getAmazonRawValue(item, "quantity-purchased") || item?.quantityPurchased || item?.orderQuantity || "";
   const recipientName = getAmazonRawValue(item, "recipient-name") || item?.recipientName || item?.shippingName || "";
   const phone = getAmazonRawValue(item, "buyer-phone-number") || item?.buyerPhoneNumber || "";
@@ -8254,7 +8257,9 @@ function buildAmazonOrderDetailFields(item) {
     ["注文番号", orderNo],
     ["注文日時", orderCreatedAt],
     ["商品名", productName],
-    ["SKU情報", "-"],
+    ["产品ID", resolvedProductId],
+    ["SKU情報", skuInfo],
+    ["产品名称", resolvedProductName],
     ["個数", quantity],
     ["收件人", recipientName],
     ["电话", phone],
@@ -8375,7 +8380,7 @@ function renderAmazonOrdersTable() {
   const list = state.amazonOrders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无亚马逊订单数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="muted">暂无亚马逊订单数据</td></tr>';
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
     return;
@@ -8393,6 +8398,8 @@ function renderAmazonOrdersTable() {
           item.id,
         )}">${escapeHtml(displayText(item.orderId))}</button></td>
         <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
         <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
         <td>${escapeHtml(displayText(item.mallName || "亚马逊"))}</td>
         <td>${escapeHtml(displayText(formatAmazonShippingOriginAsMode(item.shippingOrigin)))}</td>
@@ -9465,6 +9472,23 @@ async function deleteAmazonOrders(ids) {
   });
 }
 
+async function downloadAmazonShipmentConfirmationTxt(days) {
+  const response = await fetchAuthorizedResponse("/orders/amazon/shipment-confirmation-txt", {
+    method: "POST",
+    body: JSON.stringify({ days }),
+  });
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = resolveDownloadFileName(response, `amazon_shipment_confirmation_${formatDateForFilename(new Date())}.txt`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  return link.download;
+}
+
 function loadMoreAmazonOrdersIfNeeded() {
   const panel = $("amazonOrderImport");
   if (!panel || !panel.classList.contains("active")) return;
@@ -9803,10 +9827,11 @@ function updateAmazonOrdersSelectAll() {
 
 function updateAmazonBatchDeleteButtonState() {
   const button = $("amazonBatchDeleteBtn");
-  if (!button) return;
   const count = state.selectedAmazonOrderIds.size;
-  button.disabled = count <= 0;
-  button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
+  if (button) {
+    button.disabled = count <= 0;
+    button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
+  }
 }
 
 function updateFbaSelectAll() {
@@ -10568,6 +10593,20 @@ function bindForms() {
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  document.querySelectorAll("button[data-action='downloadAmazonShipmentConfirmation']").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const currentButton = event.currentTarget;
+      try {
+        await withBusyButton(currentButton, "下载中...", async () => {
+          const fileName = await downloadAmazonShipmentConfirmationTxt(currentButton.dataset.days || "1");
+          showToast(`已下载 ${fileName}`);
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
   });
 
   $("amazonOrdersSelectAll").addEventListener("change", (event) => {
@@ -14399,7 +14438,7 @@ function bindRefresh() {
   $("refreshRakutenOrders").addEventListener("click", () =>
     loadOrders().catch((error) => showToast(error.message, true)),
   );
-  $("refreshOrders").addEventListener("click", () =>
+  $("refreshOrders")?.addEventListener("click", () =>
     loadAmazonOrders().catch((error) => showToast(error.message, true)),
   );
   $("refreshFbaReplenishment").addEventListener("click", () =>
