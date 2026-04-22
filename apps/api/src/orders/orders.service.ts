@@ -4312,8 +4312,38 @@ export class OrdersService {
     }
 
     const uniqueRows = Array.from(uniqueRowsMap.values());
+    const importOrderIds = Array.from(
+      new Set(
+        uniqueRows
+          .map((row) => String(row.orderId ?? '').trim())
+          .filter((orderId) => orderId.length > 0),
+      ),
+    );
+    const existingOrderIds = new Set<string>();
+    if (importOrderIds.length) {
+      const existingRows = await this.prisma.rakutenOrderRecord.findMany({
+        where: {
+          orderId: {
+            in: importOrderIds,
+          },
+        },
+        select: {
+          orderId: true,
+        },
+      });
+      for (const row of existingRows) {
+        const orderId = String(row.orderId ?? '').trim();
+        if (orderId) {
+          existingOrderIds.add(orderId);
+        }
+      }
+    }
+    const rowsToCreate = uniqueRows.filter((row) => {
+      const orderId = String(row.orderId ?? '').trim();
+      return !orderId || !existingOrderIds.has(orderId);
+    });
     const importedAt = new Date();
-    const createManyInput: Prisma.RakutenOrderRecordCreateManyInput[] = uniqueRows.map((row) => ({
+    const createManyInput: Prisma.RakutenOrderRecordCreateManyInput[] = rowsToCreate.map((row) => ({
       rowHash: row.rowHash,
       orderId: row.orderId,
       itemDetailStatus: row.itemDetailStatus,
@@ -4348,13 +4378,17 @@ export class OrdersService {
       csvImportedAt: importedAt,
     }));
 
-    const result = await this.prisma.rakutenOrderRecord.createMany({
-      data: createManyInput,
-      skipDuplicates: true,
-    });
+    const result = createManyInput.length
+      ? await this.prisma.rakutenOrderRecord.createMany({
+          data: createManyInput,
+          skipDuplicates: true,
+        })
+      : { count: 0 };
 
     const duplicateInFileCount = parsedRows.length - uniqueRows.length;
-    const existingDuplicateCount = uniqueRows.length - result.count;
+    const existingOrderDuplicateCount = uniqueRows.length - rowsToCreate.length;
+    const existingRowDuplicateCount = rowsToCreate.length - result.count;
+    const existingDuplicateCount = existingOrderDuplicateCount + existingRowDuplicateCount;
 
     return {
       sourceFileName,
