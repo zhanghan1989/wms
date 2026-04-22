@@ -3133,7 +3133,7 @@ export class OrdersService {
     const parsedPages = await this.extractPdfPagesText(mergedPdfBuffer);
     if (parsedPages.length !== batch.pages.length) {
       throw new BadRequestException(
-        `PDF 总页数与批次数量不一致：PDF ${parsedPages.length} 页，批次 ${batch.pages.length} 页`,
+        `PDF 总页数与 Yamato 面单数不一致：上传 PDF 合计 ${parsedPages.length} 页，当前批次应为 ${batch.pages.length} 张面单（相同订单号已按 1 张面单合并计算）`,
       );
     }
 

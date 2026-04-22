@@ -9142,7 +9142,7 @@ function renderYamatoShipmentBatchControls() {
       const tags = [
         `批次：#${currentBatch.id}`,
         `状态：${currentBatch.status === "pdf_ready" ? "已上传PDF" : "待上传PDF"}`,
-        `总页数：${displayText(currentBatch.pageCount)}`,
+        `面单数：${displayText(currentBatch.pageCount)}`,
       ];
       if (currentBatch.status === "pdf_ready") {
         tags.push(`未打印：${displayText(currentBatch.pendingPageCount)}`);
@@ -9170,10 +9170,10 @@ function renderYamatoShipmentBatchControls() {
       summary.textContent = "";
     } else if (currentBatch.status !== "pdf_ready") {
       summary.textContent =
-        `当前拣货批次对应的 Yamato 批次 #${currentBatch.id} 已生成 Excel，尚未上传 PDF。共 ${currentBatch.pageCount} 页。${getYamatoPrintModeSummary()}`;
+        `当前拣货批次对应的 Yamato 批次 #${currentBatch.id} 已生成 Excel，尚未上传 PDF。应上传 ${currentBatch.pageCount} 张面单（相同订单号已合并计算）。${getYamatoPrintModeSummary()}`;
     } else {
       summary.textContent =
-        `当前拣货批次对应的 Yamato 批次 #${currentBatch.id} 已上传 PDF：共 ${currentBatch.pageCount} 页，未打印 ${currentBatch.pendingPageCount} 页，已打印 ${currentBatch.printedPageCount} 页。${getYamatoPrintModeSummary()}`;
+        `当前拣货批次对应的 Yamato 批次 #${currentBatch.id} 已上传 PDF：共 ${currentBatch.pageCount} 张面单，未打印 ${currentBatch.pendingPageCount} 张，已打印 ${currentBatch.printedPageCount} 张。${getYamatoPrintModeSummary()}`;
     }
   }
 }
