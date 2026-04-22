@@ -262,6 +262,12 @@ interface AmazonShipmentConfirmationFileResult {
   rowCount: number;
 }
 
+interface RakutenShipmentConfirmationFileResult {
+  fileName: string;
+  content: Buffer;
+  rowCount: number;
+}
+
 interface AmazonOrderListItem extends AmazonOrderRecord {
   resolvedProductId: string | null;
   resolvedProductName: string | null;
@@ -2213,8 +2219,8 @@ export class OrdersService {
   async buildAmazonShipmentConfirmationTxt(payload: {
     days?: string | number;
   }): Promise<AmazonShipmentConfirmationFileResult> {
-    const scope = this.normalizeAmazonShipmentConfirmationScope(payload?.days);
-    const importedAtStart = scope.days === 'all' ? null : this.getAmazonImportDateRangeStart(scope.days);
+    const scope = this.normalizeShipmentConfirmationScope(payload?.days, '订单');
+    const importedAtStart = scope.days === 'all' ? null : this.getImportDateRangeStart(scope.days);
 
     const rows = await this.prisma.amazonOrderRecord.findMany({
       where: {
@@ -2295,6 +2301,62 @@ export class OrdersService {
     return {
       fileName: `${this.formatYamatoFileNameStamp()}_${scope.fileLabel}_确认订单表格.txt`,
       content: Buffer.from(`${lines.join('\r\n')}\r\n`, 'utf8'),
+      rowCount: rows.length,
+    };
+  }
+
+  async buildRakutenShipmentConfirmationCsv(payload: {
+    days?: string | number;
+  }): Promise<RakutenShipmentConfirmationFileResult> {
+    const scope = this.normalizeShipmentConfirmationScope(payload?.days, '订单');
+    const importedAtStart = scope.days === 'all' ? null : this.getImportDateRangeStart(scope.days);
+
+    const rows = await this.prisma.rakutenOrderRecord.findMany({
+      where: {
+        shipmentNo: { not: null },
+        shipmentNoRegisteredAt: { not: null },
+        ...(importedAtStart ? { csvImportedAt: { gte: importedAtStart } } : {}),
+      },
+      orderBy: [{ csvImportedAt: 'desc' }, { shipmentNoRegisteredAt: 'asc' }, { id: 'asc' }],
+    });
+    if (!rows.length) {
+      throw new BadRequestException(`${scope.label}没有可下载的已登记发货单号乐天订单`);
+    }
+
+    const invalidRows = rows
+      .map((row) => {
+        const missingFields = [
+          String(row.orderId ?? '').trim() ? null : '注文番号',
+          row.shipmentNoRegisteredAt ? null : '発送日',
+          String(row.shipmentNo ?? '').trim() ? null : 'お荷物伝票番号',
+        ].filter((item): item is string => Boolean(item));
+        return missingFields.length ? `${row.orderId ?? row.id.toString()} 缺少 ${missingFields.join('、')}` : null;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (invalidRows.length) {
+      throw new BadRequestException(`无法生成乐天回传单号CSV：${invalidRows.join('；')}`);
+    }
+
+    const headers = ['注文番号', '送付先ID', '発送明細ID', 'お荷物伝票番号', '配送会社', '発送日'];
+    const lines = [
+      headers.map((value) => this.escapeCsvCell(value)).join(','),
+      ...rows.map((row) =>
+        [
+          row.orderId,
+          this.resolveRakutenShippingDestinationId(row),
+          '',
+          this.normalizeAmazonTrackingNumber(row.shipmentNo),
+          '1001',
+          this.formatAmazonShipmentConfirmationDate(row.shipmentNoRegisteredAt as Date),
+        ]
+          .map((value) => this.escapeCsvCell(value))
+          .join(','),
+      ),
+    ];
+
+    return {
+      fileName: `${this.formatYamatoFileNameStamp()}_${scope.fileLabel}_ShippingCompletion.csv`,
+      content: iconv.encode(`${lines.join('\r\n')}\r\n`, 'cp932'),
       rowCount: rows.length,
     };
   }
@@ -4211,24 +4273,39 @@ export class OrdersService {
     return String(value ?? '').replace(/[\t\r\n]+/g, ' ').trim();
   }
 
-  private normalizeAmazonShipmentConfirmationScope(daysRaw: string | number | null | undefined): {
+  private escapeCsvCell(value: string | number | null | undefined): string {
+    const normalized = String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
+    return `"${normalized.replace(/"/g, '""')}"`;
+  }
+
+  private resolveRakutenShippingDestinationId(row: RakutenOrderRecord): string {
+    return (
+      this.getJsonField(row.rawPayload, '送付先ID') ??
+      this.getJsonField(row.rawPayload, '送付先Id') ??
+      this.getJsonField(row.rawPayload, '送付先id') ??
+      row.shipmentRequestNo ??
+      ''
+    );
+  }
+
+  private normalizeShipmentConfirmationScope(daysRaw: string | number | null | undefined, noun: string): {
     days: 1 | 2 | 3 | 5 | 'all';
     label: string;
     fileLabel: string;
   } {
     const normalized = String(daysRaw ?? '1').trim().toLowerCase();
     if (normalized === 'all') {
-      return { days: 'all', label: '全部订单', fileLabel: '全部' };
+      return { days: 'all', label: `全部${noun}`, fileLabel: '全部' };
     }
     const days = Number(normalized);
-    if (days === 1) return { days: 1, label: '当日订单', fileLabel: '当日' };
-    if (days === 2) return { days: 2, label: '最近2天订单', fileLabel: '最近2天' };
-    if (days === 3) return { days: 3, label: '最近3天订单', fileLabel: '最近3天' };
-    if (days === 5) return { days: 5, label: '最近5天订单', fileLabel: '最近5天' };
+    if (days === 1) return { days: 1, label: `当日${noun}`, fileLabel: '当日' };
+    if (days === 2) return { days: 2, label: `最近2天${noun}`, fileLabel: '最近2天' };
+    if (days === 3) return { days: 3, label: `最近3天${noun}`, fileLabel: '最近3天' };
+    if (days === 5) return { days: 5, label: `最近5天${noun}`, fileLabel: '最近5天' };
     throw new BadRequestException('回传单号下载范围只支持当日、最近2天、最近3天、最近5天或全部');
   }
 
-  private getAmazonImportDateRangeStart(days: 1 | 2 | 3 | 5): Date {
+  private getImportDateRangeStart(days: 1 | 2 | 3 | 5): Date {
     const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
     const year = Number(parts.year);
     const month = Number(parts.month);

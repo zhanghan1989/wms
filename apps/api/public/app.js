@@ -9489,6 +9489,23 @@ async function downloadAmazonShipmentConfirmationTxt(days) {
   return link.download;
 }
 
+async function downloadRakutenShipmentConfirmationCsv(days) {
+  const response = await fetchAuthorizedResponse("/orders/rakuten/shipment-confirmation-csv", {
+    method: "POST",
+    body: JSON.stringify({ days }),
+  });
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = resolveDownloadFileName(response, `rakuten_shipment_confirmation_${formatDateForFilename(new Date())}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(href);
+  return link.download;
+}
+
 function loadMoreAmazonOrdersIfNeeded() {
   const panel = $("amazonOrderImport");
   if (!panel || !panel.classList.contains("active")) return;
@@ -10601,6 +10618,20 @@ function bindForms() {
       try {
         await withBusyButton(currentButton, "下载中...", async () => {
           const fileName = await downloadAmazonShipmentConfirmationTxt(currentButton.dataset.days || "1");
+          showToast(`已下载 ${fileName}`);
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  });
+
+  document.querySelectorAll("button[data-action='downloadRakutenShipmentConfirmation']").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const currentButton = event.currentTarget;
+      try {
+        await withBusyButton(currentButton, "下载中...", async () => {
+          const fileName = await downloadRakutenShipmentConfirmationCsv(currentButton.dataset.days || "1");
           showToast(`已下载 ${fileName}`);
         });
       } catch (error) {
@@ -14435,7 +14466,7 @@ function bindRefresh() {
   $("refreshBatchInbound").addEventListener("click", () =>
     loadBatchInboundOrders().catch((error) => showToast(error.message, true)),
   );
-  $("refreshRakutenOrders").addEventListener("click", () =>
+  $("refreshRakutenOrders")?.addEventListener("click", () =>
     loadOrders().catch((error) => showToast(error.message, true)),
   );
   $("refreshOrders")?.addEventListener("click", () =>

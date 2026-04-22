@@ -200,6 +200,24 @@ export class OrdersController {
     res.status(200).send(file.content);
   }
 
+  @Post('rakuten/shipment-confirmation-csv')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async downloadRakutenShipmentConfirmationCsv(
+    @Body() payload: { days?: string | number },
+    @Res() res: Response,
+  ): Promise<void> {
+    const file = await this.ordersService.buildRakutenShipmentConfirmationCsv(payload);
+    res.setHeader('Content-Type', 'text/csv; charset=Shift_JIS');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Rakuten-Shipment-Confirmation-Row-Count', String(file.rowCount));
+    res.status(200).send(file.content);
+  }
+
   @Post('overseas-warehouse/yamato-batches/:batchId/upload-pdf')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @UseInterceptors(AnyFilesInterceptor({ limits: { files: 20 } }))

@@ -1045,16 +1045,26 @@
         <div class="panel-head">
           <h2>乐天订单处理</h2>
           <div class="panel-tools">
-            <button id="openRakutenOrderImportModal">订单导入</button>
-            <button id="refreshRakutenOrders" class="ghost">刷新</button>
             <button id="backToOrderProcessingFromRakutenBtn" class="ghost">返回订单处理</button>
           </div>
         </div>
 
         <article class="card">
           <div class="card-head">
-            <h3>乐天订单列表</h3>
-            <button id="rakutenBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
+            <div class="card-title-actions">
+              <h3>乐天订单列表一览</h3>
+              <div class="action-row">
+                <button id="openRakutenOrderImportModal">订单导入</button>
+                <button id="rakutenBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
+              </div>
+            </div>
+            <div class="action-row-right">
+              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="1">当日订单回传单号下载</button>
+              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="2">最近2天下载</button>
+              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="3">最近3天下载</button>
+              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="5">最近5天下载</button>
+              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="all">全部下载</button>
+            </div>
           </div>
           <div id="rakutenOrdersTableWrap" class="master-product-table-wrap">
             <table>
