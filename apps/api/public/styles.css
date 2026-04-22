@@ -479,6 +479,13 @@ button.ghost {
   margin: 0;
 }
 
+.card-title-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .order-import-head {
   align-items: flex-start;
 }
