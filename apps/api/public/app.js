@@ -8815,9 +8815,7 @@ function renderOverseasPickingBatchControls() {
 
   const detail = state.selectedOverseasPickingBatchDetail;
   if (title) {
-    title.textContent = detail
-      ? `批次号：${detail.batchNo}（状态：${getOverseasPickingBatchStatusText(detail.status)}）`
-      : "拣货批次详情";
+    title.textContent = detail ? `批次号：${detail.batchNo}` : "拣货批次详情";
     title.classList.toggle("hidden", !detail);
   }
   if (meta) {
@@ -9343,11 +9341,13 @@ async function submitOverseasYamatoScan(options = {}) {
   const printConfig = normalizeYamatoPrintConfig(state.yamatoPrintConfig);
   const isDirectMode = printConfig.mode === "direct";
   const isAgentMode = printConfig.mode === "agent";
-  const result = isAgentMode
-    ? await queueYamatoShipmentLabelByProductId(batch.id, rawValue)
-    : isDirectMode
-      ? await directPrintYamatoShipmentLabelByProductId(batch.id, rawValue)
-      : await printYamatoShipmentLabelByProductId(batch.id, rawValue, popup);
+  if (isAgentMode) {
+    await queueYamatoShipmentLabelByProductId(batch.id, rawValue);
+  } else if (isDirectMode) {
+    await directPrintYamatoShipmentLabelByProductId(batch.id, rawValue);
+  } else {
+    await printYamatoShipmentLabelByProductId(batch.id, rawValue, popup);
+  }
 
   if (input) {
     input.value = "";
@@ -9355,27 +9355,6 @@ async function submitOverseasYamatoScan(options = {}) {
   await loadYamatoShipmentBatches();
   if (state.selectedOverseasPickingBatchId) {
     await loadOverseasPickingBatchDetail(state.selectedOverseasPickingBatchId);
-  }
-  if (isAgentMode) {
-    const printerText = String(result?.printerName || "").trim() || "默认打印机";
-    showToast(
-      result.trackingNo
-        ? `已加入打印队列：产品ID ${result.productId || rawValue}，目标打印机 ${printerText}，运单号 ${result.trackingNo}`
-        : `已加入打印队列：产品ID ${result.productId || rawValue}，目标打印机 ${printerText}`,
-    );
-  } else if (isDirectMode) {
-    const printerText = String(result?.printerName || "").trim() || "系统默认打印机";
-    showToast(
-      result.trackingNo
-        ? `已直打到 ${printerText}：产品ID ${result.productId || rawValue}，运单号 ${result.trackingNo}`
-        : `已直打到 ${printerText}：产品ID ${result.productId || rawValue}`,
-    );
-  } else {
-    showToast(
-      result.trackingNo
-        ? `已发送打印：产品ID ${result.productId || rawValue}，运单号 ${result.trackingNo}`
-        : `已发送打印：产品ID ${result.productId || rawValue}`,
-    );
   }
   focusOverseasYamatoScanInput();
 }
@@ -11518,11 +11497,6 @@ function bindForms() {
     }
   });
 
-  $("refreshOverseasOrderProcessing")?.addEventListener("click", () =>
-    Promise.all([loadOverseasOrderProcessingOrders()])
-      .catch((error) => showToast(error.message, true)),
-  );
-
   $("refreshChinaOrderProcessing")?.addEventListener("click", () =>
     Promise.all([loadChinaOrderProcessingOrders()])
       .catch((error) => showToast(error.message, true)),
@@ -11592,7 +11566,9 @@ function bindForms() {
         }
         state.selectedYamatoShipmentBatchId = batch.id;
         renderYamatoShipmentBatchControls();
-        showToast(`批次 #${batch.id} PDF 上传完成，现在可以扫码打印`);
+        await openActionConfirmModal(`批次 #${batch.id} PDF 上传完成，现在可以扫码打印`, "提示", "确认", {
+          showCancel: false,
+        });
         focusOverseasYamatoScanInput();
       });
     } catch (error) {

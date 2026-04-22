@@ -757,7 +757,7 @@ button.ghost {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
 .overseas-picking-detail-main {
@@ -774,6 +774,10 @@ button.ghost {
   flex-wrap: wrap;
   gap: 8px;
   margin: 0 0 14px;
+}
+
+.overseas-picking-meta:empty {
+  display: none;
 }
 
 .overseas-picking-meta-tag {
