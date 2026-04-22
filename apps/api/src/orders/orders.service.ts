@@ -153,6 +153,7 @@ type OrderFulfillmentMode = 'overseas_warehouse' | 'xiya_api';
 
 interface OrderListItem extends RakutenOrderRecord {
   resolvedProductId: string | null;
+  resolvedProductName: string | null;
   availableStock: number;
   fulfillmentMode: OrderFulfillmentMode;
 }
@@ -249,6 +250,7 @@ interface AmazonOrderImportResult {
 
 interface AmazonOrderListItem extends AmazonOrderRecord {
   resolvedProductId: string | null;
+  resolvedProductName: string | null;
   resolvedShopName: string | null;
 }
 
@@ -267,6 +269,7 @@ interface ThirdPartyExportRowInput {
   id: string;
   rowHash: string;
   resolvedProductId: string | null;
+  resolvedProductName: string | null;
   availableStock: number;
   fulfillmentMode: string;
   dispatchMode: string | null;
@@ -312,6 +315,7 @@ interface OverseasWarehouseOrderListItem {
   orderId: string | null;
   skuCode: string | null;
   resolvedProductId: string | null;
+  resolvedProductName?: string | null;
   orderQuantity: number | null;
   shopName: string | null;
   shippingName: string | null;
@@ -1845,6 +1849,7 @@ export class OrdersService {
             orderId: row.orderId,
             skuCode: row.skuCode,
             resolvedProductId: row.resolvedProductId,
+            resolvedProductName: row.resolvedProductName,
             orderQuantity: row.orderQuantity,
             shopName: row.shopName,
             shippingName: row.shippingName,
@@ -1877,6 +1882,7 @@ export class OrdersService {
             orderId: row.orderId,
             skuCode: row.sku,
             resolvedProductId: row.resolvedProductId,
+            resolvedProductName: row.resolvedProductName,
             orderQuantity: row.quantityPurchased,
             shopName: row.resolvedShopName || row.shopName,
             shippingName: row.recipientName,
@@ -2076,6 +2082,7 @@ export class OrdersService {
               orderId: row.orderId,
               skuCode: row.skuCode,
               resolvedProductId: row.resolvedProductId,
+              resolvedProductName: row.resolvedProductName,
               orderQuantity: row.orderQuantity,
               shopName: row.shopName,
               shippingName: row.shippingName,
@@ -2117,6 +2124,7 @@ export class OrdersService {
               orderId: row.orderId,
               skuCode: row.sku,
               resolvedProductId: row.resolvedProductId,
+              resolvedProductName: row.resolvedProductName,
               orderQuantity: row.quantityPurchased,
               shopName: row.resolvedShopName || row.shopName,
               shippingName: row.recipientName,
@@ -4170,6 +4178,7 @@ export class OrdersService {
       return rows.map((row) => ({
         ...row,
         resolvedProductId: null,
+        resolvedProductName: null,
         availableStock: 0,
         fulfillmentMode: 'xiya_api',
       }));
@@ -4181,12 +4190,16 @@ export class OrdersService {
       },
       select: {
         productId: true,
+        productName: true,
         stockQty: true,
       },
     });
 
     const stockQtyByProductId = new Map(
       productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
+    );
+    const productNameByProductId = new Map(
+      productRows.map((row) => [String(row.productId ?? '').trim(), row.productName ?? null]),
     );
 
     return rows.map((row) => {
@@ -4199,6 +4212,7 @@ export class OrdersService {
       return {
         ...row,
         resolvedProductId: productId,
+        resolvedProductName: productId ? productNameByProductId.get(productId) ?? null : null,
         availableStock,
         fulfillmentMode: availableStock > 0 ? 'overseas_warehouse' : 'xiya_api',
       };
@@ -4222,6 +4236,7 @@ export class OrdersService {
       return rows.map((row) => ({
         ...row,
         resolvedProductId: null,
+        resolvedProductName: null,
         resolvedShopName: null,
         availableStock: 0,
         fulfillmentMode: 'xiya_api',
@@ -4271,12 +4286,15 @@ export class OrdersService {
     const productRows = productIds.length
       ? await this.prisma.masterProduct.findMany({
           where: { productId: { in: productIds } },
-          select: { productId: true, stockQty: true },
+          select: { productId: true, productName: true, stockQty: true },
         })
       : [];
 
     const stockQtyByProductId = new Map(
       productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
+    );
+    const productNameByProductId = new Map(
+      productRows.map((row) => [String(row.productId ?? '').trim(), row.productName ?? null]),
     );
 
     return rows.map((row) => {
@@ -4291,6 +4309,7 @@ export class OrdersService {
       return {
         ...row,
         resolvedProductId: productId,
+        resolvedProductName: productId ? productNameByProductId.get(productId) ?? null : null,
         resolvedShopName: skuMeta?.shopName ?? null,
         availableStock,
         fulfillmentMode: availableStock > 0 ? 'overseas_warehouse' : 'xiya_api',
@@ -4923,6 +4942,7 @@ export class OrdersService {
       id: row.id.toString(),
       rowHash: row.rowHash,
       resolvedProductId: row.resolvedProductId,
+      resolvedProductName: row.resolvedProductName,
       availableStock: row.availableStock,
       fulfillmentMode: row.fulfillmentMode,
       dispatchMode: row.dispatchMode,
@@ -4967,6 +4987,7 @@ export class OrdersService {
       id: row.id.toString(),
       rowHash: row.rowHash,
       resolvedProductId: row.resolvedProductId,
+      resolvedProductName: row.resolvedProductName,
       availableStock: row.availableStock,
       fulfillmentMode: row.fulfillmentMode,
       dispatchMode: row.dispatchMode,
@@ -5056,6 +5077,7 @@ export class OrdersService {
       id: row.id,
       rowHash: row.rowHash,
       resolvedProductId: row.resolvedProductId,
+      resolvedProductName: row.resolvedProductName,
       availableStock: row.availableStock,
       fulfillmentMode: row.fulfillmentMode,
       dispatchMode: row.dispatchMode,
@@ -5067,7 +5089,9 @@ export class OrdersService {
       updatedAt: row.updatedAt.toISOString(),
       注文ID: row.orderId,
       商品明細ステータス: row.itemDetailStatus,
-      SKUコード: row.skuCode,
+      SKU: row.skuCode,
+      产品ID: row.resolvedProductId,
+      产品名称: row.resolvedProductName,
       セット構成品SKUコード: row.setComponentSkuCode,
       注文個数: row.orderQuantity,
       商品名: row.productName,

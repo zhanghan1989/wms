@@ -8068,7 +8068,7 @@ function renderOrdersTable() {
   const list = state.orders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无订单数据</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" class="muted">暂无订单数据</td></tr>';
     updateRakutenOrdersSelectAll();
     updateRakutenBatchDeleteButtonState();
     return;
@@ -8086,6 +8086,8 @@ function renderOrdersTable() {
           item.id,
         )}">${escapeHtml(displayText(item.orderId))}</button></td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductId || item.skuCode))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
         <td>${escapeHtml(displayText(item.orderQuantity))}</td>
         <td>${escapeHtml(displayText(item.mallName))}</td>
         <td>${escapeHtml(displayText(formatOrderFulfillmentMode(item.fulfillmentMode)))}</td>
@@ -8150,6 +8152,8 @@ function buildRakutenOrderDetailFields(item) {
   );
   const productName = getRakutenRawValue(item, "商品名") || item?.productName || "";
   const skuInfo = getRakutenRawValue(item, "SKU情報") || item?.productNameExtra || "";
+  const resolvedProductId = item?.resolvedProductId || item?.skuCode || getRakutenRawValue(item, "SKU管理番号") || "";
+  const resolvedProductName = item?.resolvedProductName || "";
   const quantity = getRakutenRawValue(item, "個数") || item?.orderQuantity || "";
   const recipientName =
     joinRakutenParts([getRakutenRawValue(item, "送付先姓"), getRakutenRawValue(item, "送付先名")]) ||
@@ -8182,6 +8186,8 @@ function buildRakutenOrderDetailFields(item) {
     ["注文日時", orderCreatedAt],
     ["商品名", productName],
     ["SKU情報", skuInfo],
+    ["产品ID", resolvedProductId],
+    ["产品名称", resolvedProductName],
     ["個数", quantity],
     ["收件人", recipientName],
     ["电话", phone],
@@ -8539,7 +8545,7 @@ function renderOverseasOrderProcessingTable() {
   }
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">暂无可归结的海外仓订单</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无可归结的海外仓订单</td></tr>';
     updateOverseasOrderProcessingSelectAll();
     updateOverseasCreatePickingBatchButtonState();
     return;
@@ -8567,6 +8573,7 @@ function renderOverseasOrderProcessingTable() {
         }</td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
         <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
         <td>${escapeHtml(displayText(item.orderQuantity))}</td>
         <td>${escapeHtml(displayText(item.shopName))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>

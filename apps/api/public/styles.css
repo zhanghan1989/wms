@@ -1239,7 +1239,7 @@ td {
 }
 
 #overseasOrderProcessingTableWrap table {
-  min-width: 980px;
+  min-width: 1080px;
 }
 
 #chinaOrderProcessingPendingTableWrap table,
@@ -2736,7 +2736,7 @@ button.danger-solid {
   }
 
   #overseasOrderProcessingTableWrap table {
-    min-width: 920px;
+    min-width: 1020px;
   }
 
   #chinaOrderProcessingPendingTableWrap table,
