@@ -591,6 +591,14 @@ interface ParsedPdfPageText {
   text: string;
 }
 
+interface UploadedYamatoPdfPage {
+  fileIndex: number;
+  fileBuffer: Buffer;
+  fileName: string | null;
+  sourcePageNo: number;
+  text: string;
+}
+
 interface YamatoTemplateRowCell {
   column: string;
   styleId: string | null;
@@ -3129,27 +3137,19 @@ export class OrdersService {
       }
     });
 
-    const mergedPdfBuffer = await this.mergePdfFiles(validFiles.map((file) => file.buffer));
-    const parsedPages = await this.extractPdfPagesText(mergedPdfBuffer);
-    if (parsedPages.length !== batch.pages.length) {
+    const uploadedPages = await this.extractUploadedYamatoPdfPages(validFiles);
+    if (uploadedPages.length !== batch.pages.length) {
       throw new BadRequestException(
-        `PDF 总页数与 Yamato 面单数不一致：上传 PDF 合计 ${parsedPages.length} 页，当前批次应为 ${batch.pages.length} 张面单（相同订单号已按 1 张面单合并计算）`,
+        `PDF 总页数与 Yamato 面单数不一致：上传 PDF 合计 ${uploadedPages.length} 页，当前批次应为 ${batch.pages.length} 张面单（相同订单号已按 1 张面单合并计算）`,
       );
     }
 
-    batch.pages.forEach((page, index) => {
-      const parsed = parsedPages[index];
-      const expectedProductIds = this.getBatchPageProductIds(page);
-      if (!expectedProductIds.length) {
-        return;
-      }
-      const matched = expectedProductIds.some((productId) => this.pdfTextContainsProductId(parsed.text, productId));
-      if (!matched) {
-        throw new BadRequestException(
-          `PDF 第 ${parsed.pageNo} 页未匹配到预期产品ID：${expectedProductIds.join('、')}`,
-        );
-      }
-    });
+    const orderedUploadedPages = this.matchUploadedPdfPagesToBatchPages(uploadedPages, batch.pages);
+    const parsedPages = orderedUploadedPages.map((page, index) => ({
+      pageNo: index + 1,
+      text: page.text,
+    }));
+    const mergedPdfBuffer = await this.mergeUploadedPdfPagesInBatchOrder(orderedUploadedPages);
 
     const trackingNumbers = parsedPages.map((page) =>
       this.extractTrackingNoFromPdfText(page?.text ?? ''),
@@ -3525,6 +3525,57 @@ export class OrdersService {
     return pages;
   }
 
+  private async extractUploadedYamatoPdfPages(files: YamatoShipmentPdfUploadFile[]): Promise<UploadedYamatoPdfPage[]> {
+    const result: UploadedYamatoPdfPage[] = [];
+    for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+      const file = files[fileIndex];
+      const pages = await this.extractPdfPagesText(file.buffer);
+      pages.forEach((page) => {
+        result.push({
+          fileIndex,
+          fileBuffer: file.buffer,
+          fileName: file.originalName ? String(file.originalName) : null,
+          sourcePageNo: page.pageNo,
+          text: page.text,
+        });
+      });
+    }
+    return result;
+  }
+
+  private matchUploadedPdfPagesToBatchPages(
+    uploadedPages: UploadedYamatoPdfPage[],
+    batchPages: Array<Pick<YamatoShipmentBatchPage, 'pageNo' | 'productIds' | 'orderId' | 'recipientName'>>,
+  ): UploadedYamatoPdfPage[] {
+    const usedUploadedPageIndexes = new Set<number>();
+    return batchPages.map((batchPage) => {
+      const expectedText = this.describeYamatoBatchPageExpectation(batchPage);
+      let bestUploadedPageIndex = -1;
+      let bestScore = 0;
+
+      uploadedPages.forEach((uploadedPage, uploadedPageIndex) => {
+        if (usedUploadedPageIndexes.has(uploadedPageIndex)) {
+          return;
+        }
+        const score = this.scorePdfTextForYamatoBatchPage(uploadedPage.text, batchPage);
+        if (score <= 0) {
+          return;
+        }
+        if (score > bestScore) {
+          bestUploadedPageIndex = uploadedPageIndex;
+          bestScore = score;
+        }
+      });
+
+      if (bestUploadedPageIndex < 0) {
+        throw new BadRequestException(`PDF 中未找到第 ${batchPage.pageNo} 张预期面单：${expectedText}`);
+      }
+
+      usedUploadedPageIndexes.add(bestUploadedPageIndex);
+      return uploadedPages[bestUploadedPageIndex];
+    });
+  }
+
   private async extractPdfSinglePage(fileBuffer: Buffer, pageNo: number): Promise<Buffer> {
     const source = await PDFDocument.load(fileBuffer);
     const pageIndex = pageNo - 1;
@@ -3538,16 +3589,22 @@ export class OrdersService {
     return Buffer.from(bytes);
   }
 
-  private async mergePdfFiles(fileBuffers: Buffer[]): Promise<Buffer> {
-    if (fileBuffers.length === 1) {
-      return fileBuffers[0];
-    }
-
+  private async mergeUploadedPdfPagesInBatchOrder(pages: UploadedYamatoPdfPage[]): Promise<Buffer> {
     const target = await PDFDocument.create();
-    for (const fileBuffer of fileBuffers) {
-      const source = await PDFDocument.load(fileBuffer);
-      const copiedPages = await target.copyPages(source, source.getPageIndices());
-      copiedPages.forEach((page) => target.addPage(page));
+    const sourcesByFileIndex = new Map<number, PDFDocument>();
+    for (const page of pages) {
+      let source = sourcesByFileIndex.get(page.fileIndex);
+      if (!source) {
+        source = await PDFDocument.load(page.fileBuffer);
+        sourcesByFileIndex.set(page.fileIndex, source);
+      }
+      const pageIndex = page.sourcePageNo - 1;
+      if (pageIndex < 0 || pageIndex >= source.getPageCount()) {
+        const fileLabel = page.fileName ? `「${page.fileName}」` : `第 ${page.fileIndex + 1} 个 PDF`;
+        throw new BadRequestException(`${fileLabel} 中不存在第 ${page.sourcePageNo} 页`);
+      }
+      const [copiedPage] = await target.copyPages(source, [pageIndex]);
+      target.addPage(copiedPage);
     }
     const bytes = await target.save();
     return Buffer.from(bytes);
@@ -3707,18 +3764,59 @@ export class OrdersService {
       .filter((item) => item.length > 0);
   }
 
+  private scorePdfTextForYamatoBatchPage(
+    text: string,
+    page: Pick<YamatoShipmentBatchPage, 'productIds' | 'orderId' | 'recipientName'>,
+  ): number {
+    let score = 0;
+    const expectedProductIds = this.getBatchPageProductIds(page);
+    if (expectedProductIds.some((productId) => this.pdfTextContainsProductId(text, productId))) {
+      score += 100;
+    }
+
+    const normalizedText = this.normalizePdfComparableText(text);
+    const orderId = String(page.orderId ?? '').trim();
+    if (orderId && normalizedText.includes(this.normalizePdfComparableText(orderId))) {
+      score += 50;
+    }
+
+    const recipientName = String(page.recipientName ?? '').trim();
+    if (recipientName && normalizedText.includes(this.normalizePdfComparableText(recipientName))) {
+      score += 10;
+    }
+
+    return score;
+  }
+
+  private describeYamatoBatchPageExpectation(
+    page: Pick<YamatoShipmentBatchPage, 'productIds' | 'orderId' | 'recipientName'>,
+  ): string {
+    const expectedProductIds = this.getBatchPageProductIds(page);
+    const orderId = String(page.orderId ?? '').trim();
+    const recipientName = String(page.recipientName ?? '').trim();
+    const expectedParts = [
+      expectedProductIds.length ? `产品ID ${expectedProductIds.join('、')}` : null,
+      orderId ? `订单号 ${orderId}` : null,
+      recipientName ? `收件人 ${recipientName}` : null,
+    ].filter((item): item is string => Boolean(item));
+
+    return expectedParts.join(' / ') || '缺少可用于校验的产品ID、订单号或收件人';
+  }
+
   private pdfTextContainsProductId(text: string, productId: string): boolean {
-    const normalizedText = String(text ?? '')
-      .toUpperCase()
-      .replace(/\s+/g, '');
-    const normalizedProductId = String(productId ?? '')
-      .trim()
-      .toUpperCase()
-      .replace(/\s+/g, '');
+    const normalizedText = this.normalizePdfComparableText(text);
+    const normalizedProductId = this.normalizePdfComparableText(productId);
     if (!normalizedText || !normalizedProductId) {
       return false;
     }
     return normalizedText.includes(normalizedProductId);
+  }
+
+  private normalizePdfComparableText(value: string): string {
+    return String(value ?? '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '');
   }
 
   private extractTrackingNoFromPdfText(text: string): string | null {
