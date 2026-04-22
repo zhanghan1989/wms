@@ -310,6 +310,8 @@ let dataBackupLoadObserver = null;
 let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let rakutenComboProductLoadObserver = null;
+let responsiveTableLabelObserver = null;
+let responsiveTableLabelFrame = 0;
 let skuProductLookupToken = 0;
 let hasUserNavigatedSinceBootstrap = false;
 const AUTH_ERROR_STORAGE_KEY = "wms_auth_error_message";
@@ -2265,9 +2267,91 @@ function displayText(value) {
   return String(value);
 }
 
+function hydrateResponsiveTableLabels(root = document) {
+  if (!root || typeof document === "undefined") return;
+  const tables = [];
+  if (typeof root.matches === "function" && root.matches("table")) {
+    tables.push(root);
+  }
+  if (typeof root.querySelectorAll === "function") {
+    tables.push(
+      ...root.querySelectorAll(
+        ".master-product-table-wrap table, .overview-table-wrap table, .manage-table-scroll table",
+      ),
+    );
+  }
+
+  tables.forEach((table) => {
+    const headers = Array.from(table.querySelectorAll("thead th")).map((cell) =>
+      String(cell.textContent || "").trim().replace(/\s+/g, " "),
+    );
+    if (!headers.length) return;
+    table.querySelectorAll("tbody tr").forEach((row) => {
+      Array.from(row.children).forEach((cell, index) => {
+        if (!cell || String(cell.tagName || "").toLowerCase() !== "td") return;
+        if (Number(cell.getAttribute("colspan") || cell.colSpan || 1) > 1) {
+          cell.removeAttribute("data-label");
+          return;
+        }
+        const label = headers[index] || "";
+        if (label) {
+          cell.setAttribute("data-label", label);
+        } else {
+          cell.removeAttribute("data-label");
+        }
+      });
+    });
+  });
+}
+
+function scheduleResponsiveTableLabelHydration() {
+  if (responsiveTableLabelFrame) return;
+  responsiveTableLabelFrame = requestAnimationFrame(() => {
+    responsiveTableLabelFrame = 0;
+    hydrateResponsiveTableLabels();
+  });
+}
+
+function setupResponsiveTableLabels() {
+  hydrateResponsiveTableLabels();
+  if (typeof MutationObserver !== "function" || responsiveTableLabelObserver) return;
+  responsiveTableLabelObserver = new MutationObserver((mutations) => {
+    const shouldHydrate = mutations.some((mutation) => {
+      if (mutation.type !== "childList") return false;
+      return Array.from(mutation.addedNodes).some((node) => {
+        if (!node || node.nodeType !== 1) return false;
+        if (typeof node.matches === "function" && node.matches("table, tr, td, th")) {
+          return true;
+        }
+        return (
+          typeof node.querySelector === "function" &&
+          Boolean(node.querySelector("table, tr, td, th"))
+        );
+      });
+    });
+    if (shouldHydrate) {
+      scheduleResponsiveTableLabelHydration();
+    }
+  });
+  responsiveTableLabelObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
+}
+
+function collapseQuickActions() {
+  const quickActions = $("employeeQuickActions");
+  const toggle = $("toggleQuickActionsBtn");
+  if (!quickActions || !toggle) return;
+  quickActions.classList.remove("expanded");
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.textContent = "更多功能";
+}
+
 function applyRoleView() {
   const layout = document.querySelector(".layout");
   const quickActions = $("employeeQuickActions");
+  const quickActionsToggle = $("toggleQuickActionsBtn");
   const isLoggedIn = Boolean(state.me);
   const isEmployee = Boolean(state.me?.role === "employee");
 
@@ -2276,6 +2360,16 @@ function applyRoleView() {
   }
   if (quickActions) {
     quickActions.classList.toggle("hidden", !isLoggedIn);
+    if (!isLoggedIn) {
+      quickActions.classList.remove("expanded");
+    }
+  }
+  if (quickActionsToggle) {
+    quickActionsToggle.classList.toggle("hidden", !isLoggedIn);
+    if (!isLoggedIn) {
+      quickActionsToggle.setAttribute("aria-expanded", "false");
+      quickActionsToggle.textContent = "更多功能";
+    }
   }
 }
 
@@ -10196,6 +10290,20 @@ function bindForms() {
 
   $("logoutBtn")?.addEventListener("click", handleLogout);
   $("topLogoutBtn")?.addEventListener("click", handleLogout);
+  $("employeeQuickActions")?.addEventListener("click", (event) => {
+    const button = event.target.closest("button");
+    if (!button) return;
+    window.setTimeout(collapseQuickActions, 0);
+  });
+  $("toggleQuickActionsBtn")?.addEventListener("click", () => {
+    const quickActions = $("employeeQuickActions");
+    const toggle = $("toggleQuickActionsBtn");
+    if (!quickActions || !toggle) return;
+    const expanded = !quickActions.classList.contains("expanded");
+    quickActions.classList.toggle("expanded", expanded);
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    toggle.textContent = expanded ? "收起功能" : "更多功能";
+  });
 
   $("importRakutenOrdersForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -14241,6 +14349,7 @@ setupFbaReplenishmentLoadObserver();
 setupStocktakePlannerLoadObserver();
 setupDataBackupLoadObserver();
 setupRakutenComboProductLoadObserver();
+setupResponsiveTableLabels();
 ensureOverseasWarehouseQueryUi();
 renderStocktakePlanner();
 bindTabs();
