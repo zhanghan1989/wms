@@ -533,6 +533,11 @@ interface YamatoShipmentBatchUploadResult {
   pdfUploadedAt: string | null;
 }
 
+interface YamatoShipmentPdfUploadFile {
+  buffer: Buffer;
+  originalName?: string;
+}
+
 interface YamatoShipmentPrintFileResult {
   batchId: string;
   fileName: string;
@@ -3096,10 +3101,13 @@ export class OrdersService {
 
   async uploadYamatoShipmentBatchPdf(
     batchIdRaw: string,
-    fileBuffer: Buffer,
-    originalName?: string,
+    files: YamatoShipmentPdfUploadFile[],
   ): Promise<YamatoShipmentBatchUploadResult> {
     const batchId = parseId(batchIdRaw, 'batchId');
+    const validFiles = files.filter((file) => file?.buffer?.length);
+    if (!validFiles.length) {
+      throw new BadRequestException('请选择 Yamato PDF 文件');
+    }
     const batch = await this.prisma.yamatoShipmentBatch.findUnique({
       where: { id: batchId },
       include: {
@@ -3114,14 +3122,18 @@ export class OrdersService {
     if (!batch.pages.length) {
       throw new BadRequestException('该 Yamato 批次没有可绑定的页面记录');
     }
-    if (!this.isPdfFileBuffer(fileBuffer)) {
-      throw new BadRequestException('上传文件不是有效的 PDF，请确认选择的是 Yamato 批量 PDF');
-    }
+    validFiles.forEach((file, index) => {
+      if (!this.isPdfFileBuffer(file.buffer)) {
+        const fileLabel = file.originalName ? `「${file.originalName}」` : `第 ${index + 1} 个文件`;
+        throw new BadRequestException(`${fileLabel} 不是有效的 PDF，请确认选择的是 Yamato 批量 PDF`);
+      }
+    });
 
-    const parsedPages = await this.extractPdfPagesText(fileBuffer);
+    const mergedPdfBuffer = await this.mergePdfFiles(validFiles.map((file) => file.buffer));
+    const parsedPages = await this.extractPdfPagesText(mergedPdfBuffer);
     if (parsedPages.length !== batch.pages.length) {
       throw new BadRequestException(
-        `PDF 页数与批次数量不一致：PDF ${parsedPages.length} 页，批次 ${batch.pages.length} 页`,
+        `PDF 总页数与批次数量不一致：PDF ${parsedPages.length} 页，批次 ${batch.pages.length} 页`,
       );
     }
 
@@ -3148,11 +3160,10 @@ export class OrdersService {
       }
     });
 
-    const sanitizedFileName =
-      this.sanitizeYamatoFileName(originalName) || `yamato-batch-${batch.id.toString()}.pdf`;
+    const sanitizedFileName = this.getYamatoUploadFileName(batch.id, validFiles);
     const pdfPath = this.buildYamatoBatchPdfPath(batch.id.toString(), sanitizedFileName);
     await this.ensureYamatoBatchDir(batch.id.toString());
-    await writeFile(pdfPath, fileBuffer);
+    await writeFile(pdfPath, mergedPdfBuffer);
 
     await this.prisma.$transaction(async (tx) => {
       await tx.yamatoShipmentBatch.update({
@@ -3242,6 +3253,13 @@ export class OrdersService {
     if (rakutenResult.count + amazonResult.count <= 0) {
       throw new NotFoundException(`未找到可回写快递单号的订单：${orderId}`);
     }
+  }
+
+  private getYamatoUploadFileName(batchId: bigint, files: YamatoShipmentPdfUploadFile[]): string {
+    if (files.length === 1) {
+      return this.sanitizeYamatoFileName(files[0]?.originalName) || `yamato-batch-${batchId.toString()}.pdf`;
+    }
+    return `yamato-batch-${batchId.toString()}-${files.length}files.pdf`;
   }
 
   async printYamatoShipmentLabelByProductId(
@@ -3516,6 +3534,21 @@ export class OrdersService {
     const target = await PDFDocument.create();
     const [page] = await target.copyPages(source, [pageIndex]);
     target.addPage(page);
+    const bytes = await target.save();
+    return Buffer.from(bytes);
+  }
+
+  private async mergePdfFiles(fileBuffers: Buffer[]): Promise<Buffer> {
+    if (fileBuffers.length === 1) {
+      return fileBuffers[0];
+    }
+
+    const target = await PDFDocument.create();
+    for (const fileBuffer of fileBuffers) {
+      const source = await PDFDocument.load(fileBuffer);
+      const copiedPages = await target.copyPages(source, source.getPageIndices());
+      copiedPages.forEach((page) => target.addPage(page));
+    }
     const bytes = await target.save();
     return Buffer.from(bytes);
   }

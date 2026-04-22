@@ -9244,9 +9244,11 @@ function focusOverseasYamatoScanInput() {
   });
 }
 
-async function uploadYamatoShipmentBatchPdf(batchId, file) {
+async function uploadYamatoShipmentBatchPdf(batchId, files) {
   const formData = new FormData();
-  formData.append("file", file);
+  files.forEach((file) => {
+    formData.append("files", file);
+  });
   return request(`/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/upload-pdf`, {
     method: "POST",
     body: formData,
@@ -11645,8 +11647,8 @@ function bindForms() {
 
   $("overseasYamatoPdfFile")?.addEventListener("change", async (event) => {
     const input = event.currentTarget;
-    const file = input?.files?.[0];
-    if (!file) return;
+    const files = Array.from(input?.files || []);
+    if (!files.length) return;
     const batch = getSelectedYamatoShipmentBatch();
     if (!batch) {
       showToast("当前拣货批次还没有生成 Yamato 批次", true);
@@ -11654,10 +11656,11 @@ function bindForms() {
       return;
     }
     const button = $("overseasUploadYamatoPdfBtn");
+    const fileCountText = files.length > 1 ? `${files.length} 个 Yamato PDF` : "Yamato PDF";
     try {
-      await withGlobalLoading("读取中，正在上传并解析 Yamato PDF...", () =>
+      await withGlobalLoading(`读取中，正在上传并解析 ${fileCountText}...`, () =>
         withBusyButton(button, "上传解析中...", async () => {
-          await uploadYamatoShipmentBatchPdf(batch.id, file);
+          await uploadYamatoShipmentBatchPdf(batch.id, files);
           await Promise.all([loadYamatoShipmentBatches(), loadOverseasPickingBatches()]);
           if (state.selectedOverseasPickingBatchId) {
             await loadOverseasPickingBatchDetail(state.selectedOverseasPickingBatchId);

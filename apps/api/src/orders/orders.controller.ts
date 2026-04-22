@@ -8,11 +8,12 @@ import {
   Query,
   Res,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -201,15 +202,22 @@ export class OrdersController {
 
   @Post('overseas-warehouse/yamato-batches/:batchId/upload-pdf')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(AnyFilesInterceptor({ limits: { files: 20 } }))
   async uploadYamatoShipmentBatchPdf(
     @Param('batchId') batchId: string,
-    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+    @UploadedFiles() files: Array<{ buffer?: Buffer; originalname?: string }> | undefined,
   ): Promise<unknown> {
-    if (!file?.buffer) {
+    const uploadedFiles = (files ?? []).filter((file) => file?.buffer);
+    if (!uploadedFiles.length) {
       throw new BadRequestException('请选择 Yamato PDF 文件');
     }
-    return this.ordersService.uploadYamatoShipmentBatchPdf(batchId, file.buffer, file.originalname);
+    return this.ordersService.uploadYamatoShipmentBatchPdf(
+      batchId,
+      uploadedFiles.map((file) => ({
+        buffer: file.buffer as Buffer,
+        originalName: file.originalname,
+      })),
+    );
   }
 
   @Post('overseas-warehouse/yamato-batches/:batchId/print-by-product')
