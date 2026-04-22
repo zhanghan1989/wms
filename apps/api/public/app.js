@@ -8479,7 +8479,7 @@ function renderChinaOrderProcessingTable() {
   }
 
   if (!pendingList.length) {
-    pendingBody.innerHTML = '<tr><td colspan="10" class="muted">暂无待 Xiya 拉取的中国发订单</td></tr>';
+    pendingBody.innerHTML = '<tr><td colspan="11" class="muted">暂无待 Xiya 拉取的中国发订单</td></tr>';
   } else {
     pendingBody.innerHTML = pendingList
       .map(
@@ -8490,6 +8490,7 @@ function renderChinaOrderProcessingTable() {
           <td>${buildChinaOrderProcessingOrderLink(item)}</td>
           <td>${escapeHtml(displayText(item.skuCode))}</td>
           <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
+          <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
           <td>${escapeHtml(displayText(item.orderQuantity))}</td>
           <td>${escapeHtml(displayText(item.shopName))}</td>
           <td>${escapeHtml(displayText(item.shippingName))}</td>
@@ -8502,7 +8503,7 @@ function renderChinaOrderProcessingTable() {
   }
 
   if (!exportedList.length) {
-    exportedBody.innerHTML = '<tr><td colspan="10" class="muted">暂无已同步给 Xiya 的中国发订单</td></tr>';
+    exportedBody.innerHTML = '<tr><td colspan="11" class="muted">暂无已同步给 Xiya 的中国发订单</td></tr>';
     return;
   }
 
@@ -8515,6 +8516,7 @@ function renderChinaOrderProcessingTable() {
         <td>${buildChinaOrderProcessingOrderLink(item)}</td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
         <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
         <td>${escapeHtml(displayText(item.orderQuantity))}</td>
         <td>${escapeHtml(displayText(item.shopName))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>
