@@ -192,6 +192,14 @@ const AMAZON_ORDER_TXT_COLUMNS = [
   { header: 'verge-of-lateShipment', key: 'vergeOfLateShipmentRaw' },
 ] as const;
 
+const OPTIONAL_AMAZON_ORDER_TXT_HEADERS = new Set<string>([
+  'customized-url',
+  'customized-page',
+  'is-business-order',
+  'purchase-order-number',
+  'price-designation',
+]);
+
 type AmazonOrderTxtColumn = (typeof AMAZON_ORDER_TXT_COLUMNS)[number];
 type AmazonOrderTxtHeader = AmazonOrderTxtColumn['header'];
 
@@ -4751,7 +4759,7 @@ export class OrdersService {
     });
 
     const missingHeaders = AMAZON_ORDER_TXT_COLUMNS.map((column) => column.header).filter(
-      (header) => !headerIndexMap.has(header),
+      (header) => !OPTIONAL_AMAZON_ORDER_TXT_HEADERS.has(header) && !headerIndexMap.has(header),
     );
     if (missingHeaders.length) {
       throw new BadRequestException(`亚马逊订单TXT缺少列：${missingHeaders.join('、')}`);
@@ -4860,7 +4868,9 @@ export class OrdersService {
 
     const headerRow = lines[0].split('\t').map((cell) => cell.trim());
     const headerSet = new Set(headerRow);
-    const missingHeaders = AMAZON_ORDER_TXT_COLUMNS.filter((column) => !headerSet.has(column.header)).length;
+    const missingHeaders = AMAZON_ORDER_TXT_COLUMNS.filter(
+      (column) => !OPTIONAL_AMAZON_ORDER_TXT_HEADERS.has(column.header) && !headerSet.has(column.header),
+    ).length;
     if (missingHeaders > 0) {
       return -50_000 - missingHeaders * 100;
     }
