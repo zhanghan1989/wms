@@ -4560,7 +4560,7 @@ export class OrdersService {
 
   private formatRakutenShipmentConfirmationDate(date: Date): string {
     const parts = getZonedDateParts(date, APP_TIMEZONE);
-    return `${parts.year}/${parts.month}/${parts.day}`;
+    return `${parts.year}${parts.month}${parts.day}`;
   }
 
   private formatYamatoFileNameStamp(date: Date = new Date()): string {
