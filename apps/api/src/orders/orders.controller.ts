@@ -181,6 +181,12 @@ export class OrdersController {
     return this.ordersService.listChinaOrderProcessing(limit, scope);
   }
 
+  @Post('china-orders/sync-xiya-tracking')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async syncXiyaTrackingNumbers(): Promise<unknown> {
+    return this.ordersService.syncXiyaTrackingNumbers();
+  }
+
   @Get('overseas-warehouse/picking-batches')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async listOverseasPickingBatches(@Query('limit') limit?: string): Promise<unknown[]> {

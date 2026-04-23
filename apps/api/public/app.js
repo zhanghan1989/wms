@@ -12220,6 +12220,28 @@ function bindForms() {
       .catch((error) => showToast(error.message, true)),
   );
 
+  $("syncXiyaTrackingNumbers")?.addEventListener("click", (event) =>
+    withBusyButton(event.currentTarget, "同步中...", async () => {
+      try {
+        const result = await request("/orders/china-orders/sync-xiya-tracking", { method: "POST" });
+        await Promise.all([
+          loadChinaOrderProcessingOrders(),
+          loadOrders(),
+          loadAmazonOrders(),
+          loadManualOrders(),
+          loadOverseasOrderProcessingOrders(),
+        ]);
+        showToast(
+          `已同步 Xiya 运单号：乐天 ${Number(result?.rakutenUpdatedCount || 0)} 条，亚马逊 ${Number(
+            result?.amazonUpdatedCount || 0,
+          )} 条，未匹配 ${Number(result?.skippedUnmatchedCount || 0)} 条。`,
+        );
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }),
+  );
+
   $("openOverseasPickingBatchManagementBtn")?.addEventListener("click", async () => {
     try {
       state.overseasPickingBatchView = "list";

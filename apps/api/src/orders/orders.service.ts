@@ -1,6 +1,12 @@
 import { execFile } from 'child_process';
 import { createHash, randomUUID } from 'crypto';
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import {
   AmazonOrderRecord,
@@ -420,6 +426,24 @@ interface ThirdPartyExportAckItem {
   id?: string | number;
 }
 
+interface XiyaLogisticsRow {
+  id?: string | number | null;
+  logistics_order_id?: string | null;
+  sales_order_id?: string | null;
+  store_name?: string | null;
+  created_at?: string | null;
+  logistics_status?: string | null;
+}
+
+interface XiyaTrackingCandidate {
+  source: ThirdPartyExportSource;
+  orderId: string;
+  trackingNo: string;
+  storeName: string;
+  registeredAt: Date;
+  rowCreatedAtMs: number;
+}
+
 interface AmazonManualOrderBatchCreateRowResult {
   id: string;
   orderId: string | null;
@@ -688,6 +712,14 @@ const OVERSEAS_DISPATCH_MODE = {
 } as const;
 const AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME = 'manual-amazon-order';
 const AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH = 'manual:amazon-order';
+const XIYA_LOGISTICS_EXPORT_URL = 'http://103.236.55.93/api/external/logistics/rakuten';
+const XIYA_LOGISTICS_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
+const XIYA_LOGISTICS_SYNC_DAYS = 5;
+const XIYA_LOGISTICS_STORE_SOURCE: Record<string, ThirdPartyExportSource> = {
+  DGAZ乐天日本: 'rakuten',
+  DGAZ亚马逊日本站: 'amazon',
+  ArcDiary亚马逊日本站: 'amazon',
+};
 const OVERSEAS_PICKING_BATCH_STATUS = {
   CREATED: 'created',
   PICKED: 'picked',
@@ -4706,16 +4738,13 @@ export class OrdersService {
       this.prisma.rakutenOrderRecord.findMany({
         where: {
           sendStatus: OrderSendStatus.unsent,
-          xiyaExportedAt: null,
+          OR: [{ shipmentNo: null }, { shipmentNo: '' }],
         },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.amazonOrderRecord.findMany({
         where: {
-          AND: [
-            { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
-            { xiyaExportedAt: null },
-          ],
+          OR: [{ shipmentNo: null }, { shipmentNo: '' }],
         },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       }),
@@ -4871,6 +4900,219 @@ export class OrdersService {
       requestedCount: rawItems.length,
       rakutenCount: Number(rakutenResult.count ?? 0),
       amazonCount: Number(amazonResult.count ?? 0),
+    };
+  }
+
+  async syncXiyaTrackingNumbers(): Promise<{
+    syncedAt: string;
+    days: number;
+    fetchedCount: number;
+    validCount: number;
+    deduplicatedCount: number;
+    rakutenUpdatedCount: number;
+    amazonUpdatedCount: number;
+    skippedUnmatchedCount: number;
+  }> {
+    const fetchedRows = await this.fetchXiyaLogisticsRows();
+    const candidates = this.normalizeXiyaTrackingCandidates(fetchedRows);
+    const deduplicatedCandidates = this.deduplicateXiyaTrackingCandidates(candidates);
+    const [rakutenResult, amazonResult] = await Promise.all([
+      this.applyXiyaTrackingCandidates(
+        'rakuten',
+        deduplicatedCandidates.filter((candidate) => candidate.source === 'rakuten'),
+      ),
+      this.applyXiyaTrackingCandidates(
+        'amazon',
+        deduplicatedCandidates.filter((candidate) => candidate.source === 'amazon'),
+      ),
+    ]);
+
+    return {
+      syncedAt: new Date().toISOString(),
+      days: XIYA_LOGISTICS_SYNC_DAYS,
+      fetchedCount: fetchedRows.length,
+      validCount: candidates.length,
+      deduplicatedCount: deduplicatedCandidates.length,
+      rakutenUpdatedCount: rakutenResult.updatedCount,
+      amazonUpdatedCount: amazonResult.updatedCount,
+      skippedUnmatchedCount: rakutenResult.skippedUnmatchedCount + amazonResult.skippedUnmatchedCount,
+    };
+  }
+
+  private async fetchXiyaLogisticsRows(): Promise<XiyaLogisticsRow[]> {
+    const url = new URL(XIYA_LOGISTICS_EXPORT_URL);
+    url.searchParams.set('storeName', Object.keys(XIYA_LOGISTICS_STORE_SOURCE).join(','));
+    url.searchParams.set('days', String(XIYA_LOGISTICS_SYNC_DAYS));
+
+    let payload: unknown;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'x-api-key': XIYA_LOGISTICS_API_KEY,
+          Accept: 'application/json',
+        },
+      });
+      if (!response.ok) {
+        throw new InternalServerErrorException(`Xiya 运单号接口请求失败：HTTP ${response.status}`);
+      }
+      payload = await response.json();
+    } catch (error) {
+      if (error instanceof InternalServerErrorException) {
+        throw error;
+      }
+      throw new InternalServerErrorException(
+        `Xiya 运单号接口请求失败：${error instanceof Error ? error.message : '未知错误'}`,
+      );
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      throw new InternalServerErrorException('Xiya 运单号接口返回格式无效');
+    }
+    const root = payload as Record<string, unknown>;
+    if (Number(root.code) !== 200) {
+      throw new InternalServerErrorException(`Xiya 运单号接口返回失败：${String(root.message ?? '未知错误')}`);
+    }
+    const data = root.data;
+    if (!data || typeof data !== 'object' || !Array.isArray((data as Record<string, unknown>).rows)) {
+      throw new InternalServerErrorException('Xiya 运单号接口缺少 data.rows 字段');
+    }
+    return (data as Record<string, unknown>).rows as XiyaLogisticsRow[];
+  }
+
+  private normalizeXiyaTrackingCandidates(rows: XiyaLogisticsRow[]): XiyaTrackingCandidate[] {
+    return rows
+      .map((row) => {
+        const storeName = String(row?.store_name ?? '').trim();
+        const source = XIYA_LOGISTICS_STORE_SOURCE[storeName];
+        const orderId = String(row?.sales_order_id ?? '').trim();
+        const trackingNo = String(row?.logistics_order_id ?? '').trim();
+        if (!source || !orderId || !trackingNo) {
+          return null;
+        }
+        const registeredAt = this.parseXiyaLogisticsDate(row?.created_at);
+        return {
+          source,
+          orderId,
+          trackingNo,
+          storeName,
+          registeredAt,
+          rowCreatedAtMs: registeredAt.getTime(),
+        };
+      })
+      .filter((item): item is XiyaTrackingCandidate => Boolean(item));
+  }
+
+  private deduplicateXiyaTrackingCandidates(candidates: XiyaTrackingCandidate[]): XiyaTrackingCandidate[] {
+    const candidateByKey = new Map<string, XiyaTrackingCandidate>();
+    candidates.forEach((candidate) => {
+      const key = `${candidate.source}:${candidate.orderId}`;
+      const current = candidateByKey.get(key);
+      if (!current || candidate.rowCreatedAtMs >= current.rowCreatedAtMs) {
+        candidateByKey.set(key, candidate);
+      }
+    });
+    return Array.from(candidateByKey.values());
+  }
+
+  private parseXiyaLogisticsDate(value: unknown): Date {
+    const text = String(value ?? '').trim();
+    const parsed = text ? new Date(text) : null;
+    return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+  }
+
+  private async applyXiyaTrackingCandidates(
+    source: ThirdPartyExportSource,
+    candidates: XiyaTrackingCandidate[],
+  ): Promise<{ updatedCount: number; skippedUnmatchedCount: number }> {
+    if (!candidates.length) {
+      return { updatedCount: 0, skippedUnmatchedCount: 0 };
+    }
+
+    const candidateByOrderId = new Map(candidates.map((candidate) => [candidate.orderId, candidate]));
+    const orderIds = Array.from(candidateByOrderId.keys());
+    const rows =
+      source === 'rakuten'
+        ? await this.prisma.rakutenOrderRecord.findMany({
+            where: {
+              orderId: { in: orderIds },
+              sendStatus: OrderSendStatus.unsent,
+              OR: [{ shipmentNo: null }, { shipmentNo: '' }],
+            },
+          })
+        : await this.prisma.amazonOrderRecord.findMany({
+            where: {
+              orderId: { in: orderIds },
+              OR: [{ shipmentNo: null }, { shipmentNo: '' }],
+            },
+          });
+
+    if (!rows.length) {
+      return { updatedCount: 0, skippedUnmatchedCount: candidates.length };
+    }
+
+    const enrichedRows =
+      source === 'rakuten'
+        ? await this.enrichOrderRows(rows as RakutenOrderRecord[])
+        : await this.enrichAmazonOrderRows(rows as AmazonOrderRecord[]);
+
+    const activePickedRefs = await this.loadActiveOverseasPickingBatchRefs(
+      enrichedRows.map((row) => ({
+        source,
+        sourceRecordId: row.id,
+      })),
+    );
+
+    const eligibleRows = enrichedRows.filter((row) =>
+      this.shouldExportOrderToThirdParty(source, row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs),
+    );
+    const eligibleRowsByOrderId = new Map<string, typeof eligibleRows>();
+    eligibleRows.forEach((row) => {
+      const orderId = String(row.orderId ?? '').trim();
+      if (!orderId) return;
+      eligibleRowsByOrderId.set(orderId, [...(eligibleRowsByOrderId.get(orderId) ?? []), row]);
+    });
+
+    let updatedCount = 0;
+    for (const [orderId, candidate] of candidateByOrderId.entries()) {
+      const targetRows = eligibleRowsByOrderId.get(orderId) ?? [];
+      if (!targetRows.length) {
+        continue;
+      }
+      const ids = targetRows.map((row) => row.id);
+      const updateResult =
+        source === 'rakuten'
+          ? await this.prisma.rakutenOrderRecord.updateMany({
+              where: {
+                id: { in: ids },
+                sendStatus: OrderSendStatus.unsent,
+                OR: [{ shipmentNo: null }, { shipmentNo: '' }],
+              },
+              data: {
+                shipmentCompany: 'Xiya',
+                shipmentNo: candidate.trackingNo,
+                shipmentNoRegisteredAt: candidate.registeredAt,
+                sendStatus: OrderSendStatus.sent,
+              },
+            })
+          : await this.prisma.amazonOrderRecord.updateMany({
+              where: {
+                id: { in: ids },
+                OR: [{ shipmentNo: null }, { shipmentNo: '' }],
+              },
+              data: {
+                shipmentCompany: 'Xiya',
+                shipmentNo: candidate.trackingNo,
+                shipmentNoRegisteredAt: candidate.registeredAt,
+              },
+            });
+      updatedCount += Number(updateResult.count ?? 0);
+    }
+
+    const matchedOrderIds = new Set(eligibleRows.map((row) => String(row.orderId ?? '').trim()).filter(Boolean));
+    return {
+      updatedCount,
+      skippedUnmatchedCount: candidates.filter((candidate) => !matchedOrderIds.has(candidate.orderId)).length,
     };
   }
 
