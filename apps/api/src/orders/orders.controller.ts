@@ -2,7 +2,6 @@ import {
   Body,
   BadRequestException,
   Controller,
-  ForbiddenException,
   Get,
   Param,
   Post,
@@ -14,12 +13,10 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
 import type { Response } from 'express';
 import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { OrdersService } from './orders.service';
@@ -43,10 +40,8 @@ export class OrdersController {
 
   @Put('rakuten/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.admin)
   async updateRakutenOrder(
     @Param('id') id: string,
-    @CurrentUser() user: AuthUser,
     @Body()
     payload: {
       orderId?: string | null;
@@ -55,13 +50,13 @@ export class OrdersController {
       productName?: string | null;
       mallName?: string | null;
       shopName?: string | null;
+      productId?: string | null;
       shippingName?: string | null;
       shippingPostalCode?: string | null;
       shippingPrefecture?: string | null;
       shippingCity?: string | null;
       shippingAddress?: string | null;
       shippingPhone?: string | null;
-      dispatchMode?: string | null;
       shipmentCompany?: string | null;
       shipmentNo?: string | null;
       deliveryDateRaw?: string | null;
@@ -69,21 +64,46 @@ export class OrdersController {
       orderRemark?: string | null;
     },
   ): Promise<unknown> {
-    this.assertExactAdminForOrderEdit(user);
     return this.ordersService.updateRakutenOrder(id, payload);
   }
 
   @Put('amazon/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.admin)
   async updateAmazonOrder(
     @Param('id') id: string,
-    @CurrentUser() user: AuthUser,
     @Body()
     payload: {
       orderId?: string | null;
       orderItemId?: string | null;
       sku?: string | null;
+      quantityPurchased?: string | number | null;
+      productName?: string | null;
+      mallName?: string | null;
+      shopName?: string | null;
+      productId?: string | null;
+      recipientName?: string | null;
+      buyerPhoneNumber?: string | null;
+      shipPostalCode?: string | null;
+      shipState?: string | null;
+      shipAddress1?: string | null;
+      shipAddress2?: string | null;
+      shipAddress3?: string | null;
+      shipmentCompany?: string | null;
+      shipmentNo?: string | null;
+    },
+  ): Promise<unknown> {
+    return this.ordersService.updateAmazonOrder(id, payload);
+  }
+
+  @Post('amazon/manual')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async createAmazonManualOrder(
+    @Body()
+    payload: {
+      orderId?: string | null;
+      orderItemId?: string | null;
+      sku?: string | null;
+      productId?: string | null;
       quantityPurchased?: string | number | null;
       productName?: string | null;
       mallName?: string | null;
@@ -95,19 +115,11 @@ export class OrdersController {
       shipAddress1?: string | null;
       shipAddress2?: string | null;
       shipAddress3?: string | null;
-      dispatchMode?: string | null;
       shipmentCompany?: string | null;
       shipmentNo?: string | null;
     },
   ): Promise<unknown> {
-    this.assertExactAdminForOrderEdit(user);
-    return this.ordersService.updateAmazonOrder(id, payload);
-  }
-
-  private assertExactAdminForOrderEdit(user: AuthUser): void {
-    if (user.role !== Role.admin) {
-      throw new ForbiddenException('只有 admin 用户可以编辑订单');
-    }
+    return this.ordersService.createAmazonManualOrder(payload);
   }
 
   @Get('overseas-warehouse')

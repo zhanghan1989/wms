@@ -1111,6 +1111,7 @@
               <div class="action-row">
                 <button id="openAmazonOrderImportModal">订单导入</button>
                 <button id="amazonBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
+                <button id="openAmazonManualOrderModal" type="button">生成手动单</button>
               </div>
             </div>
             <div class="action-row-right">
@@ -1620,6 +1621,40 @@
     </div>
   </div>
 
+  <div id="amazonManualOrderModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>生成亚马逊手动单</h3>
+        <button type="button" class="ghost" data-action="closeAmazonManualOrderModal">关闭</button>
+      </div>
+      <form id="amazonManualOrderForm" class="form-grid modal-grid order-edit-form">
+        <label>订单号<input id="amazonManualOrderId" maxlength="64" required /></label>
+        <label>order-item-id<input id="amazonManualOrderItemId" maxlength="64" placeholder="不填自动生成" /></label>
+        <label>SKU<input id="amazonManualSku" maxlength="128" /></label>
+        <label>产品ID<input id="amazonManualProductId" maxlength="64" required /></label>
+        <label>产品名称<input id="amazonManualProductName" readonly /></label>
+        <label>数量<input id="amazonManualQuantity" inputmode="numeric" required /></label>
+        <label>商品名<input id="amazonManualItemName" /></label>
+        <label>平台<input id="amazonManualMallName" maxlength="128" value="Amazon" /></label>
+        <label>店铺<input id="amazonManualShopName" maxlength="128" /></label>
+        <label>收件人<input id="amazonManualRecipientName" maxlength="255" /></label>
+        <label>电话<input id="amazonManualPhone" maxlength="64" /></label>
+        <label>邮编<input id="amazonManualPostalCode" maxlength="32" /></label>
+        <label>都道府县<input id="amazonManualState" maxlength="255" /></label>
+        <label>地址1<input id="amazonManualAddress1" /></label>
+        <label>地址2<input id="amazonManualAddress2" /></label>
+        <label>地址3<input id="amazonManualAddress3" /></label>
+        <label>发货公司<input id="amazonManualShipmentCompany" maxlength="128" /></label>
+        <label>发货单号<input id="amazonManualShipmentNo" maxlength="128" /></label>
+        <label>发货模式<input id="amazonManualDispatchMode" value="保存后自动判断" readonly /></label>
+        <div class="form-actions order-edit-actions">
+          <button type="submit" id="submitAmazonManualOrderBtn">保存手动单</button>
+          <button type="button" class="ghost" data-action="closeAmazonManualOrderModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="createSkuModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
@@ -1858,14 +1893,9 @@
         <label>商品名<input id="orderEditProductName" /></label>
         <label>平台<input id="orderEditMallName" maxlength="128" /></label>
         <label>店铺<input id="orderEditShopName" maxlength="128" /></label>
-        <label>
-          发货模式
-          <select id="orderEditDispatchMode">
-            <option value="">自动判断</option>
-            <option value="overseas">日本发</option>
-            <option value="china_pending">中国发</option>
-          </select>
-        </label>
+        <label>产品ID<input id="orderEditResolvedProductId" maxlength="64" /></label>
+        <label>产品名称<input id="orderEditResolvedProductName" readonly /></label>
+        <label>发货模式<input id="orderEditDispatchMode" readonly /></label>
         <label>收件人<input id="orderEditRecipientName" maxlength="255" /></label>
         <label>电话<input id="orderEditPhone" maxlength="64" /></label>
         <label>邮编<input id="orderEditPostalCode" maxlength="32" /></label>

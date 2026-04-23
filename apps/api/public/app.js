@@ -8322,7 +8322,7 @@ function formatAmazonShippingOriginAsMode(origin) {
 }
 
 function canCurrentUserEditOrders() {
-  return String(state.me?.role || "") === "admin";
+  return Boolean(state.me);
 }
 
 function normalizeOrderDispatchModeForDisplay(item, fallbackMode = "") {
@@ -8347,6 +8347,20 @@ function resolveOrderEditDispatchMode(item, source) {
   return "";
 }
 
+function formatOrderEditDispatchMode(value) {
+  const mode = String(value || "").trim();
+  if (mode === "overseas" || mode === "日本発" || mode === "日本发") return "日本发";
+  if (mode === "china_pending" || mode === "中国発" || mode === "中国发") return "中国发";
+  return "保存后自动判断";
+}
+
+function normalizeOrderEditSkuLookupKey(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+}
+
 function setOrderEditFieldValue(id, value) {
   const input = $(id);
   if (!input) return;
@@ -8367,10 +8381,119 @@ function setOrderEditSourceMode(source) {
   });
 }
 
-function openOrderEditModal(source, id) {
-  if (!canCurrentUserEditOrders()) {
-    throw new Error("当前账号没有编辑订单权限");
+function setOrderEditProductMeta(productId, productName) {
+  setOrderEditFieldValue("orderEditResolvedProductId", productId);
+  setOrderEditFieldValue("orderEditResolvedProductName", productName);
+}
+
+async function resolveOrderEditProductMeta(source, skuCode) {
+  const code = String(skuCode || "").trim();
+  if (!code) {
+    return { productId: "", productName: "" };
   }
+  if (source === "rakuten") {
+    const matched = await findMasterProductByProductId(code);
+    return {
+      productId: matched?.productId || code,
+      productName: matched?.productName || "",
+    };
+  }
+
+  const skuRows = await request(`/skus?q=${encodeURIComponent(code)}`);
+  const normalizedCode = normalizeOrderEditSkuLookupKey(code);
+  const matched = (Array.isArray(skuRows) ? skuRows : []).find((row) =>
+    [row?.sku, row?.rbSku, row?.fbmSku].some((value) => {
+      const rawValue = String(value || "").trim();
+      return rawValue === code || normalizeOrderEditSkuLookupKey(rawValue) === normalizedCode;
+    }),
+  );
+  return {
+    productId: String(matched?.productId || "").trim(),
+    productName: String(matched?.productName || "").trim(),
+  };
+}
+
+async function syncOrderEditProductMeta({ markDispatchAsAuto = true } = {}) {
+  const source = getOrderEditFieldValue("orderEditSource");
+  const skuCode = getOrderEditFieldValue("orderEditSku");
+  const meta = await resolveOrderEditProductMeta(source, skuCode);
+  setOrderEditProductMeta(meta.productId, meta.productName);
+  if (markDispatchAsAuto) {
+    setOrderEditFieldValue("orderEditDispatchMode", "保存后自动判断");
+  }
+  return meta;
+}
+
+async function syncOrderEditProductNameFromProductId() {
+  const source = getOrderEditFieldValue("orderEditSource");
+  const productId = getOrderEditFieldValue("orderEditResolvedProductId");
+  if (source === "rakuten") {
+    setOrderEditFieldValue("orderEditSku", productId);
+  }
+  if (!productId) {
+    setOrderEditFieldValue("orderEditResolvedProductName", "");
+    return null;
+  }
+  const matched = await findMasterProductByProductId(productId);
+  setOrderEditFieldValue("orderEditResolvedProductName", matched?.productName || "");
+  setOrderEditFieldValue("orderEditDispatchMode", "保存后自动判断");
+  return matched;
+}
+
+function getAmazonManualFieldValue(id) {
+  return String($(id)?.value || "").trim();
+}
+
+async function syncAmazonManualProductName() {
+  const productId = getAmazonManualFieldValue("amazonManualProductId");
+  if (!productId) {
+    setOrderEditFieldValue("amazonManualProductName", "");
+    setOrderEditFieldValue("amazonManualDispatchMode", "保存后自动判断");
+    return null;
+  }
+  const matched = await findMasterProductByProductId(productId);
+  setOrderEditFieldValue("amazonManualProductName", matched?.productName || "");
+  if (!getAmazonManualFieldValue("amazonManualItemName") && matched?.productName) {
+    setOrderEditFieldValue("amazonManualItemName", matched.productName);
+  }
+  setOrderEditFieldValue("amazonManualDispatchMode", "保存后自动判断");
+  return matched;
+}
+
+function openAmazonManualOrderModal() {
+  const form = $("amazonManualOrderForm");
+  if (form) form.reset();
+  setOrderEditFieldValue("amazonManualMallName", "Amazon");
+  setOrderEditFieldValue("amazonManualDispatchMode", "保存后自动判断");
+  openModal("amazonManualOrderModal");
+}
+
+async function createAmazonManualOrder() {
+  return request("/orders/amazon/manual", {
+    method: "POST",
+    body: JSON.stringify({
+      orderId: getAmazonManualFieldValue("amazonManualOrderId"),
+      orderItemId: getAmazonManualFieldValue("amazonManualOrderItemId"),
+      sku: getAmazonManualFieldValue("amazonManualSku"),
+      productId: getAmazonManualFieldValue("amazonManualProductId"),
+      quantityPurchased: getAmazonManualFieldValue("amazonManualQuantity"),
+      productName: getAmazonManualFieldValue("amazonManualItemName"),
+      mallName: getAmazonManualFieldValue("amazonManualMallName"),
+      shopName: getAmazonManualFieldValue("amazonManualShopName"),
+      recipientName: getAmazonManualFieldValue("amazonManualRecipientName"),
+      buyerPhoneNumber: getAmazonManualFieldValue("amazonManualPhone"),
+      shipPostalCode: getAmazonManualFieldValue("amazonManualPostalCode"),
+      shipState: getAmazonManualFieldValue("amazonManualState"),
+      shipAddress1: getAmazonManualFieldValue("amazonManualAddress1"),
+      shipAddress2: getAmazonManualFieldValue("amazonManualAddress2"),
+      shipAddress3: getAmazonManualFieldValue("amazonManualAddress3"),
+      shipmentCompany: getAmazonManualFieldValue("amazonManualShipmentCompany"),
+      shipmentNo: getAmazonManualFieldValue("amazonManualShipmentNo"),
+    }),
+  });
+}
+
+function openOrderEditModal(source, id) {
   const normalizedSource = String(source || "").trim();
   const list = normalizedSource === "amazon" ? state.amazonOrders : state.orders;
   const item = list.find((row) => String(row?.id || "") === String(id || ""));
@@ -8390,7 +8513,8 @@ function openOrderEditModal(source, id) {
   setOrderEditFieldValue("orderEditProductName", item.productName);
   setOrderEditFieldValue("orderEditMallName", item.mallName || (isAmazon ? "亚马逊" : ""));
   setOrderEditFieldValue("orderEditShopName", isAmazon ? item.resolvedShopName || item.shopName : item.shopName);
-  setOrderEditFieldValue("orderEditDispatchMode", resolveOrderEditDispatchMode(item, normalizedSource));
+  setOrderEditProductMeta(item.resolvedProductId || (!isAmazon ? item.skuCode : ""), item.resolvedProductName || "");
+  setOrderEditFieldValue("orderEditDispatchMode", formatOrderEditDispatchMode(resolveOrderEditDispatchMode(item, normalizedSource)));
   setOrderEditFieldValue("orderEditRecipientName", isAmazon ? item.recipientName : item.shippingName);
   setOrderEditFieldValue("orderEditPhone", isAmazon ? item.buyerPhoneNumber : item.shippingPhone);
   setOrderEditFieldValue("orderEditPostalCode", isAmazon ? item.shipPostalCode : item.shippingPostalCode);
@@ -8405,6 +8529,7 @@ function openOrderEditModal(source, id) {
   setOrderEditFieldValue("orderEditDeliveryTimeSlot", item.deliveryTimeSlot);
   setOrderEditFieldValue("orderEditRemark", item.orderRemark);
   openModal("orderEditModal");
+  syncOrderEditProductMeta({ markDispatchAsAuto: false }).catch(() => {});
 }
 
 async function submitOrderEditForm() {
@@ -8418,7 +8543,7 @@ async function submitOrderEditForm() {
     productName: getOrderEditFieldValue("orderEditProductName"),
     mallName: getOrderEditFieldValue("orderEditMallName"),
     shopName: getOrderEditFieldValue("orderEditShopName"),
-    dispatchMode: getOrderEditFieldValue("orderEditDispatchMode"),
+    productId: getOrderEditFieldValue("orderEditResolvedProductId"),
     shipmentCompany: getOrderEditFieldValue("orderEditShipmentCompany"),
     shipmentNo: getOrderEditFieldValue("orderEditShipmentNo"),
   };
@@ -10779,6 +10904,22 @@ function bindForms() {
     }
   });
 
+  $("amazonManualOrderForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "保存中...", async () => {
+        await createAmazonManualOrder();
+        await loadAmazonOrders();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
+        closeModal("amazonManualOrderModal");
+        showToast("亚马逊手动单已生成");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("orderEditForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
@@ -11531,6 +11672,24 @@ function bindForms() {
   $("editProductId").addEventListener("blur", () => {
     syncSkuProductName("editProductId", "editProductName").catch(() => {});
   });
+  $("orderEditSku")?.addEventListener("input", () => {
+    syncOrderEditProductMeta().catch(() => {});
+  });
+  $("orderEditSku")?.addEventListener("blur", () => {
+    syncOrderEditProductMeta().catch(() => {});
+  });
+  $("orderEditResolvedProductId")?.addEventListener("input", () => {
+    syncOrderEditProductNameFromProductId().catch(() => {});
+  });
+  $("orderEditResolvedProductId")?.addEventListener("blur", () => {
+    syncOrderEditProductNameFromProductId().catch(() => {});
+  });
+  $("amazonManualProductId")?.addEventListener("input", () => {
+    syncAmazonManualProductName().catch(() => {});
+  });
+  $("amazonManualProductId")?.addEventListener("blur", () => {
+    syncAmazonManualProductName().catch(() => {});
+  });
 
   $("backToInventoryListBtn").addEventListener("click", () => {
     state.inventoryHomeSelectedDetail = null;
@@ -12007,6 +12166,10 @@ function bindForms() {
 
   $("openAmazonOrderImportModal").addEventListener("click", () => {
     openModal("amazonOrderImportModal");
+  });
+
+  $("openAmazonManualOrderModal")?.addEventListener("click", () => {
+    openAmazonManualOrderModal();
   });
 
   $("closeAmazonOrderImportModal").addEventListener("click", () => {
@@ -14241,6 +14404,11 @@ function bindDelegates() {
       closeModal("amazonOrderDetailModal");
       return;
     }
+    const amazonManualOrderClose = event.target.closest("button[data-action='closeAmazonManualOrderModal']");
+    if (amazonManualOrderClose) {
+      closeModal("amazonManualOrderModal");
+      return;
+    }
     const orderEditClose = event.target.closest("button[data-action='closeOrderEditModal']");
     if (orderEditClose) {
       closeModal("orderEditModal");
@@ -14483,6 +14651,12 @@ function bindDelegates() {
   $("orderEditModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("orderEditModal");
+    }
+  });
+
+  $("amazonManualOrderModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("amazonManualOrderModal");
     }
   });
 
