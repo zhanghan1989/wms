@@ -9092,7 +9092,12 @@ function renderOverseasPickingBatchItems() {
                 const boxQty = Number(plan.boxQty || 0);
                 const pickQty = Number(plan.pickQty || 0);
                 const remainingQty = Math.max(boxQty - pickQty, 0);
-                return `<div>${escapeHtml(displayText(pickQty > 0 ? remainingQty : boxQty))}</div>`;
+                if (pickedQty > 0 || !isCreated || pickQty <= 0) {
+                  return `<div>${escapeHtml(displayText(pickQty > 0 ? remainingQty : boxQty))}</div>`;
+                }
+                return `<div>${escapeHtml(displayText(boxQty))}<span class="picking-stock-minus">-${escapeHtml(
+                  displayText(pickQty),
+                )}</span></div>`;
               },
             )
             .join("")

@@ -1714,16 +1714,7 @@ export class OrdersService {
 
       for (const item of normalizedItems) {
         const qty = item.actualQty;
-        if (item.dispatchMode !== OVERSEAS_DISPATCH_MODE.OVERSEAS) {
-          await tx.overseasPickingBatchItem.update({
-            where: { id: item.id },
-            data: {
-              actualQty: 0,
-              pickedAt: null,
-            },
-          });
-          continue;
-        }
+        if (item.dispatchMode !== OVERSEAS_DISPATCH_MODE.OVERSEAS) continue;
         if (qty <= 0) continue;
         const allocations = this.allocateOverseasPickingQtyAcrossBoxes(
           inventoryRowsByProductId.get(item.productId) ?? [],
@@ -1755,14 +1746,6 @@ export class OrdersService {
             },
           });
         }
-
-        await tx.overseasPickingBatchItem.update({
-          where: { id: item.id },
-          data: {
-            actualQty: qty,
-            pickedAt: item.pickedAt ?? new Date(),
-          },
-        });
       }
 
       for (const productId of productIds) {
