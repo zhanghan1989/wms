@@ -237,6 +237,8 @@ const state = {
   ordersVisibleCount: 0,
   amazonOrders: [],
   amazonOrdersVisibleCount: 0,
+  manualOrders: [],
+  manualOrdersVisibleCount: 0,
   overseasOrderProcessingOrders: [],
   chinaOrderProcessingOrders: [],
   overseasPickingBatches: [],
@@ -260,6 +262,7 @@ const state = {
   selectedResetPasswordUserId: null,
   selectedRakutenOrderIds: new Set(),
   selectedAmazonOrderIds: new Set(),
+  selectedManualOrderIds: new Set(),
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
@@ -301,6 +304,7 @@ let productEditRequestLoadObserver = null;
 let skuManagementLoadObserver = null;
 let ordersLoadObserver = null;
 let amazonOrdersLoadObserver = null;
+let manualOrdersLoadObserver = null;
 let fbaReplenishmentLoadObserver = null;
 let batchInboundLoadObserver = null;
 let usersLoadObserver = null;
@@ -2476,6 +2480,10 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
   }
   if (targetId === "amazonOrderImport" && state.token && !state.amazonOrders.length) {
     loadAmazonOrders().catch((error) => showToast(error.message, true));
+    return;
+  }
+  if (targetId === "manualOrderProcessing" && state.token && !state.manualOrders.length) {
+    loadManualOrders().catch((error) => showToast(error.message, true));
     return;
   }
   if (targetId === "overseasOrderProcessing" && state.token) {
@@ -8289,7 +8297,9 @@ function buildAmazonOrderDetailFields(item) {
 }
 
 function openAmazonOrderDetailModal(orderId) {
-  const item = state.amazonOrders.find((row) => String(row?.id || "") === String(orderId || ""));
+  const item = [...state.amazonOrders, ...state.manualOrders].find(
+    (row) => String(row?.id || "") === String(orderId || ""),
+  );
   openAmazonOrderDetailModalFromItem(item);
 }
 
@@ -8463,13 +8473,13 @@ async function syncAmazonManualProductName() {
 function openAmazonManualOrderModal() {
   const form = $("amazonManualOrderForm");
   if (form) form.reset();
-  setOrderEditFieldValue("amazonManualMallName", "Amazon");
+  setOrderEditFieldValue("amazonManualMallName", "");
   setOrderEditFieldValue("amazonManualDispatchMode", "保存后自动判断");
   openModal("amazonManualOrderModal");
 }
 
 async function createAmazonManualOrder() {
-  return request("/orders/amazon/manual", {
+  return request("/orders/manual", {
     method: "POST",
     body: JSON.stringify({
       orderId: getAmazonManualFieldValue("amazonManualOrderId"),
@@ -8495,7 +8505,7 @@ async function createAmazonManualOrder() {
 
 function openOrderEditModal(source, id) {
   const normalizedSource = String(source || "").trim();
-  const list = normalizedSource === "amazon" ? state.amazonOrders : state.orders;
+  const list = normalizedSource === "amazon" ? [...state.amazonOrders, ...state.manualOrders] : state.orders;
   const item = list.find((row) => String(row?.id || "") === String(id || ""));
   if (!item) {
     throw new Error("未找到对应订单");
@@ -8706,11 +8716,66 @@ function renderAmazonOrdersTable() {
   updateAmazonBatchDeleteButtonState();
 }
 
+function renderManualOrdersTable() {
+  const tbody = $("manualOrdersBody");
+  if (!tbody) return;
+  syncSelectedManualOrderIds();
+  const canEdit = canCurrentUserEditOrders();
+  const visibleCount = Math.max(state.inventoryPageSize, Number(state.manualOrdersVisibleCount || 0));
+  const list = state.manualOrders.slice(0, visibleCount);
+
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="${canEdit ? 15 : 14}" class="muted">暂无手动订单数据</td></tr>`;
+    updateManualOrdersSelectAll();
+    updateManualOrderBatchDeleteButtonState();
+    return;
+  }
+
+  tbody.innerHTML = list
+    .map(
+      (item) => `
+      <tr>
+        <td><input type="checkbox" data-action="manualOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
+          state.selectedManualOrderIds.has(String(item.id)) ? "checked" : ""
+        } /></td>
+        <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
+        <td><button type="button" class="inline-link-btn" data-action="openAmazonOrderDetail" data-id="${escapeHtml(
+          item.id,
+        )}">${escapeHtml(displayText(item.orderId))}</button></td>
+        <td>${escapeHtml(displayText(item.sku))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductId))}</td>
+        <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
+        <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
+        <td>${escapeHtml(displayText(item.mallName))}</td>
+        <td>${escapeHtml(displayText(normalizeOrderDispatchModeForDisplay(item, formatAmazonShippingOriginAsMode(item.shippingOrigin))))}</td>
+        <td>${escapeHtml(displayText(item.resolvedShopName || item.shopName))}</td>
+        <td>${escapeHtml(displayText(item.recipientName))}</td>
+        <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
+        <td>${escapeHtml(displayText(item.shipmentNo))}</td>
+        <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
+        ${
+          canEdit
+            ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editAmazonOrder" data-id="${escapeHtml(
+                item.id,
+              )}">编辑</button></td>`
+            : ""
+        }
+      </tr>
+    `,
+    )
+    .join("");
+  updateManualOrdersSelectAll();
+  updateManualOrderBatchDeleteButtonState();
+}
+
 async function loadAmazonOrders() {
   if (!state.token) {
     state.amazonOrders = [];
     state.amazonOrdersVisibleCount = 0;
+    state.manualOrders = [];
+    state.manualOrdersVisibleCount = 0;
     state.selectedAmazonOrderIds = new Set();
+    state.selectedManualOrderIds = new Set();
     renderAmazonOrdersTable();
     return;
   }
@@ -8719,6 +8784,21 @@ async function loadAmazonOrders() {
   state.amazonOrders = Array.isArray(list) ? list : [];
   state.amazonOrdersVisibleCount = state.inventoryPageSize;
   renderAmazonOrdersTable();
+}
+
+async function loadManualOrders() {
+  if (!state.token) {
+    state.manualOrders = [];
+    state.manualOrdersVisibleCount = 0;
+    state.selectedManualOrderIds = new Set();
+    renderManualOrdersTable();
+    return;
+  }
+
+  const list = await request("/orders/manual");
+  state.manualOrders = Array.isArray(list) ? list : [];
+  state.manualOrdersVisibleCount = state.inventoryPageSize;
+  renderManualOrdersTable();
 }
 
 function buildChinaOrderProcessingOrderLink(item) {
@@ -9806,6 +9886,14 @@ function loadMoreAmazonOrdersIfNeeded() {
   renderAmazonOrdersTable();
 }
 
+function loadMoreManualOrdersIfNeeded() {
+  const panel = $("manualOrderProcessing");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.manualOrdersVisibleCount >= state.manualOrders.length) return;
+  state.manualOrdersVisibleCount += state.inventoryPageSize;
+  renderManualOrdersTable();
+}
+
 function renderFbaReplenishmentList() {
   const tbody = $("fbaReplenishmentBody");
   if (!tbody) return;
@@ -9909,6 +9997,20 @@ function maybeAutoLoadAmazonOrders() {
   loadMoreAmazonOrdersIfNeeded();
 }
 
+function maybeAutoLoadManualOrders() {
+  const panel = $("manualOrderProcessing");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("manualOrdersTableWrap");
+  if (!tableWrap) return;
+  if (state.manualOrdersVisibleCount >= state.manualOrders.length) return;
+
+  const threshold = 120;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - threshold) return;
+
+  loadMoreManualOrdersIfNeeded();
+}
+
 function maybeAutoLoadFbaReplenishments() {
   const panel = $("fbaReplenishment");
   if (!panel || !panel.classList.contains("active")) return;
@@ -9946,6 +10048,31 @@ function setupAmazonOrdersLoadObserver() {
     },
   );
   amazonOrdersLoadObserver.observe(sentinel);
+}
+
+function setupManualOrdersLoadObserver() {
+  if (manualOrdersLoadObserver) {
+    manualOrdersLoadObserver.disconnect();
+    manualOrdersLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("manualOrdersTableWrap");
+  const sentinel = $("manualOrdersLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  manualOrdersLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreManualOrdersIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  manualOrdersLoadObserver.observe(sentinel);
 }
 
 function setupFbaReplenishmentLoadObserver() {
@@ -10055,6 +10182,13 @@ function syncSelectedAmazonOrderIds() {
   );
 }
 
+function syncSelectedManualOrderIds() {
+  const selectableIds = new Set(state.manualOrders.map((item) => String(item.id)));
+  state.selectedManualOrderIds = new Set(
+    Array.from(state.selectedManualOrderIds).filter((id) => selectableIds.has(String(id))),
+  );
+}
+
 function syncSelectedRakutenOrderIds() {
   const selectableIds = new Set(state.orders.map((item) => String(item.id)));
   state.selectedRakutenOrderIds = new Set(
@@ -10137,6 +10271,29 @@ function updateAmazonOrdersSelectAll() {
 function updateAmazonBatchDeleteButtonState() {
   const button = $("amazonBatchDeleteBtn");
   const count = state.selectedAmazonOrderIds.size;
+  if (button) {
+    button.disabled = count <= 0;
+    button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
+  }
+}
+
+function updateManualOrdersSelectAll() {
+  const selectAll = $("manualOrdersSelectAll");
+  if (!selectAll) return;
+  if (!state.manualOrders.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+
+  const selectedCount = state.manualOrders.filter((item) => state.selectedManualOrderIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === state.manualOrders.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.manualOrders.length;
+}
+
+function updateManualOrderBatchDeleteButtonState() {
+  const button = $("manualOrderBatchDeleteBtn");
+  const count = state.selectedManualOrderIds.size;
   if (button) {
     button.disabled = count <= 0;
     button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
@@ -10519,6 +10676,7 @@ async function reloadAll() {
     $("productEditRequestBody").innerHTML = "";
     if ($("skuManagementBody")) $("skuManagementBody").innerHTML = "";
     if ($("skuManagementSummary")) $("skuManagementSummary").textContent = "共 0 条SKU";
+    if ($("manualOrdersBody")) $("manualOrdersBody").innerHTML = "";
     if ($("masterProductBody")) $("masterProductBody").innerHTML = "";
     if ($("masterProductSkuBody")) $("masterProductSkuBody").innerHTML = "";
     if ($("masterProductBoxBody")) $("masterProductBoxBody").innerHTML = "";
@@ -10904,16 +11062,39 @@ function bindForms() {
     }
   });
 
+  $("manualOrderBatchDeleteBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "删除中...", async () => {
+        const ids = Array.from(state.selectedManualOrderIds)
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0);
+        if (!ids.length) {
+          throw new Error("请先选择要删除的手动订单");
+        }
+        const ok = await openDeleteConfirmModal(`确认批量删除 ${ids.length} 条手动订单记录？`);
+        if (!ok) return;
+        const result = await deleteAmazonOrders(ids);
+        state.selectedManualOrderIds = new Set();
+        await loadManualOrders();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
+        showToast(`已删除 ${Number(result?.deletedCount || 0)} 条手动订单记录`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("amazonManualOrderForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
       await withBusyButton(submitButton, "保存中...", async () => {
         await createAmazonManualOrder();
-        await loadAmazonOrders();
+        await Promise.all([loadManualOrders(), loadAmazonOrders()]);
         await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
         closeModal("amazonManualOrderModal");
-        showToast("亚马逊手动单已生成");
+        showToast("手动订单已生成");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -10928,7 +11109,7 @@ function bindForms() {
         const source = getOrderEditFieldValue("orderEditSource");
         await submitOrderEditForm();
         if (source === "amazon") {
-          await loadAmazonOrders();
+          await Promise.all([loadAmazonOrders(), loadManualOrders()]);
         } else {
           await loadOrders();
         }
@@ -10974,6 +11155,13 @@ function bindForms() {
     const selectableIds = state.amazonOrders.map((item) => String(item.id));
     state.selectedAmazonOrderIds = checked ? new Set(selectableIds) : new Set();
     renderAmazonOrdersTable();
+  });
+
+  $("manualOrdersSelectAll")?.addEventListener("change", (event) => {
+    const checked = Boolean(event.target.checked);
+    const selectableIds = state.manualOrders.map((item) => String(item.id));
+    state.selectedManualOrderIds = checked ? new Set(selectableIds) : new Set();
+    renderManualOrdersTable();
   });
 
   $("rakutenOrdersSelectAll").addEventListener("change", (event) => {
@@ -11986,6 +12174,15 @@ function bindForms() {
     }
   });
 
+  $("openManualOrderProcessingPanel")?.addEventListener("click", async () => {
+    try {
+      switchPanel("manualOrderProcessing");
+      await loadManualOrders();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openRakutenOrderImportPanel").addEventListener("click", async () => {
     try {
       switchPanel("rakutenOrderImport");
@@ -12181,6 +12378,10 @@ function bindForms() {
   });
 
   $("backToOrderProcessingBtn").addEventListener("click", () => {
+    switchPanel("orderProcessing");
+  });
+
+  $("backToOrderProcessingFromManualBtn")?.addEventListener("click", () => {
     switchPanel("orderProcessing");
   });
 
@@ -13519,6 +13720,21 @@ function bindDelegates() {
     updateAmazonBatchDeleteButtonState();
   });
 
+  $("manualOrdersBody")?.addEventListener("change", (event) => {
+    const checkbox = event.target.closest("input[data-action='manualOrderToggleRow']");
+    if (!checkbox) return;
+
+    const id = String(checkbox.dataset.id || "");
+    if (!id) return;
+    if (checkbox.checked) {
+      state.selectedManualOrderIds.add(id);
+    } else {
+      state.selectedManualOrderIds.delete(id);
+    }
+    updateManualOrdersSelectAll();
+    updateManualOrderBatchDeleteButtonState();
+  });
+
   $("rakutenOrdersBody").addEventListener("change", (event) => {
     const checkbox = event.target.closest("input[data-action='rakutenOrderToggleRow']");
     if (!checkbox) return;
@@ -13764,6 +13980,21 @@ function bindDelegates() {
   });
 
   $("amazonOrdersBody").addEventListener("click", (event) => {
+    try {
+      const editTrigger = event.target.closest("button[data-action='editAmazonOrder']");
+      if (editTrigger) {
+        openOrderEditModal("amazon", editTrigger.dataset.id || "");
+        return;
+      }
+      const trigger = event.target.closest("button[data-action='openAmazonOrderDetail']");
+      if (!trigger) return;
+      openAmazonOrderDetailModal(trigger.dataset.id || "");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("manualOrdersBody")?.addEventListener("click", (event) => {
     try {
       const editTrigger = event.target.closest("button[data-action='editAmazonOrder']");
       if (editTrigger) {
@@ -14734,6 +14965,13 @@ function bindScrollLoad() {
     });
   }
 
+  const manualOrdersTableWrap = $("manualOrdersTableWrap");
+  if (manualOrdersTableWrap) {
+    manualOrdersTableWrap.addEventListener("scroll", () => {
+      maybeAutoLoadManualOrders();
+    });
+  }
+
   const rakutenOrdersTableWrap = $("rakutenOrdersTableWrap");
   if (rakutenOrdersTableWrap) {
     rakutenOrdersTableWrap.addEventListener("scroll", () => {
@@ -14868,6 +15106,7 @@ setupInventoryHomeLoadObserver();
 setupProductEditRequestLoadObserver();
 setupOrdersLoadObserver();
 setupAmazonOrdersLoadObserver();
+setupManualOrdersLoadObserver();
 setupBatchInboundLoadObserver();
 setupUsersLoadObserver();
 setupAuditLoadObserver();
@@ -14892,6 +15131,8 @@ renderYamatoShipmentBatchControls();
 updateOverseasCreatePickingBatchButtonState();
 updateAmazonBatchDeleteButtonState();
 updateAmazonOrdersSelectAll();
+updateManualOrderBatchDeleteButtonState();
+updateManualOrdersSelectAll();
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
 bootstrapAuthTokenFromLocationHash();

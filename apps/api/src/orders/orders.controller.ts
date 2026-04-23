@@ -38,6 +38,12 @@ export class OrdersController {
     return this.ordersService.listAmazon(limit);
   }
 
+  @Get('manual')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async listAmazonManualOrders(@Query('limit') limit?: string): Promise<unknown[]> {
+    return this.ordersService.listAmazonManualOrders(limit);
+  }
+
   @Put('rakuten/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async updateRakutenOrder(
@@ -95,7 +101,7 @@ export class OrdersController {
     return this.ordersService.updateAmazonOrder(id, payload);
   }
 
-  @Post('amazon/manual')
+  @Post('manual')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async createAmazonManualOrder(
     @Body()

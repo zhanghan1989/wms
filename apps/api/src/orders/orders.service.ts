@@ -669,6 +669,8 @@ const OVERSEAS_DISPATCH_MODE = {
   OVERSEAS: 'overseas',
   CHINA_PENDING: 'china_pending',
 } as const;
+const AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME = 'manual-amazon-order';
+const AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH = 'manual:amazon-order';
 const OVERSEAS_PICKING_BATCH_STATUS = {
   CREATED: 'created',
   PICKED: 'picked',
@@ -1837,6 +1839,22 @@ export class OrdersService {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
     const rows = await this.prisma.amazonOrderRecord.findMany({
+      where: {
+        OR: [{ sourceFilePath: null }, { sourceFilePath: { not: AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH } }],
+      },
+      orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+    });
+    return this.enrichAmazonOrderRows(rows);
+  }
+
+  async listAmazonManualOrders(limitParam?: string): Promise<AmazonOrderListItem[]> {
+    const parsedLimit = Number(limitParam);
+    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    const rows = await this.prisma.amazonOrderRecord.findMany({
+      where: {
+        sourceFilePath: AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH,
+      },
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
     });
@@ -2026,7 +2044,7 @@ export class OrdersService {
     const orderItemId =
       this.normalizeEditableText(payload.orderItemId, 'order-item-id', 64) ||
       `manual-${Date.now().toString(36)}`;
-    const mallName = this.normalizeEditableText(payload.mallName, '平台', 128) || 'Amazon';
+    const mallName = this.normalizeEditableText(payload.mallName, '平台', 128);
     const shopName = this.normalizeEditableText(payload.shopName, '店铺', 128);
     const recipientName = this.normalizeEditableText(payload.recipientName, '收件人', 255);
     const buyerPhoneNumber = this.normalizeEditableText(payload.buyerPhoneNumber, '电话', 64);
@@ -2081,8 +2099,8 @@ export class OrdersService {
         shipmentCompany,
         shipmentNo,
         shipmentNoRegisteredAt: this.resolveEditedShipmentRegisteredAt(null, null, shipmentNo),
-        sourceFileName: 'manual-amazon-order',
-        sourceFilePath: 'manual:amazon-order',
+        sourceFileName: AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME,
+        sourceFilePath: AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH,
         rawPayload,
         csvImportedAt: now,
       },
@@ -2518,6 +2536,7 @@ export class OrdersService {
       where: {
         shipmentNo: { not: null },
         shipmentNoRegisteredAt: { not: null },
+        OR: [{ sourceFilePath: null }, { sourceFilePath: { not: AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH } }],
         ...(importedAtStart ? { csvImportedAt: { gte: importedAtStart } } : {}),
       },
       orderBy: [{ csvImportedAt: 'desc' }, { shipmentNoRegisteredAt: 'asc' }, { id: 'asc' }],
