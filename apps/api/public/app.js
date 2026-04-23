@@ -2354,7 +2354,7 @@ function applyRoleView() {
   const quickActionsToggle = $("toggleQuickActionsBtn");
   const isLoggedIn = Boolean(state.me);
   const isEmployee = Boolean(state.me?.role === "employee");
-  const canEditOrders = hasAdminAccess(state.me?.role);
+  const canEditOrders = canCurrentUserEditOrders();
 
   if (layout) {
     layout.classList.toggle("no-sidebar", isEmployee);
@@ -8317,7 +8317,7 @@ function formatAmazonShippingOriginAsMode(origin) {
 }
 
 function canCurrentUserEditOrders() {
-  return hasAdminAccess(state.me?.role);
+  return String(state.me?.role || "") === "admin";
 }
 
 function normalizeOrderDispatchModeForDisplay(item, fallbackMode = "") {
