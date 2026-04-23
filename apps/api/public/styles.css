@@ -626,6 +626,24 @@ button.ghost {
   word-break: break-word;
 }
 
+.order-edit-form {
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+}
+
+.order-edit-wide,
+.order-edit-actions {
+  grid-column: 1 / -1;
+}
+
+.order-edit-form textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.order-edit-actions {
+  justify-content: flex-start;
+}
+
 .master-product-detail-layout {
   display: grid;
   grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
@@ -1268,7 +1286,7 @@ td {
 
 #rakutenOrdersTableWrap table,
 #amazonOrdersTableWrap table {
-  min-width: 1240px;
+  min-width: 1320px;
 }
 
 #overseasOrderProcessing td,

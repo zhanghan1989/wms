@@ -2354,6 +2354,7 @@ function applyRoleView() {
   const quickActionsToggle = $("toggleQuickActionsBtn");
   const isLoggedIn = Boolean(state.me);
   const isEmployee = Boolean(state.me?.role === "employee");
+  const canEditOrders = hasAdminAccess(state.me?.role);
 
   if (layout) {
     layout.classList.toggle("no-sidebar", isEmployee);
@@ -2371,6 +2372,9 @@ function applyRoleView() {
       quickActionsToggle.textContent = "更多功能";
     }
   }
+  document.querySelectorAll(".admin-order-edit-only").forEach((node) => {
+    node.classList.toggle("hidden", !canEditOrders);
+  });
 }
 
 function setAuthGate(isLoggedIn) {
@@ -8064,11 +8068,12 @@ function renderOrdersTable() {
   const tbody = $("rakutenOrdersBody");
   if (!tbody) return;
   syncSelectedRakutenOrderIds();
+  const canEdit = canCurrentUserEditOrders();
   const visibleCount = Math.max(state.inventoryPageSize, Number(state.ordersVisibleCount || 0));
   const list = state.orders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="14" class="muted">暂无订单数据</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="${canEdit ? 15 : 14}" class="muted">暂无订单数据</td></tr>`;
     updateRakutenOrdersSelectAll();
     updateRakutenBatchDeleteButtonState();
     return;
@@ -8090,12 +8095,19 @@ function renderOrdersTable() {
         <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
         <td>${escapeHtml(displayText(item.orderQuantity))}</td>
         <td>${escapeHtml(displayText(item.mallName))}</td>
-        <td>${escapeHtml(displayText(formatOrderFulfillmentMode(item.fulfillmentMode)))}</td>
+        <td>${escapeHtml(displayText(normalizeOrderDispatchModeForDisplay(item, item.fulfillmentMode)))}</td>
         <td>${escapeHtml(displayText(item.shopName))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
+        ${
+          canEdit
+            ? `<td><button type="button" class="ghost compact-btn" data-action="editRakutenOrder" data-id="${escapeHtml(
+                item.id,
+              )}">编辑</button></td>`
+            : ""
+        }
       </tr>
     `,
     )
@@ -8304,6 +8316,146 @@ function formatAmazonShippingOriginAsMode(origin) {
   return value;
 }
 
+function canCurrentUserEditOrders() {
+  return hasAdminAccess(state.me?.role);
+}
+
+function normalizeOrderDispatchModeForDisplay(item, fallbackMode = "") {
+  const dispatchMode = String(item?.dispatchMode || "").trim();
+  if (dispatchMode === "china_pending") return "中国発";
+  if (dispatchMode === "overseas") return "日本発";
+  if (fallbackMode === "overseas_warehouse") return "日本発";
+  if (fallbackMode === "xiya_api") return "中国発";
+  return fallbackMode || "-";
+}
+
+function resolveOrderEditDispatchMode(item, source) {
+  const dispatchMode = String(item?.dispatchMode || "").trim();
+  if (dispatchMode === "overseas" || dispatchMode === "china_pending") return dispatchMode;
+  if (source === "amazon") {
+    const origin = String(item?.shippingOrigin || "").trim();
+    if (origin.includes("日本")) return "overseas";
+    if (origin.includes("中国")) return "china_pending";
+  }
+  if (item?.fulfillmentMode === "overseas_warehouse") return "overseas";
+  if (item?.fulfillmentMode === "xiya_api") return "china_pending";
+  return "";
+}
+
+function setOrderEditFieldValue(id, value) {
+  const input = $(id);
+  if (!input) return;
+  input.value = value === null || value === undefined ? "" : String(value);
+}
+
+function getOrderEditFieldValue(id) {
+  return String($(id)?.value || "").trim();
+}
+
+function setOrderEditSourceMode(source) {
+  const isAmazon = source === "amazon";
+  document.querySelectorAll(".order-edit-amazon-only").forEach((node) => {
+    node.classList.toggle("hidden", !isAmazon);
+  });
+  document.querySelectorAll(".order-edit-rakuten-only").forEach((node) => {
+    node.classList.toggle("hidden", isAmazon);
+  });
+}
+
+function openOrderEditModal(source, id) {
+  if (!canCurrentUserEditOrders()) {
+    throw new Error("当前账号没有编辑订单权限");
+  }
+  const normalizedSource = String(source || "").trim();
+  const list = normalizedSource === "amazon" ? state.amazonOrders : state.orders;
+  const item = list.find((row) => String(row?.id || "") === String(id || ""));
+  if (!item) {
+    throw new Error("未找到对应订单");
+  }
+
+  const isAmazon = normalizedSource === "amazon";
+  setOrderEditSourceMode(normalizedSource);
+  $("orderEditModalTitle").textContent = isAmazon ? "编辑亚马逊订单" : "编辑乐天订单";
+  setOrderEditFieldValue("orderEditSource", normalizedSource);
+  setOrderEditFieldValue("orderEditId", item.id);
+  setOrderEditFieldValue("orderEditOrderId", item.orderId);
+  setOrderEditFieldValue("orderEditOrderItemId", item.orderItemId);
+  setOrderEditFieldValue("orderEditSku", isAmazon ? item.sku : item.skuCode);
+  setOrderEditFieldValue("orderEditQuantity", isAmazon ? item.quantityPurchased : item.orderQuantity);
+  setOrderEditFieldValue("orderEditProductName", item.productName);
+  setOrderEditFieldValue("orderEditMallName", item.mallName || (isAmazon ? "亚马逊" : ""));
+  setOrderEditFieldValue("orderEditShopName", isAmazon ? item.resolvedShopName || item.shopName : item.shopName);
+  setOrderEditFieldValue("orderEditDispatchMode", resolveOrderEditDispatchMode(item, normalizedSource));
+  setOrderEditFieldValue("orderEditRecipientName", isAmazon ? item.recipientName : item.shippingName);
+  setOrderEditFieldValue("orderEditPhone", isAmazon ? item.buyerPhoneNumber : item.shippingPhone);
+  setOrderEditFieldValue("orderEditPostalCode", isAmazon ? item.shipPostalCode : item.shippingPostalCode);
+  setOrderEditFieldValue("orderEditState", isAmazon ? item.shipState : item.shippingPrefecture);
+  setOrderEditFieldValue("orderEditCity", item.shippingCity);
+  setOrderEditFieldValue("orderEditAddress1", isAmazon ? item.shipAddress1 : item.shippingAddress);
+  setOrderEditFieldValue("orderEditAddress2", item.shipAddress2);
+  setOrderEditFieldValue("orderEditAddress3", item.shipAddress3);
+  setOrderEditFieldValue("orderEditShipmentCompany", item.shipmentCompany);
+  setOrderEditFieldValue("orderEditShipmentNo", item.shipmentNo);
+  setOrderEditFieldValue("orderEditDeliveryDate", item.deliveryDateRaw);
+  setOrderEditFieldValue("orderEditDeliveryTimeSlot", item.deliveryTimeSlot);
+  setOrderEditFieldValue("orderEditRemark", item.orderRemark);
+  openModal("orderEditModal");
+}
+
+async function submitOrderEditForm() {
+  const source = getOrderEditFieldValue("orderEditSource");
+  const id = getOrderEditFieldValue("orderEditId");
+  if (!source || !id) {
+    throw new Error("缺少订单标识");
+  }
+  const common = {
+    orderId: getOrderEditFieldValue("orderEditOrderId"),
+    productName: getOrderEditFieldValue("orderEditProductName"),
+    mallName: getOrderEditFieldValue("orderEditMallName"),
+    shopName: getOrderEditFieldValue("orderEditShopName"),
+    dispatchMode: getOrderEditFieldValue("orderEditDispatchMode"),
+    shipmentCompany: getOrderEditFieldValue("orderEditShipmentCompany"),
+    shipmentNo: getOrderEditFieldValue("orderEditShipmentNo"),
+  };
+
+  if (source === "amazon") {
+    return request(`/orders/amazon/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        ...common,
+        orderItemId: getOrderEditFieldValue("orderEditOrderItemId"),
+        sku: getOrderEditFieldValue("orderEditSku"),
+        quantityPurchased: getOrderEditFieldValue("orderEditQuantity"),
+        recipientName: getOrderEditFieldValue("orderEditRecipientName"),
+        buyerPhoneNumber: getOrderEditFieldValue("orderEditPhone"),
+        shipPostalCode: getOrderEditFieldValue("orderEditPostalCode"),
+        shipState: getOrderEditFieldValue("orderEditState"),
+        shipAddress1: getOrderEditFieldValue("orderEditAddress1"),
+        shipAddress2: getOrderEditFieldValue("orderEditAddress2"),
+        shipAddress3: getOrderEditFieldValue("orderEditAddress3"),
+      }),
+    });
+  }
+
+  return request(`/orders/rakuten/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      ...common,
+      skuCode: getOrderEditFieldValue("orderEditSku"),
+      orderQuantity: getOrderEditFieldValue("orderEditQuantity"),
+      shippingName: getOrderEditFieldValue("orderEditRecipientName"),
+      shippingPhone: getOrderEditFieldValue("orderEditPhone"),
+      shippingPostalCode: getOrderEditFieldValue("orderEditPostalCode"),
+      shippingPrefecture: getOrderEditFieldValue("orderEditState"),
+      shippingCity: getOrderEditFieldValue("orderEditCity"),
+      shippingAddress: getOrderEditFieldValue("orderEditAddress1"),
+      deliveryDateRaw: getOrderEditFieldValue("orderEditDeliveryDate"),
+      deliveryTimeSlot: getOrderEditFieldValue("orderEditDeliveryTimeSlot"),
+      orderRemark: getOrderEditFieldValue("orderEditRemark"),
+    }),
+  });
+}
+
 function renderOrdersPanels() {
   const tbodies = [$("ordersBody"), $("amazonOrdersBody")].filter(Boolean);
   if (!tbodies.length) return;
@@ -8376,11 +8528,12 @@ function renderAmazonOrdersTable() {
   const tbody = $("amazonOrdersBody");
   if (!tbody) return;
   syncSelectedAmazonOrderIds();
+  const canEdit = canCurrentUserEditOrders();
   const visibleCount = Math.max(state.inventoryPageSize, Number(state.amazonOrdersVisibleCount || 0));
   const list = state.amazonOrders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="14" class="muted">暂无亚马逊订单数据</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="${canEdit ? 15 : 14}" class="muted">暂无亚马逊订单数据</td></tr>`;
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
     return;
@@ -8402,12 +8555,19 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
         <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
         <td>${escapeHtml(displayText(item.mallName || "亚马逊"))}</td>
-        <td>${escapeHtml(displayText(formatAmazonShippingOriginAsMode(item.shippingOrigin)))}</td>
+        <td>${escapeHtml(displayText(normalizeOrderDispatchModeForDisplay(item, formatAmazonShippingOriginAsMode(item.shippingOrigin))))}</td>
         <td>${escapeHtml(displayText(item.resolvedShopName || item.shopName))}</td>
         <td>${escapeHtml(displayText(item.recipientName))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
+        ${
+          canEdit
+            ? `<td><button type="button" class="ghost compact-btn" data-action="editAmazonOrder" data-id="${escapeHtml(
+                item.id,
+              )}">编辑</button></td>`
+            : ""
+        }
       </tr>
     `,
     )
@@ -10608,6 +10768,27 @@ function bindForms() {
         await loadAmazonOrders();
         await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
         showToast(`已删除 ${Number(result?.deletedCount || 0)} 条亚马逊订单记录`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("orderEditForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "保存中...", async () => {
+        const source = getOrderEditFieldValue("orderEditSource");
+        await submitOrderEditForm();
+        if (source === "amazon") {
+          await loadAmazonOrders();
+        } else {
+          await loadOrders();
+        }
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
+        closeModal("orderEditModal");
+        showToast("订单已更新");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -13201,10 +13382,14 @@ function bindDelegates() {
   });
 
   $("rakutenOrdersBody").addEventListener("click", (event) => {
-    const trigger = event.target.closest("button[data-action='openRakutenOrderDetail']");
-    if (!trigger) return;
-
     try {
+      const editTrigger = event.target.closest("button[data-action='editRakutenOrder']");
+      if (editTrigger) {
+        openOrderEditModal("rakuten", editTrigger.dataset.id || "");
+        return;
+      }
+      const trigger = event.target.closest("button[data-action='openRakutenOrderDetail']");
+      if (!trigger) return;
       openRakutenOrderDetailModal(trigger.dataset.id || "");
     } catch (error) {
       showToast(error.message, true);
@@ -13411,10 +13596,14 @@ function bindDelegates() {
   });
 
   $("amazonOrdersBody").addEventListener("click", (event) => {
-    const trigger = event.target.closest("button[data-action='openAmazonOrderDetail']");
-    if (!trigger) return;
-
     try {
+      const editTrigger = event.target.closest("button[data-action='editAmazonOrder']");
+      if (editTrigger) {
+        openOrderEditModal("amazon", editTrigger.dataset.id || "");
+        return;
+      }
+      const trigger = event.target.closest("button[data-action='openAmazonOrderDetail']");
+      if (!trigger) return;
       openAmazonOrderDetailModal(trigger.dataset.id || "");
     } catch (error) {
       showToast(error.message, true);
@@ -14047,6 +14236,11 @@ function bindDelegates() {
       closeModal("amazonOrderDetailModal");
       return;
     }
+    const orderEditClose = event.target.closest("button[data-action='closeOrderEditModal']");
+    if (orderEditClose) {
+      closeModal("orderEditModal");
+      return;
+    }
     const deleteConfirmClose = event.target.closest("button[data-action='closeDeleteConfirmModal']");
     if (deleteConfirmClose) {
       resolveDeleteConfirm(false);
@@ -14278,6 +14472,12 @@ function bindDelegates() {
   $("amazonOrderDetailModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("amazonOrderDetailModal");
+    }
+  });
+
+  $("orderEditModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("orderEditModal");
     }
   });
 

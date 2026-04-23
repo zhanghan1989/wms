@@ -158,6 +158,27 @@ interface OrderListItem extends RakutenOrderRecord {
   fulfillmentMode: OrderFulfillmentMode;
 }
 
+interface UpdateRakutenOrderPayload {
+  orderId?: string | null;
+  skuCode?: string | null;
+  orderQuantity?: string | number | null;
+  productName?: string | null;
+  mallName?: string | null;
+  shopName?: string | null;
+  shippingName?: string | null;
+  shippingPostalCode?: string | null;
+  shippingPrefecture?: string | null;
+  shippingCity?: string | null;
+  shippingAddress?: string | null;
+  shippingPhone?: string | null;
+  dispatchMode?: string | null;
+  shipmentCompany?: string | null;
+  shipmentNo?: string | null;
+  deliveryDateRaw?: string | null;
+  deliveryTimeSlot?: string | null;
+  orderRemark?: string | null;
+}
+
 const AMAZON_ORDER_TXT_COLUMNS = [
   { header: 'order-id', key: 'orderId' },
   { header: 'order-item-id', key: 'orderItemId' },
@@ -279,6 +300,26 @@ type AmazonFulfillmentMode = 'overseas_warehouse' | 'xiya_api';
 interface AmazonEnrichedOrderListItem extends AmazonOrderListItem {
   availableStock: number;
   fulfillmentMode: AmazonFulfillmentMode;
+}
+
+interface UpdateAmazonOrderPayload {
+  orderId?: string | null;
+  orderItemId?: string | null;
+  sku?: string | null;
+  quantityPurchased?: string | number | null;
+  productName?: string | null;
+  mallName?: string | null;
+  shopName?: string | null;
+  recipientName?: string | null;
+  buyerPhoneNumber?: string | null;
+  shipPostalCode?: string | null;
+  shipState?: string | null;
+  shipAddress1?: string | null;
+  shipAddress2?: string | null;
+  shipAddress3?: string | null;
+  dispatchMode?: string | null;
+  shipmentCompany?: string | null;
+  shipmentNo?: string | null;
 }
 
 type ThirdPartyExportSource = 'rakuten' | 'amazon';
@@ -1798,6 +1839,164 @@ export class OrdersService {
       take: limit,
     });
     return this.enrichAmazonOrderRows(rows);
+  }
+
+  async updateRakutenOrder(idRaw: string, payload: UpdateRakutenOrderPayload): Promise<OrderListItem> {
+    const id = parseId(idRaw, 'id');
+    const current = await this.prisma.rakutenOrderRecord.findUnique({ where: { id } });
+    if (!current) {
+      throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
+    }
+
+    const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
+    const skuCode = this.normalizeEditableText(payload.skuCode, 'SKU', 128);
+    const orderQuantity = this.normalizeEditablePositiveInt(payload.orderQuantity, '数量');
+    const productName = this.normalizeEditableText(payload.productName, '商品名', 5000);
+    const mallName = this.normalizeEditableText(payload.mallName, '平台', 128);
+    const shopName = this.normalizeEditableText(payload.shopName, '店铺', 128);
+    const shippingName = this.normalizeEditableText(payload.shippingName, '收件人', 128);
+    const shippingPostalCode = this.normalizeEditableText(payload.shippingPostalCode, '邮编', 32);
+    const shippingPrefecture = this.normalizeEditableText(payload.shippingPrefecture, '都道府县', 64);
+    const shippingCity = this.normalizeEditableText(payload.shippingCity, '市区町村', 128);
+    const shippingAddress = this.normalizeEditableText(payload.shippingAddress, '地址', 5000);
+    const shippingPhone = this.normalizeEditableText(payload.shippingPhone, '电话', 64);
+    const dispatchMode = this.normalizeEditableDispatchMode(payload.dispatchMode);
+    const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
+    const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
+    const deliveryDateRaw = this.normalizeEditableText(payload.deliveryDateRaw, 'お届け日指定', 32);
+    const deliveryTimeSlot = this.normalizeEditableText(payload.deliveryTimeSlot, 'お届け時間帯', 64);
+    const orderRemark = this.normalizeEditableText(payload.orderRemark, '订单备注', 5000);
+    const shipmentNoRegisteredAt = this.resolveEditedShipmentRegisteredAt(
+      current.shipmentNo,
+      current.shipmentNoRegisteredAt,
+      shipmentNo,
+    );
+
+    const updated = await this.prisma.rakutenOrderRecord.update({
+      where: { id },
+      data: {
+        orderId,
+        skuCode,
+        orderQuantity,
+        productName,
+        mallName,
+        shopName,
+        shippingName,
+        shippingPostalCode,
+        shippingPrefecture,
+        shippingCity,
+        shippingAddress,
+        shippingPhone,
+        dispatchMode,
+        shipmentCompany,
+        shipmentNo,
+        shipmentNoRegisteredAt,
+        sendStatus: this.resolveSendStatus(shipmentNo),
+        deliveryDateRaw,
+        deliveryTimeSlot,
+        orderRemark,
+        rawPayload: this.mergeRawPayload(current.rawPayload, {
+          注文番号: orderId,
+          注文ID: orderId,
+          SKU管理番号: skuCode,
+          SKUコード: skuCode,
+          商品名: productName,
+          個数: orderQuantity === null ? null : String(orderQuantity),
+          注文個数: orderQuantity === null ? null : String(orderQuantity),
+          モール名: mallName,
+          ショップ名: shopName,
+          送付先姓: shippingName,
+          送付先名: null,
+          送付先郵便番号1: shippingPostalCode,
+          送付先郵便番号2: null,
+          送付先住所都道府県: shippingPrefecture,
+          送付先住所郡市区: shippingCity,
+          送付先住所それ以降の住所: shippingAddress,
+          送付先電話番号1: shippingPhone,
+          送付先電話番号2: null,
+          送付先電話番号3: null,
+          お届け日指定: deliveryDateRaw,
+          お届け時間帯: deliveryTimeSlot,
+          コメント: orderRemark,
+        }),
+      },
+    });
+
+    const [enriched] = await this.enrichOrderRows([updated]);
+    return enriched;
+  }
+
+  async updateAmazonOrder(idRaw: string, payload: UpdateAmazonOrderPayload): Promise<AmazonEnrichedOrderListItem> {
+    const id = parseId(idRaw, 'id');
+    const current = await this.prisma.amazonOrderRecord.findUnique({ where: { id } });
+    if (!current) {
+      throw new NotFoundException(`亚马逊订单不存在: ${idRaw}`);
+    }
+
+    const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
+    const orderItemId = this.normalizeEditableText(payload.orderItemId, 'order-item-id', 64);
+    const sku = this.normalizeEditableText(payload.sku, 'SKU', 128);
+    const quantityPurchased = this.normalizeEditablePositiveInt(payload.quantityPurchased, '数量');
+    const productName = this.normalizeEditableText(payload.productName, '商品名', 5000);
+    const mallName = this.normalizeEditableText(payload.mallName, '平台', 128);
+    const shopName = this.normalizeEditableText(payload.shopName, '店铺', 128);
+    const recipientName = this.normalizeEditableText(payload.recipientName, '收件人', 255);
+    const buyerPhoneNumber = this.normalizeEditableText(payload.buyerPhoneNumber, '电话', 64);
+    const shipPostalCode = this.normalizeEditableText(payload.shipPostalCode, '邮编', 32);
+    const shipState = this.normalizeEditableText(payload.shipState, '都道府县', 255);
+    const shipAddress1 = this.normalizeEditableText(payload.shipAddress1, '地址1', 5000);
+    const shipAddress2 = this.normalizeEditableText(payload.shipAddress2, '地址2', 5000);
+    const shipAddress3 = this.normalizeEditableText(payload.shipAddress3, '地址3', 5000);
+    const dispatchMode = this.normalizeEditableDispatchMode(payload.dispatchMode);
+    const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
+    const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
+    const shipmentNoRegisteredAt = this.resolveEditedShipmentRegisteredAt(
+      current.shipmentNo,
+      current.shipmentNoRegisteredAt,
+      shipmentNo,
+    );
+
+    const updated = await this.prisma.amazonOrderRecord.update({
+      where: { id },
+      data: {
+        orderId,
+        orderItemId,
+        sku,
+        quantityPurchased,
+        productName,
+        mallName,
+        shopName,
+        recipientName,
+        buyerPhoneNumber,
+        shipPostalCode,
+        shipState,
+        shipAddress1,
+        shipAddress2,
+        shipAddress3,
+        dispatchMode,
+        shippingOrigin: this.resolveAmazonShippingOriginFromDispatchMode(dispatchMode),
+        shipmentCompany,
+        shipmentNo,
+        shipmentNoRegisteredAt,
+        rawPayload: this.mergeRawPayload(current.rawPayload, {
+          'order-id': orderId,
+          'order-item-id': orderItemId,
+          sku,
+          'product-name': productName,
+          'quantity-purchased': quantityPurchased === null ? null : String(quantityPurchased),
+          'recipient-name': recipientName,
+          'buyer-phone-number': buyerPhoneNumber,
+          'ship-postal-code': shipPostalCode,
+          'ship-state': shipState,
+          'ship-address-1': shipAddress1,
+          'ship-address-2': shipAddress2,
+          'ship-address-3': shipAddress3,
+        }),
+      },
+    });
+
+    const [enriched] = await this.enrichAmazonOrderRows([updated]);
+    return enriched;
   }
 
   async listOverseasWarehouse(limitParam?: string): Promise<OverseasWarehouseOrderListItem[]> {
@@ -3390,7 +3589,10 @@ export class OrdersService {
 
     const registeredAt = new Date();
     const rakutenResult = await tx.rakutenOrderRecord.updateMany({
-      where: { orderId },
+      where: {
+        orderId,
+        OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
+      },
       data: {
         shipmentCompany: 'Yamato',
         shipmentNo: trackingNo,
@@ -3399,7 +3601,10 @@ export class OrdersService {
       },
     });
     const amazonResult = await tx.amazonOrderRecord.updateMany({
-      where: { orderId },
+      where: {
+        orderId,
+        OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
+      },
       data: {
         shipmentCompany: 'Yamato',
         shipmentNo: trackingNo,
@@ -5273,6 +5478,85 @@ export class OrdersService {
       .map((value) => String(value ?? '').trim())
       .filter((value) => value.length > 0);
     return normalized.length ? normalized.join(separator) : null;
+  }
+
+  private normalizeEditableText(
+    value: string | number | null | undefined,
+    fieldName: string,
+    maxLength: number,
+  ): string | null {
+    const text = String(value ?? '').trim();
+    if (!text) {
+      return null;
+    }
+    if (text.length > maxLength) {
+      throw new BadRequestException(`${fieldName}不能超过 ${maxLength} 个字符`);
+    }
+    return text;
+  }
+
+  private normalizeEditablePositiveInt(
+    value: string | number | null | undefined,
+    fieldName: string,
+  ): number | null {
+    const text = String(value ?? '').trim();
+    if (!text) {
+      return null;
+    }
+    const parsed = Number(text);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new BadRequestException(`${fieldName}必须是大于 0 的整数`);
+    }
+    return parsed;
+  }
+
+  private normalizeEditableDispatchMode(value: string | null | undefined): string | null {
+    const mode = String(value ?? '').trim();
+    if (!mode) {
+      return null;
+    }
+    if (mode === OVERSEAS_DISPATCH_MODE.OVERSEAS || mode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+      return mode;
+    }
+    throw new BadRequestException('发货模式只支持自动、日本发或中国发');
+  }
+
+  private resolveAmazonShippingOriginFromDispatchMode(dispatchMode: string | null): string | null {
+    if (dispatchMode === OVERSEAS_DISPATCH_MODE.OVERSEAS) {
+      return '日本発';
+    }
+    if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+      return '中国発';
+    }
+    return null;
+  }
+
+  private resolveEditedShipmentRegisteredAt(
+    previousShipmentNo: string | null,
+    previousRegisteredAt: Date | null,
+    nextShipmentNo: string | null,
+  ): Date | null {
+    if (!nextShipmentNo) {
+      return null;
+    }
+    if (String(previousShipmentNo ?? '').trim() === nextShipmentNo) {
+      return previousRegisteredAt ?? new Date();
+    }
+    return new Date();
+  }
+
+  private mergeRawPayload(
+    rawPayload: Prisma.JsonValue | null,
+    updates: Record<string, string | null>,
+  ): Prisma.InputJsonObject {
+    const base =
+      rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+        ? { ...(rawPayload as Prisma.JsonObject) }
+        : {};
+    for (const [key, value] of Object.entries(updates)) {
+      base[key] = value;
+    }
+    return base as Prisma.InputJsonObject;
   }
 
   private resolveSendStatus(shipmentNo: string | null): OrderSendStatus {

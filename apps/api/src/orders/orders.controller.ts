@@ -6,16 +6,19 @@ import {
   Param,
   Post,
   Query,
+  Put,
   Res,
   UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import type { Response } from 'express';
 import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { OrdersService } from './orders.service';
@@ -35,6 +38,65 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async listAmazon(@Query('limit') limit?: string): Promise<unknown[]> {
     return this.ordersService.listAmazon(limit);
+  }
+
+  @Put('rakuten/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  async updateRakutenOrder(
+    @Param('id') id: string,
+    @Body()
+    payload: {
+      orderId?: string | null;
+      skuCode?: string | null;
+      orderQuantity?: string | number | null;
+      productName?: string | null;
+      mallName?: string | null;
+      shopName?: string | null;
+      shippingName?: string | null;
+      shippingPostalCode?: string | null;
+      shippingPrefecture?: string | null;
+      shippingCity?: string | null;
+      shippingAddress?: string | null;
+      shippingPhone?: string | null;
+      dispatchMode?: string | null;
+      shipmentCompany?: string | null;
+      shipmentNo?: string | null;
+      deliveryDateRaw?: string | null;
+      deliveryTimeSlot?: string | null;
+      orderRemark?: string | null;
+    },
+  ): Promise<unknown> {
+    return this.ordersService.updateRakutenOrder(id, payload);
+  }
+
+  @Put('amazon/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  async updateAmazonOrder(
+    @Param('id') id: string,
+    @Body()
+    payload: {
+      orderId?: string | null;
+      orderItemId?: string | null;
+      sku?: string | null;
+      quantityPurchased?: string | number | null;
+      productName?: string | null;
+      mallName?: string | null;
+      shopName?: string | null;
+      recipientName?: string | null;
+      buyerPhoneNumber?: string | null;
+      shipPostalCode?: string | null;
+      shipState?: string | null;
+      shipAddress1?: string | null;
+      shipAddress2?: string | null;
+      shipAddress3?: string | null;
+      dispatchMode?: string | null;
+      shipmentCompany?: string | null;
+      shipmentNo?: string | null;
+    },
+  ): Promise<unknown> {
+    return this.ordersService.updateAmazonOrder(id, payload);
   }
 
   @Get('overseas-warehouse')
