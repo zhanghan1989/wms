@@ -413,7 +413,10 @@ interface OverseasWarehouseOrderListItem {
   dispatchMode?: string | null;
   chinaDispatchReason?: string | null;
   xiyaExportedAt?: string | null;
-  xiyaStatus?: 'pending_export' | 'acknowledged';
+  xiyaStatus?: 'pending_tracking' | 'tracking_registered' | 'acknowledged';
+  shipmentCompany?: string | null;
+  shipmentNo?: string | null;
+  shipmentNoRegisteredAt?: string | null;
 }
 
 interface SelectedOverseasWarehouseOrderRef {
@@ -2370,8 +2373,7 @@ export class OrdersService {
           ? Promise.resolve([] as RakutenOrderRecord[])
           : this.prisma.rakutenOrderRecord.findMany({
               where: {
-                sendStatus: OrderSendStatus.unsent,
-                ...this.buildChinaOrderExportedAtFilter(scope),
+                ...this.buildChinaOrderShipmentNoFilter(scope),
               },
               orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
               skip: rakutenSkip,
@@ -2381,10 +2383,7 @@ export class OrdersService {
           ? Promise.resolve([] as AmazonOrderRecord[])
           : this.prisma.amazonOrderRecord.findMany({
               where: {
-                AND: [
-                  { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
-                  this.buildChinaOrderExportedAtFilter(scope),
-                ],
+                ...this.buildChinaOrderShipmentNoFilter(scope),
               },
               orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
               skip: amazonSkip,
@@ -2453,7 +2452,10 @@ export class OrdersService {
               chinaDispatchReason:
                 dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ? '拣货缺货切中国发' : '系统无库存',
               xiyaExportedAt: row.xiyaExportedAt?.toISOString() ?? null,
-              xiyaStatus: row.xiyaExportedAt ? ('acknowledged' as const) : ('pending_export' as const),
+              xiyaStatus: row.shipmentNo ? ('tracking_registered' as const) : ('pending_tracking' as const),
+              shipmentCompany: row.shipmentCompany,
+              shipmentNo: row.shipmentNo,
+              shipmentNoRegisteredAt: row.shipmentNoRegisteredAt?.toISOString() ?? null,
             };
           }),
         ...enrichedAmazonRows
@@ -2493,7 +2495,10 @@ export class OrdersService {
               chinaDispatchReason:
                 dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ? '拣货缺货切中国发' : '系统无库存',
               xiyaExportedAt: row.xiyaExportedAt?.toISOString() ?? null,
-              xiyaStatus: row.xiyaExportedAt ? ('acknowledged' as const) : ('pending_export' as const),
+              xiyaStatus: row.shipmentNo ? ('tracking_registered' as const) : ('pending_tracking' as const),
+              shipmentCompany: row.shipmentCompany,
+              shipmentNo: row.shipmentNo,
+              shipmentNoRegisteredAt: row.shipmentNoRegisteredAt?.toISOString() ?? null,
             };
           }),
       );
@@ -6262,21 +6267,24 @@ export class OrdersService {
 
   private normalizeChinaOrderScope(scopeParam?: string): 'pending' | 'exported' | 'all' {
     const scope = String(scopeParam ?? '').trim().toLowerCase();
-    if (scope === 'exported') return 'exported';
+    if (scope === 'exported' || scope === 'completed' || scope === 'tracking_registered') return 'exported';
     if (scope === 'all') return 'all';
     return 'pending';
   }
 
-  private buildChinaOrderExportedAtFilter(
+  private buildChinaOrderShipmentNoFilter(
     scope: 'pending' | 'exported' | 'all',
-  ): { xiyaExportedAt?: null | { not: null } } {
+  ):
+    | { OR: Array<{ shipmentNo: null } | { shipmentNo: string }> }
+    | { AND: Array<{ shipmentNo: { not: null } } | { shipmentNo: { not: string } }> }
+    | Record<string, never> {
     if (scope === 'exported') {
-      return { xiyaExportedAt: { not: null } };
+      return { AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }] };
     }
     if (scope === 'all') {
       return {};
     }
-    return { xiyaExportedAt: null };
+    return { OR: [{ shipmentNo: null }, { shipmentNo: '' }] };
   }
 
   private resolveChinaDispatchReason(dispatchModeRaw: string | null | undefined): string {

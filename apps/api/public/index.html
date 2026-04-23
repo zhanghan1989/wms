@@ -872,7 +872,7 @@
           <div class="card-head">
             <div>
               <h3>待 Xiya 拉取订单</h3>
-              <p id="chinaOrderProcessingPendingSummary" class="muted order-import-note">自动归结系统无库存与拣货缺货切换后的乐天、亚马逊订单。</p>
+              <p id="chinaOrderProcessingPendingSummary" class="muted order-import-note">WMS 当前没有运单号、等待 Xiya 拉取或生成运单号的中国发订单。</p>
             </div>
           </div>
           <div id="chinaOrderProcessingPendingTableWrap" class="master-product-table-wrap">
@@ -900,8 +900,8 @@
         <article class="card">
           <div class="card-head">
             <div>
-              <h3>已同步给 Xiya</h3>
-              <p id="chinaOrderProcessingExportedSummary" class="muted order-import-note">已经成功同步给 Xiya，且 Xiya 已确认接收的中国发订单。</p>
+              <h3>已登记运单号</h3>
+              <p id="chinaOrderProcessingExportedSummary" class="muted order-import-note">WMS 已经从 Xiya 同步到运单号或已手动登记运单号的中国发订单。</p>
             </div>
           </div>
           <div id="chinaOrderProcessingExportedTableWrap" class="master-product-table-wrap">
@@ -918,7 +918,9 @@
                   <th>店铺</th>
                   <th>收件人</th>
                   <th>进入原因</th>
-                  <th>回执时间</th>
+                  <th>发货公司</th>
+                  <th>运单号</th>
+                  <th>登记时间</th>
                 </tr>
               </thead>
               <tbody id="chinaOrderProcessingExportedBody"></tbody>

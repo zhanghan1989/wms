@@ -8836,16 +8836,16 @@ function renderChinaOrderProcessingTable() {
   if (!pendingBody || !exportedBody) return;
 
   const list = Array.isArray(state.chinaOrderProcessingOrders) ? state.chinaOrderProcessingOrders : [];
-  const pendingList = list.filter((item) => !item.xiyaExportedAt);
-  const exportedList = list.filter((item) => Boolean(item.xiyaExportedAt));
+  const pendingList = list.filter((item) => !String(item.shipmentNo || "").trim());
+  const exportedList = list.filter((item) => String(item.shipmentNo || "").trim());
   const pendingStats = summarizeChinaOrderProcessingList(pendingList);
   const exportedStats = summarizeChinaOrderProcessingList(exportedList);
 
   if (pendingSummary) {
-    pendingSummary.textContent = `共 ${pendingList.length} 条待 Xiya 拉取订单，其中 乐天 ${pendingStats.rakutenCount} 条，亚马逊 ${pendingStats.amazonCount} 条，系统无库存 ${pendingStats.noStockCount} 条，拣货缺货切换 ${pendingStats.switchedCount} 条。`;
+    pendingSummary.textContent = `共 ${pendingList.length} 条等待 Xiya 运单号的中国发订单，其中 乐天 ${pendingStats.rakutenCount} 条，亚马逊 ${pendingStats.amazonCount} 条，系统无库存 ${pendingStats.noStockCount} 条，拣货缺货切换 ${pendingStats.switchedCount} 条。`;
   }
   if (exportedSummary) {
-    exportedSummary.textContent = `共 ${exportedList.length} 条已同步给 Xiya 的订单，其中 乐天 ${exportedStats.rakutenCount} 条，亚马逊 ${exportedStats.amazonCount} 条，系统无库存 ${exportedStats.noStockCount} 条，拣货缺货切换 ${exportedStats.switchedCount} 条。`;
+    exportedSummary.textContent = `共 ${exportedList.length} 条已登记运单号的中国发订单，其中 乐天 ${exportedStats.rakutenCount} 条，亚马逊 ${exportedStats.amazonCount} 条，系统无库存 ${exportedStats.noStockCount} 条，拣货缺货切换 ${exportedStats.switchedCount} 条。`;
   }
 
   if (!pendingList.length) {
@@ -8873,7 +8873,7 @@ function renderChinaOrderProcessingTable() {
   }
 
   if (!exportedList.length) {
-    exportedBody.innerHTML = '<tr><td colspan="11" class="muted">暂无已同步给 Xiya 的中国发订单</td></tr>';
+    exportedBody.innerHTML = '<tr><td colspan="13" class="muted">暂无已登记运单号的中国发订单</td></tr>';
     return;
   }
 
@@ -8891,7 +8891,9 @@ function renderChinaOrderProcessingTable() {
         <td>${escapeHtml(displayText(item.shopName))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>
         <td>${escapeHtml(displayText(item.chinaDispatchReason || (item.dispatchMode === "china_pending" ? "拣货缺货切中国发" : "系统无库存")))}</td>
-        <td>${escapeHtml(formatDate(item.xiyaExportedAt))}</td>
+        <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
+        <td>${escapeHtml(displayText(item.shipmentNo))}</td>
+        <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
       </tr>
     `,
     )
