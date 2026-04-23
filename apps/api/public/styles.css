@@ -1786,6 +1786,8 @@ pre {
 .modal-card.modal-wide.modal-manage.modal-manage-scroll .manage-table-scroll table {
   border: 0;
   border-radius: 0;
+  border-collapse: separate;
+  border-spacing: 0;
   margin: 0;
   overflow: visible;
 }
@@ -1793,7 +1795,9 @@ pre {
 .modal-card.modal-wide.modal-manage.modal-manage-scroll .manage-table-scroll thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
+  background: #f2f7f4;
+  box-shadow: 0 1px 0 var(--line), 0 8px 14px rgba(17, 32, 21, 0.08);
 }
 
 .manage-query-summary {

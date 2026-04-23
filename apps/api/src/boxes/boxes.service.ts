@@ -26,6 +26,18 @@ interface BoxAuditArgs {
   remark?: string;
 }
 
+type BoxListRow = Prisma.BoxGetPayload<{
+  include: {
+    shelf: {
+      select: {
+        id: true;
+        shelfCode: true;
+        name: true;
+      };
+    };
+  };
+}>;
+
 @Injectable()
 export class BoxesService {
   constructor(
@@ -55,6 +67,50 @@ export class BoxesService {
       orderBy: { id: 'desc' },
     });
 
+    return this.buildBoxListItems(boxes);
+  }
+
+  async listManage(pageParam?: string, pageSizeParam?: string): Promise<{
+    items: unknown[];
+    page: number;
+    pageSize: number;
+    hasMore: boolean;
+    total: number;
+  }> {
+    const page = this.normalizePage(pageParam);
+    const pageSize = this.normalizePageSize(pageSizeParam, 30);
+    const skip = (page - 1) * pageSize;
+    const where = { status: 1 };
+    const [boxes, total] = await Promise.all([
+      this.prisma.box.findMany({
+        where,
+        include: {
+          shelf: {
+            select: {
+              id: true,
+              shelfCode: true,
+              name: true,
+            },
+          },
+        },
+        orderBy: [{ boxCode: 'asc' }, { id: 'asc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.box.count({ where }),
+    ]);
+
+    const items = await this.buildBoxListItems(boxes);
+    return {
+      items,
+      page,
+      pageSize,
+      hasMore: skip + boxes.length < total,
+      total,
+    };
+  }
+
+  private async buildBoxListItems(boxes: BoxListRow[]): Promise<unknown[]> {
     if (!boxes.length) {
       return [];
     }
@@ -284,6 +340,16 @@ export class BoxesService {
         archiveReleaseBlockedReasons,
       };
     });
+  }
+
+  private normalizePage(value?: string): number {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 10000) : 1;
+  }
+
+  private normalizePageSize(value?: string, defaultValue = 30): number {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 100) : defaultValue;
   }
 
   async listEmpty(): Promise<unknown[]> {

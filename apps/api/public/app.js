@@ -164,6 +164,11 @@ const state = {
   me: null,
   shelves: [],
   boxes: [],
+  boxManageRows: [],
+  boxManagePage: 1,
+  boxManagePageSize: 30,
+  boxManageHasMore: false,
+  boxManageLoading: false,
   emptyBoxes: [],
   inventorySkus: [],
   brands: [],
@@ -270,7 +275,7 @@ const state = {
   shelfEditingIds: new Set(),
   boxEditingIds: new Set(),
   shelfManageVisibleCount: 10,
-  boxManageVisibleCount: 10,
+  boxManageVisibleCount: 30,
   manageModalInitialPageSize: 10,
   manageModalLoadStep: 20,
   departmentOptionEditingCodes: new Set(),
@@ -3862,7 +3867,7 @@ async function archiveReleaseBox(boxId, boxCode) {
   showToast(
     `箱号 ${result?.releasedBoxCode || boxCode} 已释放，旧箱已归档为 ${result?.archivedBoxCode || "-"}`,
   );
-  await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+  await reloadBoxesAfterManageMutation();
   return result;
 }
 
@@ -5673,7 +5678,7 @@ function getShelvesSortedForManage() {
 }
 
 function getBoxesSortedForManage() {
-  return [...(Array.isArray(state.boxes) ? state.boxes : [])].sort((a, b) =>
+  return [...(Array.isArray(state.boxManageRows) ? state.boxManageRows : [])].sort((a, b) =>
     String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true }),
   );
 }
@@ -5683,7 +5688,7 @@ function resetShelfManageVisibleCount() {
 }
 
 function resetBoxManageVisibleCount() {
-  state.boxManageVisibleCount = state.manageModalInitialPageSize;
+  state.boxManageVisibleCount = state.boxManagePageSize;
 }
 
 function increaseShelvesManageVisibleCount() {
@@ -5696,8 +5701,13 @@ function increaseShelvesManageVisibleCount() {
 
 function increaseBoxesManageVisibleCount() {
   const total = getBoxesSortedForManage().length;
-  if (state.boxManageVisibleCount >= total) return false;
-  state.boxManageVisibleCount = Math.min(total, state.boxManageVisibleCount + state.manageModalLoadStep);
+  if (state.boxManageVisibleCount >= total) {
+    if (state.boxManageHasMore) {
+      loadBoxManagePage({ reset: false }).catch((error) => showToast(error.message, true));
+    }
+    return false;
+  }
+  state.boxManageVisibleCount = Math.min(total, state.boxManageVisibleCount + state.boxManagePageSize);
   renderBoxesManageTable();
   return true;
 }
@@ -5715,7 +5725,12 @@ function loadMoreBoxesManageIfNeeded() {
   const wrap = $("boxManageTableWrap");
   if (!wrap) return;
   const total = getBoxesSortedForManage().length;
-  if (state.boxManageVisibleCount >= total) return;
+  if (state.boxManageVisibleCount >= total) {
+    if (state.boxManageHasMore) {
+      loadBoxManagePage({ reset: false }).catch((error) => showToast(error.message, true));
+    }
+    return;
+  }
   if (wrap.scrollTop + wrap.clientHeight < wrap.scrollHeight - 24) return;
   increaseBoxesManageVisibleCount();
 }
@@ -5741,7 +5756,7 @@ function maybeAutoLoadBoxesManage() {
   const tableWrap = $("boxManageTableWrap");
   if (!tableWrap) return;
   const total = getBoxesSortedForManage().length;
-  if (state.boxManageVisibleCount >= total) return;
+  if (state.boxManageVisibleCount >= total && !state.boxManageHasMore) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -5882,7 +5897,7 @@ function renderBoxesManageTable() {
   );
   state.boxManageVisibleCount = visibleCount;
   const visibleRows = rows.slice(0, visibleCount);
-  body.innerHTML =
+  const rowHtml =
     visibleRows
       .map((item) => {
         const itemId = String(item.id);
@@ -5919,7 +5934,17 @@ function renderBoxesManageTable() {
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
+      .join("");
+  const loadingRow = state.boxManageLoading
+    ? '<tr><td colspan="3" class="muted">正在加载箱号...</td></tr>'
+    : "";
+  const moreRow = !state.boxManageLoading && state.boxManageHasMore
+    ? '<tr><td colspan="3" class="muted">继续下滑加载更多箱号。</td></tr>'
+    : "";
+  body.innerHTML = rowHtml || loadingRow || '<tr><td colspan="3" class="muted">-</td></tr>';
+  if (rowHtml && (loadingRow || moreRow)) {
+    body.insertAdjacentHTML("beforeend", loadingRow || moreRow);
+  }
   setupBoxManageLoadObserver();
   maybeAutoLoadBoxesManage();
 }
@@ -7385,6 +7410,51 @@ async function loadBoxes() {
     `,
     )
     .join("");
+}
+
+async function loadBoxManagePage({ reset = false } = {}) {
+  if (state.boxManageLoading) return;
+  if (!reset && !state.boxManageHasMore) return;
+
+  if (reset) {
+    state.boxManageRows = [];
+    state.boxManagePage = 1;
+    state.boxManageHasMore = false;
+    resetBoxManageVisibleCount();
+    renderBoxesManageTable();
+  }
+
+  state.boxManageLoading = true;
+  renderBoxesManageTable();
+  try {
+    const page = reset ? 1 : Number(state.boxManagePage || 1);
+    const result = await request(
+      `/boxes/manage?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(state.boxManagePageSize)}`,
+    );
+    const items = Array.isArray(result?.items) ? result.items : [];
+    const nextRows = reset ? items : [...state.boxManageRows, ...items];
+    const latestIds = new Set(nextRows.map((item) => String(item.id)));
+    state.boxManageRows = nextRows;
+    state.boxManageHasMore = Boolean(result?.hasMore);
+    state.boxManagePage = page + 1;
+    state.boxManageVisibleCount = Math.max(state.boxManageVisibleCount, state.boxManageRows.length);
+    state.boxEditingIds = new Set(
+      [...state.boxEditingIds].filter((id) => latestIds.has(String(id))),
+    );
+  } finally {
+    state.boxManageLoading = false;
+    renderBoxesManageTable();
+  }
+}
+
+async function reloadBoxesAfterManageMutation() {
+  const boxManageModal = $("boxManageModal");
+  const isBoxManageOpen = boxManageModal && !boxManageModal.classList.contains("hidden");
+  if (isBoxManageOpen) {
+    await Promise.all([loadShelves(), loadBoxManagePage({ reset: true }), loadInventory(), loadAudit()]);
+    return;
+  }
+  await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
 }
 
 async function loadEmptyBoxes() {
@@ -10715,6 +10785,11 @@ async function reloadAll() {
     state.myAuditLogs = [];
     state.skuEditRequests = [];
     state.inventorySkus = [];
+    state.boxes = [];
+    state.boxManageRows = [];
+    state.boxManagePage = 1;
+    state.boxManageHasMore = false;
+    state.boxManageLoading = false;
     state.emptyBoxes = [];
     state.orders = [];
     state.ordersVisibleCount = 0;
@@ -12439,7 +12514,7 @@ function bindForms() {
     try {
       state.shelfEditingIds = new Set();
       resetShelfManageVisibleCount();
-      await Promise.all([loadShelves(), loadBoxes()]);
+      await loadShelves();
       const wrap = $("shelfManageTableWrap");
       if (wrap) {
         wrap.scrollTop = 0;
@@ -12493,12 +12568,12 @@ function bindForms() {
     try {
       state.boxEditingIds = new Set();
       resetBoxManageVisibleCount();
-      await Promise.all([loadShelves(), loadBoxes()]);
+      openModal("boxManageModal");
       const wrap = $("boxManageTableWrap");
       if (wrap) {
         wrap.scrollTop = 0;
       }
-      openModal("boxManageModal");
+      await Promise.all([loadShelves(), loadBoxManagePage({ reset: true })]);
       setupBoxManageLoadObserver();
       maybeAutoLoadBoxesManage();
     } catch (error) {
@@ -13542,7 +13617,7 @@ function bindDelegates() {
         });
         state.boxEditingIds.delete(String(id));
         showToast("箱号已变更");
-        await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
+        await reloadBoxesAfterManageMutation();
       }
     } catch (error) {
       showToast(error.message, true);

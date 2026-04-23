@@ -22,6 +22,14 @@ export class BoxesController {
     return this.boxesService.listEmpty();
   }
 
+  @Get('manage')
+  async listManage(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<unknown> {
+    return this.boxesService.listManage(page, pageSize);
+  }
+
   @Post()
   async create(
     @Body() payload: CreateBoxDto,
