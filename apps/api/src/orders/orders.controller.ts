@@ -128,6 +128,35 @@ export class OrdersController {
     return this.ordersService.createAmazonManualOrder(payload);
   }
 
+  @Post('manual/batch')
+  @UseGuards(ThirdPartyApiKeyGuard)
+  async batchCreateAmazonManualOrders(
+    @Body()
+    payload: {
+      items?: Array<{
+        orderId?: string | null;
+        orderItemId?: string | null;
+        sku?: string | null;
+        productId?: string | null;
+        quantityPurchased?: string | number | null;
+        productName?: string | null;
+        mallName?: string | null;
+        shopName?: string | null;
+        recipientName?: string | null;
+        buyerPhoneNumber?: string | null;
+        shipPostalCode?: string | null;
+        shipState?: string | null;
+        shipAddress1?: string | null;
+        shipAddress2?: string | null;
+        shipAddress3?: string | null;
+        shipmentCompany?: string | null;
+        shipmentNo?: string | null;
+      }>;
+    },
+  ): Promise<unknown> {
+    return this.ordersService.batchCreateAmazonManualOrders(payload);
+  }
+
   @Get('overseas-warehouse')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async listOverseasWarehouse(@Query('limit') limit?: string): Promise<unknown[]> {

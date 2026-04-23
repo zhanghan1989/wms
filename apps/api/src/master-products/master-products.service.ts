@@ -29,6 +29,16 @@ type MasterProductListResult = {
   hasMore: boolean;
 };
 
+type AvailableStockExportResult = {
+  exportedAt: string;
+  total: number;
+  rows: Array<{
+    productId: string;
+    productName: string | null;
+    stockQty: number;
+  }>;
+};
+
 type MasterProductSyncRecordListResult = {
   items: unknown[];
   page: number;
@@ -219,6 +229,30 @@ export class MasterProductsService {
       page,
       pageSize,
       hasMore: rows.length > pageSize,
+    };
+  }
+
+  async exportAvailableStockForThirdParty(): Promise<AvailableStockExportResult> {
+    const rows = await this.prisma.masterProduct.findMany({
+      where: {
+        stockQty: { gt: 0 },
+      },
+      select: {
+        productId: true,
+        productName: true,
+        stockQty: true,
+      },
+      orderBy: [{ stockQty: 'desc' }, { productId: 'asc' }, { id: 'asc' }],
+    });
+
+    return {
+      exportedAt: new Date().toISOString(),
+      total: rows.length,
+      rows: rows.map((row) => ({
+        productId: row.productId,
+        productName: row.productName,
+        stockQty: Number(row.stockQty ?? 0),
+      })),
     };
   }
 

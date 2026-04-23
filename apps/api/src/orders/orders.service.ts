@@ -323,6 +323,9 @@ interface UpdateAmazonOrderPayload {
 }
 
 interface CreateAmazonManualOrderPayload extends UpdateAmazonOrderPayload {}
+interface BatchCreateAmazonManualOrdersPayload {
+  items?: CreateAmazonManualOrderPayload[];
+}
 
 type ThirdPartyExportSource = 'rakuten' | 'amazon';
 
@@ -415,6 +418,20 @@ interface SelectedOverseasWarehouseOrderRef {
 interface ThirdPartyExportAckItem {
   source?: 'rakuten' | 'amazon';
   id?: string | number;
+}
+
+interface AmazonManualOrderBatchCreateRowResult {
+  id: string;
+  orderId: string | null;
+  orderItemId: string | null;
+  sku: string | null;
+  productId: string | null;
+  productName: string | null;
+  quantityPurchased: number | null;
+  mallName: string | null;
+  shopName: string | null;
+  dispatchMode: string | null;
+  shippingOrigin: string | null;
 }
 
 interface OverseasPickingBatchSummary {
@@ -2029,85 +2046,61 @@ export class OrdersService {
   }
 
   async createAmazonManualOrder(payload: CreateAmazonManualOrderPayload): Promise<AmazonEnrichedOrderListItem> {
-    const orderId = this.requireEditableText(payload.orderId, '订单号', 64);
-    const sku = this.normalizeEditableText(payload.sku, 'SKU', 128);
-    const productId = this.requireEditableText(payload.productId, '产品ID', 64);
-    const quantityPurchased = this.requireEditablePositiveInt(payload.quantityPurchased, '数量');
-    const product = await this.prisma.masterProduct.findUnique({
-      where: { productId },
-      select: { productName: true },
-    });
-    const productName =
-      this.normalizeEditableText(payload.productName, '商品名', 5000) ||
-      String(product?.productName ?? '').trim() ||
-      null;
-    const orderItemId =
-      this.normalizeEditableText(payload.orderItemId, 'order-item-id', 64) ||
-      `manual-${Date.now().toString(36)}`;
-    const mallName = this.normalizeEditableText(payload.mallName, '平台', 128);
-    const shopName = this.normalizeEditableText(payload.shopName, '店铺', 128);
-    const recipientName = this.normalizeEditableText(payload.recipientName, '收件人', 255);
-    const buyerPhoneNumber = this.normalizeEditableText(payload.buyerPhoneNumber, '电话', 64);
-    const shipPostalCode = this.normalizeEditableText(payload.shipPostalCode, '邮编', 32);
-    const shipState = this.normalizeEditableText(payload.shipState, '都道府县', 255);
-    const shipAddress1 = this.normalizeEditableText(payload.shipAddress1, '地址1', 5000);
-    const shipAddress2 = this.normalizeEditableText(payload.shipAddress2, '地址2', 5000);
-    const shipAddress3 = this.normalizeEditableText(payload.shipAddress3, '地址3', 5000);
-    const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
-    const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
-    const dispatchMode = await this.resolveDispatchModeForProductId(productId);
-    const now = new Date();
-    const rawPayload = this.buildAmazonManualRawPayload({
-      orderId,
-      orderItemId,
-      sku,
-      productId,
-      productName,
-      quantityPurchased,
-      recipientName,
-      buyerPhoneNumber,
-      shipPostalCode,
-      shipState,
-      shipAddress1,
-      shipAddress2,
-      shipAddress3,
-    });
-
     const row = await this.prisma.amazonOrderRecord.create({
-      data: {
-        rowHash: createHash('sha1')
-          .update(['manual-amazon-order', randomUUID(), orderId, orderItemId, sku ?? '', productId].join('\u001f'))
-          .digest('hex'),
-        orderId,
-        orderItemId,
-        purchaseDateRaw: this.formatManualAmazonTimestamp(now),
-        sku,
-        productName,
-        quantityPurchased,
-        quantityToShip: quantityPurchased,
-        recipientName,
-        buyerPhoneNumber,
-        shipPostalCode,
-        shipState,
-        shipAddress1,
-        shipAddress2,
-        shipAddress3,
-        mallName,
-        shopName,
-        shippingOrigin: this.resolveAmazonShippingOriginFromDispatchMode(dispatchMode),
-        dispatchMode,
-        shipmentCompany,
-        shipmentNo,
-        shipmentNoRegisteredAt: this.resolveEditedShipmentRegisteredAt(null, null, shipmentNo),
-        sourceFileName: AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME,
-        sourceFilePath: AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH,
-        rawPayload,
-        csvImportedAt: now,
-      },
+      data: await this.buildAmazonManualOrderCreateData(payload),
     });
 
     const [enriched] = await this.enrichAmazonOrderRows([row]);
     return enriched;
+  }
+
+  async batchCreateAmazonManualOrders(
+    payload: BatchCreateAmazonManualOrdersPayload,
+  ): Promise<{
+    createdAt: string;
+    requestedCount: number;
+    createdCount: number;
+    rows: AmazonManualOrderBatchCreateRowResult[];
+  }> {
+    const rawItems = Array.isArray(payload?.items) ? payload.items : [];
+    if (!rawItems.length) {
+      throw new BadRequestException('请至少提供一条手动订单');
+    }
+    if (rawItems.length > 500) {
+      throw new BadRequestException('单次最多支持批量生成 500 条手动订单');
+    }
+
+    const createDataList = await Promise.all(
+      rawItems.map((item, index) => this.buildAmazonManualOrderCreateData(item, `items[${index}]`)),
+    );
+
+    const rows = await this.prisma.$transaction(async (tx) => {
+      const createdRows: AmazonOrderRecord[] = [];
+      for (const data of createDataList) {
+        createdRows.push(await tx.amazonOrderRecord.create({ data }));
+      }
+      return createdRows;
+    });
+
+    const enrichedRows = await this.enrichAmazonOrderRows(rows);
+    return {
+      createdAt: new Date().toISOString(),
+      requestedCount: rawItems.length,
+      createdCount: enrichedRows.length,
+      rows: enrichedRows.map((row) => ({
+        id: row.id.toString(),
+        orderId: row.orderId,
+        orderItemId: row.orderItemId,
+        sku: row.sku,
+        productId: row.resolvedProductId,
+        productName: row.resolvedProductName,
+        quantityPurchased: row.quantityPurchased,
+        mallName: row.mallName,
+        shopName: row.resolvedShopName || row.shopName,
+        dispatchMode: row.dispatchMode,
+        shippingOrigin: row.shippingOrigin,
+      })),
+    };
   }
 
   async listOverseasWarehouse(limitParam?: string): Promise<OverseasWarehouseOrderListItem[]> {
@@ -5756,6 +5749,87 @@ export class OrdersService {
       return '中国発';
     }
     return null;
+  }
+
+  private async buildAmazonManualOrderCreateData(
+    payload: CreateAmazonManualOrderPayload,
+    fieldPrefix = '',
+  ): Promise<Prisma.AmazonOrderRecordCreateInput> {
+    const withField = (fieldName: string) => (fieldPrefix ? `${fieldPrefix}.${fieldName}` : fieldName);
+    const orderId = this.requireEditableText(payload.orderId, withField('orderId'), 64);
+    const sku = this.normalizeEditableText(payload.sku, withField('sku'), 128);
+    const productId = this.requireEditableText(payload.productId, withField('productId'), 64);
+    const quantityPurchased = this.requireEditablePositiveInt(payload.quantityPurchased, withField('quantityPurchased'));
+    const product = await this.prisma.masterProduct.findUnique({
+      where: { productId },
+      select: { productName: true },
+    });
+    const productName =
+      this.normalizeEditableText(payload.productName, withField('productName'), 5000) ||
+      String(product?.productName ?? '').trim() ||
+      null;
+    const orderItemId =
+      this.normalizeEditableText(payload.orderItemId, withField('orderItemId'), 64) ||
+      `manual-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const mallName = this.normalizeEditableText(payload.mallName, withField('mallName'), 128);
+    const shopName = this.normalizeEditableText(payload.shopName, withField('shopName'), 128);
+    const recipientName = this.normalizeEditableText(payload.recipientName, withField('recipientName'), 255);
+    const buyerPhoneNumber = this.normalizeEditableText(payload.buyerPhoneNumber, withField('buyerPhoneNumber'), 64);
+    const shipPostalCode = this.normalizeEditableText(payload.shipPostalCode, withField('shipPostalCode'), 32);
+    const shipState = this.normalizeEditableText(payload.shipState, withField('shipState'), 255);
+    const shipAddress1 = this.normalizeEditableText(payload.shipAddress1, withField('shipAddress1'), 5000);
+    const shipAddress2 = this.normalizeEditableText(payload.shipAddress2, withField('shipAddress2'), 5000);
+    const shipAddress3 = this.normalizeEditableText(payload.shipAddress3, withField('shipAddress3'), 5000);
+    const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, withField('shipmentCompany'), 128);
+    const shipmentNo = this.normalizeEditableText(payload.shipmentNo, withField('shipmentNo'), 128);
+    const dispatchMode = await this.resolveDispatchModeForProductId(productId);
+    const now = new Date();
+    const rawPayload = this.buildAmazonManualRawPayload({
+      orderId,
+      orderItemId,
+      sku,
+      productId,
+      productName,
+      quantityPurchased,
+      recipientName,
+      buyerPhoneNumber,
+      shipPostalCode,
+      shipState,
+      shipAddress1,
+      shipAddress2,
+      shipAddress3,
+    });
+
+    return {
+      rowHash: createHash('sha1')
+        .update(['manual-amazon-order', randomUUID(), orderId, orderItemId, sku ?? '', productId].join('\u001f'))
+        .digest('hex'),
+      orderId,
+      orderItemId,
+      purchaseDateRaw: this.formatManualAmazonTimestamp(now),
+      sku,
+      productName,
+      quantityPurchased,
+      quantityToShip: quantityPurchased,
+      recipientName,
+      buyerPhoneNumber,
+      shipPostalCode,
+      shipState,
+      shipAddress1,
+      shipAddress2,
+      shipAddress3,
+      mallName,
+      shopName,
+      shippingOrigin: this.resolveAmazonShippingOriginFromDispatchMode(dispatchMode),
+      dispatchMode,
+      shipmentCompany,
+      shipmentNo,
+      shipmentNoRegisteredAt: this.resolveEditedShipmentRegisteredAt(null, null, shipmentNo),
+      sourceFileName: AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME,
+      sourceFilePath: AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH,
+      rawPayload,
+      csvImportedAt: now,
+    };
   }
 
   private buildAmazonManualRawPayload(payload: {

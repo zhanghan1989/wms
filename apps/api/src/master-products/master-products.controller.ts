@@ -18,6 +18,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
+import { ThirdPartyApiKeyGuard } from '../orders/third-party-api-key.guard';
 import { CreateMasterProductFbaReplenishmentDto } from './dto/create-master-product-fba-replenishment.dto';
 import { CreateMasterProductOutboundOneDto } from './dto/create-master-product-outbound-one.dto';
 import { ExportMasterProductsDto } from './dto/export-master-products.dto';
@@ -167,5 +168,16 @@ export class MasterProductsController {
       operatorName: user.username,
       sourceFileName: file.originalname,
     });
+  }
+}
+
+@Controller('master-products')
+export class MasterProductsThirdPartyController {
+  constructor(private readonly masterProductsService: MasterProductsService) {}
+
+  @Get('available-stock')
+  @UseGuards(ThirdPartyApiKeyGuard)
+  async exportAvailableStock(): Promise<unknown> {
+    return this.masterProductsService.exportAvailableStockForThirdParty();
   }
 }
