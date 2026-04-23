@@ -2375,6 +2375,11 @@ function applyRoleView() {
   document.querySelectorAll(".admin-order-edit-only").forEach((node) => {
     node.classList.toggle("hidden", !canEditOrders);
   });
+  if (!canEditOrders) {
+    document
+      .querySelectorAll("button[data-action='editRakutenOrder'], button[data-action='editAmazonOrder']")
+      .forEach((button) => button.remove());
+  }
 }
 
 function setAuthGate(isLoggedIn) {
@@ -8103,7 +8108,7 @@ function renderOrdersTable() {
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
           canEdit
-            ? `<td><button type="button" class="ghost compact-btn" data-action="editRakutenOrder" data-id="${escapeHtml(
+            ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editRakutenOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
             : ""
@@ -8563,7 +8568,7 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
           canEdit
-            ? `<td><button type="button" class="ghost compact-btn" data-action="editAmazonOrder" data-id="${escapeHtml(
+            ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editAmazonOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
             : ""

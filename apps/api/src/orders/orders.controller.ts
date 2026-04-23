@@ -2,6 +2,7 @@ import {
   Body,
   BadRequestException,
   Controller,
+  ForbiddenException,
   Get,
   Param,
   Post,
@@ -45,6 +46,7 @@ export class OrdersController {
   @Roles(Role.admin)
   async updateRakutenOrder(
     @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
     @Body()
     payload: {
       orderId?: string | null;
@@ -67,6 +69,7 @@ export class OrdersController {
       orderRemark?: string | null;
     },
   ): Promise<unknown> {
+    this.assertExactAdminForOrderEdit(user);
     return this.ordersService.updateRakutenOrder(id, payload);
   }
 
@@ -75,6 +78,7 @@ export class OrdersController {
   @Roles(Role.admin)
   async updateAmazonOrder(
     @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
     @Body()
     payload: {
       orderId?: string | null;
@@ -96,7 +100,14 @@ export class OrdersController {
       shipmentNo?: string | null;
     },
   ): Promise<unknown> {
+    this.assertExactAdminForOrderEdit(user);
     return this.ordersService.updateAmazonOrder(id, payload);
+  }
+
+  private assertExactAdminForOrderEdit(user: AuthUser): void {
+    if (user.role !== Role.admin) {
+      throw new ForbiddenException('只有 admin 用户可以编辑订单');
+    }
   }
 
   @Get('overseas-warehouse')
