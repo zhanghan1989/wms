@@ -5,8 +5,10 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import {
   AmazonOrderRecord,
@@ -718,6 +720,7 @@ const AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH = 'manual:amazon-order';
 const XIYA_LOGISTICS_EXPORT_URL = 'http://103.236.55.93/api/external/logistics/rakuten';
 const XIYA_LOGISTICS_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
 const XIYA_LOGISTICS_SYNC_DAYS = 5;
+const XIYA_TRACKING_SYNC_CRON = '0 0 17 * * *';
 const XIYA_LOGISTICS_STORE_SOURCE: Record<string, ThirdPartyExportSource> = {
   DGAZ乐天日本: 'rakuten',
   DGAZ亚马逊日本站: 'amazon',
@@ -786,6 +789,9 @@ function normalizeAmazonSkuLookupKey(value: string | null | undefined): string {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+  private xiyaTrackingSyncRunning = false;
+
   constructor(private readonly prisma: PrismaService) {}
 
   getYamatoShipmentPrintConfig(): YamatoShipmentPrintConfig {
@@ -2672,7 +2678,7 @@ export class OrdersService {
           this.resolveRakutenShippingDestinationId(row),
           this.resolveRakutenShippingDetailId(row, chinaDispatchOrderRecordIdsByOrderId),
           this.normalizeAmazonTrackingNumber(row.shipmentNo),
-          '1001',
+          this.resolveRakutenShipmentCarrierCode(row),
           this.formatRakutenShipmentConfirmationDate(row.shipmentNoRegisteredAt as Date),
         ]
           .map((value) => this.escapeCsvCell(value))
@@ -3715,10 +3721,27 @@ export class OrdersService {
     }
 
     const registeredAt = new Date();
+    const [rakutenRows, amazonRows] = await Promise.all([
+      tx.rakutenOrderRecord.findMany({
+        where: {
+          orderId,
+          OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
+        },
+      }),
+      tx.amazonOrderRecord.findMany({
+        where: {
+          orderId,
+          OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
+        },
+      }),
+    ]);
+    const [rakutenEligibleIds, amazonEligibleIds] = await Promise.all([
+      this.resolveYamatoWritableRakutenOrderIds(tx, rakutenRows),
+      this.resolveYamatoWritableAmazonOrderIds(tx, amazonRows),
+    ]);
     const rakutenResult = await tx.rakutenOrderRecord.updateMany({
       where: {
-        orderId,
-        OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
+        id: { in: rakutenEligibleIds },
       },
       data: {
         shipmentCompany: 'Yamato',
@@ -3729,8 +3752,7 @@ export class OrdersService {
     });
     const amazonResult = await tx.amazonOrderRecord.updateMany({
       where: {
-        orderId,
-        OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
+        id: { in: amazonEligibleIds },
       },
       data: {
         shipmentCompany: 'Yamato',
@@ -3742,6 +3764,110 @@ export class OrdersService {
     if (rakutenResult.count + amazonResult.count <= 0) {
       throw new NotFoundException(`未找到可回写快递单号的订单：${orderId}`);
     }
+  }
+
+  private async resolveYamatoWritableRakutenOrderIds(
+    tx: Prisma.TransactionClient,
+    rows: RakutenOrderRecord[],
+  ): Promise<bigint[]> {
+    const productIds = Array.from(
+      new Set(
+        rows
+          .map(
+            (row) =>
+              String(row.skuCode ?? '').trim() ||
+              String(row.setComponentSkuCode ?? '').trim(),
+          )
+          .filter((value) => value.length > 0),
+      ),
+    );
+    const stockQtyByProductId = await this.loadMasterProductStockQtyByProductId(tx, productIds);
+    return rows
+      .filter((row) => {
+        const productId = String(row.skuCode ?? '').trim() || String(row.setComponentSkuCode ?? '').trim();
+        return productId && Number(stockQtyByProductId.get(productId) ?? 0) > 0;
+      })
+      .map((row) => row.id);
+  }
+
+  private async resolveYamatoWritableAmazonOrderIds(
+    tx: Prisma.TransactionClient,
+    rows: AmazonOrderRecord[],
+  ): Promise<bigint[]> {
+    const skuCodes = Array.from(
+      new Set(
+        rows
+          .map((row) => String(row.sku ?? '').trim())
+          .filter((value) => value.length > 0),
+      ),
+    );
+    const productIdOverrideByRowId = new Map(
+      rows.map((row) => [row.id.toString(), this.getJsonObjectString(row.rawPayload, '产品ID')] as const),
+    );
+    const skuRows = skuCodes.length
+      ? await tx.sku.findMany({
+          where: {
+            productId: { not: null },
+            OR: [{ sku: { in: skuCodes } }, { rbSku: { in: skuCodes } }, { fbmSku: { in: skuCodes } }],
+          },
+          select: {
+            sku: true,
+            rbSku: true,
+            fbmSku: true,
+            productId: true,
+          },
+        })
+      : [];
+    const productIdBySku = new Map<string, string>();
+    const normalizedProductIdBySku = new Map<string, string>();
+    skuRows.forEach((row) => {
+      const productId = String(row.productId ?? '').trim();
+      if (!productId) return;
+      [row.rbSku, row.fbmSku, row.sku].forEach((candidate) => {
+        const rawSku = String(candidate ?? '').trim();
+        if (rawSku && !productIdBySku.has(rawSku)) {
+          productIdBySku.set(rawSku, productId);
+        }
+        const normalizedSku = normalizeAmazonSkuLookupKey(candidate);
+        if (normalizedSku && !normalizedProductIdBySku.has(normalizedSku)) {
+          normalizedProductIdBySku.set(normalizedSku, productId);
+        }
+      });
+    });
+    const productIds = Array.from(
+      new Set(
+        [
+          ...Array.from(productIdOverrideByRowId.values()),
+          ...Array.from(productIdBySku.values()),
+        ].filter((value) => value.length > 0),
+      ),
+    );
+    const stockQtyByProductId = await this.loadMasterProductStockQtyByProductId(tx, productIds);
+    return rows
+      .filter((row) => {
+        const sku = String(row.sku ?? '').trim();
+        const productId =
+          productIdOverrideByRowId.get(row.id.toString()) ||
+          productIdBySku.get(sku) ||
+          normalizedProductIdBySku.get(normalizeAmazonSkuLookupKey(sku)) ||
+          '';
+        return productId && Number(stockQtyByProductId.get(productId) ?? 0) > 0;
+      })
+      .map((row) => row.id);
+  }
+
+  private async loadMasterProductStockQtyByProductId(
+    tx: Prisma.TransactionClient,
+    productIds: string[],
+  ): Promise<Map<string, number>> {
+    if (!productIds.length) {
+      return new Map();
+    }
+    const rows = await tx.masterProduct.findMany({
+      where: { productId: { in: productIds } },
+      select: { productId: true, stockQty: true },
+    });
+    return new Map(rows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]));
   }
 
   private getYamatoUploadFileName(batchId: bigint, files: YamatoShipmentPdfUploadFile[]): string {
@@ -4643,6 +4769,10 @@ export class OrdersService {
     return '';
   }
 
+  private resolveRakutenShipmentCarrierCode(row: RakutenOrderRecord): string {
+    return String(row.shipmentCompany ?? '').trim().toLowerCase() === 'xiya' ? '1002' : '1001';
+  }
+
   private async loadRakutenChinaDispatchOrderRecordIdsByOrderId(
     rows: RakutenOrderRecord[],
   ): Promise<Map<string, Set<string>>> {
@@ -4918,30 +5048,55 @@ export class OrdersService {
     amazonUpdatedCount: number;
     skippedUnmatchedCount: number;
   }> {
-    const fetchedRows = await this.fetchXiyaLogisticsRows();
-    const candidates = this.normalizeXiyaTrackingCandidates(fetchedRows);
-    const deduplicatedCandidates = this.deduplicateXiyaTrackingCandidates(candidates);
-    const [rakutenResult, amazonResult] = await Promise.all([
-      this.applyXiyaTrackingCandidates(
-        'rakuten',
-        deduplicatedCandidates.filter((candidate) => candidate.source === 'rakuten'),
-      ),
-      this.applyXiyaTrackingCandidates(
-        'amazon',
-        deduplicatedCandidates.filter((candidate) => candidate.source === 'amazon'),
-      ),
-    ]);
+    if (this.xiyaTrackingSyncRunning) {
+      throw new ConflictException('当前已有 Xiya 运单号同步任务正在执行，请稍后再试');
+    }
 
-    return {
-      syncedAt: new Date().toISOString(),
-      days: XIYA_LOGISTICS_SYNC_DAYS,
-      fetchedCount: fetchedRows.length,
-      validCount: candidates.length,
-      deduplicatedCount: deduplicatedCandidates.length,
-      rakutenUpdatedCount: rakutenResult.updatedCount,
-      amazonUpdatedCount: amazonResult.updatedCount,
-      skippedUnmatchedCount: rakutenResult.skippedUnmatchedCount + amazonResult.skippedUnmatchedCount,
-    };
+    this.xiyaTrackingSyncRunning = true;
+    try {
+      const fetchedRows = await this.fetchXiyaLogisticsRows();
+      const candidates = this.normalizeXiyaTrackingCandidates(fetchedRows);
+      const deduplicatedCandidates = this.deduplicateXiyaTrackingCandidates(candidates);
+      const [rakutenResult, amazonResult] = await Promise.all([
+        this.applyXiyaTrackingCandidates(
+          'rakuten',
+          deduplicatedCandidates.filter((candidate) => candidate.source === 'rakuten'),
+        ),
+        this.applyXiyaTrackingCandidates(
+          'amazon',
+          deduplicatedCandidates.filter((candidate) => candidate.source === 'amazon'),
+        ),
+      ]);
+
+      return {
+        syncedAt: new Date().toISOString(),
+        days: XIYA_LOGISTICS_SYNC_DAYS,
+        fetchedCount: fetchedRows.length,
+        validCount: candidates.length,
+        deduplicatedCount: deduplicatedCandidates.length,
+        rakutenUpdatedCount: rakutenResult.updatedCount,
+        amazonUpdatedCount: amazonResult.updatedCount,
+        skippedUnmatchedCount: rakutenResult.skippedUnmatchedCount + amazonResult.skippedUnmatchedCount,
+      };
+    } finally {
+      this.xiyaTrackingSyncRunning = false;
+    }
+  }
+
+  @Cron(XIYA_TRACKING_SYNC_CRON, {
+    name: 'daily-xiya-tracking-sync',
+    timeZone: APP_TIMEZONE,
+  })
+  async runScheduledXiyaTrackingSync(): Promise<void> {
+    try {
+      const result = await this.syncXiyaTrackingNumbers();
+      this.logger.log(
+        `daily Xiya tracking sync completed: rakuten=${result.rakutenUpdatedCount}, amazon=${result.amazonUpdatedCount}, unmatched=${result.skippedUnmatchedCount}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`daily Xiya tracking sync failed: ${message}`);
+    }
   }
 
   private async fetchXiyaLogisticsRows(): Promise<XiyaLogisticsRow[]> {

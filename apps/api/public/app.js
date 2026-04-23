@@ -8094,7 +8094,13 @@ function renderOrdersTable() {
 
   tbody.innerHTML = list
     .map(
-      (item) => `
+      (item) => {
+        const needsRemarkFix = shouldHighlightRakutenOrderRemark(item);
+        const editButtonClass = needsRemarkFix
+          ? "ghost compact-btn admin-order-edit-only danger-solid"
+          : "ghost compact-btn admin-order-edit-only";
+        const editButtonTitle = needsRemarkFix ? '订单备注不是 "[配送日時指定:]"，请点击编辑确认' : "编辑订单";
+        return `
       <tr>
         <td><input type="checkbox" data-action="rakutenOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
           state.selectedRakutenOrderIds.has(String(item.id)) ? "checked" : ""
@@ -8116,17 +8122,22 @@ function renderOrdersTable() {
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
           canEdit
-            ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editRakutenOrder" data-id="${escapeHtml(
+            ? `<td><button type="button" class="${editButtonClass}" title="${escapeHtml(editButtonTitle)}" data-action="editRakutenOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
             : ""
         }
       </tr>
-    `,
+    `;
+      },
     )
     .join("");
   updateRakutenOrdersSelectAll();
   updateRakutenBatchDeleteButtonState();
+}
+
+function shouldHighlightRakutenOrderRemark(item) {
+  return String(item?.orderRemark ?? "").trim() !== "[配送日時指定:]";
 }
 
 function formatOrderFulfillmentMode(mode) {
