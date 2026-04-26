@@ -8377,20 +8377,25 @@ function buildAmazonOrderDetailFields(item) {
   ];
 }
 
-function openAmazonOrderDetailModal(orderId) {
-  const item = [...state.amazonOrders, ...state.manualOrders].find(
-    (row) => String(row?.id || "") === String(orderId || ""),
-  );
+function openAmazonOrderDetailModal(orderId, source = "amazon") {
+  const normalizedSource = String(source || "").trim();
+  const list = normalizedSource === "manual" ? state.manualOrders : [...state.amazonOrders, ...state.manualOrders];
+  const item = list.find((row) => String(row?.id || "") === String(orderId || ""));
   openAmazonOrderDetailModalFromItem(item);
 }
 
-function openAmazonOrderDetailModalFromItem(item) {
+function openAmazonOrderDetailModalFromItem(item, source = "amazon") {
   if (!item) {
     throw new Error("未找到对应的亚马逊订单");
   }
 
+  const normalizedSource = String(source || "").trim();
+  const title = $("amazonOrderDetailModalTitle");
   const meta = $("amazonOrderDetailMeta");
   if (!meta) return;
+  if (title) {
+    title.textContent = normalizedSource === "manual" ? "手动订单详情" : "亚马逊订单详情";
+  }
   meta.innerHTML = buildAmazonOrderDetailFields(item)
     .map(
       ([label, value]) => `
@@ -8463,7 +8468,7 @@ function getOrderEditFieldValue(id) {
 }
 
 function setOrderEditSourceMode(source) {
-  const isAmazon = source === "amazon";
+  const isAmazon = source === "amazon" || source === "manual";
   document.querySelectorAll(".order-edit-amazon-only").forEach((node) => {
     node.classList.toggle("hidden", !isAmazon);
   });
@@ -8586,15 +8591,21 @@ async function createAmazonManualOrder() {
 
 function openOrderEditModal(source, id) {
   const normalizedSource = String(source || "").trim();
-  const list = normalizedSource === "amazon" ? [...state.amazonOrders, ...state.manualOrders] : state.orders;
+  const list =
+    normalizedSource === "rakuten"
+      ? state.orders
+      : normalizedSource === "manual"
+        ? state.manualOrders
+        : [...state.amazonOrders, ...state.manualOrders];
   const item = list.find((row) => String(row?.id || "") === String(id || ""));
   if (!item) {
     throw new Error("未找到对应订单");
   }
 
-  const isAmazon = normalizedSource === "amazon";
+  const isManual = normalizedSource === "manual";
+  const isAmazon = normalizedSource === "amazon" || isManual;
   setOrderEditSourceMode(normalizedSource);
-  $("orderEditModalTitle").textContent = isAmazon ? "编辑亚马逊订单" : "编辑乐天订单";
+  $("orderEditModalTitle").textContent = isManual ? "编辑手动订单" : isAmazon ? "编辑亚马逊订单" : "编辑乐天订单";
   setOrderEditFieldValue("orderEditSource", normalizedSource);
   setOrderEditFieldValue("orderEditId", item.id);
   setOrderEditFieldValue("orderEditOrderId", item.orderId);
@@ -8639,8 +8650,9 @@ async function submitOrderEditForm() {
     shipmentNo: getOrderEditFieldValue("orderEditShipmentNo"),
   };
 
-  if (source === "amazon") {
-    return request(`/orders/amazon/${encodeURIComponent(id)}`, {
+  if (source === "amazon" || source === "manual") {
+    const endpoint = source === "manual" ? `/orders/manual/${encodeURIComponent(id)}` : `/orders/amazon/${encodeURIComponent(id)}`;
+    return request(endpoint, {
       method: "PUT",
       body: JSON.stringify({
         ...common,
@@ -8820,7 +8832,7 @@ function renderManualOrdersTable() {
           state.selectedManualOrderIds.has(String(item.id)) ? "checked" : ""
         } /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
-        <td><button type="button" class="inline-link-btn" data-action="openAmazonOrderDetail" data-id="${escapeHtml(
+        <td><button type="button" class="inline-link-btn" data-action="openManualOrderDetail" data-id="${escapeHtml(
           item.id,
         )}">${escapeHtml(displayText(item.orderId))}</button></td>
         <td>${escapeHtml(displayText(item.sku))}</td>
@@ -8836,7 +8848,7 @@ function renderManualOrdersTable() {
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
           canEdit
-            ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editAmazonOrder" data-id="${escapeHtml(
+            ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editManualOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
             : ""
@@ -8893,17 +8905,24 @@ function buildChinaOrderProcessingOrderLink(item) {
       item.id || "",
     )}">${escapeHtml(displayText(item.orderId))}</button>`;
   }
+  if (item.source === "manual") {
+    return `<button type="button" class="inline-link-btn" data-action="openChinaManualOrderDetail" data-id="${escapeHtml(
+      item.id || "",
+    )}">${escapeHtml(displayText(item.orderId))}</button>`;
+  }
   return escapeHtml(displayText(item.orderId));
 }
 
 function summarizeChinaOrderProcessingList(list) {
   const rakutenCount = list.filter((item) => item.source === "rakuten").length;
   const amazonCount = list.filter((item) => item.source === "amazon").length;
+  const manualCount = list.filter((item) => item.source === "manual").length;
   const switchedCount = list.filter((item) => item.dispatchMode === "china_pending").length;
   const noStockCount = Math.max(list.length - switchedCount, 0);
   return {
     rakutenCount,
     amazonCount,
+    manualCount,
     switchedCount,
     noStockCount,
   };
@@ -8923,10 +8942,10 @@ function renderChinaOrderProcessingTable() {
   const exportedStats = summarizeChinaOrderProcessingList(exportedList);
 
   if (pendingSummary) {
-    pendingSummary.textContent = `共 ${pendingList.length} 条等待 Xiya 运单号的中国发订单，其中 乐天 ${pendingStats.rakutenCount} 条，亚马逊 ${pendingStats.amazonCount} 条，系统无库存 ${pendingStats.noStockCount} 条，拣货缺货切换 ${pendingStats.switchedCount} 条。`;
+    pendingSummary.textContent = `共 ${pendingList.length} 条等待 Xiya 运单号的中国发订单，其中 乐天 ${pendingStats.rakutenCount} 条，亚马逊 ${pendingStats.amazonCount} 条，手动订单 ${pendingStats.manualCount} 条，系统无库存 ${pendingStats.noStockCount} 条，拣货缺货切换 ${pendingStats.switchedCount} 条。`;
   }
   if (exportedSummary) {
-    exportedSummary.textContent = `共 ${exportedList.length} 条已登记运单号的中国发订单，其中 乐天 ${exportedStats.rakutenCount} 条，亚马逊 ${exportedStats.amazonCount} 条，系统无库存 ${exportedStats.noStockCount} 条，拣货缺货切换 ${exportedStats.switchedCount} 条。`;
+    exportedSummary.textContent = `共 ${exportedList.length} 条已登记运单号的中国发订单，其中 乐天 ${exportedStats.rakutenCount} 条，亚马逊 ${exportedStats.amazonCount} 条，手动订单 ${exportedStats.manualCount} 条，系统无库存 ${exportedStats.noStockCount} 条，拣货缺货切换 ${exportedStats.switchedCount} 条。`;
   }
 
   if (!pendingList.length) {
@@ -9002,8 +9021,9 @@ function renderOverseasOrderProcessingTable() {
   const list = Array.isArray(state.overseasOrderProcessingOrders) ? state.overseasOrderProcessingOrders : [];
   const rakutenCount = list.filter((item) => item.source === "rakuten").length;
   const amazonCount = list.filter((item) => item.source === "amazon").length;
+  const manualCount = list.filter((item) => item.source === "manual").length;
   if (summary) {
-    summary.textContent = `共 ${list.length} 条待处理订单，其中 乐天 ${rakutenCount} 条，亚马逊 ${amazonCount} 条。`;
+    summary.textContent = `共 ${list.length} 条待处理订单，其中 乐天 ${rakutenCount} 条，亚马逊 ${amazonCount} 条，手动订单 ${manualCount} 条。`;
   }
 
   if (!list.length) {
@@ -9031,6 +9051,10 @@ function renderOverseasOrderProcessingTable() {
               ? `<button type="button" class="inline-link-btn" data-action="openOverseasAmazonOrderDetail" data-id="${escapeHtml(
                   item.id || "",
                 )}">${escapeHtml(displayText(item.orderId))}</button>`
+              : item.source === "manual"
+                ? `<button type="button" class="inline-link-btn" data-action="openOverseasManualOrderDetail" data-id="${escapeHtml(
+                    item.id || "",
+                  )}">${escapeHtml(displayText(item.orderId))}</button>`
               : escapeHtml(displayText(item.orderId))
         }</td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
@@ -9256,6 +9280,10 @@ function renderOverseasPickingBatchOrders() {
             ? `<button type="button" class="inline-link-btn" data-action="openPickingBatchAmazonOrderDetail" data-item-id="${escapeHtml(
                 item.itemId || "",
               )}">${escapeHtml(displayText(item.orderId))}</button>`
+            : item.source === "manual"
+              ? `<button type="button" class="inline-link-btn" data-action="openPickingBatchManualOrderDetail" data-item-id="${escapeHtml(
+                  item.itemId || "",
+                )}">${escapeHtml(displayText(item.orderId))}</button>`
             : escapeHtml(displayText(item.orderId));
       return `
         <tr>
@@ -9927,6 +9955,13 @@ async function submitOverseasYamatoScan(options = {}) {
 
 async function deleteAmazonOrders(ids) {
   return request("/orders/amazon/delete-batch", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+async function deleteManualOrders(ids) {
+  return request("/orders/manual/delete-batch", {
     method: "POST",
     body: JSON.stringify({ ids }),
   });
@@ -11167,7 +11202,7 @@ function bindForms() {
         }
         const ok = await openDeleteConfirmModal(`确认批量删除 ${ids.length} 条手动订单记录？`);
         if (!ok) return;
-        const result = await deleteAmazonOrders(ids);
+        const result = await deleteManualOrders(ids);
         state.selectedManualOrderIds = new Set();
         await loadManualOrders();
         await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
@@ -11202,7 +11237,9 @@ function bindForms() {
         const source = getOrderEditFieldValue("orderEditSource");
         await submitOrderEditForm();
         if (source === "amazon") {
-          await Promise.all([loadAmazonOrders(), loadManualOrders()]);
+          await loadAmazonOrders();
+        } else if (source === "manual") {
+          await loadManualOrders();
         } else {
           await loadOrders();
         }
@@ -12322,7 +12359,9 @@ function bindForms() {
         showToast(
           `已同步 Xiya 运单号：乐天 ${Number(result?.rakutenUpdatedCount || 0)} 条，亚马逊 ${Number(
             result?.amazonUpdatedCount || 0,
-          )} 条，未匹配 ${Number(result?.skippedUnmatchedCount || 0)} 条。`,
+          )} 条，手动订单 ${Number(result?.manualUpdatedCount || 0)} 条，未匹配 ${Number(
+            result?.skippedUnmatchedCount || 0,
+          )} 条。`,
         );
       } catch (error) {
         showToast(error.message, true);
@@ -13915,6 +13954,15 @@ function bindDelegates() {
         return;
       }
 
+      const manualTrigger = event.target.closest("button[data-action='openOverseasManualOrderDetail']");
+      if (manualTrigger) {
+        const item = state.overseasOrderProcessingOrders.find(
+          (row) => row?.source === "manual" && String(row?.id || "") === String(manualTrigger.dataset.id || ""),
+        );
+        openAmazonOrderDetailModalFromItem(item, "manual");
+        return;
+      }
+
       const switchTrigger = event.target.closest("button[data-action='switchOverseasPendingOrderToChina']");
       if (!switchTrigger) return;
       const source = String(switchTrigger.dataset.source || "").trim();
@@ -13948,11 +13996,20 @@ function bindDelegates() {
       }
 
       const amazonTrigger = event.target.closest("button[data-action='openChinaAmazonOrderDetail']");
-      if (!amazonTrigger) return;
+      if (amazonTrigger) {
+        const item = state.chinaOrderProcessingOrders.find(
+          (row) => row?.source === "amazon" && String(row?.id || "") === String(amazonTrigger.dataset.id || ""),
+        );
+        openAmazonOrderDetailModalFromItem(item);
+        return;
+      }
+
+      const manualTrigger = event.target.closest("button[data-action='openChinaManualOrderDetail']");
+      if (!manualTrigger) return;
       const item = state.chinaOrderProcessingOrders.find(
-        (row) => row?.source === "amazon" && String(row?.id || "") === String(amazonTrigger.dataset.id || ""),
+        (row) => row?.source === "manual" && String(row?.id || "") === String(manualTrigger.dataset.id || ""),
       );
-      openAmazonOrderDetailModalFromItem(item);
+      openAmazonOrderDetailModalFromItem(item, "manual");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -14057,6 +14114,14 @@ function bindDelegates() {
         return;
       }
 
+      const manualTrigger = event.target.closest("button[data-action='openPickingBatchManualOrderDetail']");
+      if (manualTrigger) {
+        const itemId = String(manualTrigger.dataset.itemId || "").trim();
+        const item = orders.find((row) => String(row?.itemId || "") === itemId);
+        openAmazonOrderDetailModalFromItem(item, "manual");
+        return;
+      }
+
       const removeTrigger = event.target.closest("button[data-action='removeOverseasOrderFromBatch']");
       if (!removeTrigger) return;
       if (!detail?.id) {
@@ -14111,14 +14176,14 @@ function bindDelegates() {
 
   $("manualOrdersBody")?.addEventListener("click", (event) => {
     try {
-      const editTrigger = event.target.closest("button[data-action='editAmazonOrder']");
+      const editTrigger = event.target.closest("button[data-action='editManualOrder']");
       if (editTrigger) {
-        openOrderEditModal("amazon", editTrigger.dataset.id || "");
+        openOrderEditModal("manual", editTrigger.dataset.id || "");
         return;
       }
-      const trigger = event.target.closest("button[data-action='openAmazonOrderDetail']");
+      const trigger = event.target.closest("button[data-action='openManualOrderDetail']");
       if (!trigger) return;
-      openAmazonOrderDetailModal(trigger.dataset.id || "");
+      openAmazonOrderDetailModal(trigger.dataset.id || "", "manual");
     } catch (error) {
       showToast(error.message, true);
     }

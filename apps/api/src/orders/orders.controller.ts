@@ -101,6 +101,34 @@ export class OrdersController {
     return this.ordersService.updateAmazonOrder(id, payload);
   }
 
+  @Put('manual/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async updateManualOrder(
+    @Param('id') id: string,
+    @Body()
+    payload: {
+      orderId?: string | null;
+      orderItemId?: string | null;
+      sku?: string | null;
+      quantityPurchased?: string | number | null;
+      productName?: string | null;
+      mallName?: string | null;
+      shopName?: string | null;
+      productId?: string | null;
+      recipientName?: string | null;
+      buyerPhoneNumber?: string | null;
+      shipPostalCode?: string | null;
+      shipState?: string | null;
+      shipAddress1?: string | null;
+      shipAddress2?: string | null;
+      shipAddress3?: string | null;
+      shipmentCompany?: string | null;
+      shipmentNo?: string | null;
+    },
+  ): Promise<unknown> {
+    return this.ordersService.updateManualOrder(id, payload);
+  }
+
   @Post('manual')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async createAmazonManualOrder(
@@ -202,7 +230,7 @@ export class OrdersController {
   @Post('overseas-warehouse/picking-batches')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async createOverseasPickingBatch(
-    @Body() payload: { items?: Array<{ source?: 'rakuten' | 'amazon'; id?: string | number }>; remark?: string },
+    @Body() payload: { items?: Array<{ source?: 'rakuten' | 'amazon' | 'manual'; id?: string | number }>; remark?: string },
     @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
     return this.ordersService.createOverseasPickingBatch(payload, user.id);
@@ -308,7 +336,7 @@ export class OrdersController {
   @Post('overseas-warehouse/yamato-export')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async exportOverseasWarehouseYamatoImport(
-    @Body() payload: { items?: Array<{ source?: 'rakuten' | 'amazon'; id?: string | number }> },
+    @Body() payload: { items?: Array<{ source?: 'rakuten' | 'amazon' | 'manual'; id?: string | number }> },
     @Res() res: Response,
   ): Promise<void> {
     const file = await this.ordersService.buildOverseasWarehouseYamatoImport(payload);
@@ -413,6 +441,14 @@ export class OrdersController {
     return this.ordersService.deleteAmazonBatch(payload);
   }
 
+  @Post('manual/delete-batch')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async deleteManualBatch(
+    @Body() payload: { ids?: Array<string | number> },
+  ): Promise<{ deletedCount: number }> {
+    return this.ordersService.deleteManualBatch(payload);
+  }
+
   @Post('amazon/shipment-confirmation-txt')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async downloadAmazonShipmentConfirmationTxt(
@@ -475,7 +511,7 @@ export class OrdersController {
   @Post('export/ack')
   @UseGuards(ThirdPartyApiKeyGuard)
   async ackExport(
-    @Body() payload: { items?: Array<{ source?: 'rakuten' | 'amazon'; id?: string | number }> },
+    @Body() payload: { items?: Array<{ source?: 'rakuten' | 'amazon' | 'manual'; id?: string | number }> },
   ): Promise<unknown> {
     return this.ordersService.ackThirdPartyExport(payload);
   }
