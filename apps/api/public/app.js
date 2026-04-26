@@ -8942,10 +8942,10 @@ function renderChinaOrderProcessingTable() {
   const exportedStats = summarizeChinaOrderProcessingList(exportedList);
 
   if (pendingSummary) {
-    pendingSummary.textContent = `共 ${pendingList.length} 条等待 Xiya 运单号的中国发订单，其中 乐天 ${pendingStats.rakutenCount} 条，亚马逊 ${pendingStats.amazonCount} 条，手动订单 ${pendingStats.manualCount} 条，系统无库存 ${pendingStats.noStockCount} 条，拣货缺货切换 ${pendingStats.switchedCount} 条。`;
+    pendingSummary.textContent = `共 ${pendingList.length} 条等待 Xiya 运单号的中国发订单，其中 乐天 ${pendingStats.rakutenCount} 条，亚马逊 ${pendingStats.amazonCount} 条，手动订单 ${pendingStats.manualCount} 条。`;
   }
   if (exportedSummary) {
-    exportedSummary.textContent = `共 ${exportedList.length} 条已登记运单号的中国发订单，其中 乐天 ${exportedStats.rakutenCount} 条，亚马逊 ${exportedStats.amazonCount} 条，手动订单 ${exportedStats.manualCount} 条，系统无库存 ${exportedStats.noStockCount} 条，拣货缺货切换 ${exportedStats.switchedCount} 条。`;
+    exportedSummary.textContent = `共 ${exportedList.length} 条已登记运单号的中国发订单，其中 乐天 ${exportedStats.rakutenCount} 条，亚马逊 ${exportedStats.amazonCount} 条，手动订单 ${exportedStats.manualCount} 条。`;
   }
 
   if (!pendingList.length) {

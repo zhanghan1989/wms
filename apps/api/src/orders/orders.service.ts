@@ -4289,7 +4289,11 @@ export class OrdersService {
 
   private getYamatoUploadFileName(batchId: bigint, files: YamatoShipmentPdfUploadFile[]): string {
     if (files.length === 1) {
-      return this.sanitizeYamatoFileName(files[0]?.originalName) || `yamato-batch-${batchId.toString()}.pdf`;
+      const fileName = this.sanitizeYamatoFileName(files[0]?.originalName);
+      if (!fileName) {
+        return `yamato-batch-${batchId.toString()}.pdf`;
+      }
+      return /\.pdf$/i.test(fileName) ? fileName : `${fileName}.pdf`;
     }
     return `yamato-batch-${batchId.toString()}-${files.length}files.pdf`;
   }
