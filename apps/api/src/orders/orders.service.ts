@@ -5538,7 +5538,7 @@ export class OrdersService {
         ),
         this.applyXiyaTrackingCandidates(
           'manual',
-          deduplicatedCandidates.filter((candidate) => candidate.source === 'amazon'),
+          deduplicatedCandidates,
         ),
       ]);
 

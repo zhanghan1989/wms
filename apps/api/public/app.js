@@ -8385,11 +8385,11 @@ function openAmazonOrderDetailModal(orderId, source = "amazon") {
 }
 
 function openAmazonOrderDetailModalFromItem(item, source = "amazon") {
+  const normalizedSource = String(source || "").trim();
   if (!item) {
-    throw new Error("未找到对应的亚马逊订单");
+    throw new Error(normalizedSource === "manual" ? "未找到对应的手动订单" : "未找到对应的亚马逊订单");
   }
 
-  const normalizedSource = String(source || "").trim();
   const title = $("amazonOrderDetailModalTitle");
   const meta = $("amazonOrderDetailMeta");
   if (!meta) return;
