@@ -8166,6 +8166,7 @@ function renderOrdersTable() {
     .map(
       (item) => {
         const needsRemarkFix = shouldHighlightRakutenOrderRemark(item);
+        const canEditRow = canEdit && !hasRegisteredShipmentNo(item);
         const editButtonClass = needsRemarkFix
           ? "ghost compact-btn admin-order-edit-only danger-solid"
           : "ghost compact-btn admin-order-edit-only";
@@ -8191,11 +8192,13 @@ function renderOrdersTable() {
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
-          canEdit
+          canEditRow
             ? `<td><button type="button" class="${editButtonClass}" title="${escapeHtml(editButtonTitle)}" data-action="editRakutenOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
-            : ""
+            : canEdit
+              ? `<td><span class="muted">-</span></td>`
+              : ""
         }
       </tr>
     `;
@@ -8419,6 +8422,10 @@ function formatAmazonShippingOriginAsMode(origin) {
 
 function canCurrentUserEditOrders() {
   return Boolean(state.me);
+}
+
+function hasRegisteredShipmentNo(item) {
+  return String(item?.shipmentNo || "").trim().length > 0;
 }
 
 function normalizeOrderDispatchModeForDisplay(item, fallbackMode = "") {
@@ -8774,7 +8781,9 @@ function renderAmazonOrdersTable() {
 
   tbody.innerHTML = list
     .map(
-      (item) => `
+      (item) => {
+        const canEditRow = canEdit && !hasRegisteredShipmentNo(item);
+        return `
       <tr>
         <td><input type="checkbox" data-action="amazonOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
           state.selectedAmazonOrderIds.has(String(item.id)) ? "checked" : ""
@@ -8795,14 +8804,17 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
-          canEdit
+          canEditRow
             ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editAmazonOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
-            : ""
+            : canEdit
+              ? `<td><span class="muted">-</span></td>`
+              : ""
         }
       </tr>
-    `,
+    `;
+      },
     )
     .join("");
   updateAmazonOrdersSelectAll();
@@ -8826,7 +8838,9 @@ function renderManualOrdersTable() {
 
   tbody.innerHTML = list
     .map(
-      (item) => `
+      (item) => {
+        const canEditRow = canEdit && !hasRegisteredShipmentNo(item);
+        return `
       <tr>
         <td><input type="checkbox" data-action="manualOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
           state.selectedManualOrderIds.has(String(item.id)) ? "checked" : ""
@@ -8847,14 +8861,17 @@ function renderManualOrdersTable() {
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
-          canEdit
+          canEditRow
             ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editManualOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
-            : ""
+            : canEdit
+              ? `<td><span class="muted">-</span></td>`
+              : ""
         }
       </tr>
-    `,
+    `;
+      },
     )
     .join("");
   updateManualOrdersSelectAll();
@@ -9967,7 +9984,7 @@ async function deleteManualOrders(ids) {
   });
 }
 
-async function downloadAmazonShipmentConfirmationTxt(days) {
+async function downloadAmazonShipmentConfirmationZip(days) {
   const response = await fetchAuthorizedResponse("/orders/amazon/shipment-confirmation-txt", {
     method: "POST",
     body: JSON.stringify({ days }),
@@ -9976,7 +9993,7 @@ async function downloadAmazonShipmentConfirmationTxt(days) {
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = href;
-  link.download = resolveDownloadFileName(response, `amazon_shipment_confirmation_${formatDateForFilename(new Date())}.txt`);
+  link.download = resolveDownloadFileName(response, `amazon_shipment_confirmation_${formatDateForFilename(new Date())}.zip`);
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -11257,7 +11274,7 @@ function bindForms() {
       const currentButton = event.currentTarget;
       try {
         await withBusyButton(currentButton, "下载中...", async () => {
-          const fileName = await downloadAmazonShipmentConfirmationTxt(currentButton.dataset.days || "1");
+          const fileName = await downloadAmazonShipmentConfirmationZip(currentButton.dataset.days || "1");
           showToast(`已下载 ${fileName}`);
         });
       } catch (error) {

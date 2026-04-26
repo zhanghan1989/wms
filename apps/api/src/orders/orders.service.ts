@@ -291,6 +291,7 @@ interface AmazonShipmentConfirmationFileResult {
   fileName: string;
   content: Buffer;
   rowCount: number;
+  fileCount?: number;
 }
 
 interface RakutenShipmentConfirmationFileResult {
@@ -2860,7 +2861,7 @@ export class OrdersService {
     return { deletedCount: result.count };
   }
 
-  async buildAmazonShipmentConfirmationTxt(payload: {
+  async buildAmazonShipmentConfirmationTxtZip(payload: {
     days?: string | number;
   }): Promise<AmazonShipmentConfirmationFileResult> {
     const scope = this.normalizeShipmentConfirmationScope(payload?.days, '订单');
@@ -2894,6 +2895,35 @@ export class OrdersService {
       throw new BadRequestException(`无法生成回传单号TXT：${invalidRows.join('；')}`);
     }
 
+    const enrichedRows = await this.enrichAmazonOrderRows(rows);
+    const rowsByShopName = new Map<string, AmazonEnrichedOrderListItem[]>();
+    for (const row of enrichedRows) {
+      const shopName = this.resolveAmazonShipmentConfirmationShopName(row);
+      const shopRows = rowsByShopName.get(shopName) ?? [];
+      shopRows.push(row);
+      rowsByShopName.set(shopName, shopRows);
+    }
+
+    const timestamp = this.formatYamatoFileNameStamp();
+    const zip = new JSZip();
+    const usedEntryNames = new Set<string>();
+    for (const [shopName, shopRows] of rowsByShopName) {
+      const baseEntryName = `${timestamp}_${scope.fileLabel}_${this.sanitizeShipmentConfirmationFileNamePart(
+        shopName,
+      )}_确认订单表格.txt`;
+      const entryName = this.ensureUniqueZipEntryName(baseEntryName, usedEntryNames);
+      zip.file(entryName, this.buildAmazonShipmentConfirmationTxtContent(shopRows), { date: new Date() });
+    }
+
+    return {
+      fileName: `${timestamp}_${scope.fileLabel}_亚马逊回传单号_按店铺.zip`,
+      content: await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }),
+      rowCount: rows.length,
+      fileCount: rowsByShopName.size,
+    };
+  }
+
+  private buildAmazonShipmentConfirmationTxtContent(rows: Array<AmazonOrderRecord | AmazonEnrichedOrderListItem>): Buffer {
     const headers = [
       'order-id',
       'order-item-id',
@@ -2941,12 +2971,7 @@ export class OrdersService {
           .join('\t'),
       ),
     ];
-
-    return {
-      fileName: `${this.formatYamatoFileNameStamp()}_${scope.fileLabel}_确认订单表格.txt`,
-      content: Buffer.from(`${lines.join('\r\n')}\r\n`, 'utf8'),
-      rowCount: rows.length,
-    };
+    return Buffer.from(`${lines.join('\r\n')}\r\n`, 'utf8');
   }
 
   async buildRakutenShipmentConfirmationCsv(payload: {
@@ -5086,6 +5111,35 @@ export class OrdersService {
 
   private resolveRakutenShipmentCarrierCode(row: RakutenOrderRecord): string {
     return String(row.shipmentCompany ?? '').trim().toLowerCase() === 'xiya' ? '1002' : '1001';
+  }
+
+  private resolveAmazonShipmentConfirmationShopName(row: AmazonEnrichedOrderListItem): string {
+    const shopName = String(row.resolvedShopName || row.shopName || '').trim();
+    return shopName || '未设置店铺';
+  }
+
+  private sanitizeShipmentConfirmationFileNamePart(value: string): string {
+    const normalized = String(value || '').trim().replace(/[\\/:*?"<>|]+/g, '_');
+    return normalized || '未设置店铺';
+  }
+
+  private ensureUniqueZipEntryName(fileName: string, usedNames: Set<string>): string {
+    if (!usedNames.has(fileName)) {
+      usedNames.add(fileName);
+      return fileName;
+    }
+
+    const dotIndex = fileName.lastIndexOf('.');
+    const baseName = dotIndex > 0 ? fileName.slice(0, dotIndex) : fileName;
+    const extension = dotIndex > 0 ? fileName.slice(dotIndex) : '';
+    let index = 2;
+    let nextName = `${baseName}_${index}${extension}`;
+    while (usedNames.has(nextName)) {
+      index += 1;
+      nextName = `${baseName}_${index}${extension}`;
+    }
+    usedNames.add(nextName);
+    return nextName;
   }
 
   private async loadRakutenChinaDispatchOrderRecordIdsByOrderId(
