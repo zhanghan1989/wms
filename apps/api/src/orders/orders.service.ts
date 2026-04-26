@@ -4138,27 +4138,13 @@ export class OrdersService {
     }
 
     const registeredAt = new Date();
-    const [rakutenRows, amazonRows] = await Promise.all([
-      tx.rakutenOrderRecord.findMany({
-        where: {
-          orderId,
-          OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
-        },
-      }),
-      tx.amazonOrderRecord.findMany({
-        where: {
-          orderId,
-          OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
-        },
-      }),
-    ]);
-    const [rakutenEligibleIds, amazonEligibleIds] = await Promise.all([
-      this.resolveYamatoWritableRakutenOrderIds(tx, rakutenRows),
-      this.resolveYamatoWritableAmazonOrderIds(tx, amazonRows),
-    ]);
+    const japaneseDispatchFilter = {
+      OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
+    };
     const rakutenResult = await tx.rakutenOrderRecord.updateMany({
       where: {
-        id: { in: rakutenEligibleIds },
+        orderId,
+        ...japaneseDispatchFilter,
       },
       data: {
         shipmentCompany: 'Yamato',
@@ -4169,7 +4155,19 @@ export class OrdersService {
     });
     const amazonResult = await tx.amazonOrderRecord.updateMany({
       where: {
-        id: { in: amazonEligibleIds },
+        orderId,
+        ...japaneseDispatchFilter,
+      },
+      data: {
+        shipmentCompany: 'Yamato',
+        shipmentNo: trackingNo,
+        shipmentNoRegisteredAt: registeredAt,
+      },
+    });
+    const manualResult = await (tx as any).manualOrderRecord.updateMany({
+      where: {
+        orderId,
+        ...japaneseDispatchFilter,
       },
       data: {
         shipmentCompany: 'Yamato',
@@ -4178,113 +4176,9 @@ export class OrdersService {
       },
     });
 
-    if (rakutenResult.count + amazonResult.count <= 0) {
+    if (rakutenResult.count + amazonResult.count + Number(manualResult.count ?? 0) <= 0) {
       throw new NotFoundException(`未找到可回写快递单号的订单：${orderId}`);
     }
-  }
-
-  private async resolveYamatoWritableRakutenOrderIds(
-    tx: Prisma.TransactionClient,
-    rows: RakutenOrderRecord[],
-  ): Promise<bigint[]> {
-    const productIds = Array.from(
-      new Set(
-        rows
-          .map(
-            (row) =>
-              String(row.skuCode ?? '').trim() ||
-              String(row.setComponentSkuCode ?? '').trim(),
-          )
-          .filter((value) => value.length > 0),
-      ),
-    );
-    const stockQtyByProductId = await this.loadMasterProductStockQtyByProductId(tx, productIds);
-    return rows
-      .filter((row) => {
-        const productId = String(row.skuCode ?? '').trim() || String(row.setComponentSkuCode ?? '').trim();
-        return productId && Number(stockQtyByProductId.get(productId) ?? 0) > 0;
-      })
-      .map((row) => row.id);
-  }
-
-  private async resolveYamatoWritableAmazonOrderIds(
-    tx: Prisma.TransactionClient,
-    rows: AmazonOrderRecord[],
-  ): Promise<bigint[]> {
-    const skuCodes = Array.from(
-      new Set(
-        rows
-          .map((row) => String(row.sku ?? '').trim())
-          .filter((value) => value.length > 0),
-      ),
-    );
-    const productIdOverrideByRowId = new Map(
-      rows.map((row) => [row.id.toString(), this.getJsonObjectString(row.rawPayload, '产品ID')] as const),
-    );
-    const skuRows = skuCodes.length
-      ? await tx.sku.findMany({
-          where: {
-            productId: { not: null },
-            OR: [{ sku: { in: skuCodes } }, { rbSku: { in: skuCodes } }, { fbmSku: { in: skuCodes } }],
-          },
-          select: {
-            sku: true,
-            rbSku: true,
-            fbmSku: true,
-            productId: true,
-          },
-        })
-      : [];
-    const productIdBySku = new Map<string, string>();
-    const normalizedProductIdBySku = new Map<string, string>();
-    skuRows.forEach((row) => {
-      const productId = String(row.productId ?? '').trim();
-      if (!productId) return;
-      [row.rbSku, row.fbmSku, row.sku].forEach((candidate) => {
-        const rawSku = String(candidate ?? '').trim();
-        if (rawSku && !productIdBySku.has(rawSku)) {
-          productIdBySku.set(rawSku, productId);
-        }
-        const normalizedSku = normalizeAmazonSkuLookupKey(candidate);
-        if (normalizedSku && !normalizedProductIdBySku.has(normalizedSku)) {
-          normalizedProductIdBySku.set(normalizedSku, productId);
-        }
-      });
-    });
-    const productIds = Array.from(
-      new Set(
-        [
-          ...Array.from(productIdOverrideByRowId.values()),
-          ...Array.from(productIdBySku.values()),
-        ].filter((value) => value.length > 0),
-      ),
-    );
-    const stockQtyByProductId = await this.loadMasterProductStockQtyByProductId(tx, productIds);
-    return rows
-      .filter((row) => {
-        const sku = String(row.sku ?? '').trim();
-        const productId =
-          productIdOverrideByRowId.get(row.id.toString()) ||
-          productIdBySku.get(sku) ||
-          normalizedProductIdBySku.get(normalizeAmazonSkuLookupKey(sku)) ||
-          '';
-        return productId && Number(stockQtyByProductId.get(productId) ?? 0) > 0;
-      })
-      .map((row) => row.id);
-  }
-
-  private async loadMasterProductStockQtyByProductId(
-    tx: Prisma.TransactionClient,
-    productIds: string[],
-  ): Promise<Map<string, number>> {
-    if (!productIds.length) {
-      return new Map();
-    }
-    const rows = await tx.masterProduct.findMany({
-      where: { productId: { in: productIds } },
-      select: { productId: true, stockQty: true },
-    });
-    return new Map(rows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]));
   }
 
   private getYamatoUploadFileName(batchId: bigint, files: YamatoShipmentPdfUploadFile[]): string {
