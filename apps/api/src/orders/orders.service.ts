@@ -443,6 +443,11 @@ interface XiyaLogisticsRow {
   store_name?: string | null;
   created_at?: string | null;
   logistics_status?: string | null;
+  shipping_method_name?: string | null;
+  delivery_method_name?: string | null;
+  logistics_method_name?: string | null;
+  transport_method_name?: string | null;
+  '运输方式名称'?: string | null;
 }
 
 interface XiyaTrackingCandidate {
@@ -450,6 +455,7 @@ interface XiyaTrackingCandidate {
   orderId: string;
   trackingNo: string;
   storeName: string;
+  shipmentCompany: string;
   registeredAt: Date;
   rowCreatedAtMs: number;
 }
@@ -2864,7 +2870,6 @@ export class OrdersService {
       where: {
         shipmentNo: { not: null },
         shipmentNoRegisteredAt: { not: null },
-        OR: [{ sourceFilePath: null }, { sourceFilePath: { not: AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH } }],
         ...(importedAtStart ? { csvImportedAt: { gte: importedAtStart } } : {}),
       },
       orderBy: [{ csvImportedAt: 'desc' }, { shipmentNoRegisteredAt: 'asc' }, { id: 'asc' }],
@@ -5621,12 +5626,14 @@ export class OrdersService {
         if (!source || !orderId || !trackingNo) {
           return null;
         }
+        const shipmentCompany = this.resolveXiyaShipmentCompany(row);
         const registeredAt = this.parseXiyaLogisticsDate(row?.created_at);
         return {
           source,
           orderId,
           trackingNo,
           storeName,
+          shipmentCompany,
           registeredAt,
           rowCreatedAtMs: registeredAt.getTime(),
         };
@@ -5650,6 +5657,26 @@ export class OrdersService {
     const text = String(value ?? '').trim();
     const parsed = text ? new Date(text) : null;
     return parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+  }
+
+  private resolveXiyaShipmentCompany(row: XiyaLogisticsRow): string {
+    const methodName = String(
+      row?.['运输方式名称'] ??
+        row?.shipping_method_name ??
+        row?.delivery_method_name ??
+        row?.logistics_method_name ??
+        row?.transport_method_name ??
+        '',
+    )
+      .trim()
+      .toUpperCase();
+    if (methodName === 'SAGAWA-01') {
+      return 'SAGAWA';
+    }
+    if (methodName === 'YAMATO-01') {
+      return 'YAMATO';
+    }
+    return 'Xiya';
   }
 
   private async applyXiyaTrackingCandidates(
@@ -5737,7 +5764,7 @@ export class OrdersService {
                 OR: [{ shipmentNo: null }, { shipmentNo: '' }],
               },
               data: {
-                shipmentCompany: 'Xiya',
+                shipmentCompany: candidate.shipmentCompany,
                 shipmentNo: candidate.trackingNo,
                 shipmentNoRegisteredAt: candidate.registeredAt,
                 sendStatus: OrderSendStatus.sent,
@@ -5750,7 +5777,7 @@ export class OrdersService {
                   OR: [{ shipmentNo: null }, { shipmentNo: '' }],
                 },
                 data: {
-                  shipmentCompany: 'Xiya',
+                  shipmentCompany: candidate.shipmentCompany,
                   shipmentNo: candidate.trackingNo,
                   shipmentNoRegisteredAt: candidate.registeredAt,
                 },
@@ -5761,7 +5788,7 @@ export class OrdersService {
                   OR: [{ shipmentNo: null }, { shipmentNo: '' }],
                 },
                 data: {
-                  shipmentCompany: 'Xiya',
+                  shipmentCompany: candidate.shipmentCompany,
                   shipmentNo: candidate.trackingNo,
                   shipmentNoRegisteredAt: candidate.registeredAt,
                 },

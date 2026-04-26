@@ -8381,7 +8381,7 @@ function openAmazonOrderDetailModal(orderId, source = "amazon") {
   const normalizedSource = String(source || "").trim();
   const list = normalizedSource === "manual" ? state.manualOrders : [...state.amazonOrders, ...state.manualOrders];
   const item = list.find((row) => String(row?.id || "") === String(orderId || ""));
-  openAmazonOrderDetailModalFromItem(item);
+  openAmazonOrderDetailModalFromItem(item, normalizedSource);
 }
 
 function openAmazonOrderDetailModalFromItem(item, source = "amazon") {
