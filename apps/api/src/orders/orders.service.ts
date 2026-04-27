@@ -614,6 +614,7 @@ interface YamatoExportItem {
 interface YamatoMergedExportRow {
   orderId: string;
   printerValue: string;
+  printerName: string;
   deliveryDate: string;
   deliveryTimeSlot: string;
   phone: string;
@@ -697,6 +698,7 @@ interface PreparedYamatoShipmentPrintResult {
   trackingNo: string | null;
   productId: string;
   productIds: string[];
+  printerName: string | null;
   remainingMatchCount: number;
 }
 
@@ -4066,20 +4068,24 @@ export class OrdersService {
       existing.lineCount += 1;
     });
 
-    return Array.from(mergedByOrderId.values()).map((row) => ({
-      orderId: row.orderId,
-      printerValue: this.resolveMergedYamatoPrinterValue(row.printerValues, row.lineCount),
-      deliveryDate: row.deliveryDate,
-      deliveryTimeSlot: row.deliveryTimeSlot,
-      phone: row.phone,
-      postalCode: row.postalCode,
-      address1: row.address1,
-      address2: row.address2,
-      recipientName: row.recipientName,
-      itemSummary: `DGAZ ${row.itemParts.join(' / ')}`,
-      isMergedDuplicate: row.lineCount > 1,
-      productIds: Array.from(new Set(row.productIds.filter((item) => String(item || '').trim()))),
-    }));
+    return Array.from(mergedByOrderId.values()).map((row) => {
+      const printerValue = this.resolveMergedYamatoPrinterValue(row.printerValues, row.lineCount);
+      return {
+        orderId: row.orderId,
+        printerValue,
+        printerName: this.resolveYamatoWindowsPrinterName(printerValue),
+        deliveryDate: row.deliveryDate,
+        deliveryTimeSlot: row.deliveryTimeSlot,
+        phone: row.phone,
+        postalCode: row.postalCode,
+        address1: row.address1,
+        address2: row.address2,
+        recipientName: row.recipientName,
+        itemSummary: `DGAZ ${row.itemParts.join(' / ')}`,
+        isMergedDuplicate: row.lineCount > 1,
+        productIds: Array.from(new Set(row.productIds.filter((item) => String(item || '').trim()))),
+      };
+    });
   }
 
   private resolveMergedYamatoPrinterValue(printerValuesRaw: string[], lineCount: number): string {
@@ -4394,7 +4400,7 @@ export class OrdersService {
     }
 
     const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
-    const printerName = await this.resolveYamatoPrinterNameForProductIds(prepared.productIds);
+    const printerName = prepared.printerName ?? (await this.resolveYamatoPrinterNameForProductIds(prepared.productIds));
     const activeJob = await this.prisma.printJob.findFirst({
       where: {
         batchPageId: prepared.pageId,
@@ -4525,6 +4531,7 @@ export class OrdersService {
       trackingNo: targetPage.trackingNo ?? null,
       productId,
       productIds: targetPageProductIds,
+      printerName: String(targetPage.printerName ?? '').trim() || null,
       remainingMatchCount: Math.max(printablePages.length - 1, 0),
     };
   }
@@ -4559,6 +4566,8 @@ export class OrdersService {
             pageNo: index + 1,
             orderId: row.orderId,
             productIds: row.productIds,
+            printerValue: row.printerValue,
+            printerName: row.printerName,
             itemSummary: row.itemSummary,
             recipientName: row.recipientName,
           })),

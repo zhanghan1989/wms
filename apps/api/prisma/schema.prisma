@@ -822,6 +822,8 @@ model YamatoShipmentBatchPage {
   pageNo           Int                 @map("page_no")
   orderId          String?             @map("order_id") @db.VarChar(64)
   productIds       Json?               @map("product_ids")
+  printerValue     String?             @map("printer_value") @db.VarChar(128)
+  printerName      String?             @map("printer_name") @db.VarChar(128)
   itemSummary      String?             @map("item_summary") @db.Text
   trackingNo       String?             @map("tracking_no") @db.VarChar(128)
   recipientName    String?             @map("recipient_name") @db.VarChar(255)
