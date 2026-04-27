@@ -696,6 +696,7 @@ interface PreparedYamatoShipmentPrintResult {
   pageNo: number;
   trackingNo: string | null;
   productId: string;
+  productIds: string[];
   remainingMatchCount: number;
 }
 
@@ -4031,6 +4032,7 @@ export class OrdersService {
       Omit<YamatoExportItem, 'source' | 'id' | 'productId' | 'quantity'> & {
         itemParts: string[];
         productIds: string[];
+        printerValues: string[];
         lineCount: number;
       }
     >();
@@ -4052,6 +4054,7 @@ export class OrdersService {
           recipientName: item.recipientName || '-',
           itemParts: [itemPart],
           productIds: [item.productId],
+          printerValues: [item.printerValue || '0'],
           lineCount: 1,
         });
         return;
@@ -4059,15 +4062,13 @@ export class OrdersService {
 
       existing.itemParts.push(itemPart);
       existing.productIds.push(item.productId);
+      existing.printerValues.push(item.printerValue || '0');
       existing.lineCount += 1;
-      if ((!existing.printerValue || existing.printerValue === '0') && item.printerValue && item.printerValue !== '0') {
-        existing.printerValue = item.printerValue;
-      }
     });
 
     return Array.from(mergedByOrderId.values()).map((row) => ({
       orderId: row.orderId,
-      printerValue: row.printerValue || '0',
+      printerValue: this.resolveMergedYamatoPrinterValue(row.printerValues, row.lineCount),
       deliveryDate: row.deliveryDate,
       deliveryTimeSlot: row.deliveryTimeSlot,
       phone: row.phone,
@@ -4079,6 +4080,14 @@ export class OrdersService {
       isMergedDuplicate: row.lineCount > 1,
       productIds: Array.from(new Set(row.productIds.filter((item) => String(item || '').trim()))),
     }));
+  }
+
+  private resolveMergedYamatoPrinterValue(printerValuesRaw: string[], lineCount: number): string {
+    const printerValues = printerValuesRaw.map((value) => String(value ?? '').trim() || '0');
+    if (lineCount <= 1) {
+      return printerValues[0] || '0';
+    }
+    return printerValues.length > 0 && printerValues.every((value) => value === 'A') ? 'A' : '0';
   }
 
   async uploadYamatoShipmentBatchPdf(
@@ -4385,7 +4394,7 @@ export class OrdersService {
     }
 
     const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
-    const printerName = await this.resolveYamatoPrinterNameForProductId(prepared.productId);
+    const printerName = await this.resolveYamatoPrinterNameForProductIds(prepared.productIds);
     const activeJob = await this.prisma.printJob.findFirst({
       where: {
         batchPageId: prepared.pageId,
@@ -4503,6 +4512,7 @@ export class OrdersService {
     }
 
     const targetPage = printablePages[0];
+    const targetPageProductIds = this.getBatchPageProductIds(targetPage);
     const pdfBuffer = await readFile(batch.pdfFilePath);
     const singlePagePdf = await this.extractPdfSinglePage(pdfBuffer, targetPage.pageNo);
 
@@ -4514,6 +4524,7 @@ export class OrdersService {
       pageNo: targetPage.pageNo,
       trackingNo: targetPage.trackingNo ?? null,
       productId,
+      productIds: targetPageProductIds,
       remainingMatchCount: Math.max(printablePages.length - 1, 0),
     };
   }
@@ -4735,6 +4746,31 @@ export class OrdersService {
       },
     });
     return this.resolveYamatoWindowsPrinterName(product?.yamatoPrinterName);
+  }
+
+  private async resolveYamatoPrinterNameForProductIds(productIdsRaw: string[]): Promise<string | null> {
+    const productIds = Array.from(
+      new Set(productIdsRaw.map((productId) => String(productId ?? '').trim()).filter((productId) => productId)),
+    );
+    if (productIds.length <= 1) {
+      return productIds.length ? this.resolveYamatoPrinterNameForProductId(productIds[0]) : YAMATO_DEFAULT_WINDOWS_PRINTER_NAME;
+    }
+
+    const products = await this.prisma.masterProduct.findMany({
+      where: { productId: { in: productIds } },
+      select: {
+        productId: true,
+        yamatoPrinterName: true,
+      },
+    });
+    const printerValueByProductId = new Map(
+      products.map((product) => [product.productId, String(product.yamatoPrinterName ?? '').trim() || '0'] as const),
+    );
+    const mergedPrinterValue = this.resolveMergedYamatoPrinterValue(
+      productIds.map((productId) => printerValueByProductId.get(productId) ?? '0'),
+      productIds.length,
+    );
+    return this.resolveYamatoWindowsPrinterName(mergedPrinterValue);
   }
 
   private resolveYamatoWindowsPrinterName(rawPrinterValue: string | null | undefined): string {
