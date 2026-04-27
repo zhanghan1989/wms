@@ -8166,11 +8166,17 @@ function renderOrdersTable() {
     .map(
       (item) => {
         const needsRemarkFix = shouldHighlightRakutenOrderRemark(item);
-        const canEditRow = canEdit && !hasRegisteredShipmentNo(item);
+        const isShipmentRegistered = hasRegisteredShipmentNo(item);
         const editButtonClass = needsRemarkFix
-          ? "ghost compact-btn admin-order-edit-only danger-solid"
+          ? isShipmentRegistered
+            ? "ghost compact-btn admin-order-edit-only"
+            : "ghost compact-btn admin-order-edit-only danger-solid"
           : "ghost compact-btn admin-order-edit-only";
-        const editButtonTitle = needsRemarkFix ? '订单备注不是 "[配送日時指定:]"，请点击编辑确认' : "编辑订单";
+        const editButtonTitle = isShipmentRegistered
+          ? "修改发货公司和发货单号"
+          : needsRemarkFix
+            ? '订单备注不是 "[配送日時指定:]"，请点击编辑确认'
+            : "编辑订单";
         return `
       <tr>
         <td><input type="checkbox" data-action="rakutenOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
@@ -8192,13 +8198,11 @@ function renderOrdersTable() {
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
-          canEditRow
+          canEdit
             ? `<td><button type="button" class="${editButtonClass}" title="${escapeHtml(editButtonTitle)}" data-action="editRakutenOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
-            : canEdit
-              ? `<td><span class="muted">-</span></td>`
-              : ""
+            : ""
         }
       </tr>
     `;
@@ -8470,6 +8474,18 @@ function setOrderEditFieldValue(id, value) {
   input.value = value === null || value === undefined ? "" : String(value);
 }
 
+function setOrderEditShipmentOnlyMode(enabled) {
+  const editableIds = new Set([
+    "orderEditSource",
+    "orderEditId",
+    "orderEditShipmentCompany",
+    "orderEditShipmentNo",
+  ]);
+  document.querySelectorAll("#orderEditForm input, #orderEditForm textarea").forEach((node) => {
+    node.disabled = Boolean(enabled) && !editableIds.has(node.id);
+  });
+}
+
 function getOrderEditFieldValue(id) {
   return String($(id)?.value || "").trim();
 }
@@ -8611,8 +8627,15 @@ function openOrderEditModal(source, id) {
 
   const isManual = normalizedSource === "manual";
   const isAmazon = normalizedSource === "amazon" || isManual;
+  const isShipmentRegistered = hasRegisteredShipmentNo(item);
   setOrderEditSourceMode(normalizedSource);
-  $("orderEditModalTitle").textContent = isManual ? "编辑手动订单" : isAmazon ? "编辑亚马逊订单" : "编辑乐天订单";
+  $("orderEditModalTitle").textContent = isShipmentRegistered
+    ? "修改发货信息"
+    : isManual
+      ? "编辑手动订单"
+      : isAmazon
+        ? "编辑亚马逊订单"
+        : "编辑乐天订单";
   setOrderEditFieldValue("orderEditSource", normalizedSource);
   setOrderEditFieldValue("orderEditId", item.id);
   setOrderEditFieldValue("orderEditOrderId", item.orderId);
@@ -8637,8 +8660,11 @@ function openOrderEditModal(source, id) {
   setOrderEditFieldValue("orderEditDeliveryDate", item.deliveryDateRaw);
   setOrderEditFieldValue("orderEditDeliveryTimeSlot", item.deliveryTimeSlot);
   setOrderEditFieldValue("orderEditRemark", item.orderRemark);
+  setOrderEditShipmentOnlyMode(isShipmentRegistered);
   openModal("orderEditModal");
-  syncOrderEditProductMeta({ markDispatchAsAuto: false }).catch(() => {});
+  if (!isShipmentRegistered) {
+    syncOrderEditProductMeta({ markDispatchAsAuto: false }).catch(() => {});
+  }
 }
 
 async function submitOrderEditForm() {
@@ -8782,7 +8808,6 @@ function renderAmazonOrdersTable() {
   tbody.innerHTML = list
     .map(
       (item) => {
-        const canEditRow = canEdit && !hasRegisteredShipmentNo(item);
         return `
       <tr>
         <td><input type="checkbox" data-action="amazonOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
@@ -8804,13 +8829,11 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
-          canEditRow
+          canEdit
             ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editAmazonOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
-            : canEdit
-              ? `<td><span class="muted">-</span></td>`
-              : ""
+            : ""
         }
       </tr>
     `;
@@ -8839,7 +8862,6 @@ function renderManualOrdersTable() {
   tbody.innerHTML = list
     .map(
       (item) => {
-        const canEditRow = canEdit && !hasRegisteredShipmentNo(item);
         return `
       <tr>
         <td><input type="checkbox" data-action="manualOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
@@ -8861,13 +8883,11 @@ function renderManualOrdersTable() {
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
-          canEditRow
+          canEdit
             ? `<td><button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editManualOrder" data-id="${escapeHtml(
                 item.id,
               )}">编辑</button></td>`
-            : canEdit
-              ? `<td><span class="muted">-</span></td>`
-              : ""
+            : ""
         }
       </tr>
     `;

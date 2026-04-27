@@ -1972,6 +1972,21 @@ export class OrdersService {
     if (!current) {
       throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
     }
+    if (this.hasRegisteredShipmentNo(current)) {
+      const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
+      const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
+      const updated = await this.prisma.rakutenOrderRecord.update({
+        where: { id },
+        data: {
+          shipmentCompany,
+          shipmentNo,
+          shipmentNoRegisteredAt: shipmentNo ? new Date() : null,
+          sendStatus: this.resolveSendStatus(shipmentNo),
+        },
+      });
+      const [enriched] = await this.enrichOrderRows([updated]);
+      return enriched;
+    }
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
     let skuCode = this.normalizeEditableText(payload.skuCode, 'SKU', 128);
@@ -2062,6 +2077,20 @@ export class OrdersService {
     if (!current) {
       throw new NotFoundException(`亚马逊订单不存在: ${idRaw}`);
     }
+    if (this.hasRegisteredShipmentNo(current)) {
+      const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
+      const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
+      const updated = await this.prisma.amazonOrderRecord.update({
+        where: { id },
+        data: {
+          shipmentCompany,
+          shipmentNo,
+          shipmentNoRegisteredAt: shipmentNo ? new Date() : null,
+        },
+      });
+      const [enriched] = await this.enrichAmazonOrderRows([updated]);
+      return enriched;
+    }
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
     const orderItemId = this.normalizeEditableText(payload.orderItemId, 'order-item-id', 64);
@@ -2138,6 +2167,20 @@ export class OrdersService {
     const current = await (this.prisma as any).manualOrderRecord.findUnique({ where: { id } });
     if (!current) {
       throw new NotFoundException(`手动订单不存在: ${idRaw}`);
+    }
+    if (this.hasRegisteredShipmentNo(current)) {
+      const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
+      const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
+      const updated = await (this.prisma as any).manualOrderRecord.update({
+        where: { id },
+        data: {
+          shipmentCompany,
+          shipmentNo,
+          shipmentNoRegisteredAt: shipmentNo ? new Date() : null,
+        },
+      });
+      const [enriched] = await this.enrichManualOrderRows([updated as ManualOrderRecordLike]);
+      return enriched;
     }
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
@@ -6949,6 +6992,10 @@ export class OrdersService {
       return previousRegisteredAt ?? new Date();
     }
     return new Date();
+  }
+
+  private hasRegisteredShipmentNo(row: { shipmentNo?: string | null }): boolean {
+    return String(row.shipmentNo ?? '').trim().length > 0;
   }
 
   private mergeRawPayload(
