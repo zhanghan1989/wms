@@ -6154,6 +6154,9 @@ export class OrdersService {
         rawPayload[column.header] =
           cellIndex === undefined ? null : this.normalizeCellValue(sourceRow[cellIndex]);
       }
+      rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot] = this.normalizeRakutenDeliveryTimeSlot(
+        rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot],
+      );
 
       const hasAnyValue = Object.values(rawPayload).some((value) => Boolean(value));
       if (!hasAnyValue) {
@@ -6573,6 +6576,14 @@ export class OrdersService {
       .replace(/\r?\n/g, ' ')
       .trim();
     return normalized ? normalized : null;
+  }
+
+  private normalizeRakutenDeliveryTimeSlot(value: string | null): string | null {
+    const normalized = String(value ?? '').trim();
+    if (normalized === '午前中') {
+      return '0812';
+    }
+    return normalized || null;
   }
 
   private parseQuantity(value: string | null): number | null {
