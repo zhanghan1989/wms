@@ -4126,6 +4126,10 @@ export class OrdersService {
           tx,
           page.orderId,
           trackingNo,
+          {
+            pickingBatchId: batch.pickingBatchId,
+            productIds: this.getBatchPageProductIds(page),
+          },
         );
 
         if (batch.pickingBatchId && String(page.orderId ?? '').trim()) {
@@ -4133,6 +4137,10 @@ export class OrdersService {
             where: {
               batchId: batch.pickingBatchId,
               orderId: String(page.orderId ?? '').trim(),
+              dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS,
+              ...(this.getBatchPageProductIds(page).length
+                ? { productId: { in: this.getBatchPageProductIds(page) } }
+                : {}),
             },
             data: {
               shipmentTrackingNo: trackingNo,
@@ -4155,6 +4163,7 @@ export class OrdersService {
     tx: Prisma.TransactionClient,
     orderIdRaw: string | null | undefined,
     trackingNoRaw: string | null | undefined,
+    options: { pickingBatchId?: bigint | null; productIds?: string[] } = {},
   ): Promise<void> {
     const orderId = String(orderIdRaw ?? '').trim();
     const trackingNo = String(trackingNoRaw ?? '').trim();
@@ -4163,6 +4172,70 @@ export class OrdersService {
     }
 
     const registeredAt = new Date();
+    const productIds = Array.from(
+      new Set((options.productIds ?? []).map((productId) => String(productId ?? '').trim()).filter(Boolean)),
+    );
+    if (options.pickingBatchId) {
+      const pickingItems = await tx.overseasPickingBatchItem.findMany({
+        where: {
+          batchId: options.pickingBatchId,
+          orderId,
+          dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS,
+          actualQty: { gt: 0 },
+          ...(productIds.length ? { productId: { in: productIds } } : {}),
+        },
+        select: {
+          source: true,
+          sourceRecordId: true,
+        },
+      });
+      const rakutenIds = pickingItems
+        .filter((item) => item.source === 'rakuten')
+        .map((item) => item.sourceRecordId);
+      const amazonIds = pickingItems
+        .filter((item) => item.source === 'amazon')
+        .map((item) => item.sourceRecordId);
+      const manualIds = pickingItems
+        .filter((item) => item.source === 'manual')
+        .map((item) => item.sourceRecordId);
+      const rakutenResult = rakutenIds.length
+        ? await tx.rakutenOrderRecord.updateMany({
+            where: { id: { in: rakutenIds }, orderId },
+            data: {
+              shipmentCompany: 'Yamato',
+              shipmentNo: trackingNo,
+              shipmentNoRegisteredAt: registeredAt,
+              sendStatus: this.resolveSendStatus(trackingNo),
+            },
+          })
+        : { count: 0 };
+      const amazonResult = amazonIds.length
+        ? await tx.amazonOrderRecord.updateMany({
+            where: { id: { in: amazonIds }, orderId },
+            data: {
+              shipmentCompany: 'Yamato',
+              shipmentNo: trackingNo,
+              shipmentNoRegisteredAt: registeredAt,
+            },
+          })
+        : { count: 0 };
+      const manualResult = manualIds.length
+        ? await (tx as any).manualOrderRecord.updateMany({
+            where: { id: { in: manualIds }, orderId },
+            data: {
+              shipmentCompany: 'Yamato',
+              shipmentNo: trackingNo,
+              shipmentNoRegisteredAt: registeredAt,
+            },
+          })
+        : { count: 0 };
+
+      if (rakutenResult.count + amazonResult.count + Number(manualResult.count ?? 0) <= 0) {
+        throw new NotFoundException(`未找到可回写快递单号的订单：${orderId}`);
+      }
+      return;
+    }
+
     const japaneseDispatchFilter = {
       OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
     };
@@ -5159,7 +5232,6 @@ export class OrdersService {
     const relatedRows = await this.prisma.rakutenOrderRecord.findMany({
       where: {
         orderId: { in: orderIds },
-        sendStatus: OrderSendStatus.unsent,
       },
       orderBy: [{ id: 'asc' }],
     });
@@ -5172,7 +5244,7 @@ export class OrdersService {
     );
     const result = new Map<string, Set<string>>();
     for (const row of enrichedRows) {
-      if (!this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs)) {
+      if (!this.isRakutenChinaDispatchRow(row, activePickedRefs)) {
         continue;
       }
       const orderId = String(row.orderId ?? '').trim();
@@ -5184,6 +5256,21 @@ export class OrdersService {
       result.set(orderId, ids);
     }
     return result;
+  }
+
+  private isRakutenChinaDispatchRow(row: OrderListItem, activePickedRefs: Set<string>): boolean {
+    const dispatchMode = String(row.dispatchMode ?? '').trim();
+    if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+      return true;
+    }
+    if (row.xiyaExportedAt) {
+      return true;
+    }
+    const shipmentCompany = String(row.shipmentCompany ?? '').trim();
+    if (shipmentCompany === 'Xiya' || shipmentCompany === 'SAGAWA' || shipmentCompany === 'YAMATO') {
+      return true;
+    }
+    return row.fulfillmentMode === 'xiya_api' && !activePickedRefs.has(`rakuten:${row.id.toString()}`);
   }
 
   private normalizeShipmentConfirmationScope(daysRaw: string | number | null | undefined, noun: string): {
