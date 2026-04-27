@@ -6579,8 +6579,8 @@ export class OrdersService {
   }
 
   private normalizeRakutenDeliveryTimeSlot(value: string | null): string | null {
-    const normalized = String(value ?? '').trim();
-    if (normalized === '午前中') {
+    const normalized = String(value ?? '').normalize('NFKC').trim();
+    if (normalized === '午前中' || normalized === '1') {
       return '0812';
     }
     return normalized || null;
