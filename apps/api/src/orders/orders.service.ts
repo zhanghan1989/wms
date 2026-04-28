@@ -456,6 +456,7 @@ interface XiyaLogisticsRow {
   store_name?: string | null;
   created_at?: string | null;
   logistics_status?: string | null;
+  shipping_method?: string | null;
   shipping_method_name?: string | null;
   delivery_method_name?: string | null;
   logistics_method_name?: string | null;
@@ -6069,6 +6070,7 @@ export class OrdersService {
   private resolveXiyaShipmentCompany(row: XiyaLogisticsRow): string {
     const methodName = String(
       row?.['运输方式名称'] ??
+        row?.shipping_method ??
         row?.shipping_method_name ??
         row?.delivery_method_name ??
         row?.logistics_method_name ??
@@ -6078,10 +6080,10 @@ export class OrdersService {
       .trim()
       .toUpperCase();
     if (methodName === 'SAGAWA-01') {
-      return 'SAGAWA';
+      return 'Xiya-SAGAWA';
     }
     if (methodName === 'YAMATO-01') {
-      return 'YAMATO';
+      return 'Xiya-YAMATO';
     }
     return 'Xiya';
   }
@@ -6153,14 +6155,7 @@ export class OrdersService {
     const updatedManualIds: bigint[] = [];
     for (const [orderId, candidate] of candidateByOrderId.entries()) {
       const targetRows = eligibleRowsByOrderId.get(orderId) ?? [];
-      const scopedTargetRows =
-        source === 'manual'
-          ? targetRows.filter(
-              (row) =>
-                String((row as AmazonEnrichedOrderListItem).resolvedShopName ?? (row as AmazonEnrichedOrderListItem).shopName ?? '').trim() ===
-                candidate.storeName,
-            )
-          : targetRows;
+      const scopedTargetRows = targetRows;
       if (!scopedTargetRows.length) {
         continue;
       }
