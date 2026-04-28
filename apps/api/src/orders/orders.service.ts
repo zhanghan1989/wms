@@ -353,6 +353,13 @@ interface BatchCreateAmazonManualOrdersPayload {
   items?: CreateAmazonManualOrderPayload[];
 }
 
+interface DeleteAmazonManualOrdersForXiyaPayload {
+  orderId?: string | null;
+  orderIds?: Array<string | number | null>;
+  bloggerCooperationId?: string | null;
+  blogger_cooperation_id?: string | null;
+}
+
 type ThirdPartyExportSource = 'rakuten' | 'amazon' | 'manual';
 
 interface ThirdPartyExportRowInput {
@@ -2325,6 +2332,7 @@ export class OrdersService {
     createdAt: string;
     requestedCount: number;
     createdCount: number;
+    updatedCount: number;
     rows: AmazonManualOrderBatchCreateRowResult[];
   }> {
     const rawItems = Array.isArray(payload?.items) ? payload.items : [];
@@ -2339,20 +2347,52 @@ export class OrdersService {
       rawItems.map((item, index) => this.buildAmazonManualOrderCreateData(item, `items[${index}]`)),
     );
 
-    const rows = await this.prisma.$transaction(async (tx) => {
-      const createdRows: ManualOrderRecordLike[] = [];
+    const result = await this.prisma.$transaction(async (tx) => {
+      const rows: ManualOrderRecordLike[] = [];
+      let createdCount = 0;
+      let updatedCount = 0;
       for (const data of createDataList) {
-        createdRows.push(await (tx as any).manualOrderRecord.create({ data }));
+        const orderId = String(data.orderId ?? '').trim();
+        const existing = orderId
+          ? ((await (tx as any).manualOrderRecord.findFirst({
+              where: { orderId },
+              orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+            })) as ManualOrderRecordLike | null)
+          : null;
+        if (existing) {
+          const updateData: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+          delete updateData.rowHash;
+          delete updateData.createdAt;
+          delete updateData.updatedAt;
+
+          const existingShipmentNo = String(existing.shipmentNo ?? '').trim();
+          if (existingShipmentNo) {
+            throw new ConflictException(`订单 ${orderId} 已经有运单号，请联系海外仓处理`);
+          }
+
+          rows.push(
+            (await (tx as any).manualOrderRecord.update({
+              where: { id: existing.id },
+              data: updateData,
+            })) as ManualOrderRecordLike,
+          );
+          updatedCount += 1;
+          continue;
+        }
+
+        rows.push((await (tx as any).manualOrderRecord.create({ data })) as ManualOrderRecordLike);
+        createdCount += 1;
       }
-      return createdRows;
+      return { rows, createdCount, updatedCount };
     });
 
-    await this.syncManualOrdersToXyjgBestEffort(rows);
-    const enrichedRows = await this.enrichManualOrderRows(rows);
+    await this.syncManualOrdersToXyjgBestEffort(result.rows);
+    const enrichedRows = await this.enrichManualOrderRows(result.rows);
     return {
       createdAt: new Date().toISOString(),
       requestedCount: rawItems.length,
-      createdCount: enrichedRows.length,
+      createdCount: result.createdCount,
+      updatedCount: result.updatedCount,
       rows: enrichedRows.map((row) => ({
         id: row.id.toString(),
         orderId: row.orderId,
@@ -2367,6 +2407,105 @@ export class OrdersService {
         dispatchMode: row.dispatchMode,
         shippingOrigin: row.shippingOrigin,
       })),
+    };
+  }
+
+  async deleteAmazonManualOrdersForXiya(
+    payload: DeleteAmazonManualOrdersForXiyaPayload,
+  ): Promise<{
+    requestedCount: number;
+    matchedCount: number;
+    deletedCount: number;
+    deletedOrderIds: string[];
+    notFoundOrderIds: string[];
+  }> {
+    const rawOrderIds = [payload?.orderId, ...(Array.isArray(payload?.orderIds) ? payload.orderIds : [])];
+    const orderIds = Array.from(
+      new Set(rawOrderIds.map((value) => String(value ?? '').trim()).filter((value) => value.length > 0)),
+    );
+    if (!orderIds.length) {
+      throw new BadRequestException('请提供要删除的手动订单号');
+    }
+    if (orderIds.length > 500) {
+      throw new BadRequestException('单次最多支持删除 500 个手动订单号');
+    }
+
+    const bloggerCooperationId = String(
+      payload?.bloggerCooperationId ?? payload?.blogger_cooperation_id ?? '',
+    ).trim();
+    const rows = (await (this.prisma as any).manualOrderRecord.findMany({
+      where: {
+        orderId: { in: orderIds },
+        ...(bloggerCooperationId ? { bloggerCooperationId } : {}),
+      },
+    })) as ManualOrderRecordLike[];
+    const matchedOrderIds = new Set(rows.map((row) => String(row.orderId ?? '').trim()).filter(Boolean));
+    const notFoundOrderIds = orderIds.filter((orderId) => !matchedOrderIds.has(orderId));
+    if (!rows.length) {
+      throw new NotFoundException('未找到可删除的手动订单');
+    }
+
+    const rowWithShipment = rows.find((row) => String(row.shipmentNo ?? '').trim());
+    if (rowWithShipment) {
+      throw new ConflictException(`订单 ${rowWithShipment.orderId ?? ''} 已经有运单号，请联系海外仓处理`);
+    }
+
+    const rowIds = rows.map((row) => row.id);
+    const pickingItems = await this.prisma.overseasPickingBatchItem.findMany({
+      where: {
+        source: 'manual',
+        sourceRecordId: { in: rowIds },
+      },
+      include: {
+        batch: {
+          select: {
+            id: true,
+            batchNo: true,
+            status: true,
+          },
+        },
+      },
+    });
+    const blockedPickingItem = pickingItems.find(
+      (item) => item.batch.status !== OVERSEAS_PICKING_BATCH_STATUS.CREATED,
+    );
+    if (blockedPickingItem) {
+      throw new ConflictException(
+        `订单 ${blockedPickingItem.orderId ?? ''} 已进入拣货批次 ${blockedPickingItem.batch.batchNo}，请联系海外仓处理`,
+      );
+    }
+
+    const deletedCount = await this.prisma.$transaction(async (tx) => {
+      const batchIds = Array.from(new Set(pickingItems.map((item) => item.batchId.toString()))).map((id) => BigInt(id));
+      if (pickingItems.length) {
+        await tx.overseasPickingBatchItem.deleteMany({
+          where: {
+            id: {
+              in: pickingItems.map((item) => item.id),
+            },
+          },
+        });
+        for (const batchId of batchIds) {
+          await this.recalculateOverseasPickingBatchAfterItemRemoval(tx, batchId);
+        }
+      }
+
+      const result = await (tx as any).manualOrderRecord.deleteMany({
+        where: {
+          id: {
+            in: rowIds,
+          },
+        },
+      });
+      return Number(result.count ?? 0);
+    });
+
+    return {
+      requestedCount: orderIds.length,
+      matchedCount: rows.length,
+      deletedCount,
+      deletedOrderIds: Array.from(matchedOrderIds),
+      notFoundOrderIds,
     };
   }
 

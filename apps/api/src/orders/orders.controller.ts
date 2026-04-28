@@ -191,6 +191,20 @@ export class OrdersController {
     return this.ordersService.batchCreateAmazonManualOrders(payload);
   }
 
+  @Post('manual/delete')
+  @UseGuards(ThirdPartyApiKeyGuard)
+  async deleteAmazonManualOrdersForXiya(
+    @Body()
+    payload: {
+      orderId?: string | null;
+      orderIds?: Array<string | number | null>;
+      bloggerCooperationId?: string | null;
+      blogger_cooperation_id?: string | null;
+    },
+  ): Promise<unknown> {
+    return this.ordersService.deleteAmazonManualOrdersForXiya(payload);
+  }
+
   @Get('overseas-warehouse')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async listOverseasWarehouse(@Query('limit') limit?: string): Promise<unknown[]> {
