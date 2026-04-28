@@ -5935,9 +5935,10 @@ export class OrdersService {
       return [];
     }
 
+    const relatedRows = await this.loadRelatedRakutenOrderRows(rows);
     const lookupProductIds = Array.from(
       new Set(
-        rows
+        relatedRows
           .flatMap((row) => [row.skuCode, row.setComponentSkuCode])
           .map((value) => String(value ?? '').trim())
           .filter((value) => value.length > 0),
@@ -5971,6 +5972,19 @@ export class OrdersService {
     const productNameByProductId = new Map(
       productRows.map((row) => [String(row.productId ?? '').trim(), row.productName ?? null]),
     );
+    const chinaFulfillmentOrderIds = this.resolveChinaFulfillmentOrderIds(
+      relatedRows.map((row) => {
+        const productId =
+          String(row.skuCode ?? '').trim() ||
+          String(row.setComponentSkuCode ?? '').trim() ||
+          null;
+        return {
+          orderId: row.orderId,
+          dispatchMode: row.dispatchMode,
+          availableStock: productId ? stockQtyByProductId.get(productId) ?? 0 : 0,
+        };
+      }),
+    );
 
     return rows.map((row) => {
       const productId =
@@ -5978,28 +5992,36 @@ export class OrdersService {
         String(row.setComponentSkuCode ?? '').trim() ||
         null;
       const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+      const orderId = String(row.orderId ?? '').trim();
+      const isChinaFulfillment =
+        String(row.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ||
+        (orderId ? chinaFulfillmentOrderIds.has(orderId) : availableStock <= 0);
 
       return {
         ...row,
         resolvedProductId: productId,
         resolvedProductName: productId ? productNameByProductId.get(productId) ?? null : null,
         availableStock,
-        fulfillmentMode: availableStock > 0 ? 'overseas_warehouse' : 'xiya_api',
+        fulfillmentMode: isChinaFulfillment ? 'xiya_api' : 'overseas_warehouse',
       };
     });
   }
 
-  private async enrichAmazonOrderRows(rows: AmazonOrderRecord[]): Promise<AmazonEnrichedOrderListItem[]> {
+  private async enrichAmazonOrderRows(
+    rows: AmazonOrderRecord[],
+    options: { includeRelatedRows?: boolean } = {},
+  ): Promise<AmazonEnrichedOrderListItem[]> {
     if (!rows.length) {
       return [];
     }
 
+    const relatedRows = options.includeRelatedRows === false ? rows : await this.loadRelatedAmazonOrderRows(rows);
     const productIdOverrideByRowId = new Map(
-      rows.map((row) => [row.id.toString(), this.getJsonObjectString(row.rawPayload, '产品ID')] as const),
+      relatedRows.map((row) => [row.id.toString(), this.getJsonObjectString(row.rawPayload, '产品ID')] as const),
     );
     const lookupCodes = Array.from(
       new Set(
-        rows
+        relatedRows
           .map((row) => String(row.sku ?? '').trim())
           .filter((value) => value.length > 0),
       ),
@@ -6062,6 +6084,24 @@ export class OrdersService {
     const productNameByProductId = new Map(
       productRows.map((row) => [String(row.productId ?? '').trim(), row.productName ?? null]),
     );
+    const resolveProductId = (row: AmazonOrderRecord): string | null => {
+      const skuCode = String(row.sku ?? '').trim();
+      const skuMeta =
+        skuMetaByCode.get(skuCode) ??
+        normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(skuCode)) ??
+        null;
+      return productIdOverrideByRowId.get(row.id.toString()) || skuMeta?.productId || null;
+    };
+    const chinaFulfillmentOrderIds = this.resolveChinaFulfillmentOrderIds(
+      relatedRows.map((row) => {
+        const productId = resolveProductId(row);
+        return {
+          orderId: row.orderId,
+          dispatchMode: row.dispatchMode,
+          availableStock: productId ? stockQtyByProductId.get(productId) ?? 0 : 0,
+        };
+      }),
+    );
 
     return rows.map((row) => {
       const skuCode = String(row.sku ?? '').trim();
@@ -6069,23 +6109,93 @@ export class OrdersService {
         skuMetaByCode.get(skuCode) ??
         normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(skuCode)) ??
         null;
-      const productId = productIdOverrideByRowId.get(row.id.toString()) || skuMeta?.productId || null;
+      const productId = resolveProductId(row);
       const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+      const orderId = String(row.orderId ?? '').trim();
+      const isChinaFulfillment =
+        String(row.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ||
+        (orderId ? chinaFulfillmentOrderIds.has(orderId) : availableStock <= 0);
 
       return {
         ...row,
+        shippingOrigin: isChinaFulfillment ? '中国発' : this.resolveAmazonShippingOriginFromDispatchMode(OVERSEAS_DISPATCH_MODE.OVERSEAS),
         resolvedProductId: productId,
         resolvedProductName: productId ? productNameByProductId.get(productId) ?? null : null,
         resolvedShopName: skuMeta?.shopName ?? null,
         availableStock,
-        fulfillmentMode: availableStock > 0 ? 'overseas_warehouse' : 'xiya_api',
+        fulfillmentMode: isChinaFulfillment ? 'xiya_api' : 'overseas_warehouse',
       };
     });
   }
 
   private async enrichManualOrderRows(rows: ManualOrderRecordLike[]): Promise<ManualEnrichedOrderListItem[]> {
-    const enriched = await this.enrichAmazonOrderRows(rows as unknown as AmazonOrderRecord[]);
+    const enriched = await this.enrichAmazonOrderRows(rows as unknown as AmazonOrderRecord[], {
+      includeRelatedRows: false,
+    });
     return enriched as unknown as ManualEnrichedOrderListItem[];
+  }
+
+  private async loadRelatedRakutenOrderRows(rows: RakutenOrderRecord[]): Promise<RakutenOrderRecord[]> {
+    const orderIds = this.extractNonEmptyOrderIds(rows);
+    if (!orderIds.length) {
+      return rows;
+    }
+    const relatedRows = await this.prisma.rakutenOrderRecord.findMany({
+      where: {
+        orderId: { in: orderIds },
+      },
+    });
+    return this.mergeRowsById(rows, relatedRows);
+  }
+
+  private async loadRelatedAmazonOrderRows(rows: AmazonOrderRecord[]): Promise<AmazonOrderRecord[]> {
+    const orderIds = this.extractNonEmptyOrderIds(rows);
+    if (!orderIds.length) {
+      return rows;
+    }
+    const relatedRows = await this.prisma.amazonOrderRecord.findMany({
+      where: {
+        orderId: { in: orderIds },
+      },
+    });
+    return this.mergeRowsById(rows, relatedRows);
+  }
+
+  private extractNonEmptyOrderIds(rows: Array<{ orderId: string | null }>): string[] {
+    return Array.from(
+      new Set(
+        rows
+          .map((row) => String(row.orderId ?? '').trim())
+          .filter((orderId) => orderId.length > 0),
+      ),
+    );
+  }
+
+  private mergeRowsById<Row extends { id: bigint }>(primaryRows: Row[], relatedRows: Row[]): Row[] {
+    const rowsById = new Map<string, Row>();
+    [...primaryRows, ...relatedRows].forEach((row) => {
+      rowsById.set(row.id.toString(), row);
+    });
+    return Array.from(rowsById.values());
+  }
+
+  private resolveChinaFulfillmentOrderIds(
+    rows: Array<{ orderId: string | null; dispatchMode?: string | null; availableStock: number }>,
+  ): Set<string> {
+    const orderIds = new Set<string>();
+    rows.forEach((row) => {
+      const orderId = String(row.orderId ?? '').trim();
+      if (!orderId) {
+        return;
+      }
+      if (
+        String(row.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ||
+        Number(row.availableStock ?? 0) <= 0
+      ) {
+        orderIds.add(orderId);
+      }
+    });
+    return orderIds;
   }
 
   private async importCsvBuffer(
@@ -6529,12 +6639,22 @@ export class OrdersService {
     const stockQtyByProductId = new Map(
       productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
     );
+    const chinaFulfillmentOrderIds = this.resolveChinaFulfillmentOrderIds(
+      uniqueRows.map((row) => {
+        const productId = resolveSkuMeta(row.sku)?.productId;
+        return {
+          orderId: row.orderId,
+          availableStock: productId ? stockQtyByProductId.get(productId) ?? 0 : 0,
+        };
+      }),
+    );
     const importedAt = new Date();
     const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = uniqueRows.map((row) => ({
       shippingOrigin: (() => {
         const productId = resolveSkuMeta(row.sku)?.productId;
         const stockQty = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
-        return stockQty > 0 ? '日本発' : '中国発';
+        const orderId = String(row.orderId ?? '').trim();
+        return (orderId ? chinaFulfillmentOrderIds.has(orderId) : stockQty <= 0) ? '中国発' : '日本発';
       })(),
       rowHash: row.rowHash,
       orderId: row.orderId,
