@@ -5935,10 +5935,9 @@ export class OrdersService {
       return [];
     }
 
-    const relatedRows = await this.loadRelatedRakutenOrderRows(rows);
     const lookupProductIds = Array.from(
       new Set(
-        relatedRows
+        rows
           .flatMap((row) => [row.skuCode, row.setComponentSkuCode])
           .map((value) => String(value ?? '').trim())
           .filter((value) => value.length > 0),
@@ -5972,19 +5971,6 @@ export class OrdersService {
     const productNameByProductId = new Map(
       productRows.map((row) => [String(row.productId ?? '').trim(), row.productName ?? null]),
     );
-    const chinaFulfillmentOrderIds = this.resolveChinaFulfillmentOrderIds(
-      relatedRows.map((row) => {
-        const productId =
-          String(row.skuCode ?? '').trim() ||
-          String(row.setComponentSkuCode ?? '').trim() ||
-          null;
-        return {
-          orderId: row.orderId,
-          dispatchMode: row.dispatchMode,
-          availableStock: productId ? stockQtyByProductId.get(productId) ?? 0 : 0,
-        };
-      }),
-    );
 
     return rows.map((row) => {
       const productId =
@@ -5992,17 +5978,13 @@ export class OrdersService {
         String(row.setComponentSkuCode ?? '').trim() ||
         null;
       const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
-      const orderId = String(row.orderId ?? '').trim();
-      const isChinaFulfillment =
-        String(row.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ||
-        (orderId ? chinaFulfillmentOrderIds.has(orderId) : availableStock <= 0);
 
       return {
         ...row,
         resolvedProductId: productId,
         resolvedProductName: productId ? productNameByProductId.get(productId) ?? null : null,
         availableStock,
-        fulfillmentMode: isChinaFulfillment ? 'xiya_api' : 'overseas_warehouse',
+        fulfillmentMode: availableStock > 0 ? 'overseas_warehouse' : 'xiya_api',
       };
     });
   }
@@ -6133,19 +6115,6 @@ export class OrdersService {
       includeRelatedRows: false,
     });
     return enriched as unknown as ManualEnrichedOrderListItem[];
-  }
-
-  private async loadRelatedRakutenOrderRows(rows: RakutenOrderRecord[]): Promise<RakutenOrderRecord[]> {
-    const orderIds = this.extractNonEmptyOrderIds(rows);
-    if (!orderIds.length) {
-      return rows;
-    }
-    const relatedRows = await this.prisma.rakutenOrderRecord.findMany({
-      where: {
-        orderId: { in: orderIds },
-      },
-    });
-    return this.mergeRowsById(rows, relatedRows);
   }
 
   private async loadRelatedAmazonOrderRows(rows: AmazonOrderRecord[]): Promise<AmazonOrderRecord[]> {
