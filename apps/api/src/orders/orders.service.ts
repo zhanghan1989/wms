@@ -300,13 +300,23 @@ interface RakutenShipmentConfirmationFileResult {
   rowCount: number;
 }
 
+interface ManualOrderXyjgFields {
+  bloggerCooperationId?: string | null;
+  xyjgPushStatus?: string | null;
+  xyjgPushMode?: string | null;
+  xyjgPushTrackingNo?: string | null;
+  xyjgPushedAt?: Date | null;
+  xyjgPushError?: string | null;
+  xyjgPushResponse?: Prisma.JsonValue | null;
+}
+
 interface AmazonOrderListItem extends AmazonOrderRecord {
   resolvedProductId: string | null;
   resolvedProductName: string | null;
   resolvedShopName: string | null;
 }
-type ManualOrderRecordLike = AmazonOrderRecord;
-type ManualOrderListItem = AmazonOrderListItem;
+type ManualOrderRecordLike = AmazonOrderRecord & ManualOrderXyjgFields;
+type ManualOrderListItem = AmazonOrderListItem & ManualOrderXyjgFields;
 
 type AmazonFulfillmentMode = 'overseas_warehouse' | 'xiya_api';
 
@@ -314,7 +324,7 @@ interface AmazonEnrichedOrderListItem extends AmazonOrderListItem {
   availableStock: number;
   fulfillmentMode: AmazonFulfillmentMode;
 }
-type ManualEnrichedOrderListItem = AmazonEnrichedOrderListItem;
+type ManualEnrichedOrderListItem = AmazonEnrichedOrderListItem & ManualOrderXyjgFields;
 
 interface UpdateAmazonOrderPayload {
   orderId?: string | null;
@@ -334,6 +344,8 @@ interface UpdateAmazonOrderPayload {
   shipAddress3?: string | null;
   shipmentCompany?: string | null;
   shipmentNo?: string | null;
+  bloggerCooperationId?: string | null;
+  blogger_cooperation_id?: string | null;
 }
 
 interface CreateAmazonManualOrderPayload extends UpdateAmazonOrderPayload {}
@@ -471,6 +483,7 @@ interface AmazonManualOrderBatchCreateRowResult {
   quantityPurchased: number | null;
   mallName: string | null;
   shopName: string | null;
+  bloggerCooperationId: string | null;
   dispatchMode: string | null;
   shippingOrigin: string | null;
 }
@@ -744,6 +757,16 @@ const XIYA_LOGISTICS_EXPORT_URL = 'http://103.236.55.93/api/external/logistics/r
 const XIYA_LOGISTICS_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
 const XIYA_LOGISTICS_SYNC_DAYS = 5;
 const XIYA_TRACKING_SYNC_CRON = '0 0 17 * * *';
+const XYJG_BLOGGER_STATUS_PUSH_URL =
+  process.env.XYJG_BLOGGER_STATUS_PUSH_URL || 'http://103.236.55.93/api/external/push';
+const XYJG_PUSH_STATUS = {
+  SYNCED: 'synced',
+  FAILED: 'failed',
+} as const;
+const XYJG_PUSH_MODE = {
+  CHINA_SHIP: 'china_ship',
+  LOGISTICS_ORDER: 'logistics_order',
+} as const;
 const XIYA_LOGISTICS_STORE_SOURCE: Record<string, ThirdPartyExportSource> = {
   DGAZ乐天日本: 'rakuten',
   DGAZ亚马逊日本站: 'amazon',
@@ -1462,6 +1485,7 @@ export class OrdersService {
       return this.recalculateOverseasPickingBatchAfterItemRemoval(tx, batchId);
     });
 
+    await this.syncManualOrderIdsToXyjgBestEffort(manualIds);
     return {
       success: true,
       productId,
@@ -1607,6 +1631,9 @@ export class OrdersService {
       return this.recalculateOverseasPickingBatchAfterItemRemoval(tx, batchId);
     });
 
+    if (item.source === 'manual') {
+      await this.syncManualOrderIdsToXyjgBestEffort([item.sourceRecordId]);
+    }
     return {
       success: true,
       itemId: item.id.toString(),
@@ -2197,6 +2224,7 @@ export class OrdersService {
           shipmentNoRegisteredAt: shipmentNo ? new Date() : null,
         },
       });
+      await this.syncManualOrdersToXyjgBestEffort([updated as ManualOrderRecordLike]);
       const [enriched] = await this.enrichManualOrderRows([updated as ManualOrderRecordLike]);
       return enriched;
     }
@@ -2211,6 +2239,11 @@ export class OrdersService {
     const productName = this.normalizeEditableText(payload.productName, '商品名', 5000);
     const mallName = this.normalizeEditableText(payload.mallName, '平台', 128);
     const shopName = this.normalizeEditableText(payload.shopName, '店铺', 128);
+    const bloggerCooperationId = this.normalizeEditableText(
+      payload.bloggerCooperationId ?? payload.blogger_cooperation_id,
+      'bloggerCooperationId',
+      128,
+    );
     const recipientName = this.normalizeEditableText(payload.recipientName, '收件人', 255);
     const buyerPhoneNumber = this.normalizeEditableText(payload.buyerPhoneNumber, '电话', 64);
     const shipPostalCode = this.normalizeEditableText(payload.shipPostalCode, '邮编', 32);
@@ -2237,6 +2270,7 @@ export class OrdersService {
         productName,
         mallName,
         shopName,
+        bloggerCooperationId,
         recipientName,
         buyerPhoneNumber,
         shipPostalCode,
@@ -2253,6 +2287,8 @@ export class OrdersService {
           'order-id': orderId,
           'order-item-id': orderItemId,
           sku,
+          bloggerCooperationId,
+          blogger_cooperation_id: bloggerCooperationId,
           产品ID: productId,
           'product-name': productName,
           'quantity-purchased': quantityPurchased === null ? null : String(quantityPurchased),
@@ -2267,6 +2303,7 @@ export class OrdersService {
       },
     });
 
+    await this.syncManualOrdersToXyjgBestEffort([updated as ManualOrderRecordLike]);
     const [enriched] = await this.enrichManualOrderRows([updated as ManualOrderRecordLike]);
     return enriched;
   }
@@ -2276,6 +2313,7 @@ export class OrdersService {
       data: await this.buildAmazonManualOrderCreateData(payload),
     });
 
+    await this.syncManualOrdersToXyjgBestEffort([row as ManualOrderRecordLike]);
     const [enriched] = await this.enrichManualOrderRows([row as ManualOrderRecordLike]);
     return enriched;
   }
@@ -2308,6 +2346,7 @@ export class OrdersService {
       return createdRows;
     });
 
+    await this.syncManualOrdersToXyjgBestEffort(rows);
     const enrichedRows = await this.enrichManualOrderRows(rows);
     return {
       createdAt: new Date().toISOString(),
@@ -2323,6 +2362,7 @@ export class OrdersService {
         quantityPurchased: row.quantityPurchased,
         mallName: row.mallName,
         shopName: row.resolvedShopName || row.shopName,
+        bloggerCooperationId: row.bloggerCooperationId ?? null,
         dispatchMode: row.dispatchMode,
         shippingOrigin: row.shippingOrigin,
       })),
@@ -2642,6 +2682,7 @@ export class OrdersService {
           dispatchMode: OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
         },
       });
+      await this.syncManualOrderIdsToXyjgBestEffort([id]);
     }
     return {
       success: true,
@@ -2817,6 +2858,9 @@ export class OrdersService {
           }),
         ...enrichedManualRows
           .filter((row) => {
+            if (this.isManualOrderHandledByXyjg(row)) {
+              return false;
+            }
             const dispatchMode = String(row.dispatchMode ?? '').trim();
             if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
               return true;
@@ -4248,6 +4292,7 @@ export class OrdersService {
     await this.ensureYamatoBatchDir(batch.id.toString());
     await writeFile(pdfPath, mergedPdfBuffer);
 
+    const manualOrderIdsForXyjg = new Set<bigint>();
     await this.prisma.$transaction(async (tx) => {
       await tx.yamatoShipmentBatch.update({
         where: { id: batch.id },
@@ -4274,7 +4319,7 @@ export class OrdersService {
           },
         });
 
-        await this.writeYamatoTrackingNoBackToOrders(
+        const updatedManualIds = await this.writeYamatoTrackingNoBackToOrders(
           tx,
           page.orderId,
           trackingNo,
@@ -4283,6 +4328,7 @@ export class OrdersService {
             productIds: this.getBatchPageProductIds(page),
           },
         );
+        updatedManualIds.forEach((id) => manualOrderIdsForXyjg.add(id));
 
         if (batch.pickingBatchId && String(page.orderId ?? '').trim()) {
           await tx.overseasPickingBatchItem.updateMany({
@@ -4302,6 +4348,7 @@ export class OrdersService {
       }
     });
 
+    await this.syncManualOrderIdsToXyjgBestEffort(Array.from(manualOrderIdsForXyjg));
     return {
       id: batch.id.toString(),
       status: YAMATO_BATCH_STATUS.PDF_READY,
@@ -4316,7 +4363,7 @@ export class OrdersService {
     orderIdRaw: string | null | undefined,
     trackingNoRaw: string | null | undefined,
     options: { pickingBatchId?: bigint | null; productIds?: string[] } = {},
-  ): Promise<void> {
+  ): Promise<bigint[]> {
     const orderId = String(orderIdRaw ?? '').trim();
     const trackingNo = String(trackingNoRaw ?? '').trim();
     if (!orderId || !trackingNo) {
@@ -4385,7 +4432,7 @@ export class OrdersService {
       if (rakutenResult.count + amazonResult.count + Number(manualResult.count ?? 0) <= 0) {
         throw new NotFoundException(`未找到可回写快递单号的订单：${orderId}`);
       }
-      return;
+      return Number(manualResult.count ?? 0) > 0 ? manualIds : [];
     }
 
     const japaneseDispatchFilter = {
@@ -4414,21 +4461,33 @@ export class OrdersService {
         shipmentNoRegisteredAt: registeredAt,
       },
     });
-    const manualResult = await (tx as any).manualOrderRecord.updateMany({
+    const manualRows = (await (tx as any).manualOrderRecord.findMany({
       where: {
         orderId,
         ...japaneseDispatchFilter,
       },
-      data: {
-        shipmentCompany: 'Yamato',
-        shipmentNo: trackingNo,
-        shipmentNoRegisteredAt: registeredAt,
-      },
-    });
+      select: { id: true },
+    })) as Array<{ id: bigint }>;
+    const manualIds = manualRows.map((row) => row.id);
+    const manualResult = manualIds.length
+      ? await (tx as any).manualOrderRecord.updateMany({
+          where: {
+            id: {
+              in: manualIds,
+            },
+          },
+          data: {
+            shipmentCompany: 'Yamato',
+            shipmentNo: trackingNo,
+            shipmentNoRegisteredAt: registeredAt,
+          },
+        })
+      : { count: 0 };
 
     if (rakutenResult.count + amazonResult.count + Number(manualResult.count ?? 0) <= 0) {
       throw new NotFoundException(`未找到可回写快递单号的订单：${orderId}`);
     }
+    return Number(manualResult.count ?? 0) > 0 ? manualIds : [];
   }
 
   private getYamatoUploadFileName(batchId: bigint, files: YamatoShipmentPdfUploadFile[]): string {
@@ -5535,6 +5594,7 @@ export class OrdersService {
           row: this.toAmazonThirdPartyRow(row),
         })),
       ...enrichedManualRows
+        .filter((row) => !this.isManualOrderHandledByXyjg(row))
         .filter((row) => this.shouldExportOrderToThirdParty('manual', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs))
         .map((row) => ({
           createdAt: row.createdAt,
@@ -5648,6 +5708,7 @@ export class OrdersService {
       )
       .map((row) => row.id);
     const eligibleManualIds = enrichedManualRows
+      .filter((row) => !this.isManualOrderHandledByXyjg(row))
       .filter((row) =>
         this.shouldExportOrderToThirdParty('manual', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs),
       )
@@ -5765,6 +5826,160 @@ export class OrdersService {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`daily Xiya tracking sync failed: ${message}`);
     }
+  }
+
+  private async syncManualOrderIdsToXyjgBestEffort(ids: Array<bigint | number | string>): Promise<void> {
+    const normalizedIds = Array.from(
+      new Set(
+        ids
+          .map((id) => {
+            try {
+              return BigInt(id);
+            } catch {
+              return null;
+            }
+          })
+          .filter((id): id is bigint => id !== null),
+      ),
+    );
+    if (!normalizedIds.length) {
+      return;
+    }
+
+    const rows = (await (this.prisma as any).manualOrderRecord.findMany({
+      where: {
+        id: {
+          in: normalizedIds,
+        },
+      },
+    })) as ManualOrderRecordLike[];
+    await this.syncManualOrdersToXyjgBestEffort(rows);
+  }
+
+  private async syncManualOrdersToXyjgBestEffort(rows: ManualOrderRecordLike[]): Promise<void> {
+    for (const row of rows) {
+      await this.syncManualOrderToXyjgBestEffort(row);
+    }
+  }
+
+  private async syncManualOrderToXyjgBestEffort(row: ManualOrderRecordLike): Promise<void> {
+    const bloggerCooperationId = this.resolveManualOrderBloggerCooperationId(row);
+    if (!bloggerCooperationId) {
+      return;
+    }
+
+    const dispatchMode = String(row.dispatchMode ?? '').trim();
+    const trackingNo = String(row.shipmentNo ?? '').trim();
+    const pushMode =
+      dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING
+        ? XYJG_PUSH_MODE.CHINA_SHIP
+        : trackingNo
+          ? XYJG_PUSH_MODE.LOGISTICS_ORDER
+          : null;
+    if (!pushMode) {
+      return;
+    }
+
+    const pushTrackingNo = pushMode === XYJG_PUSH_MODE.LOGISTICS_ORDER ? trackingNo : null;
+    if (
+      String(row.xyjgPushStatus ?? '') === XYJG_PUSH_STATUS.SYNCED &&
+      String(row.xyjgPushMode ?? '') === pushMode &&
+      String(row.xyjgPushTrackingNo ?? '') === String(pushTrackingNo ?? '')
+    ) {
+      return;
+    }
+
+    const payload = {
+      blogger_cooperation_id: bloggerCooperationId,
+      switch_to_china_ship: pushMode === XYJG_PUSH_MODE.CHINA_SHIP,
+      ...(pushTrackingNo ? { tracking_number: pushTrackingNo } : {}),
+    };
+
+    try {
+      const response = await fetch(XYJG_BLOGGER_STATUS_PUSH_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const responsePayload = await this.readExternalJsonResponse(response);
+      const responseCode =
+        responsePayload && typeof responsePayload === 'object'
+          ? Number((responsePayload as Record<string, unknown>).code)
+          : NaN;
+      if (!response.ok || responseCode !== 200) {
+        const message =
+          responsePayload && typeof responsePayload === 'object'
+            ? String((responsePayload as Record<string, unknown>).message ?? '')
+            : '';
+        throw new Error(message || `HTTP ${response.status}`);
+      }
+
+      await (this.prisma as any).manualOrderRecord.update({
+        where: { id: row.id },
+        data: {
+          xyjgPushStatus: XYJG_PUSH_STATUS.SYNCED,
+          xyjgPushMode: pushMode,
+          xyjgPushTrackingNo: pushTrackingNo,
+          xyjgPushedAt: new Date(),
+          xyjgPushError: null,
+          xyjgPushResponse: responsePayload as Prisma.InputJsonValue,
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`XYJG blogger status push failed for manual order ${row.id.toString()}: ${message}`);
+      await (this.prisma as any).manualOrderRecord.update({
+        where: { id: row.id },
+        data: {
+          xyjgPushStatus: XYJG_PUSH_STATUS.FAILED,
+          xyjgPushMode: pushMode,
+          xyjgPushTrackingNo: pushTrackingNo,
+          xyjgPushedAt: null,
+          xyjgPushError: this.truncateText(message, 2000),
+        },
+      });
+    }
+  }
+
+  private resolveManualOrderBloggerCooperationId(row: ManualOrderRecordLike): string | null {
+    const direct = String(row.bloggerCooperationId ?? '').trim();
+    if (direct) {
+      return direct;
+    }
+    const fromRawPayload =
+      this.getJsonObjectString(row.rawPayload, 'bloggerCooperationId') ||
+      this.getJsonObjectString(row.rawPayload, 'blogger_cooperation_id') ||
+      this.getJsonObjectString(row.rawPayload, '博主合作单ID');
+    if (fromRawPayload) {
+      return fromRawPayload;
+    }
+    const orderId = String(row.orderId ?? '').trim();
+    return /^XYJG-COOP-\d+-\d+$/i.test(orderId) ? orderId : null;
+  }
+
+  private isManualOrderHandledByXyjg(row: ManualOrderRecordLike): boolean {
+    return Boolean(this.resolveManualOrderBloggerCooperationId(row));
+  }
+
+  private async readExternalJsonResponse(response: Response): Promise<unknown> {
+    const text = await response.text();
+    if (!text) {
+      return null;
+    }
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return {
+        raw: this.truncateText(text, 2000),
+      };
+    }
+  }
+
+  private truncateText(value: string, maxLength: number): string {
+    return value.length > maxLength ? value.slice(0, maxLength) : value;
   }
 
   private async fetchXiyaLogisticsRows(): Promise<XiyaLogisticsRow[]> {
@@ -5922,9 +6137,11 @@ export class OrdersService {
       })),
     );
 
-    const eligibleRows = enrichedRows.filter((row) =>
-      this.shouldExportOrderToThirdParty(source, row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs),
-    );
+    const eligibleRows = enrichedRows
+      .filter((row) => source !== 'manual' || !this.isManualOrderHandledByXyjg(row as ManualEnrichedOrderListItem))
+      .filter((row) =>
+        this.shouldExportOrderToThirdParty(source, row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs),
+      );
     const eligibleRowsByOrderId = new Map<string, typeof eligibleRows>();
     eligibleRows.forEach((row) => {
       const orderId = String(row.orderId ?? '').trim();
@@ -5933,6 +6150,7 @@ export class OrdersService {
     });
 
     let updatedCount = 0;
+    const updatedManualIds: bigint[] = [];
     for (const [orderId, candidate] of candidateByOrderId.entries()) {
       const targetRows = eligibleRowsByOrderId.get(orderId) ?? [];
       const scopedTargetRows =
@@ -5986,8 +6204,14 @@ export class OrdersService {
                 },
               });
       updatedCount += Number(updateResult.count ?? 0);
+      if (source === 'manual' && Number(updateResult.count ?? 0) > 0) {
+        updatedManualIds.push(...ids);
+      }
     }
 
+    if (source === 'manual') {
+      await this.syncManualOrderIdsToXyjgBestEffort(updatedManualIds);
+    }
     const matchedOrderIds = new Set(eligibleRows.map((row) => String(row.orderId ?? '').trim()).filter(Boolean));
     return {
       updatedCount,
@@ -7058,7 +7282,7 @@ export class OrdersService {
   private async buildAmazonManualOrderCreateData(
     payload: CreateAmazonManualOrderPayload,
     fieldPrefix = '',
-  ): Promise<Prisma.AmazonOrderRecordCreateInput> {
+  ): Promise<Prisma.ManualOrderRecordCreateInput> {
     const withField = (fieldName: string) => (fieldPrefix ? `${fieldPrefix}.${fieldName}` : fieldName);
     const orderId = this.requireEditableText(payload.orderId, withField('orderId'), 64);
     const sku = this.normalizeEditableText(payload.sku, withField('sku'), 128);
@@ -7077,6 +7301,11 @@ export class OrdersService {
       `manual-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const mallName = this.normalizeEditableText(payload.mallName, withField('mallName'), 128);
     const shopName = this.normalizeEditableText(payload.shopName, withField('shopName'), 128);
+    const bloggerCooperationId = this.normalizeEditableText(
+      payload.bloggerCooperationId ?? payload.blogger_cooperation_id,
+      withField('bloggerCooperationId'),
+      128,
+    );
     const recipientName = this.normalizeEditableText(payload.recipientName, withField('recipientName'), 255);
     const buyerPhoneNumber = this.normalizeEditableText(payload.buyerPhoneNumber, withField('buyerPhoneNumber'), 64);
     const shipPostalCode = this.normalizeEditableText(payload.shipPostalCode, withField('shipPostalCode'), 32);
@@ -7124,6 +7353,7 @@ export class OrdersService {
       shipAddress3,
       mallName,
       shopName,
+      bloggerCooperationId,
       shippingOrigin: this.resolveAmazonShippingOriginFromDispatchMode(dispatchMode),
       dispatchMode,
       shipmentCompany,
@@ -7131,7 +7361,10 @@ export class OrdersService {
       shipmentNoRegisteredAt: this.resolveEditedShipmentRegisteredAt(null, null, shipmentNo),
       sourceFileName: AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME,
       sourceFilePath: AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH,
-      rawPayload,
+      rawPayload: this.mergeRawPayload(rawPayload, {
+        bloggerCooperationId,
+        blogger_cooperation_id: bloggerCooperationId,
+      }),
       csvImportedAt: now,
     };
   }
@@ -7198,7 +7431,7 @@ export class OrdersService {
   }
 
   private mergeRawPayload(
-    rawPayload: Prisma.JsonValue | null,
+    rawPayload: Prisma.JsonValue | Prisma.InputJsonObject | null,
     updates: Record<string, string | null>,
   ): Prisma.InputJsonObject {
     const base =

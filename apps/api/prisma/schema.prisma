@@ -730,11 +730,18 @@ model ManualOrderRecord {
   vergeOfLateShipment   Boolean? @map("verge_of_late_shipment")
   mallName              String?  @map("mall_name") @db.VarChar(128)
   shopName              String?  @map("shop_name") @db.VarChar(128)
+  bloggerCooperationId  String?  @map("blogger_cooperation_id") @db.VarChar(128)
   shipmentCompany       String?  @map("shipment_company") @db.VarChar(128)
   shipmentNo            String?  @map("shipment_no") @db.VarChar(128)
   shipmentNoRegisteredAt DateTime? @map("shipment_no_registered_at")
   dispatchMode          String?  @map("dispatch_mode") @db.VarChar(32)
   xiyaExportedAt        DateTime? @map("xiya_exported_at")
+  xyjgPushStatus        String?  @map("xyjg_push_status") @db.VarChar(32)
+  xyjgPushMode          String?  @map("xyjg_push_mode") @db.VarChar(32)
+  xyjgPushTrackingNo    String?  @map("xyjg_push_tracking_no") @db.VarChar(128)
+  xyjgPushedAt          DateTime? @map("xyjg_pushed_at")
+  xyjgPushError         String?  @map("xyjg_push_error") @db.Text
+  xyjgPushResponse      Json?    @map("xyjg_push_response")
   sourceFileName        String?  @map("source_file_name") @db.VarChar(255)
   sourceFilePath        String?  @map("source_file_path") @db.VarChar(512)
   rawPayload            Json?    @map("raw_payload")
@@ -748,6 +755,8 @@ model ManualOrderRecord {
   @@index([csvImportedAt])
   @@index([createdAt])
   @@index([xiyaExportedAt])
+  @@index([bloggerCooperationId])
+  @@index([xyjgPushStatus])
   @@map("manual_order_records")
 }
 

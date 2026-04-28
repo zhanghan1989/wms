@@ -114,6 +114,8 @@ export class OrdersController {
       productName?: string | null;
       mallName?: string | null;
       shopName?: string | null;
+      bloggerCooperationId?: string | null;
+      blogger_cooperation_id?: string | null;
       productId?: string | null;
       recipientName?: string | null;
       buyerPhoneNumber?: string | null;
@@ -142,6 +144,8 @@ export class OrdersController {
       productName?: string | null;
       mallName?: string | null;
       shopName?: string | null;
+      bloggerCooperationId?: string | null;
+      blogger_cooperation_id?: string | null;
       recipientName?: string | null;
       buyerPhoneNumber?: string | null;
       shipPostalCode?: string | null;
@@ -170,6 +174,8 @@ export class OrdersController {
         productName?: string | null;
         mallName?: string | null;
         shopName?: string | null;
+        bloggerCooperationId?: string | null;
+        blogger_cooperation_id?: string | null;
         recipientName?: string | null;
         buyerPhoneNumber?: string | null;
         shipPostalCode?: string | null;
