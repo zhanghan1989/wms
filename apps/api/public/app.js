@@ -10317,7 +10317,7 @@ async function moveProductBetweenBoxes({ productId, oldBoxCode, newBoxCode }) {
   return request("/inventory/move-product-between-boxes", {
     method: "POST",
     body: JSON.stringify({
-      productId: normalizedProductId,
+      productId,
       fromBoxCode: oldBoxCode,
       toBoxCode: newBoxCode,
     }),
