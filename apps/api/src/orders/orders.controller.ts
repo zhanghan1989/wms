@@ -455,8 +455,8 @@ export class OrdersController {
     @Body() payload: { days?: string | number },
     @Res() res: Response,
   ): Promise<void> {
-    const file = await this.ordersService.buildAmazonShipmentConfirmationTxtZip(payload);
-    res.setHeader('Content-Type', 'application/zip');
+    const file = await this.ordersService.buildAmazonShipmentConfirmationTxt(payload);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
@@ -464,7 +464,7 @@ export class OrdersController {
     res.setHeader('Content-Length', String(file.content.length));
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Amazon-Shipment-Confirmation-Row-Count', String(file.rowCount));
-    res.setHeader('X-Amazon-Shipment-Confirmation-File-Count', String(file.fileCount ?? 0));
+    res.setHeader('X-Amazon-Shipment-Confirmation-File-Count', String(file.fileCount ?? 1));
     res.status(200).send(file.content);
   }
 

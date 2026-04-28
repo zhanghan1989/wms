@@ -10004,7 +10004,7 @@ async function deleteManualOrders(ids) {
   });
 }
 
-async function downloadAmazonShipmentConfirmationZip(days) {
+async function downloadAmazonShipmentConfirmationTxt(days) {
   const response = await fetchAuthorizedResponse("/orders/amazon/shipment-confirmation-txt", {
     method: "POST",
     body: JSON.stringify({ days }),
@@ -10013,7 +10013,7 @@ async function downloadAmazonShipmentConfirmationZip(days) {
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = href;
-  link.download = resolveDownloadFileName(response, `amazon_shipment_confirmation_${formatDateForFilename(new Date())}.zip`);
+  link.download = resolveDownloadFileName(response, `amazon_shipment_confirmation_${formatDateForFilename(new Date())}.txt`);
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -11294,7 +11294,7 @@ function bindForms() {
       const currentButton = event.currentTarget;
       try {
         await withBusyButton(currentButton, "下载中...", async () => {
-          const fileName = await downloadAmazonShipmentConfirmationZip(currentButton.dataset.days || "1");
+          const fileName = await downloadAmazonShipmentConfirmationTxt(currentButton.dataset.days || "1");
           showToast(`已下载 ${fileName}`);
         });
       } catch (error) {
