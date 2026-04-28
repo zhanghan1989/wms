@@ -587,7 +587,15 @@ interface OverseasPickingBatchItemSnapshot {
   availableStockSnapshot: number;
   shopName: string | null;
   shippingName: string | null;
+  pickingPlanSnapshot?: OverseasPickingPlanSnapshotItem[];
 }
+
+type OverseasPickingPlanSnapshotItem = {
+  shelfCode: string | null;
+  boxCode: string | null;
+  boxQty: number;
+  pickQty: number;
+};
 
 interface YamatoImportFileResult {
   fileName: string;
@@ -1020,6 +1028,7 @@ export class OrdersService {
         requestedQty: number;
         actualQty: number;
         locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number }>;
+        pickPlans: OverseasPickingPlanSnapshotItem[];
       }
     >();
 
@@ -1043,10 +1052,12 @@ export class OrdersService {
             requestedQty: 0,
             actualQty: 0,
             locations: locationMeta?.locations ?? [],
+            pickPlans: [],
           };
 
         aggregate.requestedQty += requestedQty;
         aggregate.actualQty += pickedQty;
+        aggregate.pickPlans.push(...this.parseOverseasPickingPlanSnapshot(item.pickingPlanSnapshot));
         groupedItems.set(item.productId, aggregate);
       });
 
@@ -1054,7 +1065,9 @@ export class OrdersService {
       .sort((left, right) => left.sortKey.localeCompare(right.sortKey, 'zh-Hans-CN'))
       .map((item) => {
         const targetLocation = resolvePickingLocation(item.locations, item.actualQty, item.requestedQty);
-        const pickPlans = buildPickingPlans(item.locations, item.requestedQty);
+        const pickPlans = item.pickPlans.length
+          ? this.mergeOverseasPickingPlanSnapshots(item.pickPlans)
+          : buildPickingPlans(item.locations, item.requestedQty);
         return {
           productId: item.productId,
           productName: item.productName,
@@ -1175,6 +1188,7 @@ export class OrdersService {
     operatorId?: bigint,
   ): Promise<OverseasPickingBatchCreateResult> {
     const snapshots = await this.collectOverseasPickingBatchItemSnapshots(payload?.items);
+    await this.attachOverseasPickingPlanSnapshots(snapshots);
     const activeDuplicates = await this.findActiveOverseasPickingBatchDuplicates(snapshots);
     if (activeDuplicates.length) {
       throw new ConflictException(
@@ -1206,6 +1220,7 @@ export class OrdersService {
             productId: item.productId,
             requestedQty: item.requestedQty,
             availableStockSnapshot: item.availableStockSnapshot,
+            pickingPlanSnapshot: item.pickingPlanSnapshot ?? [],
             shopName: item.shopName,
             shippingName: item.shippingName,
           })),
@@ -3477,6 +3492,62 @@ export class OrdersService {
     );
   }
 
+  private async attachOverseasPickingPlanSnapshots(
+    snapshots: OverseasPickingBatchItemSnapshot[],
+  ): Promise<void> {
+    const locationMetaByProductId = await this.loadOverseasPickingBatchLocationMeta(
+      snapshots.map((item) => item.productId),
+    );
+    const remainingLocationsByProductId = new Map<
+      string,
+      Array<{ shelfCode: string | null; boxCode: string | null; qty: number; originalQty: number }>
+    >();
+
+    snapshots.forEach((snapshot) => {
+      const productId = String(snapshot.productId ?? '').trim();
+      if (!productId || remainingLocationsByProductId.has(productId)) {
+        return;
+      }
+      const locations = locationMetaByProductId.get(productId)?.locations ?? [];
+      remainingLocationsByProductId.set(
+        productId,
+        locations.map((location) => ({
+          shelfCode: location.shelfCode ?? null,
+          boxCode: location.boxCode ?? null,
+          qty: Number(location.qty ?? 0),
+          originalQty: Number(location.qty ?? 0),
+        })),
+      );
+    });
+
+    snapshots.forEach((snapshot) => {
+      const locations = remainingLocationsByProductId.get(snapshot.productId) ?? [];
+      let remainingQty = Math.max(Number(snapshot.requestedQty ?? 0), 0);
+      const plans: OverseasPickingPlanSnapshotItem[] = [];
+
+      for (const location of locations) {
+        if (remainingQty <= 0) {
+          break;
+        }
+        const currentQty = Number(location.qty ?? 0);
+        if (currentQty <= 0) {
+          continue;
+        }
+        const pickQty = Math.min(currentQty, remainingQty);
+        plans.push({
+          shelfCode: location.shelfCode ?? null,
+          boxCode: location.boxCode ?? null,
+          boxQty: Number(location.originalQty ?? currentQty),
+          pickQty,
+        });
+        location.qty = currentQty - pickQty;
+        remainingQty -= pickQty;
+      }
+
+      snapshot.pickingPlanSnapshot = plans;
+    });
+  }
+
   private async loadActiveOverseasPickingBatchRefs(
     refs: Array<{ source: 'rakuten' | 'amazon' | 'manual'; sourceRecordId: bigint }>,
   ): Promise<Set<string>> {
@@ -3694,6 +3765,48 @@ export class OrdersService {
     }
 
     return allocations;
+  }
+
+  private parseOverseasPickingPlanSnapshot(value: unknown): OverseasPickingPlanSnapshotItem[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+        const row = item as Record<string, unknown>;
+        const boxQty = Number(row.boxQty ?? 0);
+        const pickQty = Number(row.pickQty ?? 0);
+        if (!Number.isFinite(boxQty) || boxQty <= 0 || !Number.isFinite(pickQty) || pickQty < 0) {
+          return null;
+        }
+        return {
+          shelfCode: String(row.shelfCode ?? '').trim() || null,
+          boxCode: String(row.boxCode ?? '').trim() || null,
+          boxQty,
+          pickQty,
+        };
+      })
+      .filter((item): item is OverseasPickingPlanSnapshotItem => Boolean(item));
+  }
+
+  private mergeOverseasPickingPlanSnapshots(
+    plans: OverseasPickingPlanSnapshotItem[],
+  ): OverseasPickingPlanSnapshotItem[] {
+    const mergedByLocation = new Map<string, OverseasPickingPlanSnapshotItem>();
+    plans.forEach((plan) => {
+      const key = `${plan.shelfCode ?? ''}\u001f${plan.boxCode ?? ''}`;
+      const current = mergedByLocation.get(key);
+      if (!current) {
+        mergedByLocation.set(key, { ...plan });
+        return;
+      }
+      current.boxQty = Math.max(Number(current.boxQty ?? 0), Number(plan.boxQty ?? 0));
+      current.pickQty += Number(plan.pickQty ?? 0);
+    });
+    return Array.from(mergedByLocation.values());
   }
 
   private async buildYamatoExportItemsFromPickingBatchItems(
@@ -5245,10 +5358,10 @@ export class OrdersService {
     if (!chinaRecordIds?.size) {
       return '';
     }
-    if (chinaRecordIds.size > 1 || !chinaRecordIds.has(row.id.toString())) {
-      return '中国発あり';
+    if (chinaRecordIds.has(row.id.toString())) {
+      return '中国発';
     }
-    return '';
+    return '中国発あり';
   }
 
   private resolveRakutenShipmentCarrierCode(row: RakutenOrderRecord): string {

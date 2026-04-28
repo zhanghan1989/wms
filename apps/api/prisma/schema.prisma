@@ -782,6 +782,7 @@ model OverseasPickingBatchItem {
   requestedQty           Int                   @map("requested_qty")
   actualQty              Int?                  @map("actual_qty")
   availableStockSnapshot Int                   @default(0) @map("available_stock_snapshot")
+  pickingPlanSnapshot    Json?                 @map("picking_plan_snapshot")
   dispatchMode           String                @default("overseas") @map("dispatch_mode") @db.VarChar(32)
   shopName               String?               @map("shop_name") @db.VarChar(128)
   shippingName           String?               @map("shipping_name") @db.VarChar(255)
