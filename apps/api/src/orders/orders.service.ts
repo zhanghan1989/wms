@@ -4723,6 +4723,13 @@ export class OrdersService {
       });
     }
 
+    return this.createYamatoShipmentPrintJob(prepared, printerName);
+  }
+
+  private async createYamatoShipmentPrintJob(
+    prepared: PreparedYamatoShipmentPrintResult,
+    printerName: string | null,
+  ): Promise<YamatoShipmentQueuedPrintResult> {
     const created = await this.prisma.printJob.create({
       data: {
         jobType: 'yamato_label',
@@ -4766,6 +4773,36 @@ export class OrdersService {
       });
       throw error;
     }
+  }
+
+  async requeueYamatoShipmentLabelByProductId(
+    batchIdRaw: string,
+    payload: { productId?: string },
+  ): Promise<YamatoShipmentQueuedPrintResult & { clearedJobCount: number }> {
+    if (this.getYamatoPrintMode() !== 'agent') {
+      throw new BadRequestException('Yamato 打印代理未启用');
+    }
+
+    const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
+    const printerName = prepared.printerName ?? (await this.resolveYamatoPrinterNameForProductIds(prepared.productIds));
+    const cleared = await this.prisma.printJob.updateMany({
+      where: {
+        batchPageId: prepared.pageId,
+        status: {
+          in: [PrintJobStatus.pending, PrintJobStatus.claimed],
+        },
+      },
+      data: {
+        status: PrintJobStatus.failed,
+        failedAt: new Date(),
+        errorMessage: 'manual reprint requested',
+      },
+    });
+    const queued = await this.createYamatoShipmentPrintJob(prepared, printerName);
+    return {
+      ...queued,
+      clearedJobCount: cleared.count,
+    };
   }
 
   private async prepareYamatoShipmentLabelByProductId(
@@ -5564,7 +5601,7 @@ export class OrdersService {
   }
 
   private resolveRakutenShipmentCarrierCode(row: RakutenOrderRecord): string {
-    return String(row.shipmentCompany ?? '').trim().toLowerCase() === 'xiya' ? '1002' : '1001';
+    return String(row.shipmentCompany ?? '').trim().toUpperCase() === 'XIYA-SAGAWA' ? '1002' : '1001';
   }
 
   private async loadRakutenChinaDispatchOrderRecordIdsByOrderId(
@@ -6972,6 +7009,36 @@ export class OrdersService {
     }
 
     const uniqueRows = Array.from(uniqueRowsMap.values());
+    const importOrderIds = Array.from(
+      new Set(
+        uniqueRows
+          .map((row) => String(row.orderId ?? '').trim())
+          .filter((orderId) => orderId.length > 0),
+      ),
+    );
+    const existingOrderIds = new Set<string>();
+    if (importOrderIds.length) {
+      const existingRows = await this.prisma.amazonOrderRecord.findMany({
+        where: {
+          orderId: {
+            in: importOrderIds,
+          },
+        },
+        select: {
+          orderId: true,
+        },
+      });
+      for (const row of existingRows) {
+        const orderId = String(row.orderId ?? '').trim();
+        if (orderId) {
+          existingOrderIds.add(orderId);
+        }
+      }
+    }
+    const rowsToCreate = uniqueRows.filter((row) => {
+      const orderId = String(row.orderId ?? '').trim();
+      return !orderId || !existingOrderIds.has(orderId);
+    });
     const skuRows = await this.prisma.sku.findMany({
       where: {
         productId: { not: null },
@@ -7015,7 +7082,7 @@ export class OrdersService {
 
     const productIds = Array.from(
       new Set(
-        uniqueRows
+        rowsToCreate
           .map((row) => resolveSkuMeta(row.sku)?.productId)
           .filter((value): value is string => Boolean(value)),
       ),
@@ -7032,7 +7099,7 @@ export class OrdersService {
       productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
     );
     const chinaFulfillmentOrderIds = this.resolveChinaFulfillmentOrderIds(
-      uniqueRows.map((row) => {
+      rowsToCreate.map((row) => {
         const productId = resolveSkuMeta(row.sku)?.productId;
         return {
           orderId: row.orderId,
@@ -7041,7 +7108,7 @@ export class OrdersService {
       }),
     );
     const importedAt = new Date();
-    const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = uniqueRows.map((row) => ({
+    const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = rowsToCreate.map((row) => ({
       shippingOrigin: (() => {
         const productId = resolveSkuMeta(row.sku)?.productId;
         const stockQty = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
@@ -7091,13 +7158,17 @@ export class OrdersService {
       csvImportedAt: importedAt,
     }));
 
-    const result = await this.prisma.amazonOrderRecord.createMany({
-      data: createManyInput,
-      skipDuplicates: true,
-    });
+    const result = createManyInput.length
+      ? await this.prisma.amazonOrderRecord.createMany({
+          data: createManyInput,
+          skipDuplicates: true,
+        })
+      : { count: 0 };
 
     const duplicateInFileCount = parsedRows.length - uniqueRows.length;
-    const existingDuplicateCount = uniqueRows.length - result.count;
+    const existingOrderDuplicateCount = uniqueRows.length - rowsToCreate.length;
+    const existingRowDuplicateCount = rowsToCreate.length - result.count;
+    const existingDuplicateCount = existingOrderDuplicateCount + existingRowDuplicateCount;
 
     return {
       sourceFileName,

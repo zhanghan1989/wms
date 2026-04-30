@@ -453,6 +453,15 @@ export class OrdersController {
     return this.ordersService.queueYamatoShipmentLabelByProductId(batchId, payload);
   }
 
+  @Post('overseas-warehouse/yamato-batches/:batchId/requeue-print-by-product')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async requeueYamatoShipmentLabelByProductId(
+    @Param('batchId') batchId: string,
+    @Body() payload: { productId?: string },
+  ): Promise<unknown> {
+    return this.ordersService.requeueYamatoShipmentLabelByProductId(batchId, payload);
+  }
+
   @Post('amazon/delete-batch')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async deleteAmazonBatch(

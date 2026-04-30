@@ -9662,6 +9662,7 @@ function renderYamatoShipmentBatchControls() {
   const meta = $("overseasYamatoBatchMeta");
   const uploadBtn = $("overseasUploadYamatoPdfBtn");
   const scanBtn = $("overseasYamatoScanSubmitBtn");
+  const reprintBtn = $("overseasYamatoReprintBtn");
   const scanInput = $("overseasYamatoScanInput");
   const currentBatch = getSelectedYamatoShipmentBatch();
   const canUploadPdf = Boolean(currentBatch);
@@ -9692,6 +9693,10 @@ function renderYamatoShipmentBatchControls() {
   if (scanBtn) {
     scanBtn.disabled = !canScanPrint;
     scanBtn.textContent = "4.扫码打印";
+  }
+  if (reprintBtn) {
+    reprintBtn.disabled = !canScanPrint || normalizeYamatoPrintConfig(state.yamatoPrintConfig).mode !== "agent";
+    reprintBtn.textContent = "重新打印";
   }
   if (scanInput) {
     scanInput.disabled = !canScanPrint;
@@ -9800,6 +9805,16 @@ async function directPrintYamatoShipmentLabelByProductId(batchId, productId) {
 async function queueYamatoShipmentLabelByProductId(batchId, productId) {
   return request(
     `/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/queue-print-by-product`,
+    {
+      method: "POST",
+      body: JSON.stringify({ productId }),
+    },
+  );
+}
+
+async function requeueYamatoShipmentLabelByProductId(batchId, productId) {
+  return request(
+    `/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/requeue-print-by-product`,
     {
       method: "POST",
       body: JSON.stringify({ productId }),
@@ -9979,6 +9994,31 @@ async function submitOverseasYamatoScan(options = {}) {
     return;
   }
   if (isAgentMode && pendingBeforePrint === 1) {
+    waitForYamatoBatchPrintCompletion(batch.id)
+      .then((isComplete) => {
+        if (isComplete) {
+          return showYamatoBatchPrintCompletePrompt();
+        }
+        return undefined;
+      })
+      .catch(() => {});
+  }
+}
+
+async function submitOverseasYamatoReprint(scanRequest = null) {
+  const { input, rawValue, batch } = scanRequest || getOverseasYamatoScanRequest();
+  const printConfig = normalizeYamatoPrintConfig(state.yamatoPrintConfig);
+  if (printConfig.mode !== "agent") {
+    throw new Error("重新打印只支持打印代理模式");
+  }
+  const pendingBeforePrint = getYamatoPendingPageCount(batch);
+  await requeueYamatoShipmentLabelByProductId(batch.id, rawValue);
+  if (input) {
+    input.value = "";
+  }
+  await refreshYamatoPrintStateForSelectedBatch();
+  focusOverseasYamatoScanInput();
+  if (pendingBeforePrint === 1) {
     waitForYamatoBatchPrintCompletion(batch.id)
       .then((isComplete) => {
         if (isComplete) {
@@ -12501,6 +12541,19 @@ function bindForms() {
           popup.close();
         } catch (_) {}
       }
+      showToast(error.message, true);
+      focusOverseasYamatoScanInput();
+    }
+  });
+
+  $("overseasYamatoReprintBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      const scanRequest = getOverseasYamatoScanRequest();
+      await withBusyButton(button, "重打中...", async () => {
+        await submitOverseasYamatoReprint(scanRequest);
+      });
+    } catch (error) {
       showToast(error.message, true);
       focusOverseasYamatoScanInput();
     }
