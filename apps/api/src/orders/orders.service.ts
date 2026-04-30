@@ -4692,7 +4692,9 @@ export class OrdersService {
       throw new BadRequestException('Yamato 打印代理未启用');
     }
 
-    const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
+    const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload, {
+      excludeActivePrintJobs: true,
+    });
     const printerName = prepared.printerName ?? (await this.resolveYamatoPrinterNameForProductIds(prepared.productIds));
     const activeJob = await this.prisma.printJob.findFirst({
       where: {
@@ -4808,6 +4810,7 @@ export class OrdersService {
   private async prepareYamatoShipmentLabelByProductId(
     batchIdRaw: string,
     payload: { productId?: string },
+    options: { excludeActivePrintJobs?: boolean } = {},
   ): Promise<PreparedYamatoShipmentPrintResult> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const productId = String(payload?.productId ?? '').trim();
@@ -4830,15 +4833,32 @@ export class OrdersService {
       throw new BadRequestException('当前批次尚未上传可打印的 Yamato PDF');
     }
 
-    const printablePages = batch.pages.filter(
+    let printablePages = batch.pages.filter(
       (page) =>
         !page.printedAt &&
         this.getBatchPageProductIds(page).some(
           (candidate) => candidate.localeCompare(productId, undefined, { sensitivity: 'accent' }) === 0,
         ),
     );
+    if (options.excludeActivePrintJobs && printablePages.length) {
+      const activeJobs = await this.prisma.printJob.findMany({
+        where: {
+          batchPageId: {
+            in: printablePages.map((page) => page.id),
+          },
+          status: {
+            in: [PrintJobStatus.pending, PrintJobStatus.claimed],
+          },
+        },
+        select: {
+          batchPageId: true,
+        },
+      });
+      const activePageIds = new Set(activeJobs.map((job) => job.batchPageId?.toString()).filter(Boolean));
+      printablePages = printablePages.filter((page) => !activePageIds.has(page.id.toString()));
+    }
     if (!printablePages.length) {
-      throw new BadRequestException(`当前批次中未找到产品ID ${productId} 对应的未打印面单`);
+      throw new BadRequestException(`当前批次中产品ID ${productId} 对应面单已全部打印或正在打印中`);
     }
 
     try {
