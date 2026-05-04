@@ -5320,31 +5320,37 @@ export class OrdersService {
       const staleReason = this.getReusablePrintJobBlockReason(activeJob, printerName);
       if (!staleReason) {
         if (payload.acceptActivePrintJob === true) {
-          return {
-            batchId: prepared.batchId,
-            productId: prepared.productId,
-            pageNo: prepared.pageNo,
-            trackingNo: prepared.trackingNo,
-            printerName,
-            queueJobId: activeJob.id.toString(),
-            mode: 'agent',
-          };
+          await this.prisma.printJob.updateMany({
+            where: {
+              id: activeJob.id,
+              status: {
+                in: [PrintJobStatus.pending, PrintJobStatus.claimed],
+              },
+            },
+            data: {
+              status: PrintJobStatus.failed,
+              failedAt: new Date(),
+              errorMessage: 'requeued after merged label confirmation',
+            },
+          });
+        } else {
+          throw new BadRequestException('该面单已在打印队列中，请勿重复扫码');
         }
-        throw new BadRequestException('该面单已在打印队列中，请勿重复扫码');
-      }
-      await this.prisma.printJob.updateMany({
-        where: {
-          id: activeJob.id,
-          status: {
-            in: [PrintJobStatus.pending, PrintJobStatus.claimed],
+      } else {
+        await this.prisma.printJob.updateMany({
+          where: {
+            id: activeJob.id,
+            status: {
+              in: [PrintJobStatus.pending, PrintJobStatus.claimed],
+            },
           },
-        },
-        data: {
-          status: PrintJobStatus.failed,
-          failedAt: new Date(),
-          errorMessage: staleReason,
-        },
-      });
+          data: {
+            status: PrintJobStatus.failed,
+            failedAt: new Date(),
+            errorMessage: staleReason,
+          },
+        });
+      }
     }
 
     return this.createYamatoShipmentPrintJob(prepared, printerName);
