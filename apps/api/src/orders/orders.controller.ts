@@ -448,6 +448,15 @@ export class OrdersController {
     res.status(200).send(file.content);
   }
 
+  @Post('overseas-warehouse/yamato-batches/:batchId/preview-by-product')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async previewYamatoShipmentLabelByProductId(
+    @Param('batchId') batchId: string,
+    @Body() payload: { productId?: string },
+  ): Promise<unknown> {
+    return this.ordersService.previewYamatoShipmentLabelByProductId(batchId, payload);
+  }
+
   @Post('overseas-warehouse/yamato-batches/:batchId/direct-print-by-product')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async directPrintYamatoShipmentLabelByProductId(

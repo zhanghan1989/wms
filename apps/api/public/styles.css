@@ -1286,6 +1286,25 @@ td {
   min-width: 1800px;
 }
 
+.yamato-merged-scan-table-wrap {
+  max-height: 360px;
+  margin-top: 12px;
+}
+
+.yamato-merged-scan-table-wrap table {
+  min-width: 760px;
+}
+
+.yamato-merged-scan-status-done {
+  color: #158457;
+  font-weight: 800;
+}
+
+.yamato-merged-scan-status-pending {
+  color: #c2413b;
+  font-weight: 800;
+}
+
 #overseasOrderProcessingTableWrap,
 #chinaOrderProcessingPendingTableWrap,
 #chinaOrderProcessingExportedTableWrap,

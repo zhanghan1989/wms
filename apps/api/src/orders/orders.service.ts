@@ -758,6 +758,25 @@ interface YamatoShipmentQueuedPrintResult {
   mode: 'agent';
 }
 
+interface YamatoShipmentPageProductDetail {
+  productId: string;
+  productName: string | null;
+  quantity: number;
+}
+
+interface YamatoShipmentPagePreviewResult {
+  batchId: string;
+  pageNo: number;
+  orderId: string | null;
+  trackingNo: string | null;
+  productId: string;
+  productIds: string[];
+  itemSummary: string | null;
+  recipientName: string | null;
+  products: YamatoShipmentPageProductDetail[];
+  remainingMatchCount: number;
+}
+
 interface PreparedYamatoShipmentPrintResult {
   batchId: string;
   fileName: string;
@@ -5211,6 +5230,32 @@ export class OrdersService {
     };
   }
 
+  async previewYamatoShipmentLabelByProductId(
+    batchIdRaw: string,
+    payload: { productId?: string },
+  ): Promise<YamatoShipmentPagePreviewResult> {
+    const { batch, targetPage, productId, printablePages } = await this.findPrintableYamatoShipmentPageByProductId(
+      batchIdRaw,
+      payload,
+      {
+        excludeActivePrintJobs: true,
+      },
+    );
+    const productIds = this.getBatchPageProductIds(targetPage);
+    return {
+      batchId: batch.id.toString(),
+      pageNo: targetPage.pageNo,
+      orderId: targetPage.orderId ?? null,
+      trackingNo: targetPage.trackingNo ?? null,
+      productId,
+      productIds,
+      itemSummary: targetPage.itemSummary ?? null,
+      recipientName: targetPage.recipientName ?? null,
+      products: await this.buildYamatoShipmentPageProductDetails(targetPage),
+      remainingMatchCount: Math.max(printablePages.length - 1, 0),
+    };
+  }
+
   async directPrintYamatoShipmentLabelByProductId(
     batchIdRaw: string,
     payload: { productId?: string },
@@ -5364,6 +5409,50 @@ export class OrdersService {
     payload: { productId?: string },
     options: { excludeActivePrintJobs?: boolean } = {},
   ): Promise<PreparedYamatoShipmentPrintResult> {
+    const { batch, targetPage, productId, printablePages } = await this.findPrintableYamatoShipmentPageByProductId(
+      batchIdRaw,
+      payload,
+      options,
+    );
+
+    const pdfFilePath = batch.pdfFilePath;
+    if (!pdfFilePath) {
+      throw new BadRequestException('当前批次尚未上传可打印的 Yamato PDF');
+    }
+    try {
+      await stat(pdfFilePath);
+    } catch {
+      throw new BadRequestException('当前批次的 Yamato PDF 文件不存在，请重新上传');
+    }
+
+    const targetPageProductIds = this.getBatchPageProductIds(targetPage);
+    const pdfBuffer = await readFile(pdfFilePath);
+    const singlePagePdf = await this.extractPdfSinglePage(pdfBuffer, targetPage.pageNo);
+
+    return {
+      batchId: batch.id.toString(),
+      fileName: `Yamato-${productId}-p${targetPage.pageNo}.pdf`,
+      content: singlePagePdf,
+      pageId: targetPage.id,
+      pageNo: targetPage.pageNo,
+      trackingNo: targetPage.trackingNo ?? null,
+      productId,
+      productIds: targetPageProductIds,
+      printerName: String(targetPage.printerName ?? '').trim() || null,
+      remainingMatchCount: Math.max(printablePages.length - 1, 0),
+    };
+  }
+
+  private async findPrintableYamatoShipmentPageByProductId(
+    batchIdRaw: string,
+    payload: { productId?: string },
+    options: { excludeActivePrintJobs?: boolean } = {},
+  ): Promise<{
+    batch: YamatoShipmentBatch & { pages: YamatoShipmentBatchPage[] };
+    targetPage: YamatoShipmentBatchPage;
+    productId: string;
+    printablePages: YamatoShipmentBatchPage[];
+  }> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const productId = String(payload?.productId ?? '').trim();
     if (!productId) {
@@ -5413,28 +5502,11 @@ export class OrdersService {
       throw new BadRequestException(`当前批次中产品ID ${productId} 对应面单已全部打印或正在打印中`);
     }
 
-    try {
-      await stat(batch.pdfFilePath);
-    } catch {
-      throw new BadRequestException('当前批次的 Yamato PDF 文件不存在，请重新上传');
-    }
-
-    const targetPage = printablePages[0];
-    const targetPageProductIds = this.getBatchPageProductIds(targetPage);
-    const pdfBuffer = await readFile(batch.pdfFilePath);
-    const singlePagePdf = await this.extractPdfSinglePage(pdfBuffer, targetPage.pageNo);
-
     return {
-      batchId: batch.id.toString(),
-      fileName: `Yamato-${productId}-p${targetPage.pageNo}.pdf`,
-      content: singlePagePdf,
-      pageId: targetPage.id,
-      pageNo: targetPage.pageNo,
-      trackingNo: targetPage.trackingNo ?? null,
+      batch,
+      targetPage: printablePages[0],
       productId,
-      productIds: targetPageProductIds,
-      printerName: String(targetPage.printerName ?? '').trim() || null,
-      remainingMatchCount: Math.max(printablePages.length - 1, 0),
+      printablePages,
     };
   }
 
@@ -5780,6 +5852,60 @@ export class OrdersService {
     return value
       .map((item) => String(item ?? '').trim())
       .filter((item) => item.length > 0);
+  }
+
+  private async buildYamatoShipmentPageProductDetails(
+    page: Pick<YamatoShipmentBatchPage, 'productIds' | 'itemSummary'>,
+  ): Promise<YamatoShipmentPageProductDetail[]> {
+    const parsedItems = this.parseYamatoItemSummaryProductQuantities(page.itemSummary, this.getBatchPageProductIds(page));
+    const productIds = Array.from(new Set(parsedItems.map((item) => item.productId).filter(Boolean)));
+    const productRows = productIds.length
+      ? await this.prisma.masterProduct.findMany({
+          where: { productId: { in: productIds } },
+          select: {
+            productId: true,
+            productName: true,
+          },
+        })
+      : [];
+    const productNameById = new Map(productRows.map((row) => [row.productId, row.productName] as const));
+    return parsedItems.map((item) => ({
+      productId: item.productId,
+      productName: productNameById.get(item.productId) ?? null,
+      quantity: item.quantity,
+    }));
+  }
+
+  private parseYamatoItemSummaryProductQuantities(
+    itemSummary: string | null | undefined,
+    fallbackProductIds: string[],
+  ): Array<{ productId: string; quantity: number }> {
+    const quantityByProductId = new Map<string, number>();
+    const summary = String(itemSummary ?? '').trim().replace(/^DGAZ\s*/i, '');
+    summary
+      .split('/')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .forEach((part) => {
+        const starIndex = part.lastIndexOf('*');
+        if (starIndex <= 0) return;
+        const productId = part.slice(0, starIndex).trim();
+        const quantityText = part.slice(starIndex + 1).replace(/[^\d]/g, '');
+        const quantity = Number.parseInt(quantityText, 10);
+        if (!productId || !Number.isInteger(quantity) || quantity <= 0) return;
+        quantityByProductId.set(productId, (quantityByProductId.get(productId) ?? 0) + quantity);
+      });
+
+    fallbackProductIds.forEach((productId) => {
+      if (!quantityByProductId.has(productId)) {
+        quantityByProductId.set(productId, 1);
+      }
+    });
+
+    return Array.from(quantityByProductId.entries()).map(([productId, quantity]) => ({
+      productId,
+      quantity,
+    }));
   }
 
   private scorePdfTextForYamatoBatchPage(

@@ -2046,6 +2046,36 @@
     </div>
   </div>
 
+  <div id="yamatoMergedScanModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>合并面单扫码确认</h3>
+        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前合并面单打印</button>
+      </div>
+      <p id="yamatoMergedScanSummary" class="muted">该面单包含多个产品，请扫齐后再打印。</p>
+      <div class="action-row overseas-scan-row">
+        <input id="yamatoMergedScanInput" type="text" inputmode="text" autocomplete="off" placeholder="继续扫描该面单内剩余产品ID" />
+      </div>
+      <div class="master-product-table-wrap yamato-merged-scan-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>产品ID</th>
+              <th>产品名</th>
+              <th>数量</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody id="yamatoMergedScanBody"></tbody>
+        </table>
+      </div>
+      <div class="modal-actions modal-actions-split">
+        <span id="yamatoMergedScanHint" class="muted">扫齐所有产品后会自动打印面单。</span>
+        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前合并面单打印</button>
+      </div>
+    </div>
+  </div>
+
   <div id="editSkuModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
