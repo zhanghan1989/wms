@@ -244,8 +244,18 @@ const state = {
   amazonOrdersVisibleCount: 0,
   manualOrders: [],
   manualOrdersVisibleCount: 0,
+  orderSearchResult: null,
+  returnRecords: [],
+  returnRecordsVisibleCount: 0,
+  selectedReturnRecordIds: new Set(),
   overseasOrderProcessingOrders: [],
+  overseasOrderProcessingVisibleCount: 30,
   chinaOrderProcessingOrders: [],
+  chinaOrderProcessingPendingOrders: [],
+  chinaOrderProcessingExportedOrders: [],
+  chinaOrderProcessingExportedOffset: 0,
+  chinaOrderProcessingExportedHasMore: false,
+  chinaOrderProcessingExportedLoading: false,
   overseasPickingBatches: [],
   overseasPickingBatchView: "list",
   selectedOverseasPickingBatchId: "",
@@ -310,6 +320,9 @@ let skuManagementLoadObserver = null;
 let ordersLoadObserver = null;
 let amazonOrdersLoadObserver = null;
 let manualOrdersLoadObserver = null;
+let returnRecordsLoadObserver = null;
+let overseasOrderProcessingLoadObserver = null;
+let chinaOrderProcessingExportedLoadObserver = null;
 let fbaReplenishmentLoadObserver = null;
 let batchInboundLoadObserver = null;
 let usersLoadObserver = null;
@@ -322,6 +335,8 @@ let rakutenComboProductLoadObserver = null;
 let responsiveTableLabelObserver = null;
 let responsiveTableLabelFrame = 0;
 let skuProductLookupToken = 0;
+let orderSearchSuggestionTimer = null;
+let orderSearchSuggestionToken = 0;
 let hasUserNavigatedSinceBootstrap = false;
 const AUTH_ERROR_STORAGE_KEY = "wms_auth_error_message";
 const AUTH_HASH_PARAM = "wmsToken";
@@ -2501,6 +2516,10 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
     Promise.all([
       state.chinaOrderProcessingOrders.length ? Promise.resolve() : loadChinaOrderProcessingOrders(),
     ]).catch((error) => showToast(error.message, true));
+    return;
+  }
+  if (targetId === "returnManagement" && state.token && !state.returnRecords.length) {
+    loadReturnRecords().catch((error) => showToast(error.message, true));
     return;
   }
   if (targetId === "overseasPickingBatchManagement" && state.token) {
@@ -8758,6 +8777,303 @@ function renderOrdersPanels() {
   });
 }
 
+async function searchAllOrders(keyword) {
+  return request(`/orders/search?q=${encodeURIComponent(String(keyword || "").trim())}`);
+}
+
+async function fetchOrderSearchSuggestions(keyword) {
+  return request(`/orders/search-suggestions?q=${encodeURIComponent(String(keyword || "").trim())}`);
+}
+
+function renderOrderSearchSuggestions(suggestions) {
+  const datalist = $("orderSearchSuggestionsList");
+  if (!datalist) return;
+  const list = Array.isArray(suggestions) ? suggestions : [];
+  datalist.innerHTML = list
+    .map((item) => {
+      const value = String(item?.value || "").trim();
+      if (!value) return "";
+      return `<option value="${escapeHtml(value)}" label="${escapeHtml(item?.label || value)}"></option>`;
+    })
+    .join("");
+}
+
+function scheduleOrderSearchSuggestions() {
+  const input = $("orderSearchInput");
+  const keyword = String(input?.value || "").trim();
+  if (orderSearchSuggestionTimer) {
+    window.clearTimeout(orderSearchSuggestionTimer);
+    orderSearchSuggestionTimer = null;
+  }
+  if (!keyword) {
+    renderOrderSearchSuggestions([]);
+    return;
+  }
+
+  const token = ++orderSearchSuggestionToken;
+  orderSearchSuggestionTimer = window.setTimeout(async () => {
+    try {
+      const suggestions = await fetchOrderSearchSuggestions(keyword);
+      if (token !== orderSearchSuggestionToken) return;
+      renderOrderSearchSuggestions(suggestions);
+    } catch {
+      if (token !== orderSearchSuggestionToken) return;
+      renderOrderSearchSuggestions([]);
+    }
+  }, 220);
+}
+
+function formatUnifiedOrderSearchMode(mode) {
+  if (mode === "overseas_warehouse") return "日本発";
+  if (mode === "xiya_api") return "中国発";
+  if (mode === "china_pending") return "中国発";
+  if (mode === "overseas") return "日本発";
+  return mode || "-";
+}
+
+function buildOrderSearchRowsHtml(rows, emptyText) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return `<tr><td colspan="13" class="muted">${escapeHtml(emptyText || "暂无订单数据")}</td></tr>`;
+  }
+  return rows
+    .map(
+      (item) => `
+        <tr>
+          <td>${escapeHtml(displayText(item.sourceLabel))}</td>
+          <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
+          <td>${escapeHtml(displayText(item.orderId))}</td>
+          <td>${escapeHtml(displayText(item.sku))}</td>
+          <td>${escapeHtml(displayText(item.productId))}</td>
+          <td>${escapeHtml(displayText(item.productName))}</td>
+          <td>${escapeHtml(displayText(item.quantity))}</td>
+          <td>${escapeHtml(displayText(item.shopName || item.mallName))}</td>
+          <td>${escapeHtml(displayText(item.recipientName))}</td>
+          <td>${escapeHtml(displayText(item.phone))}</td>
+          <td>${escapeHtml(displayText(formatUnifiedOrderSearchMode(item.fulfillmentMode)))}</td>
+          <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
+          <td>${escapeHtml(displayText(item.shipmentNo))}</td>
+        </tr>
+      `,
+    )
+    .join("");
+}
+
+function renderOrderSearchResults() {
+  const result = state.orderSearchResult;
+  const summary = $("orderSearchSummary");
+  const resultSection = $("orderSearchResultSection");
+  const matchesBody = $("orderSearchMatchesBody");
+  const historySection = $("orderSearchHistorySection");
+  const historyBody = $("orderSearchHistoryBody");
+  const matchesTitle = $("orderSearchMatchesTitle");
+  if (!summary || !resultSection || !matchesBody || !historySection || !historyBody) return;
+
+  if (!result) {
+    summary.textContent = "请输入条件后检索。";
+    resultSection.classList.add("hidden");
+    matchesBody.innerHTML = "";
+    historyBody.innerHTML = "";
+    return;
+  }
+
+  const matches = Array.isArray(result.matches) ? result.matches : [];
+  const history = Array.isArray(result.history) ? result.history : [];
+  const isOrderSearch = result.mode === "order";
+  summary.textContent = isOrderSearch
+    ? `找到 ${matches.length} 条该注文番号订单，下面显示 ${history.length} 条该用户历史订单。`
+    : `找到 ${matches.length} 条该用户订单。`;
+  if (matchesTitle) {
+    matchesTitle.textContent = isOrderSearch ? "命中的订单" : "检索结果";
+  }
+  matchesBody.innerHTML = buildOrderSearchRowsHtml(matches, "没有找到匹配订单");
+  historySection.classList.toggle("hidden", !isOrderSearch);
+  historyBody.innerHTML = isOrderSearch ? buildOrderSearchRowsHtml(history, "暂无该用户其他历史订单") : "";
+  resultSection.classList.remove("hidden");
+}
+
+function clearOrderSearchResults() {
+  state.orderSearchResult = null;
+  const input = $("orderSearchInput");
+  if (input) {
+    input.value = "";
+  }
+  renderOrderSearchResults();
+}
+
+async function loadReturnRecords() {
+  if (!state.token) {
+    state.returnRecords = [];
+    state.returnRecordsVisibleCount = 0;
+    state.selectedReturnRecordIds = new Set();
+    renderReturnRecordsTable();
+    return;
+  }
+  const list = await request("/return-records");
+  state.returnRecords = Array.isArray(list) ? list : [];
+  state.returnRecordsVisibleCount = state.inventoryPageSize;
+  state.selectedReturnRecordIds = new Set();
+  renderReturnRecordsTable();
+  setupReturnRecordsLoadObserver();
+}
+
+function syncSelectedReturnRecordIds() {
+  const selectableIds = new Set(state.returnRecords.map((item) => String(item.id)));
+  state.selectedReturnRecordIds = new Set(
+    Array.from(state.selectedReturnRecordIds).filter((id) => selectableIds.has(String(id))),
+  );
+}
+
+function formatReturnRecordBoolean(value) {
+  return value ? "是" : "否";
+}
+
+function updateReturnRecordsSelectAll() {
+  const selectAll = $("returnRecordsSelectAll");
+  if (!selectAll) return;
+  if (!state.returnRecords.length) {
+    selectAll.checked = false;
+    selectAll.indeterminate = false;
+    return;
+  }
+  const selectedCount = state.returnRecords.filter((item) => state.selectedReturnRecordIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === state.returnRecords.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.returnRecords.length;
+}
+
+function updateReturnRecordBatchDeleteButtonState() {
+  const button = $("returnRecordBatchDeleteBtn");
+  if (!button) return;
+  const count = state.selectedReturnRecordIds.size;
+  button.disabled = count <= 0;
+  button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
+}
+
+function renderReturnRecordsTable() {
+  const tbody = $("returnRecordsBody");
+  if (!tbody) return;
+  syncSelectedReturnRecordIds();
+  const visibleCount = Math.max(state.inventoryPageSize, Number(state.returnRecordsVisibleCount || 0));
+  const rows = state.returnRecords.slice(0, visibleCount);
+  state.returnRecordsVisibleCount = visibleCount;
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="15" class="muted">暂无返品记录。</td></tr>`;
+    updateReturnRecordsSelectAll();
+    updateReturnRecordBatchDeleteButtonState();
+    return;
+  }
+
+  tbody.innerHTML = rows
+    .map((item) => {
+      const id = String(item.id || "");
+      return `
+        <tr>
+          <td><input type="checkbox" class="return-record-select" data-id="${escapeHtml(id)}" ${
+            state.selectedReturnRecordIds.has(id) ? "checked" : ""
+          } /></td>
+          <td>${escapeHtml(formatDate(item.createdAt))}</td>
+          <td>${escapeHtml(displayText(item.senderName))}</td>
+          <td>${escapeHtml(displayText(item.carrierName))}</td>
+          <td>${escapeHtml(displayText(item.trackingNo))}</td>
+          <td>${escapeHtml(displayText(item.postalCode))}</td>
+          <td>${escapeHtml(displayText(item.address))}</td>
+          <td>${escapeHtml(displayText(item.phone))}</td>
+          <td>${escapeHtml(displayText(item.packageContent))}</td>
+          <td>${escapeHtml(displayText(item.salesSite))}</td>
+          <td>${escapeHtml(displayText(item.orderNo))}</td>
+          <td>${escapeHtml(displayText(item.productId))}</td>
+          <td>${escapeHtml(displayText(item.productName))}</td>
+          <td>${escapeHtml(formatReturnRecordBoolean(item.isOpenedUsed))}</td>
+          <td>${escapeHtml(formatReturnRecordBoolean(item.canRestock))}</td>
+        </tr>
+      `;
+    })
+    .join("");
+  updateReturnRecordsSelectAll();
+  updateReturnRecordBatchDeleteButtonState();
+}
+
+function loadMoreReturnRecordsIfNeeded() {
+  const panel = $("returnManagement");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.returnRecordsVisibleCount >= state.returnRecords.length) return;
+  state.returnRecordsVisibleCount += state.inventoryPageSize;
+  renderReturnRecordsTable();
+}
+
+function setupReturnRecordsLoadObserver() {
+  if (returnRecordsLoadObserver) {
+    returnRecordsLoadObserver.disconnect();
+    returnRecordsLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("returnRecordsTableWrap");
+  const sentinel = $("returnRecordsLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  returnRecordsLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreReturnRecordsIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  returnRecordsLoadObserver.observe(sentinel);
+}
+
+function resetReturnRecordCreateForm() {
+  const form = $("returnRecordCreateForm");
+  if (form) form.reset();
+  const productNameInput = $("returnRecordProductName");
+  if (productNameInput) productNameInput.value = "";
+  renderMasterProductOptionsForInput("returnRecordProductId", "returnRecordProductIdList");
+}
+
+function getReturnRecordCreatePayload() {
+  return {
+    senderName: $("returnRecordSenderName")?.value || "",
+    carrierName: $("returnRecordCarrierName")?.value || "",
+    trackingNo: $("returnRecordTrackingNo")?.value || "",
+    postalCode: $("returnRecordPostalCode")?.value || "",
+    address: $("returnRecordAddress")?.value || "",
+    phone: $("returnRecordPhone")?.value || "",
+    packageContent: $("returnRecordPackageContent")?.value || "",
+    salesSite: $("returnRecordSalesSite")?.value || "",
+    orderNo: $("returnRecordOrderNo")?.value || "",
+    productId: $("returnRecordProductId")?.value || "",
+    isOpenedUsed: Boolean($("returnRecordIsOpenedUsed")?.checked),
+    canRestock: Boolean($("returnRecordCanRestock")?.checked),
+  };
+}
+
+async function createReturnRecord(payload) {
+  return request("/return-records", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+async function importReturnRecordsFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request("/return-records/import-excel", {
+    method: "POST",
+    body: formData,
+  });
+}
+
+async function deleteReturnRecords(ids) {
+  return request("/return-records/delete-batch", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
 async function loadOrders() {
   if (!state.token) {
     state.orders = [];
@@ -8965,6 +9281,52 @@ function summarizeChinaOrderProcessingList(list) {
   };
 }
 
+function mergeChinaOrderProcessingLists() {
+  state.chinaOrderProcessingOrders = [
+    ...(Array.isArray(state.chinaOrderProcessingPendingOrders) ? state.chinaOrderProcessingPendingOrders : []),
+    ...(Array.isArray(state.chinaOrderProcessingExportedOrders) ? state.chinaOrderProcessingExportedOrders : []),
+  ];
+}
+
+async function loadMoreChinaOrderProcessingExportedOrders() {
+  if (!state.token || state.chinaOrderProcessingExportedLoading || !state.chinaOrderProcessingExportedHasMore) {
+    return;
+  }
+  state.chinaOrderProcessingExportedLoading = true;
+  try {
+    const offset = Number(state.chinaOrderProcessingExportedOffset || 0);
+    const list = await request(
+      `/orders/china-orders?scope=exported&limit=${state.inventoryPageSize}&offset=${offset}`,
+    );
+    const rows = Array.isArray(list) ? list : [];
+    state.chinaOrderProcessingExportedOrders = [...state.chinaOrderProcessingExportedOrders, ...rows];
+    state.chinaOrderProcessingExportedOffset += rows.length;
+    state.chinaOrderProcessingExportedHasMore = rows.length >= state.inventoryPageSize;
+    mergeChinaOrderProcessingLists();
+  } finally {
+    state.chinaOrderProcessingExportedLoading = false;
+  }
+  renderChinaOrderProcessingTable();
+}
+
+function setupChinaOrderProcessingExportedInfiniteScroll() {
+  if (chinaOrderProcessingExportedLoadObserver) {
+    chinaOrderProcessingExportedLoadObserver.disconnect();
+    chinaOrderProcessingExportedLoadObserver = null;
+  }
+  const sentinel = $("chinaOrderProcessingExportedLoadSentinel");
+  const root = $("chinaOrderProcessingExportedTableWrap");
+  if (!sentinel || !root) return;
+  chinaOrderProcessingExportedLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      loadMoreChinaOrderProcessingExportedOrders().catch((error) => showToast(error.message, true));
+    },
+    { root, rootMargin: "120px" },
+  );
+  chinaOrderProcessingExportedLoadObserver.observe(sentinel);
+}
+
 function renderChinaOrderProcessingTable() {
   const pendingBody = $("chinaOrderProcessingPendingBody");
   const pendingSummary = $("chinaOrderProcessingPendingSummary");
@@ -8972,9 +9334,8 @@ function renderChinaOrderProcessingTable() {
   const exportedSummary = $("chinaOrderProcessingExportedSummary");
   if (!pendingBody || !exportedBody) return;
 
-  const list = Array.isArray(state.chinaOrderProcessingOrders) ? state.chinaOrderProcessingOrders : [];
-  const pendingList = list.filter((item) => !String(item.shipmentNo || "").trim());
-  const exportedList = list.filter((item) => String(item.shipmentNo || "").trim());
+  const pendingList = Array.isArray(state.chinaOrderProcessingPendingOrders) ? state.chinaOrderProcessingPendingOrders : [];
+  const exportedList = Array.isArray(state.chinaOrderProcessingExportedOrders) ? state.chinaOrderProcessingExportedOrders : [];
   const pendingStats = summarizeChinaOrderProcessingList(pendingList);
   const exportedStats = summarizeChinaOrderProcessingList(exportedList);
 
@@ -9040,13 +9401,27 @@ function renderChinaOrderProcessingTable() {
 async function loadChinaOrderProcessingOrders() {
   if (!state.token) {
     state.chinaOrderProcessingOrders = [];
+    state.chinaOrderProcessingPendingOrders = [];
+    state.chinaOrderProcessingExportedOrders = [];
+    state.chinaOrderProcessingExportedOffset = 0;
+    state.chinaOrderProcessingExportedHasMore = false;
+    state.chinaOrderProcessingExportedLoading = false;
     renderChinaOrderProcessingTable();
     return;
   }
 
-  const list = await request("/orders/china-orders?scope=all");
-  state.chinaOrderProcessingOrders = Array.isArray(list) ? list : [];
+  const [pendingList, exportedList] = await Promise.all([
+    request("/orders/china-orders?scope=pending&limit=1000"),
+    request(`/orders/china-orders?scope=exported&limit=${state.inventoryPageSize}&offset=0`),
+  ]);
+  state.chinaOrderProcessingPendingOrders = Array.isArray(pendingList) ? pendingList : [];
+  state.chinaOrderProcessingExportedOrders = Array.isArray(exportedList) ? exportedList : [];
+  state.chinaOrderProcessingExportedOffset = state.chinaOrderProcessingExportedOrders.length;
+  state.chinaOrderProcessingExportedHasMore = state.chinaOrderProcessingExportedOrders.length >= state.inventoryPageSize;
+  state.chinaOrderProcessingExportedLoading = false;
+  mergeChinaOrderProcessingLists();
   renderChinaOrderProcessingTable();
+  setupChinaOrderProcessingExportedInfiniteScroll();
 }
 
 function renderOverseasOrderProcessingTable() {
@@ -9056,6 +9431,8 @@ function renderOverseasOrderProcessingTable() {
   syncSelectedOverseasOrderKeys();
 
   const list = Array.isArray(state.overseasOrderProcessingOrders) ? state.overseasOrderProcessingOrders : [];
+  const visibleCount = Math.max(state.inventoryPageSize, Number(state.overseasOrderProcessingVisibleCount || 0));
+  const visibleList = list.slice(0, visibleCount);
   const rakutenCount = list.filter((item) => item.source === "rakuten").length;
   const amazonCount = list.filter((item) => item.source === "amazon").length;
   const manualCount = list.filter((item) => item.source === "manual").length;
@@ -9070,7 +9447,7 @@ function renderOverseasOrderProcessingTable() {
     return;
   }
 
-  tbody.innerHTML = list
+  tbody.innerHTML = visibleList
     .map(
       (item) => `
       <tr>
@@ -9119,9 +9496,43 @@ function renderOverseasOrderProcessingTable() {
   updateOverseasCreatePickingBatchButtonState();
 }
 
+function loadMoreOverseasOrderProcessingIfNeeded() {
+  const panel = $("overseasOrderProcessing");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.overseasOrderProcessingVisibleCount >= state.overseasOrderProcessingOrders.length) return;
+  state.overseasOrderProcessingVisibleCount += state.inventoryPageSize;
+  renderOverseasOrderProcessingTable();
+}
+
+function setupOverseasOrderProcessingLoadObserver() {
+  if (overseasOrderProcessingLoadObserver) {
+    overseasOrderProcessingLoadObserver.disconnect();
+    overseasOrderProcessingLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("overseasOrderProcessingTableWrap");
+  const sentinel = $("overseasOrderProcessingLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+
+  overseasOrderProcessingLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreOverseasOrderProcessingIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  overseasOrderProcessingLoadObserver.observe(sentinel);
+}
+
 async function loadOverseasOrderProcessingOrders() {
   if (!state.token) {
     state.overseasOrderProcessingOrders = [];
+    state.overseasOrderProcessingVisibleCount = state.inventoryPageSize;
     state.selectedOverseasOrderKeys = new Set();
     renderOverseasOrderProcessingTable();
     return;
@@ -9129,7 +9540,9 @@ async function loadOverseasOrderProcessingOrders() {
 
   const list = await request("/orders/overseas-warehouse");
   state.overseasOrderProcessingOrders = Array.isArray(list) ? list : [];
+  state.overseasOrderProcessingVisibleCount = state.inventoryPageSize;
   renderOverseasOrderProcessingTable();
+  setupOverseasOrderProcessingLoadObserver();
 }
 
 async function switchOverseasPendingOrderToChina(source, id) {
@@ -10907,8 +11320,19 @@ async function reloadAll() {
     state.ordersVisibleCount = 0;
     state.amazonOrders = [];
     state.amazonOrdersVisibleCount = 0;
+    state.manualOrders = [];
+    state.manualOrdersVisibleCount = 0;
+    state.returnRecords = [];
+    state.returnRecordsVisibleCount = 0;
+    state.selectedReturnRecordIds = new Set();
     state.overseasOrderProcessingOrders = [];
+    state.overseasOrderProcessingVisibleCount = state.inventoryPageSize;
     state.chinaOrderProcessingOrders = [];
+    state.chinaOrderProcessingPendingOrders = [];
+    state.chinaOrderProcessingExportedOrders = [];
+    state.chinaOrderProcessingExportedOffset = 0;
+    state.chinaOrderProcessingExportedHasMore = false;
+    state.chinaOrderProcessingExportedLoading = false;
     state.overseasPickingBatches = [];
     state.overseasPickingBatchView = "list";
     state.selectedOverseasPickingBatchId = "";
@@ -11078,6 +11502,40 @@ function bindForms() {
     quickActions.classList.toggle("expanded", expanded);
     toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
     toggle.textContent = expanded ? "收起功能" : "更多功能";
+  });
+
+  const submitOrderSearch = async (button = $("orderSearchSubmitBtn")) => {
+    const input = $("orderSearchInput");
+    const keyword = String(input?.value || "").trim();
+    if (!keyword) {
+      showToast("请输入注文番号、收件人或电话", true);
+      input?.focus();
+      return;
+    }
+    try {
+      await withBusyButton(button, "检索中...", async () => {
+        state.orderSearchResult = await searchAllOrders(keyword);
+        renderOrderSearchResults();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+  $("orderSearchSubmitBtn")?.addEventListener("click", (event) => {
+    submitOrderSearch(event.currentTarget);
+  });
+  $("orderSearchInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    submitOrderSearch($("orderSearchSubmitBtn"));
+  });
+  $("orderSearchInput")?.addEventListener("input", () => {
+    scheduleOrderSearchSuggestions();
+  });
+  $("orderSearchClearBtn")?.addEventListener("click", () => {
+    clearOrderSearchResults();
+    renderOrderSearchSuggestions([]);
+    $("orderSearchInput")?.focus();
   });
 
   $("importRakutenOrdersForm").addEventListener("submit", async (event) => {
@@ -12669,6 +13127,113 @@ function bindForms() {
 
   $("backToOverseasWarehouseBtn").addEventListener("click", () => {
     switchPanel("overseasWarehouse");
+  });
+
+  $("openReturnManagementPanel")?.addEventListener("click", async () => {
+    try {
+      await loadReturnRecords();
+      switchPanel("returnManagement");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("backToOverseasWarehouseFromReturnBtn")?.addEventListener("click", () => {
+    switchPanel("overseasWarehouse");
+  });
+
+  $("openReturnRecordCreateModal")?.addEventListener("click", () => {
+    resetReturnRecordCreateForm();
+    openModal("returnRecordCreateModal");
+    $("returnRecordSenderName")?.focus();
+  });
+
+  $("openReturnRecordImportModal")?.addEventListener("click", () => {
+    $("returnRecordImportForm")?.reset();
+    openModal("returnRecordImportModal");
+  });
+
+  $("returnRecordProductId")?.addEventListener("input", () => {
+    syncSkuProductName("returnRecordProductId", "returnRecordProductName").catch(() => {});
+  });
+
+  $("returnRecordCreateForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = getSubmitButton(form, event);
+    try {
+      await withBusyButton(submitButton, "保存中...", async () => {
+        await createReturnRecord(getReturnRecordCreatePayload());
+        closeModal("returnRecordCreateModal");
+        await loadReturnRecords();
+        showToast("已新增返品记录");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("returnRecordImportForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = getSubmitButton(form, event);
+    try {
+      await withBusyButton(submitButton, "导入中...", async () => {
+        const file = $("returnRecordImportFile")?.files?.[0];
+        if (!file) {
+          throw new Error("请选择返品 Excel 文件");
+        }
+        const result = await importReturnRecordsFile(file);
+        closeModal("returnRecordImportModal");
+        form.reset();
+        await loadReturnRecords();
+        showToast(`返品记录导入完成，新增 ${Number(result?.createdCount || 0)} 条`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("returnRecordBatchDeleteBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "删除中...", async () => {
+        const ids = Array.from(state.selectedReturnRecordIds);
+        if (!ids.length) {
+          throw new Error("请先选择要删除的返品记录");
+        }
+        const ok = await openDeleteConfirmModal(`确认批量删除 ${ids.length} 条返品记录？`);
+        if (!ok) return;
+        const result = await deleteReturnRecords(ids);
+        state.selectedReturnRecordIds = new Set();
+        await loadReturnRecords();
+        showToast(`已删除 ${Number(result?.deletedCount || 0)} 条返品记录`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("returnRecordsSelectAll")?.addEventListener("change", (event) => {
+    const checked = event.currentTarget.checked;
+    state.selectedReturnRecordIds = checked
+      ? new Set(state.returnRecords.map((item) => String(item.id)))
+      : new Set();
+    renderReturnRecordsTable();
+  });
+
+  $("returnRecordsBody")?.addEventListener("change", (event) => {
+    const checkbox = event.target.closest(".return-record-select");
+    if (!checkbox) return;
+    const id = String(checkbox.dataset.id || "");
+    if (!id) return;
+    if (checkbox.checked) {
+      state.selectedReturnRecordIds.add(id);
+    } else {
+      state.selectedReturnRecordIds.delete(id);
+    }
+    updateReturnRecordsSelectAll();
+    updateReturnRecordBatchDeleteButtonState();
   });
 
   $("regenerateStocktakeTasksBtn").addEventListener("click", async (event) => {
@@ -14776,6 +15341,16 @@ function bindDelegates() {
       closeModal("bulkRakutenComboProductUploadModal");
       return;
     }
+    const returnRecordCreateClose = event.target.closest("button[data-action='closeReturnRecordCreateModal']");
+    if (returnRecordCreateClose) {
+      closeModal("returnRecordCreateModal");
+      return;
+    }
+    const returnRecordImportClose = event.target.closest("button[data-action='closeReturnRecordImportModal']");
+    if (returnRecordImportClose) {
+      closeModal("returnRecordImportModal");
+      return;
+    }
     const boxClose = event.target.closest("button[data-action='closeCreateBoxFromSkuModal']");
     if (boxClose) {
       closeModal("createBoxFromSkuModal");
@@ -15006,6 +15581,18 @@ function bindDelegates() {
   $("bulkRakutenComboProductUploadModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("bulkRakutenComboProductUploadModal");
+    }
+  });
+
+  $("returnRecordCreateModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("returnRecordCreateModal");
+    }
+  });
+
+  $("returnRecordImportModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("returnRecordImportModal");
     }
   });
 
@@ -15274,6 +15861,13 @@ function bindScrollLoad() {
   if (stocktakePlannerTableWrap) {
     stocktakePlannerTableWrap.addEventListener("scroll", () => {
       maybeAutoLoadStocktakeTasks();
+    });
+  }
+
+  const returnRecordsTableWrap = $("returnRecordsTableWrap");
+  if (returnRecordsTableWrap) {
+    returnRecordsTableWrap.addEventListener("scroll", () => {
+      loadMoreReturnRecordsIfNeeded();
     });
   }
 

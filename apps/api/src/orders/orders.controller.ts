@@ -44,6 +44,18 @@ export class OrdersController {
     return this.ordersService.listAmazonManualOrders(limit);
   }
 
+  @Get('search')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async searchOrders(@Query('q') query?: string): Promise<unknown> {
+    return this.ordersService.searchOrders(query);
+  }
+
+  @Get('search-suggestions')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async searchOrderSuggestions(@Query('q') query?: string): Promise<unknown> {
+    return this.ordersService.searchOrderSuggestions(query);
+  }
+
   @Put('rakuten/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async updateRakutenOrder(
@@ -225,8 +237,9 @@ export class OrdersController {
   async listChinaOrderProcessing(
     @Query('limit') limit?: string,
     @Query('scope') scope?: string,
+    @Query('offset') offset?: string,
   ): Promise<unknown[]> {
-    return this.ordersService.listChinaOrderProcessing(limit, scope);
+    return this.ordersService.listChinaOrderProcessing(limit, scope, offset);
   }
 
   @Post('china-orders/sync-xiya-tracking')

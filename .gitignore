@@ -9,3 +9,4 @@ dist/
 *.log
 coverage/
 apps/api/data/
+apps/api/storage/

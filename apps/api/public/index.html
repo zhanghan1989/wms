@@ -309,6 +309,7 @@
               <button type="button" id="openBoxManageModal">箱号管理</button>
               <button type="button" id="openShelfManageModal">货架管理</button>
               <button type="button" id="openStocktakePlannerPanel">库存盘点</button>
+              <button type="button" id="openReturnManagementPanel">返品管理</button>
               <button type="button" id="openEmptyBoxManageModal" class="btn-with-badge">
                 空箱管理
                 <span id="emptyBoxManageBadge" class="quick-badge hidden">0</span>
@@ -813,6 +814,72 @@
             <div id="ordersLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
           </div>
         </article>
+
+        <article class="card order-search-card">
+          <div class="card-head">
+            <div>
+              <h3>订单检索</h3>
+              <p class="muted order-import-note">可按 注文番号、收件人、电话 检索乐天 / 亚马逊 / 手动订单。</p>
+            </div>
+          </div>
+          <div class="action-row order-search-row">
+            <input id="orderSearchInput" type="text" autocomplete="off" list="orderSearchSuggestionsList" placeholder="输入 注文番号、收件人或电话" />
+            <datalist id="orderSearchSuggestionsList"></datalist>
+            <button id="orderSearchSubmitBtn" type="button">检索</button>
+            <button id="orderSearchClearBtn" type="button" class="ghost">清空</button>
+          </div>
+          <p id="orderSearchSummary" class="muted order-import-note">请输入条件后检索。</p>
+          <div id="orderSearchResultSection" class="order-search-result-section hidden">
+            <h3 id="orderSearchMatchesTitle" class="order-search-result-title">检索结果</h3>
+            <div class="master-product-table-wrap order-search-table-wrap">
+              <table class="order-search-table">
+                <thead>
+                  <tr>
+                    <th>平台</th>
+                    <th>导入时间</th>
+                    <th>注文番号</th>
+                    <th>SKU</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>数量</th>
+                    <th>店铺</th>
+                    <th>收件人</th>
+                    <th>电话</th>
+                    <th>发货模式</th>
+                    <th>发货公司</th>
+                    <th>发货单号</th>
+                  </tr>
+                </thead>
+                <tbody id="orderSearchMatchesBody"></tbody>
+              </table>
+            </div>
+            <div id="orderSearchHistorySection" class="hidden">
+              <h3 id="orderSearchHistoryTitle" class="order-search-result-title">该用户历史订单</h3>
+              <div class="master-product-table-wrap order-search-table-wrap">
+                <table class="order-search-table">
+                  <thead>
+                    <tr>
+                      <th>平台</th>
+                      <th>导入时间</th>
+                      <th>注文番号</th>
+                      <th>SKU</th>
+                      <th>产品ID</th>
+                      <th>产品名称</th>
+                      <th>数量</th>
+                      <th>店铺</th>
+                      <th>收件人</th>
+                      <th>电话</th>
+                      <th>发货模式</th>
+                      <th>发货公司</th>
+                      <th>发货单号</th>
+                    </tr>
+                  </thead>
+                  <tbody id="orderSearchHistoryBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </article>
       </section>
 
       <section class="panel" id="overseasOrderProcessing">
@@ -854,6 +921,7 @@
               </thead>
               <tbody id="overseasOrderProcessingBody"></tbody>
             </table>
+            <div id="overseasOrderProcessingLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
           </div>
         </article>
       </section>
@@ -925,6 +993,7 @@
               </thead>
               <tbody id="chinaOrderProcessingExportedBody"></tbody>
             </table>
+            <div id="chinaOrderProcessingExportedLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
           </div>
         </article>
       </section>
@@ -1505,6 +1574,55 @@
           </div>
         </article>
       </section>
+
+      <section class="panel" id="returnManagement">
+        <div class="panel-head">
+          <h2>返品管理</h2>
+          <div class="panel-tools">
+            <button id="backToOverseasWarehouseFromReturnBtn" class="ghost" type="button">返回海外仓管理</button>
+          </div>
+        </div>
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>返品管理一览</h3>
+              <p class="muted">支持新增返回记录、批量导入 Excel、批量删除。产品名称会根据产品ID自动匹配主表。</p>
+            </div>
+            <div class="actions">
+              <button id="openReturnRecordCreateModal" type="button">新增返回记录</button>
+              <button id="openReturnRecordImportModal" type="button">批量导入</button>
+              <button id="returnRecordBatchDeleteBtn" class="danger" type="button" disabled>批量删除</button>
+            </div>
+          </div>
+          <div id="returnRecordsTableWrap" class="master-product-table-wrap return-records-table-wrap">
+            <table class="return-records-table">
+              <thead>
+                <tr>
+                  <th><input id="returnRecordsSelectAll" type="checkbox" /></th>
+                  <th>作成时间</th>
+                  <th>発送人</th>
+                  <th>運送会社</th>
+                  <th>追跡番号</th>
+                  <th>郵便番号</th>
+                  <th>住所</th>
+                  <th>電話番号</th>
+                  <th>荷物</th>
+                  <th>販売サイト</th>
+                  <th>注文番号</th>
+                  <th>产品ID</th>
+                  <th>产品名称</th>
+                  <th>是否已拆封使用</th>
+                  <th>是否可以再入库</th>
+                </tr>
+              </thead>
+              <tbody id="returnRecordsBody">
+                <tr><td colspan="15" class="muted">暂无返品记录。</td></tr>
+              </tbody>
+            </table>
+            <div id="returnRecordsLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+          </div>
+        </article>
+      </section>
       <section class="panel" id="dataBackup">
         <div class="panel-head">
           <h2>数据备份一览</h2>
@@ -1866,6 +1984,63 @@
             <button type="submit" id="submitBulkRakutenComboProductUploadBtn">上传并处理</button>
             <button type="button" class="ghost" data-action="closeBulkRakutenComboProductUploadModal">取消</button>
           </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="returnRecordCreateModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>新增返回记录</h3>
+        <button type="button" class="ghost" data-action="closeReturnRecordCreateModal">关闭</button>
+      </div>
+      <form id="returnRecordCreateForm" class="form-grid modal-grid">
+        <label class="create-sku-left-col">発送人<input id="returnRecordSenderName" maxlength="255" /></label>
+        <label class="create-sku-right-col">運送会社<input id="returnRecordCarrierName" maxlength="128" /></label>
+        <label class="create-sku-left-col">追跡番号<input id="returnRecordTrackingNo" maxlength="128" /></label>
+        <label class="create-sku-right-col">郵便番号<input id="returnRecordPostalCode" maxlength="32" /></label>
+        <label class="create-sku-full-row">住所<input id="returnRecordAddress" maxlength="5000" /></label>
+        <label class="create-sku-left-col">電話番号<input id="returnRecordPhone" maxlength="64" /></label>
+        <label class="create-sku-right-col">販売サイト<input id="returnRecordSalesSite" maxlength="128" /></label>
+        <label class="create-sku-left-col">注文番号<input id="returnRecordOrderNo" maxlength="128" /></label>
+        <label class="create-sku-right-col">产品ID
+          <input id="returnRecordProductId" list="returnRecordProductIdList" maxlength="128" />
+          <datalist id="returnRecordProductIdList"></datalist>
+        </label>
+        <label class="create-sku-full-row">产品名称<input id="returnRecordProductName" readonly /></label>
+        <label class="create-sku-full-row">荷物<input id="returnRecordPackageContent" maxlength="5000" /></label>
+        <label class="checkbox-label create-sku-left-col">
+          <input id="returnRecordIsOpenedUsed" type="checkbox" />
+          是否已拆封使用
+        </label>
+        <label class="checkbox-label create-sku-right-col">
+          <input id="returnRecordCanRestock" type="checkbox" />
+          是否可以再入库
+        </label>
+        <div class="modal-actions">
+          <button type="submit" id="submitReturnRecordCreateBtn">保存</button>
+          <button type="button" class="ghost" data-action="closeReturnRecordCreateModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="returnRecordImportModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>批量导入返品记录</h3>
+        <button type="button" class="ghost" data-action="closeReturnRecordImportModal">关闭</button>
+      </div>
+      <form id="returnRecordImportForm" class="form-grid modal-grid">
+        <label class="create-sku-full-row">
+          返品 Excel 文件
+          <input id="returnRecordImportFile" type="file" accept=".xlsx,.xls" required />
+        </label>
+        <p class="create-sku-full-row muted">支持列：発送人、運送会社、追跡番号、郵便番号、住所、電話番号、荷物、販売サイト、注文番号、产品ID、是否已拆封使用、是否可以再入库。</p>
+        <div class="modal-actions">
+          <button type="submit" id="submitReturnRecordImportBtn">上传并导入</button>
+          <button type="button" class="ghost" data-action="closeReturnRecordImportModal">取消</button>
         </div>
       </form>
     </div>

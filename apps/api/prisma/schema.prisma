@@ -911,6 +911,33 @@ model RakutenComboProductItem {
   @@map("rakuten_combo_product_items")
 }
 
+model ReturnRecord {
+  id             BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  senderName     String?  @map("sender_name") @db.VarChar(255)
+  carrierName    String?  @map("carrier_name") @db.VarChar(128)
+  trackingNo     String?  @map("tracking_no") @db.VarChar(128)
+  postalCode     String?  @map("postal_code") @db.VarChar(32)
+  address        String?  @db.Text
+  phone          String?  @db.VarChar(64)
+  packageContent String?  @map("package_content") @db.Text
+  salesSite      String?  @map("sales_site") @db.VarChar(128)
+  orderNo        String?  @map("order_no") @db.VarChar(128)
+  productId      String?  @map("product_id") @db.VarChar(128)
+  productName    String?  @map("product_name") @db.VarChar(255)
+  isOpenedUsed   Boolean  @default(false) @map("is_opened_used")
+  canRestock     Boolean  @default(false) @map("can_restock")
+  sourceFileName String?  @map("source_file_name") @db.VarChar(255)
+  createdBy      BigInt?  @map("created_by") @db.UnsignedBigInt
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([createdAt], map: "return_records_created_at_idx")
+  @@index([trackingNo], map: "return_records_tracking_no_idx")
+  @@index([orderNo], map: "return_records_order_no_idx")
+  @@index([productId], map: "return_records_product_id_idx")
+  @@map("return_records")
+}
+
 model PrintJob {
   id           BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   jobType      String                 @default("yamato_label") @map("job_type") @db.VarChar(32)

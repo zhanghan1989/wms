@@ -1252,6 +1252,40 @@ td {
   flex: 0 0 auto;
 }
 
+.order-search-card {
+  margin-top: 16px;
+}
+
+.order-search-row {
+  align-items: center;
+  gap: 10px;
+}
+
+.order-search-row input {
+  flex: 1 1 360px;
+  min-width: 240px;
+}
+
+.order-search-result-title {
+  margin: 16px 0 10px;
+}
+
+.order-search-table-wrap {
+  max-height: 430px;
+}
+
+.order-search-table {
+  min-width: 1380px;
+}
+
+.return-records-table-wrap {
+  max-height: 620px;
+}
+
+.return-records-table {
+  min-width: 1800px;
+}
+
 #overseasOrderProcessingTableWrap,
 #chinaOrderProcessingPendingTableWrap,
 #chinaOrderProcessingExportedTableWrap,

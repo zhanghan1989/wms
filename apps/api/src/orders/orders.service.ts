@@ -362,6 +362,46 @@ interface DeleteAmazonManualOrdersForXiyaPayload {
 
 type ThirdPartyExportSource = 'rakuten' | 'amazon' | 'manual';
 
+type UnifiedOrderSearchSource = 'rakuten' | 'amazon' | 'manual';
+type UnifiedOrderSearchMode = 'order' | 'customer';
+
+interface UnifiedOrderSearchRow {
+  source: UnifiedOrderSearchSource;
+  sourceLabel: string;
+  id: string;
+  orderId: string | null;
+  sku: string | null;
+  productId: string | null;
+  productName: string | null;
+  quantity: number | null;
+  mallName: string | null;
+  shopName: string | null;
+  recipientName: string | null;
+  phone: string | null;
+  fulfillmentMode: string | null;
+  shipmentCompany: string | null;
+  shipmentNo: string | null;
+  shipmentNoRegisteredAt: string | null;
+  csvImportedAt: string | null;
+  createdAt: string | null;
+}
+
+interface UnifiedOrderSearchResult {
+  query: string;
+  mode: UnifiedOrderSearchMode;
+  matches: UnifiedOrderSearchRow[];
+  history: UnifiedOrderSearchRow[];
+}
+
+type UnifiedOrderSearchSuggestionType = 'orderId' | 'recipientName' | 'phone';
+
+interface UnifiedOrderSearchSuggestion {
+  type: UnifiedOrderSearchSuggestionType;
+  value: string;
+  label: string;
+  sourceLabel: string;
+}
+
 interface ThirdPartyExportRowInput {
   source: ThirdPartyExportSource;
   sourceLabel: string;
@@ -2019,6 +2059,511 @@ export class OrdersService {
     return this.enrichManualOrderRows(rows as ManualOrderRecordLike[]);
   }
 
+  async searchOrders(queryRaw?: string): Promise<UnifiedOrderSearchResult> {
+    const query = String(queryRaw ?? '').trim();
+    if (!query) {
+      throw new BadRequestException('请输入注文番号、收件人或电话');
+    }
+
+    const normalizedOrderId = this.normalizeSearchOrderId(query);
+    const [rakutenExactIds, amazonExactIds, manualExactIds] = await Promise.all([
+      this.findOrderIdsByNormalizedOrderId('rakuten', normalizedOrderId, 300),
+      this.findOrderIdsByNormalizedOrderId('amazon', normalizedOrderId, 300),
+      this.findOrderIdsByNormalizedOrderId('manual', normalizedOrderId, 300),
+    ]);
+    const [rakutenExactRows, amazonExactRows, manualExactRows]: [
+      RakutenOrderRecord[],
+      AmazonOrderRecord[],
+      ManualOrderRecordLike[],
+    ] = await Promise.all([
+      rakutenExactIds.length
+        ? this.prisma.rakutenOrderRecord.findMany({
+            where: { id: { in: rakutenExactIds } },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+          })
+        : Promise.resolve([] as RakutenOrderRecord[]),
+      amazonExactIds.length
+        ? this.prisma.amazonOrderRecord.findMany({
+            where: { id: { in: amazonExactIds } },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+          })
+        : Promise.resolve([] as AmazonOrderRecord[]),
+      manualExactIds.length
+        ? ((this.prisma as any).manualOrderRecord.findMany({
+            where: { id: { in: manualExactIds } },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+          }) as Promise<ManualOrderRecordLike[]>)
+        : Promise.resolve([] as ManualOrderRecordLike[]),
+    ]);
+
+    const hasExactMatch = Boolean(rakutenExactRows.length || amazonExactRows.length || manualExactRows.length);
+    if (hasExactMatch) {
+      const matches = await this.buildUnifiedOrderSearchRows(rakutenExactRows, amazonExactRows, manualExactRows);
+      const customerKeys = this.extractUnifiedOrderCustomerKeys(rakutenExactRows, amazonExactRows, manualExactRows);
+      const historyRows = await this.findUnifiedOrdersByCustomerKeys(
+        customerKeys.names,
+        customerKeys.phoneDigits,
+        500,
+      );
+      const matchedKeys = new Set(matches.map((row) => `${row.source}:${row.id}`));
+      return {
+        query,
+        mode: 'order',
+        matches,
+        history: historyRows.filter((row) => !matchedKeys.has(`${row.source}:${row.id}`)),
+      };
+    }
+
+    return {
+      query,
+      mode: 'customer',
+      matches: await this.findUnifiedOrdersByCustomerQuery(query, 500),
+      history: [],
+    };
+  }
+
+  async searchOrderSuggestions(queryRaw?: string): Promise<UnifiedOrderSearchSuggestion[]> {
+    const query = String(queryRaw ?? '').trim();
+    if (!query) {
+      return [];
+    }
+
+    const normalizedOrderId = this.normalizeSearchOrderId(query);
+    const phoneDigits = this.normalizeSearchPhoneDigits(query);
+    const limit = 20;
+    const [orderIdSuggestions, phoneSuggestions, recipientNameSuggestions] = await Promise.all([
+      normalizedOrderId
+        ? this.findOrderSearchSuggestionsByNormalizedColumn('orderId', normalizedOrderId, limit)
+        : Promise.resolve([]),
+      phoneDigits ? this.findOrderSearchSuggestionsByNormalizedColumn('phone', phoneDigits, limit) : Promise.resolve([]),
+      this.findRecipientNameSuggestions(query, limit),
+    ]);
+
+    const seen = new Set<string>();
+    return [...orderIdSuggestions, ...recipientNameSuggestions, ...phoneSuggestions]
+      .filter((suggestion) => {
+        const key = `${suggestion.type}:${suggestion.value}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, 50);
+  }
+
+  private async findOrderSearchSuggestionsByNormalizedColumn(
+    type: 'orderId' | 'phone',
+    normalizedFragment: string,
+    limit: number,
+  ): Promise<UnifiedOrderSearchSuggestion[]> {
+    const configs = [
+      {
+        sourceLabel: '乐天',
+        tableName: 'rakuten_order_records',
+        valueColumn: type === 'orderId' ? 'order_id' : 'shipping_phone',
+      },
+      {
+        sourceLabel: '亚马逊',
+        tableName: 'amazon_order_records',
+        valueColumn: type === 'orderId' ? 'order_id' : 'buyer_phone_number',
+      },
+      {
+        sourceLabel: '手动订单',
+        tableName: 'manual_order_records',
+        valueColumn: type === 'orderId' ? 'order_id' : 'buyer_phone_number',
+      },
+    ];
+    const normalizedLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
+    const normalizedSql =
+      type === 'orderId'
+        ? `UPPER(REGEXP_REPLACE(COALESCE(value_column_placeholder, ''), '[^0-9A-Za-z]', ''))`
+        : `REGEXP_REPLACE(COALESCE(value_column_placeholder, ''), '[^0-9]', '')`;
+    const rowsBySource = await Promise.all(
+      configs.map(async (config) => {
+        const rows = await this.prisma.$queryRawUnsafe<Array<{ value: string | null }>>(
+          `SELECT ${config.valueColumn} AS value
+           FROM ${config.tableName}
+           WHERE ${normalizedSql.replace('value_column_placeholder', config.valueColumn)} LIKE ?
+             AND ${config.valueColumn} IS NOT NULL
+             AND ${config.valueColumn} <> ''
+           ORDER BY csv_imported_at DESC, id DESC
+           LIMIT ?`,
+          `%${normalizedFragment}%`,
+          normalizedLimit,
+        );
+        return rows
+          .map((row) => String(row.value ?? '').trim())
+          .filter((value) => value.length > 0)
+          .map((value) => ({
+            type,
+            value,
+            sourceLabel: config.sourceLabel,
+            label: `${config.sourceLabel} ${type === 'orderId' ? '注文番号' : '电话'}: ${value}`,
+          }));
+      }),
+    );
+    return rowsBySource.flat();
+  }
+
+  private async findRecipientNameSuggestions(
+    query: string,
+    limit: number,
+  ): Promise<UnifiedOrderSearchSuggestion[]> {
+    const keyword = String(query ?? '').trim();
+    if (!keyword) {
+      return [];
+    }
+    const normalizedLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
+    const [rakutenRows, amazonRows, manualRows] = await Promise.all([
+      this.prisma.rakutenOrderRecord.findMany({
+        where: { shippingName: { contains: keyword } },
+        select: { shippingName: true },
+        orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+        take: normalizedLimit,
+      }),
+      this.prisma.amazonOrderRecord.findMany({
+        where: { recipientName: { contains: keyword } },
+        select: { recipientName: true },
+        orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+        take: normalizedLimit,
+      }),
+      (this.prisma as any).manualOrderRecord.findMany({
+        where: { recipientName: { contains: keyword } },
+        select: { recipientName: true },
+        orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+        take: normalizedLimit,
+      }) as Promise<Array<{ recipientName: string | null }>>,
+    ]);
+    return [
+      ...rakutenRows.map((row) => ({ sourceLabel: '乐天', value: row.shippingName })),
+      ...amazonRows.map((row) => ({ sourceLabel: '亚马逊', value: row.recipientName })),
+      ...manualRows.map((row) => ({ sourceLabel: '手动订单', value: row.recipientName })),
+    ]
+      .map((row) => ({ ...row, value: String(row.value ?? '').trim() }))
+      .filter((row) => row.value.length > 0)
+      .map((row) => ({
+        type: 'recipientName' as const,
+        value: row.value,
+        sourceLabel: row.sourceLabel,
+        label: `${row.sourceLabel} 收件人: ${row.value}`,
+      }));
+  }
+
+  private async findUnifiedOrdersByCustomerQuery(
+    query: string,
+    limit: number,
+  ): Promise<UnifiedOrderSearchRow[]> {
+    const keyword = String(query ?? '').trim();
+    const phoneDigits = this.normalizeSearchPhoneDigits(keyword);
+    const [rakutenRows, amazonRows, manualRows] = await this.findUnifiedRawOrdersByCustomer({
+      names: keyword ? [keyword] : [],
+      phoneDigits: phoneDigits ? [phoneDigits] : [],
+      phoneMatchMode: 'contains',
+      limit,
+    });
+    return this.buildUnifiedOrderSearchRows(rakutenRows, amazonRows, manualRows);
+  }
+
+  private async findUnifiedOrdersByCustomerKeys(
+    names: string[],
+    phoneDigits: string[],
+    limit: number,
+  ): Promise<UnifiedOrderSearchRow[]> {
+    const [rakutenRows, amazonRows, manualRows] = await this.findUnifiedRawOrdersByCustomer({
+      names,
+      phoneDigits,
+      phoneMatchMode: 'exact',
+      limit,
+    });
+    return this.buildUnifiedOrderSearchRows(rakutenRows, amazonRows, manualRows);
+  }
+
+  private async findUnifiedRawOrdersByCustomer(options: {
+    names: string[];
+    phoneDigits: string[];
+    phoneMatchMode: 'contains' | 'exact';
+    limit: number;
+  }): Promise<[RakutenOrderRecord[], AmazonOrderRecord[], ManualOrderRecordLike[]]> {
+    const names = Array.from(
+      new Set(options.names.map((name) => String(name ?? '').trim()).filter((name) => name.length > 0)),
+    ).slice(0, 10);
+    const phoneDigits = Array.from(
+      new Set(
+        options.phoneDigits
+          .map((phone) => this.normalizeSearchPhoneDigits(phone))
+          .filter((phone) => phone.length > 0),
+      ),
+    ).slice(0, 10);
+    if (!names.length && !phoneDigits.length) {
+      return [[], [], []];
+    }
+
+    const limit = Math.max(1, Math.min(Number(options.limit) || 500, 1000));
+    const [
+      rakutenNameRows,
+      amazonNameRows,
+      manualNameRows,
+      rakutenPhoneIds,
+      amazonPhoneIds,
+      manualPhoneIds,
+    ] = await Promise.all([
+      names.length
+        ? this.prisma.rakutenOrderRecord.findMany({
+            where: { OR: names.map((name) => ({ shippingName: { contains: name } })) },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+            take: limit,
+          })
+        : Promise.resolve([] as RakutenOrderRecord[]),
+      names.length
+        ? this.prisma.amazonOrderRecord.findMany({
+            where: { OR: names.map((name) => ({ recipientName: { contains: name } })) },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+            take: limit,
+          })
+        : Promise.resolve([] as AmazonOrderRecord[]),
+      names.length
+        ? ((this.prisma as any).manualOrderRecord.findMany({
+            where: { OR: names.map((name) => ({ recipientName: { contains: name } })) },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+            take: limit,
+          }) as Promise<ManualOrderRecordLike[]>)
+        : Promise.resolve([] as ManualOrderRecordLike[]),
+      this.findOrderIdsByNormalizedPhone('rakuten', phoneDigits, options.phoneMatchMode, limit),
+      this.findOrderIdsByNormalizedPhone('amazon', phoneDigits, options.phoneMatchMode, limit),
+      this.findOrderIdsByNormalizedPhone('manual', phoneDigits, options.phoneMatchMode, limit),
+    ]);
+
+    const [rakutenPhoneRows, amazonPhoneRows, manualPhoneRows] = await Promise.all([
+      rakutenPhoneIds.length
+        ? this.prisma.rakutenOrderRecord.findMany({
+            where: { id: { in: rakutenPhoneIds } },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+          })
+        : Promise.resolve([] as RakutenOrderRecord[]),
+      amazonPhoneIds.length
+        ? this.prisma.amazonOrderRecord.findMany({
+            where: { id: { in: amazonPhoneIds } },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+          })
+        : Promise.resolve([] as AmazonOrderRecord[]),
+      manualPhoneIds.length
+        ? ((this.prisma as any).manualOrderRecord.findMany({
+            where: { id: { in: manualPhoneIds } },
+            orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
+          }) as Promise<ManualOrderRecordLike[]>)
+        : Promise.resolve([] as ManualOrderRecordLike[]),
+    ]);
+
+    return [
+      this.mergeRowsById(rakutenNameRows, rakutenPhoneRows).slice(0, limit),
+      this.mergeRowsById(amazonNameRows, amazonPhoneRows).slice(0, limit),
+      this.mergeRowsById(manualNameRows, manualPhoneRows).slice(0, limit),
+    ];
+  }
+
+  private extractUnifiedOrderCustomerKeys(
+    rakutenRows: RakutenOrderRecord[],
+    amazonRows: AmazonOrderRecord[],
+    manualRows: ManualOrderRecordLike[],
+  ): { names: string[]; phoneDigits: string[] } {
+    const names = new Set<string>();
+    const phoneDigits = new Set<string>();
+    rakutenRows.forEach((row) => {
+      const name = String(row.shippingName ?? '').trim();
+      const phone = this.normalizeSearchPhoneDigits(row.shippingPhone);
+      if (name) names.add(name);
+      if (phone) phoneDigits.add(phone);
+    });
+    [...amazonRows, ...manualRows].forEach((row) => {
+      const name = String(row.recipientName ?? '').trim();
+      const phone = this.normalizeSearchPhoneDigits(row.buyerPhoneNumber);
+      if (name) names.add(name);
+      if (phone) phoneDigits.add(phone);
+    });
+    return {
+      names: Array.from(names),
+      phoneDigits: Array.from(phoneDigits),
+    };
+  }
+
+  private async findOrderIdsByNormalizedPhone(
+    source: UnifiedOrderSearchSource,
+    phoneDigits: string[],
+    matchMode: 'contains' | 'exact',
+    limit: number,
+  ): Promise<bigint[]> {
+    if (!phoneDigits.length) {
+      return [];
+    }
+
+    const tableConfig = {
+      rakuten: { tableName: 'rakuten_order_records', phoneColumn: 'shipping_phone' },
+      amazon: { tableName: 'amazon_order_records', phoneColumn: 'buyer_phone_number' },
+      manual: { tableName: 'manual_order_records', phoneColumn: 'buyer_phone_number' },
+    }[source];
+    const normalizedPhoneSql = `REGEXP_REPLACE(COALESCE(${tableConfig.phoneColumn}, ''), '[^0-9]', '')`;
+    const normalizedLimit = Math.max(1, Math.min(Number(limit) || 500, 1000));
+    const params =
+      matchMode === 'exact'
+        ? [...phoneDigits, normalizedLimit]
+        : [`%${phoneDigits[0]}%`, normalizedLimit];
+    const whereSql =
+      matchMode === 'exact'
+        ? `${normalizedPhoneSql} IN (${phoneDigits.map(() => '?').join(', ')})`
+        : `${normalizedPhoneSql} LIKE ?`;
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ id: bigint | number | string }>>(
+      `SELECT id FROM ${tableConfig.tableName} WHERE ${whereSql} ORDER BY csv_imported_at DESC, id DESC LIMIT ?`,
+      ...params,
+    );
+    return rows
+      .map((row) => this.parseBigIntId(row.id))
+      .filter((id): id is bigint => id !== null);
+  }
+
+  private async findOrderIdsByNormalizedOrderId(
+    source: UnifiedOrderSearchSource,
+    normalizedOrderId: string,
+    limit: number,
+  ): Promise<bigint[]> {
+    if (!normalizedOrderId) {
+      return [];
+    }
+
+    const tableName = {
+      rakuten: 'rakuten_order_records',
+      amazon: 'amazon_order_records',
+      manual: 'manual_order_records',
+    }[source];
+    const normalizedLimit = Math.max(1, Math.min(Number(limit) || 300, 1000));
+    const rows = await this.prisma.$queryRawUnsafe<Array<{ id: bigint | number | string }>>(
+      `SELECT id FROM ${tableName}
+       WHERE UPPER(REGEXP_REPLACE(COALESCE(order_id, ''), '[^0-9A-Za-z]', '')) = ?
+       ORDER BY csv_imported_at DESC, id DESC
+       LIMIT ?`,
+      normalizedOrderId,
+      normalizedLimit,
+    );
+    return rows
+      .map((row) => this.parseBigIntId(row.id))
+      .filter((id): id is bigint => id !== null);
+  }
+
+  private async buildUnifiedOrderSearchRows(
+    rakutenRows: RakutenOrderRecord[],
+    amazonRows: AmazonOrderRecord[],
+    manualRows: ManualOrderRecordLike[],
+  ): Promise<UnifiedOrderSearchRow[]> {
+    const [rakutenEnrichedRows, amazonEnrichedRows, manualEnrichedRows] = await Promise.all([
+      this.enrichOrderRows(rakutenRows),
+      this.enrichAmazonOrderRows(amazonRows),
+      this.enrichManualOrderRows(manualRows),
+    ]);
+
+    const rows: UnifiedOrderSearchRow[] = [
+      ...rakutenEnrichedRows.map((row) => this.toUnifiedOrderSearchRow('rakuten', row)),
+      ...amazonEnrichedRows.map((row) => this.toUnifiedOrderSearchRow('amazon', row)),
+      ...manualEnrichedRows.map((row) => this.toUnifiedOrderSearchRow('manual', row)),
+    ];
+    rows.sort((left, right) => {
+      const leftTime = new Date(left.csvImportedAt || left.createdAt || 0).getTime();
+      const rightTime = new Date(right.csvImportedAt || right.createdAt || 0).getTime();
+      if (rightTime !== leftTime) return rightTime - leftTime;
+      return Number(right.id) - Number(left.id);
+    });
+    return rows;
+  }
+
+  private toUnifiedOrderSearchRow(
+    source: 'rakuten',
+    row: OrderListItem,
+  ): UnifiedOrderSearchRow;
+  private toUnifiedOrderSearchRow(
+    source: 'amazon',
+    row: AmazonEnrichedOrderListItem,
+  ): UnifiedOrderSearchRow;
+  private toUnifiedOrderSearchRow(
+    source: 'manual',
+    row: ManualEnrichedOrderListItem,
+  ): UnifiedOrderSearchRow;
+  private toUnifiedOrderSearchRow(
+    source: UnifiedOrderSearchSource,
+    row: OrderListItem | AmazonEnrichedOrderListItem | ManualEnrichedOrderListItem,
+  ): UnifiedOrderSearchRow {
+    if (source === 'rakuten') {
+      const rakutenRow = row as OrderListItem;
+      return {
+        source,
+        sourceLabel: '乐天',
+        id: rakutenRow.id.toString(),
+        orderId: rakutenRow.orderId,
+        sku: rakutenRow.skuCode,
+        productId: rakutenRow.resolvedProductId || rakutenRow.skuCode,
+        productName: rakutenRow.resolvedProductName || rakutenRow.productName,
+        quantity: rakutenRow.orderQuantity,
+        mallName: rakutenRow.mallName,
+        shopName: rakutenRow.shopName,
+        recipientName: rakutenRow.shippingName,
+        phone: rakutenRow.shippingPhone,
+        fulfillmentMode: rakutenRow.fulfillmentMode,
+        shipmentCompany: rakutenRow.shipmentCompany,
+        shipmentNo: rakutenRow.shipmentNo,
+        shipmentNoRegisteredAt: this.toIsoStringOrNull(rakutenRow.shipmentNoRegisteredAt),
+        csvImportedAt: this.toIsoStringOrNull(rakutenRow.csvImportedAt),
+        createdAt: this.toIsoStringOrNull(rakutenRow.createdAt),
+      };
+    }
+
+    const amazonLikeRow = row as AmazonEnrichedOrderListItem | ManualEnrichedOrderListItem;
+    return {
+      source,
+      sourceLabel: source === 'manual' ? '手动订单' : '亚马逊',
+      id: amazonLikeRow.id.toString(),
+      orderId: amazonLikeRow.orderId,
+      sku: amazonLikeRow.sku,
+      productId: amazonLikeRow.resolvedProductId,
+      productName: amazonLikeRow.resolvedProductName || amazonLikeRow.productName,
+      quantity: amazonLikeRow.quantityPurchased,
+      mallName: amazonLikeRow.mallName,
+      shopName: amazonLikeRow.resolvedShopName || amazonLikeRow.shopName,
+      recipientName: amazonLikeRow.recipientName,
+      phone: amazonLikeRow.buyerPhoneNumber,
+      fulfillmentMode: amazonLikeRow.fulfillmentMode,
+      shipmentCompany: amazonLikeRow.shipmentCompany,
+      shipmentNo: amazonLikeRow.shipmentNo,
+      shipmentNoRegisteredAt: this.toIsoStringOrNull(amazonLikeRow.shipmentNoRegisteredAt),
+      csvImportedAt: this.toIsoStringOrNull(amazonLikeRow.csvImportedAt),
+      createdAt: this.toIsoStringOrNull(amazonLikeRow.createdAt),
+    };
+  }
+
+  private normalizeSearchPhoneDigits(value: unknown): string {
+    return String(value ?? '').replace(/\D/g, '');
+  }
+
+  private normalizeSearchOrderId(value: unknown): string {
+    return String(value ?? '')
+      .replace(/[^0-9A-Za-z]/g, '')
+      .toUpperCase();
+  }
+
+  private parseBigIntId(value: unknown): bigint | null {
+    const text = String(value ?? '').trim();
+    if (!/^\d+$/.test(text)) {
+      return null;
+    }
+    return BigInt(text);
+  }
+
+  private toIsoStringOrNull(value: Date | string | null | undefined): string | null {
+    if (!value) {
+      return null;
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
+  }
+
   async updateRakutenOrder(idRaw: string, payload: UpdateRakutenOrderPayload): Promise<OrderListItem> {
     const id = parseId(idRaw, 'id');
     const current = await this.prisma.rakutenOrderRecord.findUnique({ where: { id } });
@@ -2832,11 +3377,18 @@ export class OrdersService {
     };
   }
 
-  async listChinaOrderProcessing(limitParam?: string, scopeParam?: string): Promise<OverseasWarehouseOrderListItem[]> {
+  async listChinaOrderProcessing(
+    limitParam?: string,
+    scopeParam?: string,
+    offsetParam?: string,
+  ): Promise<OverseasWarehouseOrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    const parsedOffset = Number(offsetParam);
+    const offset = Number.isInteger(parsedOffset) && parsedOffset > 0 ? Math.min(parsedOffset, 100000) : 0;
+    const collectTarget = offset + limit;
     const scope = this.normalizeChinaOrderScope(scopeParam);
-    const batchSize = Math.min(Math.max(limit, 200), 500);
+    const batchSize = Math.min(Math.max(collectTarget, 200), 500);
     const collected: OverseasWarehouseOrderListItem[] = [];
     let rakutenSkip = 0;
     let amazonSkip = 0;
@@ -2845,7 +3397,7 @@ export class OrdersService {
     let amazonExhausted = false;
     let manualExhausted = false;
 
-    while (collected.length < limit && (!rakutenExhausted || !amazonExhausted || !manualExhausted)) {
+    while (collected.length < collectTarget && (!rakutenExhausted || !amazonExhausted || !manualExhausted)) {
       const [rakutenRows, amazonRows, manualRows]: [RakutenOrderRecord[], AmazonOrderRecord[], ManualOrderRecordLike[]] = await Promise.all([
         rakutenExhausted
           ? Promise.resolve([] as RakutenOrderRecord[])
@@ -3051,7 +3603,7 @@ export class OrdersService {
         if (timeDiff !== 0) return timeDiff;
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       })
-      .slice(0, limit);
+      .slice(offset, offset + limit);
   }
 
   async deleteAmazonBatch(payload: {
