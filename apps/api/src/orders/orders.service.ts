@@ -5237,9 +5237,6 @@ export class OrdersService {
     const { batch, targetPage, productId, printablePages } = await this.findPrintableYamatoShipmentPageByProductId(
       batchIdRaw,
       payload,
-      {
-        excludeActivePrintJobs: true,
-      },
     );
     const productIds = this.getBatchPageProductIds(targetPage);
     return {
@@ -5289,9 +5286,20 @@ export class OrdersService {
       throw new BadRequestException('Yamato 打印代理未启用');
     }
 
-    const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload, {
-      excludeActivePrintJobs: true,
-    });
+    let prepared: PreparedYamatoShipmentPrintResult;
+    try {
+      prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload, {
+        excludeActivePrintJobs: true,
+      });
+    } catch (error) {
+      if (
+        !(error instanceof BadRequestException) ||
+        !String(error.message).includes('对应面单已全部打印或正在打印中')
+      ) {
+        throw error;
+      }
+      prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
+    }
     const printerName = prepared.printerName ?? (await this.resolveYamatoPrinterNameForProductIds(prepared.productIds));
     const activeJob = await this.prisma.printJob.findFirst({
       where: {
