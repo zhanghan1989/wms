@@ -790,6 +790,12 @@ interface PreparedYamatoShipmentPrintResult {
   remainingMatchCount: number;
 }
 
+interface YamatoShipmentPrintByProductPayload {
+  productId?: string;
+  pageNo?: string | number;
+  acceptActivePrintJob?: boolean;
+}
+
 interface ParsedPdfPageText {
   pageNo: number;
   text: string;
@@ -5214,7 +5220,7 @@ export class OrdersService {
 
   async printYamatoShipmentLabelByProductId(
     batchIdRaw: string,
-    payload: { productId?: string },
+    payload: YamatoShipmentPrintByProductPayload,
   ): Promise<YamatoShipmentPrintFileResult> {
     const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
     await this.markYamatoShipmentBatchPagePrinted(prepared.pageId, prepared.productId);
@@ -5232,7 +5238,7 @@ export class OrdersService {
 
   async previewYamatoShipmentLabelByProductId(
     batchIdRaw: string,
-    payload: { productId?: string },
+    payload: YamatoShipmentPrintByProductPayload,
   ): Promise<YamatoShipmentPagePreviewResult> {
     const { batch, targetPage, productId, printablePages } = await this.findPrintableYamatoShipmentPageByProductId(
       batchIdRaw,
@@ -5255,7 +5261,7 @@ export class OrdersService {
 
   async directPrintYamatoShipmentLabelByProductId(
     batchIdRaw: string,
-    payload: { productId?: string },
+    payload: YamatoShipmentPrintByProductPayload,
   ): Promise<YamatoShipmentDirectPrintResult> {
     if (!this.isYamatoDirectPrintEnabled()) {
       throw new BadRequestException('Yamato 直打未启用，当前仍使用浏览器打印');
@@ -5280,7 +5286,7 @@ export class OrdersService {
 
   async queueYamatoShipmentLabelByProductId(
     batchIdRaw: string,
-    payload: { productId?: string },
+    payload: YamatoShipmentPrintByProductPayload,
   ): Promise<YamatoShipmentQueuedPrintResult> {
     if (this.getYamatoPrintMode() !== 'agent') {
       throw new BadRequestException('Yamato 打印代理未启用');
@@ -5313,6 +5319,17 @@ export class OrdersService {
     if (activeJob) {
       const staleReason = this.getReusablePrintJobBlockReason(activeJob, printerName);
       if (!staleReason) {
+        if (payload.acceptActivePrintJob === true) {
+          return {
+            batchId: prepared.batchId,
+            productId: prepared.productId,
+            pageNo: prepared.pageNo,
+            trackingNo: prepared.trackingNo,
+            printerName,
+            queueJobId: activeJob.id.toString(),
+            mode: 'agent',
+          };
+        }
         throw new BadRequestException('该面单已在打印队列中，请勿重复扫码');
       }
       await this.prisma.printJob.updateMany({
@@ -5384,7 +5401,7 @@ export class OrdersService {
 
   async requeueYamatoShipmentLabelByProductId(
     batchIdRaw: string,
-    payload: { productId?: string },
+    payload: YamatoShipmentPrintByProductPayload,
   ): Promise<YamatoShipmentQueuedPrintResult & { clearedJobCount: number }> {
     if (this.getYamatoPrintMode() !== 'agent') {
       throw new BadRequestException('Yamato 打印代理未启用');
@@ -5414,7 +5431,7 @@ export class OrdersService {
 
   private async prepareYamatoShipmentLabelByProductId(
     batchIdRaw: string,
-    payload: { productId?: string },
+    payload: YamatoShipmentPrintByProductPayload,
     options: { excludeActivePrintJobs?: boolean } = {},
   ): Promise<PreparedYamatoShipmentPrintResult> {
     const { batch, targetPage, productId, printablePages } = await this.findPrintableYamatoShipmentPageByProductId(
@@ -5453,7 +5470,7 @@ export class OrdersService {
 
   private async findPrintableYamatoShipmentPageByProductId(
     batchIdRaw: string,
-    payload: { productId?: string },
+    payload: YamatoShipmentPrintByProductPayload,
     options: { excludeActivePrintJobs?: boolean } = {},
   ): Promise<{
     batch: YamatoShipmentBatch & { pages: YamatoShipmentBatchPage[] };
@@ -5465,6 +5482,14 @@ export class OrdersService {
     const productId = String(payload?.productId ?? '').trim();
     if (!productId) {
       throw new BadRequestException('产品ID不能为空');
+    }
+    const pageNoRaw = payload?.pageNo;
+    const pageNo =
+      pageNoRaw === undefined || pageNoRaw === null || String(pageNoRaw).trim() === ''
+        ? null
+        : Number(pageNoRaw);
+    if (pageNo !== null && (!Number.isInteger(pageNo) || pageNo <= 0)) {
+      throw new BadRequestException('Yamato 面单页码不正确');
     }
 
     const batch = await this.prisma.yamatoShipmentBatch.findUnique({
@@ -5485,6 +5510,7 @@ export class OrdersService {
     let printablePages = batch.pages.filter(
       (page) =>
         !page.printedAt &&
+        (pageNo === null || page.pageNo === pageNo) &&
         this.getBatchPageProductIds(page).some(
           (candidate) => candidate.localeCompare(productId, undefined, { sensitivity: 'accent' }) === 0,
         ),

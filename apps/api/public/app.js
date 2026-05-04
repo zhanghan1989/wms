@@ -10270,12 +10270,12 @@ async function directPrintYamatoShipmentLabelByProductId(batchId, productId) {
   );
 }
 
-async function queueYamatoShipmentLabelByProductId(batchId, productId) {
+async function queueYamatoShipmentLabelByProductId(batchId, productId, options = {}) {
   return request(
     `/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/queue-print-by-product`,
     {
       method: "POST",
-      body: JSON.stringify({ productId }),
+      body: JSON.stringify({ productId, ...options }),
     },
   );
 }
@@ -10542,14 +10542,16 @@ function startYamatoMergedScanSession(preview, scannedProductId) {
   focusYamatoMergedScanInput();
 }
 
-async function executeYamatoPrintForProduct(batch, productId, popup = null) {
+async function executeYamatoPrintForProduct(batch, productId, options = {}) {
   const pendingBeforePrint = getYamatoPendingPageCount(batch);
   const printConfig = normalizeYamatoPrintConfig(state.yamatoPrintConfig);
   const isDirectMode = printConfig.mode === "direct";
   const isAgentMode = printConfig.mode === "agent";
+  const popup = options && typeof options === "object" && "popup" in options ? options.popup : null;
+  const queueOptions = options && typeof options === "object" ? options.queueOptions || {} : {};
   let printPopup = popup;
   if (isAgentMode) {
-    await queueYamatoShipmentLabelByProductId(batch.id, productId);
+    await queueYamatoShipmentLabelByProductId(batch.id, productId, queueOptions);
   } else if (isDirectMode) {
     await directPrintYamatoShipmentLabelByProductId(batch.id, productId);
   } else {
@@ -10601,7 +10603,12 @@ async function finishYamatoMergedScanSession() {
   state.yamatoMergedScanSession = null;
   renderYamatoMergedScanSession();
   closeModal("yamatoMergedScanModal");
-  await executeYamatoPrintForProduct(batch, productId);
+  await executeYamatoPrintForProduct(batch, productId, {
+    queueOptions: {
+      pageNo: session.pageNo,
+      acceptActivePrintJob: true,
+    },
+  });
 }
 
 async function handleYamatoMergedScanValue(rawValue) {
