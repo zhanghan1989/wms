@@ -10280,12 +10280,12 @@ async function queueYamatoShipmentLabelByProductId(batchId, productId, options =
   );
 }
 
-async function requeueYamatoShipmentLabelByProductId(batchId, productId) {
+async function requeueYamatoShipmentLabelByProductId(batchId, productId, options = {}) {
   return request(
     `/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batchId)}/requeue-print-by-product`,
     {
       method: "POST",
-      body: JSON.stringify({ productId }),
+      body: JSON.stringify({ productId, ...options }),
     },
   );
 }
@@ -10603,12 +10603,25 @@ async function finishYamatoMergedScanSession() {
   state.yamatoMergedScanSession = null;
   renderYamatoMergedScanSession();
   closeModal("yamatoMergedScanModal");
-  await executeYamatoPrintForProduct(batch, productId, {
-    queueOptions: {
-      pageNo: session.pageNo,
-      acceptActivePrintJob: true,
-    },
-  });
+  const printConfig = normalizeYamatoPrintConfig(state.yamatoPrintConfig);
+  if (printConfig.mode === "agent") {
+    const pendingBeforePrint = getYamatoPendingPageCount(batch);
+    await requeueYamatoShipmentLabelByProductId(batch.id, productId, { pageNo: session.pageNo });
+    await refreshYamatoPrintStateForSelectedBatch();
+    focusOverseasYamatoScanInput();
+    if (pendingBeforePrint === 1) {
+      waitForYamatoBatchPrintCompletion(batch.id)
+        .then((isComplete) => {
+          if (isComplete) {
+            return showYamatoBatchPrintCompletePrompt();
+          }
+          return undefined;
+        })
+        .catch(() => {});
+    }
+    return;
+  }
+  await executeYamatoPrintForProduct(batch, productId);
 }
 
 async function handleYamatoMergedScanValue(rawValue) {
