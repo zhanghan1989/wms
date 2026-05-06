@@ -10290,6 +10290,36 @@ async function requeueYamatoShipmentLabelByProductId(batchId, productId, options
   );
 }
 
+async function getYamatoPrintJobStatus(jobId) {
+  return request(`/orders/overseas-warehouse/yamato-print-jobs/${encodeURIComponent(jobId)}`);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForYamatoPrintJobAccepted(jobId, timeoutMs = 12000) {
+  const normalizedJobId = String(jobId || "").trim();
+  if (!normalizedJobId) return null;
+  const startedAt = Date.now();
+  let latestStatus = null;
+  while (Date.now() - startedAt <= timeoutMs) {
+    latestStatus = await getYamatoPrintJobStatus(normalizedJobId);
+    const status = String(latestStatus?.status || "").toLowerCase();
+    if (status === "completed" || status === "claimed") {
+      return latestStatus;
+    }
+    if (status === "failed") {
+      throw new Error(`打印任务 #${normalizedJobId} 失败：${displayText(latestStatus?.errorMessage)}`);
+    }
+    await delay(1000);
+  }
+  const printerName = String(latestStatus?.printerName || "").trim();
+  throw new Error(
+    `打印任务 #${normalizedJobId} 已创建，但 Windows 打印代理还没有领取。请检查打印代理是否运行，PRINT_AGENT_PRINTERS 是否包含 ${printerName || "该打印机"}。`,
+  );
+}
+
 function openYamatoPrintPlaceholderWindow(title = "Yamato 面单打印") {
   const popup = window.open("", "_blank");
   if (!popup) {
@@ -10606,7 +10636,8 @@ async function finishYamatoMergedScanSession() {
   const printConfig = normalizeYamatoPrintConfig(state.yamatoPrintConfig);
   if (printConfig.mode === "agent") {
     const pendingBeforePrint = getYamatoPendingPageCount(batch);
-    await requeueYamatoShipmentLabelByProductId(batch.id, productId, { pageNo: session.pageNo });
+    const queued = await requeueYamatoShipmentLabelByProductId(batch.id, productId, { pageNo: session.pageNo });
+    await waitForYamatoPrintJobAccepted(queued?.queueJobId);
     await refreshYamatoPrintStateForSelectedBatch();
     focusOverseasYamatoScanInput();
     if (pendingBeforePrint === 1) {

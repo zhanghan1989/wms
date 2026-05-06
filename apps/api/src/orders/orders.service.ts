@@ -5439,6 +5439,33 @@ export class OrdersService {
     };
   }
 
+  async getYamatoShipmentPrintJobStatus(jobIdRaw: string): Promise<unknown> {
+    const jobId = parseId(jobIdRaw, 'jobId');
+    const job = await this.prisma.printJob.findUnique({
+      where: { id: jobId },
+      select: {
+        id: true,
+        jobType: true,
+        status: true,
+        productId: true,
+        printerName: true,
+        fileName: true,
+        trackingNo: true,
+        agentName: true,
+        systemJobId: true,
+        errorMessage: true,
+        queuedAt: true,
+        claimedAt: true,
+        completedAt: true,
+        failedAt: true,
+      },
+    });
+    if (!job || job.jobType !== 'yamato_label') {
+      throw new NotFoundException(`Yamato 打印任务不存在: ${jobIdRaw}`);
+    }
+    return job;
+  }
+
   private async prepareYamatoShipmentLabelByProductId(
     batchIdRaw: string,
     payload: YamatoShipmentPrintByProductPayload,

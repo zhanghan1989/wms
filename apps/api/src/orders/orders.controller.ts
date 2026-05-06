@@ -484,6 +484,12 @@ export class OrdersController {
     return this.ordersService.requeueYamatoShipmentLabelByProductId(batchId, payload);
   }
 
+  @Get('overseas-warehouse/yamato-print-jobs/:jobId')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getYamatoShipmentPrintJobStatus(@Param('jobId') jobId: string): Promise<unknown> {
+    return this.ordersService.getYamatoShipmentPrintJobStatus(jobId);
+  }
+
   @Post('amazon/delete-batch')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async deleteAmazonBatch(
