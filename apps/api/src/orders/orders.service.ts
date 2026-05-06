@@ -857,6 +857,10 @@ const YAMATO_BATCH_STATUS = {
 const YAMATO_DEFAULT_WINDOWS_PRINTER_NAME = 'yamato';
 const YAMATO_PRODUCT_PRINTER_ALIASES: Record<string, string> = {
   A: 'nekoposu',
+  yamato: YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
+  nekoposu: 'nekoposu',
+  'ヤマト': YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
+  'ネコポス': 'nekoposu',
 };
 const YAMATO_PRINT_JOB_STALE_MS = 5 * 60 * 1000;
 const YAMATO_EXPORT_FIXED_VALUES = {
@@ -5306,7 +5310,7 @@ export class OrdersService {
       }
       prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
     }
-    const printerName = prepared.printerName ?? (await this.resolveYamatoPrinterNameForProductIds(prepared.productIds));
+    const printerName = await this.resolveYamatoPrinterNameForProductIds(prepared.productIds);
     const activeJob = await this.prisma.printJob.findFirst({
       where: {
         batchPageId: prepared.pageId,
@@ -5414,7 +5418,7 @@ export class OrdersService {
     }
 
     const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
-    const printerName = prepared.printerName ?? (await this.resolveYamatoPrinterNameForProductIds(prepared.productIds));
+    const printerName = await this.resolveYamatoPrinterNameForProductIds(prepared.productIds);
     const cleared = await this.prisma.printJob.updateMany({
       where: {
         batchPageId: prepared.pageId,
@@ -5801,7 +5805,12 @@ export class OrdersService {
     if (!printerValue) {
       return YAMATO_DEFAULT_WINDOWS_PRINTER_NAME;
     }
-    return YAMATO_PRODUCT_PRINTER_ALIASES[printerValue] ?? printerValue;
+    return (
+      YAMATO_PRODUCT_PRINTER_ALIASES[printerValue] ??
+      YAMATO_PRODUCT_PRINTER_ALIASES[printerValue.toUpperCase()] ??
+      YAMATO_PRODUCT_PRINTER_ALIASES[printerValue.toLowerCase()] ??
+      printerValue
+    );
   }
 
   private getReusablePrintJobBlockReason(
