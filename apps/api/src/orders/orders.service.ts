@@ -856,6 +856,8 @@ const YAMATO_BATCH_STATUS = {
 } as const;
 const YAMATO_DEFAULT_WINDOWS_PRINTER_NAME = 'yamato';
 const YAMATO_PRODUCT_PRINTER_ALIASES: Record<string, string> = {
+  '0': YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
+  '０': YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
   A: 'nekoposu',
   yamato: YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
   nekoposu: 'nekoposu',
