@@ -353,6 +353,16 @@ interface BatchCreateAmazonManualOrdersPayload {
   items?: CreateAmazonManualOrderPayload[];
 }
 
+interface ManualOrderFileImportResult {
+  sourceFileName: string;
+  importedAt: string;
+  totalRows: number;
+  requestedCount: number;
+  createdCount: number;
+  updatedCount: number;
+  rows: AmazonManualOrderBatchCreateRowResult[];
+}
+
 interface DeleteAmazonManualOrdersForXiyaPayload {
   orderId?: string | null;
   orderIds?: Array<string | number | null>;
@@ -826,10 +836,31 @@ const OVERSEAS_DISPATCH_MODE = {
 } as const;
 const AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME = 'manual-amazon-order';
 const AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH = 'manual:amazon-order';
+const MANUAL_ORDER_UPLOAD_TEMPLATE_FILE = '手动订单上传模板.xlsx';
 const XIYA_LOGISTICS_EXPORT_URL = 'http://103.236.55.93/api/external/logistics/rakuten';
 const XIYA_LOGISTICS_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
 const XIYA_LOGISTICS_SYNC_DAYS = 5;
 const XIYA_TRACKING_SYNC_CRON = '0 0 17 * * *';
+const MANUAL_ORDER_UPLOAD_HEADERS = {
+  orderId: ['订单号', '注文番号', 'orderId', 'order-id'],
+  orderItemId: ['order-item-id', 'orderItemId', '订单商品ID', '明细ID'],
+  sku: ['SKU', 'sku'],
+  productId: ['产品ID', '商品ID', 'productId', 'product-id'],
+  quantityPurchased: ['数量', '個数', 'quantity', 'quantityPurchased', 'quantity-purchased'],
+  productName: ['产品名称', '商品名', 'productName', 'product-name'],
+  mallName: ['平台', 'mallName', 'mall-name'],
+  shopName: ['店铺', '店铺名', 'shopName', 'shop-name'],
+  bloggerCooperationId: ['博主合作ID', 'bloggerCooperationId', 'blogger_cooperation_id'],
+  recipientName: ['收件人', '收货人', 'recipientName', 'recipient-name'],
+  buyerPhoneNumber: ['电话', '收件人电话', 'buyerPhoneNumber', 'buyer-phone-number', 'phone'],
+  shipPostalCode: ['邮编', '郵便番号', 'shipPostalCode', 'ship-postal-code'],
+  shipState: ['都道府县', '都道府県', 'shipState', 'ship-state'],
+  shipAddress1: ['地址1', '地址一', 'shipAddress1', 'ship-address-1'],
+  shipAddress2: ['地址2', '地址二', 'shipAddress2', 'ship-address-2'],
+  shipAddress3: ['地址3', '地址三', 'shipAddress3', 'ship-address-3'],
+  shipmentCompany: ['发货公司', '配送会社', 'shipmentCompany', 'shipment-company'],
+  shipmentNo: ['发货单号', '运单号', 'tracking-number', 'shipmentNo', 'shipment-no'],
+} as const;
 const XYJG_BLOGGER_STATUS_PUSH_URL =
   process.env.XYJG_BLOGGER_STATUS_PUSH_URL || 'http://103.236.55.93/api/external/push';
 const XYJG_PUSH_STATUS = {
@@ -2900,6 +2931,58 @@ export class OrdersService {
     await this.syncManualOrdersToXyjgBestEffort([row as ManualOrderRecordLike]);
     const [enriched] = await this.enrichManualOrderRows([row as ManualOrderRecordLike]);
     return enriched;
+  }
+
+  getAmazonManualOrderUploadTemplate(): { fileName: string; content: Buffer } {
+    const headers = [
+      '订单号',
+      'order-item-id',
+      'SKU',
+      '产品ID',
+      '数量',
+      '产品名称',
+      '平台',
+      '店铺',
+      '博主合作ID',
+      '收件人',
+      '电话',
+      '邮编',
+      '都道府县',
+      '地址1',
+      '地址2',
+      '地址3',
+      '发货公司',
+      '发货单号',
+    ];
+    const rows = [
+      headers,
+      ['MANUAL-001', '', '', '8736', 1, '', '', '2号店-DGAZ store', '', '山田太郎', '090-0000-0000', '100-0001', '東京都', '千代田区', '千代田1-1', '', '', ''],
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '手动订单');
+    return {
+      fileName: MANUAL_ORDER_UPLOAD_TEMPLATE_FILE,
+      content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+    };
+  }
+
+  async importAmazonManualOrdersFile(
+    fileBuffer: Buffer,
+    originalName?: string,
+  ): Promise<ManualOrderFileImportResult> {
+    const sourceFileName = String(originalName ?? '').trim() || 'manual-orders.xlsx';
+    const items = this.parseManualOrderUploadFile(fileBuffer, sourceFileName);
+    const result = await this.batchCreateAmazonManualOrders({ items });
+    return {
+      sourceFileName,
+      importedAt: result.createdAt,
+      totalRows: items.length,
+      requestedCount: result.requestedCount,
+      createdCount: result.createdCount,
+      updatedCount: result.updatedCount,
+      rows: result.rows,
+    };
   }
 
   async batchCreateAmazonManualOrders(
@@ -8348,6 +8431,76 @@ export class OrdersService {
       }),
       csvImportedAt: now,
     };
+  }
+
+  private parseManualOrderUploadFile(fileBuffer: Buffer, sourceFileName: string): CreateAmazonManualOrderPayload[] {
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', cellDates: false, raw: false });
+    } catch {
+      throw new BadRequestException('手动订单批量上传文件无法解析，请上传 xlsx 文件');
+    }
+
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) {
+      throw new BadRequestException('手动订单批量上传文件没有可读取的工作表');
+    }
+    const sheet = workbook.Sheets[sheetName];
+    const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
+    const items = rawRows
+      .map((row) => this.mapManualOrderUploadRow(row))
+      .filter((item): item is CreateAmazonManualOrderPayload => Boolean(item));
+
+    if (!items.length) {
+      throw new BadRequestException(`手动订单批量上传文件没有有效数据：${sourceFileName}`);
+    }
+    return items;
+  }
+
+  private mapManualOrderUploadRow(row: Record<string, unknown>): CreateAmazonManualOrderPayload | null {
+    const pick = (aliases: readonly string[]) => this.pickManualOrderUploadCell(row, aliases);
+    const item: CreateAmazonManualOrderPayload = {
+      orderId: pick(MANUAL_ORDER_UPLOAD_HEADERS.orderId),
+      orderItemId: pick(MANUAL_ORDER_UPLOAD_HEADERS.orderItemId),
+      sku: pick(MANUAL_ORDER_UPLOAD_HEADERS.sku),
+      productId: pick(MANUAL_ORDER_UPLOAD_HEADERS.productId),
+      quantityPurchased: pick(MANUAL_ORDER_UPLOAD_HEADERS.quantityPurchased),
+      productName: pick(MANUAL_ORDER_UPLOAD_HEADERS.productName),
+      mallName: pick(MANUAL_ORDER_UPLOAD_HEADERS.mallName),
+      shopName: pick(MANUAL_ORDER_UPLOAD_HEADERS.shopName),
+      bloggerCooperationId: pick(MANUAL_ORDER_UPLOAD_HEADERS.bloggerCooperationId),
+      recipientName: pick(MANUAL_ORDER_UPLOAD_HEADERS.recipientName),
+      buyerPhoneNumber: pick(MANUAL_ORDER_UPLOAD_HEADERS.buyerPhoneNumber),
+      shipPostalCode: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipPostalCode),
+      shipState: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipState),
+      shipAddress1: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipAddress1),
+      shipAddress2: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipAddress2),
+      shipAddress3: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipAddress3),
+      shipmentCompany: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipmentCompany),
+      shipmentNo: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipmentNo),
+    };
+    return Object.values(item).some((value) => String(value ?? '').trim()) ? item : null;
+  }
+
+  private pickManualOrderUploadCell(row: Record<string, unknown>, aliases: readonly string[]): string {
+    const aliasSet = new Set(aliases.map((alias) => this.normalizeManualOrderUploadHeader(alias)));
+    for (const [header, value] of Object.entries(row)) {
+      if (!aliasSet.has(this.normalizeManualOrderUploadHeader(header))) continue;
+      return this.stringifyManualOrderUploadValue(value);
+    }
+    return '';
+  }
+
+  private normalizeManualOrderUploadHeader(value: unknown): string {
+    return String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_\-－—–・·:：]/g, '');
+  }
+
+  private stringifyManualOrderUploadValue(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    return String(value).trim();
   }
 
   private buildAmazonManualRawPayload(payload: {

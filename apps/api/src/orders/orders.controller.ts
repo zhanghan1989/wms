@@ -172,6 +172,35 @@ export class OrdersController {
     return this.ordersService.createAmazonManualOrder(payload);
   }
 
+  @Get('manual/upload-template')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async downloadAmazonManualOrderUploadTemplate(@Res() res: Response): Promise<void> {
+    const file = this.ordersService.getAmazonManualOrderUploadTemplate();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
+  @Post('manual/import-excel')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @UseInterceptors(FileInterceptor('file'))
+  async importAmazonManualOrdersExcel(
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+  ): Promise<unknown> {
+    if (!file?.buffer) {
+      throw new BadRequestException('请选择手动订单批量上传文件');
+    }
+    return this.ordersService.importAmazonManualOrdersFile(file.buffer, file.originalname);
+  }
+
   @Post('manual/batch')
   @UseGuards(ThirdPartyApiKeyGuard)
   async batchCreateAmazonManualOrders(

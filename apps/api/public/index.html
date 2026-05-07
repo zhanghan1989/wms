@@ -1242,6 +1242,7 @@
               <h3>手动订单列表一览</h3>
               <div class="action-row">
                 <button id="openAmazonManualOrderModal" type="button">生成手动订单</button>
+                <button id="manualOrderImportBtn" type="button">批量上传</button>
                 <button id="manualOrderBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
               </div>
             </div>
@@ -1823,6 +1824,28 @@
         <div class="form-actions order-edit-actions">
           <button type="submit" id="submitAmazonManualOrderBtn">保存手动单</button>
           <button type="button" class="ghost" data-action="closeAmazonManualOrderModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="manualOrderImportModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>批量上传手动订单</h3>
+        <button type="button" class="ghost" data-action="closeManualOrderImportModal">关闭</button>
+      </div>
+      <form id="manualOrderImportForm" class="form-grid modal-grid">
+        <label class="create-sku-full-row">
+          手动订单 Excel 文件
+          <input id="manualOrdersImportFile" type="file" accept=".xlsx" required />
+        </label>
+        <div class="modal-actions modal-actions-split">
+          <button id="downloadManualOrderTemplateBtn" type="button" class="ghost">下载模板</button>
+          <div class="actions">
+            <button type="submit" id="uploadManualOrdersBtn">上传并导入</button>
+            <button type="button" class="ghost" data-action="closeManualOrderImportModal">取消</button>
+          </div>
         </div>
       </form>
     </div>

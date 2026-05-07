@@ -8632,6 +8632,15 @@ async function createAmazonManualOrder() {
   });
 }
 
+async function importManualOrdersFile(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  return request("/orders/manual/import-excel", {
+    method: "POST",
+    body: formData,
+  });
+}
+
 function openOrderEditModal(source, id) {
   const normalizedSource = String(source || "").trim();
   const list =
@@ -12037,6 +12046,50 @@ function bindForms() {
         await loadManualOrders();
         await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
         showToast(`已删除 ${Number(result?.deletedCount || 0)} 条手动订单记录`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("manualOrderImportBtn")?.addEventListener("click", () => {
+    $("manualOrderImportForm")?.reset();
+    openModal("manualOrderImportModal");
+  });
+
+  $("downloadManualOrderTemplateBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadAuthorizedFile("/orders/manual/upload-template", {}, "手动订单上传模板.xlsx");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("manualOrderImportForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = getSubmitButton(form, event);
+    try {
+      await withBusyButton(submitButton, "导入中...", async () => {
+        const file = $("manualOrdersImportFile")?.files?.[0];
+        if (!file) {
+          throw new Error("请选择手动订单 Excel 文件");
+        }
+        const result = await importManualOrdersFile(file);
+        state.selectedManualOrderIds = new Set();
+        await loadManualOrders();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
+        showToast(
+          `手动订单批量上传完成：新增 ${Number(result?.createdCount || 0)} 条，更新 ${Number(
+            result?.updatedCount || 0,
+          )} 条（文件 ${result?.sourceFileName || file.name}）`,
+          false,
+        );
+        form.reset();
+        closeModal("manualOrderImportModal");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -15779,6 +15832,11 @@ function bindDelegates() {
       closeModal("amazonManualOrderModal");
       return;
     }
+    const manualOrderImportClose = event.target.closest("button[data-action='closeManualOrderImportModal']");
+    if (manualOrderImportClose) {
+      closeModal("manualOrderImportModal");
+      return;
+    }
     const orderEditClose = event.target.closest("button[data-action='closeOrderEditModal']");
     if (orderEditClose) {
       closeModal("orderEditModal");
@@ -16039,6 +16097,12 @@ function bindDelegates() {
   $("amazonManualOrderModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("amazonManualOrderModal");
+    }
+  });
+
+  $("manualOrderImportModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("manualOrderImportModal");
     }
   });
 
