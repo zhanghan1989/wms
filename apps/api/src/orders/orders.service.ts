@@ -2307,32 +2307,41 @@ export class OrdersService {
     });
   }
 
-  async list(limitParam?: string): Promise<OrderListItem[]> {
+  async list(limitParam?: string, offsetParam?: string): Promise<OrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    const parsedOffset = Number(offsetParam);
+    const offset = Number.isInteger(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
     const rows = await this.prisma.rakutenOrderRecord.findMany({
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
+      skip: offset,
     });
     return this.enrichOrderRows(rows);
   }
 
-  async listAmazon(limitParam?: string): Promise<AmazonOrderListItem[]> {
+  async listAmazon(limitParam?: string, offsetParam?: string): Promise<AmazonOrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    const parsedOffset = Number(offsetParam);
+    const offset = Number.isInteger(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
     const rows = await this.prisma.amazonOrderRecord.findMany({
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
+      skip: offset,
     });
     return this.enrichAmazonOrderRows(rows);
   }
 
-  async listAmazonManualOrders(limitParam?: string): Promise<ManualOrderListItem[]> {
+  async listAmazonManualOrders(limitParam?: string, offsetParam?: string): Promise<ManualOrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    const parsedOffset = Number(offsetParam);
+    const offset = Number.isInteger(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
     const rows = await (this.prisma as any).manualOrderRecord.findMany({
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
+      skip: offset,
     });
     return this.enrichManualOrderRows(rows as ManualOrderRecordLike[]);
   }

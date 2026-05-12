@@ -240,10 +240,19 @@ const state = {
   selectedBatchInboundOrderDetail: null,
   orders: [],
   ordersVisibleCount: 0,
+  ordersOffset: 0,
+  ordersHasMore: false,
+  ordersLoading: false,
   amazonOrders: [],
   amazonOrdersVisibleCount: 0,
+  amazonOrdersOffset: 0,
+  amazonOrdersHasMore: false,
+  amazonOrdersLoading: false,
   manualOrders: [],
   manualOrdersVisibleCount: 0,
+  manualOrdersOffset: 0,
+  manualOrdersHasMore: false,
+  manualOrdersLoading: false,
   orderSearchResult: null,
   returnRecords: [],
   returnRecordsVisibleCount: 0,
@@ -7629,7 +7638,7 @@ function maybeAutoLoadOrders() {
   if (!panel || !panel.classList.contains("active")) return;
   const tableWrap = $("rakutenOrdersTableWrap");
   if (!tableWrap) return;
-  if (state.ordersVisibleCount >= state.orders.length) return;
+  if (!state.ordersHasMore || state.ordersLoading) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -9157,23 +9166,48 @@ async function loadOrders() {
   if (!state.token) {
     state.orders = [];
     state.ordersVisibleCount = 0;
+    state.ordersOffset = 0;
+    state.ordersHasMore = false;
+    state.ordersLoading = false;
     state.selectedRakutenOrderIds = new Set();
     renderOrdersTable();
     return;
   }
 
-  const list = await request("/orders");
-  state.orders = Array.isArray(list) ? list : [];
-  state.ordersVisibleCount = state.inventoryPageSize;
-  renderOrdersTable();
+  state.ordersLoading = true;
+  try {
+    const pageSize = state.inventoryPageSize;
+    const list = await request(`/orders?limit=${pageSize}&offset=0`);
+    state.orders = Array.isArray(list) ? list : [];
+    state.ordersOffset = state.orders.length;
+    state.ordersHasMore = state.orders.length >= pageSize;
+    state.ordersVisibleCount = state.orders.length;
+    renderOrdersTable();
+  } finally {
+    state.ordersLoading = false;
+  }
 }
 
-function loadMoreOrdersIfNeeded() {
+async function loadMoreOrdersIfNeeded() {
   const panel = $("rakutenOrderImport");
   if (!panel || !panel.classList.contains("active")) return;
-  if (state.ordersVisibleCount >= state.orders.length) return;
-  state.ordersVisibleCount += state.inventoryPageSize;
-  renderOrdersTable();
+  if (!state.ordersHasMore || state.ordersLoading) return;
+  state.ordersLoading = true;
+  try {
+    const pageSize = state.inventoryPageSize;
+    const offset = state.ordersOffset || state.orders.length;
+    const list = await request(`/orders?limit=${pageSize}&offset=${offset}`);
+    const rows = Array.isArray(list) ? list : [];
+    state.orders = [...state.orders, ...rows];
+    state.ordersOffset = offset + rows.length;
+    state.ordersHasMore = rows.length >= pageSize;
+    state.ordersVisibleCount = state.orders.length;
+    renderOrdersTable();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.ordersLoading = false;
+  }
 }
 
 async function importOrdersFile(file) {
@@ -9299,33 +9333,58 @@ async function loadAmazonOrders() {
   if (!state.token) {
     state.amazonOrders = [];
     state.amazonOrdersVisibleCount = 0;
+    state.amazonOrdersOffset = 0;
+    state.amazonOrdersHasMore = false;
+    state.amazonOrdersLoading = false;
     state.manualOrders = [];
     state.manualOrdersVisibleCount = 0;
+    state.manualOrdersOffset = 0;
+    state.manualOrdersHasMore = false;
+    state.manualOrdersLoading = false;
     state.selectedAmazonOrderIds = new Set();
     state.selectedManualOrderIds = new Set();
     renderAmazonOrdersTable();
     return;
   }
 
-  const list = await request("/orders/amazon");
-  state.amazonOrders = Array.isArray(list) ? list : [];
-  state.amazonOrdersVisibleCount = state.inventoryPageSize;
-  renderAmazonOrdersTable();
+  state.amazonOrdersLoading = true;
+  try {
+    const pageSize = state.inventoryPageSize;
+    const list = await request(`/orders/amazon?limit=${pageSize}&offset=0`);
+    state.amazonOrders = Array.isArray(list) ? list : [];
+    state.amazonOrdersOffset = state.amazonOrders.length;
+    state.amazonOrdersHasMore = state.amazonOrders.length >= pageSize;
+    state.amazonOrdersVisibleCount = state.amazonOrders.length;
+    renderAmazonOrdersTable();
+  } finally {
+    state.amazonOrdersLoading = false;
+  }
 }
 
 async function loadManualOrders() {
   if (!state.token) {
     state.manualOrders = [];
     state.manualOrdersVisibleCount = 0;
+    state.manualOrdersOffset = 0;
+    state.manualOrdersHasMore = false;
+    state.manualOrdersLoading = false;
     state.selectedManualOrderIds = new Set();
     renderManualOrdersTable();
     return;
   }
 
-  const list = await request("/orders/manual");
-  state.manualOrders = Array.isArray(list) ? list : [];
-  state.manualOrdersVisibleCount = state.inventoryPageSize;
-  renderManualOrdersTable();
+  state.manualOrdersLoading = true;
+  try {
+    const pageSize = state.inventoryPageSize;
+    const list = await request(`/orders/manual?limit=${pageSize}&offset=0`);
+    state.manualOrders = Array.isArray(list) ? list : [];
+    state.manualOrdersOffset = state.manualOrders.length;
+    state.manualOrdersHasMore = state.manualOrders.length >= pageSize;
+    state.manualOrdersVisibleCount = state.manualOrders.length;
+    renderManualOrdersTable();
+  } finally {
+    state.manualOrdersLoading = false;
+  }
 }
 
 function buildChinaOrderProcessingOrderLink(item) {
@@ -10788,20 +10847,48 @@ async function downloadRakutenShipmentConfirmationCsv(days) {
   return link.download;
 }
 
-function loadMoreAmazonOrdersIfNeeded() {
+async function loadMoreAmazonOrdersIfNeeded() {
   const panel = $("amazonOrderImport");
   if (!panel || !panel.classList.contains("active")) return;
-  if (state.amazonOrdersVisibleCount >= state.amazonOrders.length) return;
-  state.amazonOrdersVisibleCount += state.inventoryPageSize;
-  renderAmazonOrdersTable();
+  if (!state.amazonOrdersHasMore || state.amazonOrdersLoading) return;
+  state.amazonOrdersLoading = true;
+  try {
+    const pageSize = state.inventoryPageSize;
+    const offset = state.amazonOrdersOffset || state.amazonOrders.length;
+    const list = await request(`/orders/amazon?limit=${pageSize}&offset=${offset}`);
+    const rows = Array.isArray(list) ? list : [];
+    state.amazonOrders = [...state.amazonOrders, ...rows];
+    state.amazonOrdersOffset = offset + rows.length;
+    state.amazonOrdersHasMore = rows.length >= pageSize;
+    state.amazonOrdersVisibleCount = state.amazonOrders.length;
+    renderAmazonOrdersTable();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.amazonOrdersLoading = false;
+  }
 }
 
-function loadMoreManualOrdersIfNeeded() {
+async function loadMoreManualOrdersIfNeeded() {
   const panel = $("manualOrderProcessing");
   if (!panel || !panel.classList.contains("active")) return;
-  if (state.manualOrdersVisibleCount >= state.manualOrders.length) return;
-  state.manualOrdersVisibleCount += state.inventoryPageSize;
-  renderManualOrdersTable();
+  if (!state.manualOrdersHasMore || state.manualOrdersLoading) return;
+  state.manualOrdersLoading = true;
+  try {
+    const pageSize = state.inventoryPageSize;
+    const offset = state.manualOrdersOffset || state.manualOrders.length;
+    const list = await request(`/orders/manual?limit=${pageSize}&offset=${offset}`);
+    const rows = Array.isArray(list) ? list : [];
+    state.manualOrders = [...state.manualOrders, ...rows];
+    state.manualOrdersOffset = offset + rows.length;
+    state.manualOrdersHasMore = rows.length >= pageSize;
+    state.manualOrdersVisibleCount = state.manualOrders.length;
+    renderManualOrdersTable();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    state.manualOrdersLoading = false;
+  }
 }
 
 function renderFbaReplenishmentList() {
@@ -10898,7 +10985,7 @@ function maybeAutoLoadAmazonOrders() {
   if (!panel || !panel.classList.contains("active")) return;
   const tableWrap = $("amazonOrdersTableWrap");
   if (!tableWrap) return;
-  if (state.amazonOrdersVisibleCount >= state.amazonOrders.length) return;
+  if (!state.amazonOrdersHasMore || state.amazonOrdersLoading) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -10912,7 +10999,7 @@ function maybeAutoLoadManualOrders() {
   if (!panel || !panel.classList.contains("active")) return;
   const tableWrap = $("manualOrdersTableWrap");
   if (!tableWrap) return;
-  if (state.manualOrdersVisibleCount >= state.manualOrders.length) return;
+  if (!state.manualOrdersHasMore || state.manualOrdersLoading) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -11618,10 +11705,19 @@ async function reloadAll() {
     state.emptyBoxes = [];
     state.orders = [];
     state.ordersVisibleCount = 0;
+    state.ordersOffset = 0;
+    state.ordersHasMore = false;
+    state.ordersLoading = false;
     state.amazonOrders = [];
     state.amazonOrdersVisibleCount = 0;
+    state.amazonOrdersOffset = 0;
+    state.amazonOrdersHasMore = false;
+    state.amazonOrdersLoading = false;
     state.manualOrders = [];
     state.manualOrdersVisibleCount = 0;
+    state.manualOrdersOffset = 0;
+    state.manualOrdersHasMore = false;
+    state.manualOrdersLoading = false;
     state.returnRecords = [];
     state.returnRecordsVisibleCount = 0;
     state.selectedReturnRecordIds = new Set();

@@ -28,20 +28,20 @@ export class OrdersController {
 
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  async list(@Query('limit') limit?: string): Promise<unknown[]> {
-    return this.ordersService.list(limit);
+  async list(@Query('limit') limit?: string, @Query('offset') offset?: string): Promise<unknown[]> {
+    return this.ordersService.list(limit, offset);
   }
 
   @Get('amazon')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  async listAmazon(@Query('limit') limit?: string): Promise<unknown[]> {
-    return this.ordersService.listAmazon(limit);
+  async listAmazon(@Query('limit') limit?: string, @Query('offset') offset?: string): Promise<unknown[]> {
+    return this.ordersService.listAmazon(limit, offset);
   }
 
   @Get('manual')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  async listAmazonManualOrders(@Query('limit') limit?: string): Promise<unknown[]> {
-    return this.ordersService.listAmazonManualOrders(limit);
+  async listAmazonManualOrders(@Query('limit') limit?: string, @Query('offset') offset?: string): Promise<unknown[]> {
+    return this.ordersService.listAmazonManualOrders(limit, offset);
   }
 
   @Get('search')
