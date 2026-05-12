@@ -8187,6 +8187,7 @@ function renderOrdersTable() {
       (item) => {
         const needsRemarkFix = shouldHighlightRakutenOrderRemark(item);
         const isShipmentRegistered = hasRegisteredShipmentNo(item);
+        const canDeleteRow = canBatchDeleteOrder(item);
         const editButtonClass = needsRemarkFix
           ? isShipmentRegistered
             ? "ghost compact-btn admin-order-edit-only"
@@ -8201,7 +8202,7 @@ function renderOrdersTable() {
       <tr>
         <td><input type="checkbox" data-action="rakutenOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
           state.selectedRakutenOrderIds.has(String(item.id)) ? "checked" : ""
-        } /></td>
+        } ${canDeleteRow ? "" : 'disabled title="已有运单号，不能批量删除"'} /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td><button type="button" class="inline-link-btn" data-action="openRakutenOrderDetail" data-id="${escapeHtml(
           item.id,
@@ -8452,6 +8453,10 @@ function hasRegisteredShipmentNo(item) {
   return String(item?.shipmentNo || "").trim().length > 0;
 }
 
+function canBatchDeleteOrder(item) {
+  return !hasRegisteredShipmentNo(item);
+}
+
 function normalizeOrderDispatchModeForDisplay(item, fallbackMode = "") {
   const dispatchMode = String(item?.dispatchMode || "").trim();
   if (dispatchMode === "china_pending") return "中国発";
@@ -8518,6 +8523,10 @@ function setOrderEditSourceMode(source) {
   document.querySelectorAll(".order-edit-rakuten-only").forEach((node) => {
     node.classList.toggle("hidden", isAmazon);
   });
+  const skuInput = $("orderEditSku");
+  if (skuInput) {
+    skuInput.required = !isAmazon;
+  }
 }
 
 function setOrderEditProductMeta(productId, productName) {
@@ -8555,6 +8564,17 @@ async function resolveOrderEditProductMeta(source, skuCode) {
 async function syncOrderEditProductMeta({ markDispatchAsAuto = true } = {}) {
   const source = getOrderEditFieldValue("orderEditSource");
   const skuCode = getOrderEditFieldValue("orderEditSku");
+  const currentProductId = getOrderEditFieldValue("orderEditResolvedProductId");
+  if (source !== "rakuten" && !skuCode && currentProductId) {
+    await syncOrderEditProductNameFromProductId();
+    if (markDispatchAsAuto) {
+      setOrderEditFieldValue("orderEditDispatchMode", "保存后自动判断");
+    }
+    return {
+      productId: currentProductId,
+      productName: getOrderEditFieldValue("orderEditResolvedProductName"),
+    };
+  }
   const meta = await resolveOrderEditProductMeta(source, skuCode);
   setOrderEditProductMeta(meta.productId, meta.productName);
   if (markDispatchAsAuto) {
@@ -8713,13 +8733,18 @@ async function submitOrderEditForm() {
   };
 
   if (source === "amazon" || source === "manual") {
+    const sku = getOrderEditFieldValue("orderEditSku");
+    const productId = getOrderEditFieldValue("orderEditResolvedProductId");
+    if (!sku && !productId) {
+      throw new Error("请填写 SKU 或 产品ID");
+    }
     const endpoint = source === "manual" ? `/orders/manual/${encodeURIComponent(id)}` : `/orders/amazon/${encodeURIComponent(id)}`;
     return request(endpoint, {
       method: "PUT",
       body: JSON.stringify({
         ...common,
         orderItemId: getOrderEditFieldValue("orderEditOrderItemId"),
-        sku: getOrderEditFieldValue("orderEditSku"),
+        sku,
         quantityPurchased: getOrderEditFieldValue("orderEditQuantity"),
         recipientName: getOrderEditFieldValue("orderEditRecipientName"),
         buyerPhoneNumber: getOrderEditFieldValue("orderEditPhone"),
@@ -9178,11 +9203,12 @@ function renderAmazonOrdersTable() {
   tbody.innerHTML = list
     .map(
       (item) => {
+        const canDeleteRow = canBatchDeleteOrder(item);
         return `
       <tr>
         <td><input type="checkbox" data-action="amazonOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
           state.selectedAmazonOrderIds.has(String(item.id)) ? "checked" : ""
-        } /></td>
+        } ${canDeleteRow ? "" : 'disabled title="已有运单号，不能批量删除"'} /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td><button type="button" class="inline-link-btn" data-action="openAmazonOrderDetail" data-id="${escapeHtml(
           item.id,
@@ -9232,11 +9258,12 @@ function renderManualOrdersTable() {
   tbody.innerHTML = list
     .map(
       (item) => {
+        const canDeleteRow = canBatchDeleteOrder(item);
         return `
       <tr>
         <td><input type="checkbox" data-action="manualOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
           state.selectedManualOrderIds.has(String(item.id)) ? "checked" : ""
-        } /></td>
+        } ${canDeleteRow ? "" : 'disabled title="已有运单号，不能批量删除"'} /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td><button type="button" class="inline-link-btn" data-action="openManualOrderDetail" data-id="${escapeHtml(
           item.id,
@@ -10216,29 +10243,6 @@ async function deleteRakutenOrders(ids) {
   });
 }
 
-async function downloadOverseasYamatoImport(items) {
-  const response = await fetchAuthorizedResponse("/orders/overseas-warehouse/yamato-export", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ items }),
-  });
-  const blob = await response.blob();
-  const href = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = href;
-  link.download = resolveDownloadFileName(response, "ヤマト-インポート.xlsx");
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(href);
-  return {
-    fileName: link.download,
-    batchId: String(response.headers.get("x-yamato-batch-id") || "").trim(),
-  };
-}
-
 function focusOverseasYamatoScanInput() {
   const input = $("overseasYamatoScanInput");
   if (!input) return;
@@ -11082,21 +11086,21 @@ function syncSelectedFbaIds() {
 }
 
 function syncSelectedAmazonOrderIds() {
-  const selectableIds = new Set(state.amazonOrders.map((item) => String(item.id)));
+  const selectableIds = new Set(state.amazonOrders.filter(canBatchDeleteOrder).map((item) => String(item.id)));
   state.selectedAmazonOrderIds = new Set(
     Array.from(state.selectedAmazonOrderIds).filter((id) => selectableIds.has(String(id))),
   );
 }
 
 function syncSelectedManualOrderIds() {
-  const selectableIds = new Set(state.manualOrders.map((item) => String(item.id)));
+  const selectableIds = new Set(state.manualOrders.filter(canBatchDeleteOrder).map((item) => String(item.id)));
   state.selectedManualOrderIds = new Set(
     Array.from(state.selectedManualOrderIds).filter((id) => selectableIds.has(String(id))),
   );
 }
 
 function syncSelectedRakutenOrderIds() {
-  const selectableIds = new Set(state.orders.map((item) => String(item.id)));
+  const selectableIds = new Set(state.orders.filter(canBatchDeleteOrder).map((item) => String(item.id)));
   state.selectedRakutenOrderIds = new Set(
     Array.from(state.selectedRakutenOrderIds).filter((id) => selectableIds.has(String(id))),
   );
@@ -11105,15 +11109,16 @@ function syncSelectedRakutenOrderIds() {
 function updateRakutenOrdersSelectAll() {
   const selectAll = $("rakutenOrdersSelectAll");
   if (!selectAll) return;
-  if (!state.orders.length) {
+  const selectable = state.orders.filter(canBatchDeleteOrder);
+  if (!selectable.length) {
     selectAll.checked = false;
     selectAll.indeterminate = false;
     return;
   }
 
-  const selectedCount = state.orders.filter((item) => state.selectedRakutenOrderIds.has(String(item.id))).length;
-  selectAll.checked = selectedCount > 0 && selectedCount === state.orders.length;
-  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.orders.length;
+  const selectedCount = selectable.filter((item) => state.selectedRakutenOrderIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === selectable.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
 }
 
 function updateRakutenBatchDeleteButtonState() {
@@ -11163,15 +11168,16 @@ function updateOverseasCreatePickingBatchButtonState() {
 function updateAmazonOrdersSelectAll() {
   const selectAll = $("amazonOrdersSelectAll");
   if (!selectAll) return;
-  if (!state.amazonOrders.length) {
+  const selectable = state.amazonOrders.filter(canBatchDeleteOrder);
+  if (!selectable.length) {
     selectAll.checked = false;
     selectAll.indeterminate = false;
     return;
   }
 
-  const selectedCount = state.amazonOrders.filter((item) => state.selectedAmazonOrderIds.has(String(item.id))).length;
-  selectAll.checked = selectedCount > 0 && selectedCount === state.amazonOrders.length;
-  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.amazonOrders.length;
+  const selectedCount = selectable.filter((item) => state.selectedAmazonOrderIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === selectable.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
 }
 
 function updateAmazonBatchDeleteButtonState() {
@@ -11186,15 +11192,16 @@ function updateAmazonBatchDeleteButtonState() {
 function updateManualOrdersSelectAll() {
   const selectAll = $("manualOrdersSelectAll");
   if (!selectAll) return;
-  if (!state.manualOrders.length) {
+  const selectable = state.manualOrders.filter(canBatchDeleteOrder);
+  if (!selectable.length) {
     selectAll.checked = false;
     selectAll.indeterminate = false;
     return;
   }
 
-  const selectedCount = state.manualOrders.filter((item) => state.selectedManualOrderIds.has(String(item.id))).length;
-  selectAll.checked = selectedCount > 0 && selectedCount === state.manualOrders.length;
-  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.manualOrders.length;
+  const selectedCount = selectable.filter((item) => state.selectedManualOrderIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === selectable.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < selectable.length;
 }
 
 function updateManualOrderBatchDeleteButtonState() {
@@ -12165,21 +12172,21 @@ function bindForms() {
 
   $("amazonOrdersSelectAll").addEventListener("change", (event) => {
     const checked = Boolean(event.target.checked);
-    const selectableIds = state.amazonOrders.map((item) => String(item.id));
+    const selectableIds = state.amazonOrders.filter(canBatchDeleteOrder).map((item) => String(item.id));
     state.selectedAmazonOrderIds = checked ? new Set(selectableIds) : new Set();
     renderAmazonOrdersTable();
   });
 
   $("manualOrdersSelectAll")?.addEventListener("change", (event) => {
     const checked = Boolean(event.target.checked);
-    const selectableIds = state.manualOrders.map((item) => String(item.id));
+    const selectableIds = state.manualOrders.filter(canBatchDeleteOrder).map((item) => String(item.id));
     state.selectedManualOrderIds = checked ? new Set(selectableIds) : new Set();
     renderManualOrdersTable();
   });
 
   $("rakutenOrdersSelectAll").addEventListener("change", (event) => {
     const checked = Boolean(event.target.checked);
-    const selectableIds = state.orders.map((item) => String(item.id));
+    const selectableIds = state.orders.filter(canBatchDeleteOrder).map((item) => String(item.id));
     state.selectedRakutenOrderIds = checked ? new Set(selectableIds) : new Set();
     renderOrdersTable();
   });

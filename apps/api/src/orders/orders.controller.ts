@@ -229,7 +229,7 @@ export class OrdersController {
       }>;
     },
   ): Promise<unknown> {
-    return this.ordersService.batchCreateAmazonManualOrders(payload);
+    return this.ordersService.batchCreateAmazonManualOrders(payload, 'xiya_push');
   }
 
   @Post('manual/delete')
@@ -393,27 +393,6 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   getYamatoShipmentPrintConfig(): unknown {
     return this.ordersService.getYamatoShipmentPrintConfig();
-  }
-
-  @Post('overseas-warehouse/yamato-export')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  async exportOverseasWarehouseYamatoImport(
-    @Body() payload: { items?: Array<{ source?: 'rakuten' | 'amazon' | 'manual'; id?: string | number }> },
-    @Res() res: Response,
-  ): Promise<void> {
-    const file = await this.ordersService.buildOverseasWarehouseYamatoImport(payload);
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
-    );
-    res.setHeader('Content-Length', String(file.content.length));
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Yamato-Batch-Id', file.batchId);
-    res.status(200).send(file.content);
   }
 
   @Post('rakuten/shipment-confirmation-csv')
