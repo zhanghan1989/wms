@@ -9183,6 +9183,7 @@ async function loadOrders() {
     state.ordersHasMore = state.orders.length >= pageSize;
     state.ordersVisibleCount = state.orders.length;
     renderOrdersTable();
+    setTimeout(() => maybeAutoLoadOrders(), 0);
   } finally {
     state.ordersLoading = false;
   }
@@ -9203,6 +9204,7 @@ async function loadMoreOrdersIfNeeded() {
     state.ordersHasMore = rows.length >= pageSize;
     state.ordersVisibleCount = state.orders.length;
     renderOrdersTable();
+    setTimeout(() => maybeAutoLoadOrders(), 0);
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -9252,7 +9254,7 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
         <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
         <td>${escapeHtml(displayText(item.mallName || "亚马逊"))}</td>
-        <td>${escapeHtml(displayText(normalizeOrderDispatchModeForDisplay(item, formatAmazonShippingOriginAsMode(item.shippingOrigin))))}</td>
+        <td>${escapeHtml(displayText(normalizeOrderDispatchModeForDisplay(item, item.fulfillmentMode || formatAmazonShippingOriginAsMode(item.shippingOrigin))))}</td>
         <td>${escapeHtml(displayText(item.resolvedShopName || item.shopName))}</td>
         <td>${escapeHtml(displayText(item.recipientName))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
@@ -9307,7 +9309,7 @@ function renderManualOrdersTable() {
         <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
         <td>${escapeHtml(displayText(item.quantityPurchased))}</td>
         <td>${escapeHtml(displayText(item.mallName))}</td>
-        <td>${escapeHtml(displayText(normalizeOrderDispatchModeForDisplay(item, formatAmazonShippingOriginAsMode(item.shippingOrigin))))}</td>
+        <td>${escapeHtml(displayText(normalizeOrderDispatchModeForDisplay(item, item.fulfillmentMode || formatAmazonShippingOriginAsMode(item.shippingOrigin))))}</td>
         <td>${escapeHtml(displayText(item.resolvedShopName || item.shopName))}</td>
         <td>${escapeHtml(displayText(item.recipientName))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
@@ -9356,6 +9358,7 @@ async function loadAmazonOrders() {
     state.amazonOrdersHasMore = state.amazonOrders.length >= pageSize;
     state.amazonOrdersVisibleCount = state.amazonOrders.length;
     renderAmazonOrdersTable();
+    setTimeout(() => maybeAutoLoadAmazonOrders(), 0);
   } finally {
     state.amazonOrdersLoading = false;
   }
@@ -9382,6 +9385,7 @@ async function loadManualOrders() {
     state.manualOrdersHasMore = state.manualOrders.length >= pageSize;
     state.manualOrdersVisibleCount = state.manualOrders.length;
     renderManualOrdersTable();
+    setTimeout(() => maybeAutoLoadManualOrders(), 0);
   } finally {
     state.manualOrdersLoading = false;
   }
@@ -10862,6 +10866,7 @@ async function loadMoreAmazonOrdersIfNeeded() {
     state.amazonOrdersHasMore = rows.length >= pageSize;
     state.amazonOrdersVisibleCount = state.amazonOrders.length;
     renderAmazonOrdersTable();
+    setTimeout(() => maybeAutoLoadAmazonOrders(), 0);
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -10884,6 +10889,7 @@ async function loadMoreManualOrdersIfNeeded() {
     state.manualOrdersHasMore = rows.length >= pageSize;
     state.manualOrdersVisibleCount = state.manualOrders.length;
     renderManualOrdersTable();
+    setTimeout(() => maybeAutoLoadManualOrders(), 0);
   } catch (error) {
     showToast(error.message, true);
   } finally {

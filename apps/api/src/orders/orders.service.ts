@@ -4622,10 +4622,11 @@ export class OrdersService {
       }
       const orderId = String(row.orderId ?? '').trim();
       const productId = String(row.resolvedProductId ?? '').trim();
-      const skuCode = String(row.sku ?? '').trim();
+      const skuCode = String(row.sku ?? (source === 'manual' ? productId : '')).trim();
       const requestedQty = Number(row.quantityPurchased ?? 0);
       if (!orderId || !productId || !skuCode || requestedQty <= 0) {
-        throw new BadRequestException(`${source === 'manual' ? '手动订单' : '亚马逊订单'} ${id} 缺少有效的订单号、产品ID、SKU 或数量`);
+        const requiredFieldsText = source === 'manual' ? '订单号、产品ID 或数量' : '订单号、产品ID、SKU 或数量';
+        throw new BadRequestException(`${source === 'manual' ? '手动订单' : '亚马逊订单'} ${id} 缺少有效的${requiredFieldsText}`);
       }
       items.push({
         source,
