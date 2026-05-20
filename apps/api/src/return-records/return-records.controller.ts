@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -23,6 +24,16 @@ export class ReturnRecordsController {
   @Get()
   async list(): Promise<unknown[]> {
     return this.returnRecordsService.list();
+  }
+
+  @Get('search')
+  async search(@Query('q') query?: string): Promise<unknown> {
+    return this.returnRecordsService.search(query);
+  }
+
+  @Get('search-suggestions')
+  async searchSuggestions(@Query('q') query?: string): Promise<unknown[]> {
+    return this.returnRecordsService.searchSuggestions(query);
   }
 
   @Post()

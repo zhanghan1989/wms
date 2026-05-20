@@ -841,6 +841,7 @@ const YAMATO_IMPORT_TEMPLATE_FILE = 'ヤマト-インポート.xlsx';
 const OVERSEAS_DISPATCH_MODE = {
   OVERSEAS: 'overseas',
   CHINA_PENDING: 'china_pending',
+  CHINA_NO_STOCK: 'china_no_stock',
 } as const;
 const AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME = 'manual-amazon-order';
 const AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH = 'manual:amazon-order';
@@ -1178,7 +1179,7 @@ export class OrdersService {
     sortedItems
       .filter(
         (item) =>
-          String(item.dispatchMode ?? OVERSEAS_DISPATCH_MODE.OVERSEAS).trim() !== OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
+          !this.isChinaDispatchMode(item.dispatchMode),
       )
       .forEach((item) => {
         const requestedQty = Number(item.requestedQty ?? 0);
@@ -1247,7 +1248,7 @@ export class OrdersService {
       const dispatchMode =
         String(item.dispatchMode ?? OVERSEAS_DISPATCH_MODE.OVERSEAS).trim() || OVERSEAS_DISPATCH_MODE.OVERSEAS;
       let orderStatusText = '待拣货';
-      if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+      if (this.isChinaDispatchMode(dispatchMode)) {
         orderStatusText = '中国发待处理';
       } else if (yamatoPrintedAt) {
         orderStatusText = '已打印面单';
@@ -1283,8 +1284,7 @@ export class OrdersService {
           toIsoString(amazonRow?.shipmentNoRegisteredAt) ??
           toIsoString(manualRow?.shipmentNoRegisteredAt),
         dispatchMode,
-        chinaDispatchReason:
-          dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ? '拣货缺货切中国发' : null,
+        chinaDispatchReason: this.isChinaDispatchMode(dispatchMode) ? this.resolveChinaDispatchReason(dispatchMode) : null,
         yamatoPageNo: page?.pageNo ?? null,
         yamatoPrintedAt,
         orderStatusText,
@@ -1524,9 +1524,7 @@ export class OrdersService {
       throw new NotFoundException(`拣货批次中不存在产品 ${productId}`);
     }
 
-    const activeItems = items.filter(
-      (item) => String(item.dispatchMode ?? OVERSEAS_DISPATCH_MODE.OVERSEAS).trim() !== OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
-    );
+    const activeItems = items.filter((item) => !this.isChinaDispatchMode(item.dispatchMode));
     if (!activeItems.length) {
       throw new NotFoundException(`拣货批次中不存在可切中国发的产品 ${productId}`);
     }
@@ -1667,8 +1665,7 @@ export class OrdersService {
 
     const targetItems = items.filter(
       (item) =>
-        String(item.dispatchMode ?? OVERSEAS_DISPATCH_MODE.OVERSEAS).trim() !== OVERSEAS_DISPATCH_MODE.CHINA_PENDING &&
-        Number(item.actualQty ?? 0) > 0,
+        !this.isChinaDispatchMode(item.dispatchMode) && Number(item.actualQty ?? 0) > 0,
     );
     if (!targetItems.length) {
       return {
@@ -1729,7 +1726,7 @@ export class OrdersService {
     if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.CREATED) {
       throw new BadRequestException('当前拣货批次已确认，不能再切换发货方式');
     }
-    if (String(item.dispatchMode ?? '') === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+    if (this.isChinaDispatchMode(item.dispatchMode)) {
       throw new NotFoundException(`拣货批次明细不存在可切中国发的订单: ${itemIdRaw}`);
     }
     if (Number(item.actualQty ?? 0) > 0) {
@@ -1998,7 +1995,7 @@ export class OrdersService {
     if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.CREATED) {
       throw new BadRequestException('当前拣货批次已确认，不能再变更拣货状态');
     }
-    if (String(item.dispatchMode ?? '') === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+    if (this.isChinaDispatchMode(item.dispatchMode)) {
       throw new BadRequestException(`产品 ${item.productId} 已切换为中国发，不能重置为未拣货`);
     }
     if (Number(item.actualQty ?? 0) <= 0) {
@@ -2061,7 +2058,7 @@ export class OrdersService {
       });
 
       const resetDispatchMode =
-        String(item.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING
+        this.isChinaDispatchMode(item.dispatchMode)
           ? OVERSEAS_DISPATCH_MODE.OVERSEAS
           : null;
       if (item.source === 'rakuten' && resetDispatchMode) {
@@ -2129,7 +2126,7 @@ export class OrdersService {
       const requestedQty = Number(item.requestedQty ?? 0);
       const actualQty = actualQtyByItemId.get(item.id.toString()) ?? Number(item.actualQty ?? 0);
       const dispatchMode = String(item.dispatchMode ?? OVERSEAS_DISPATCH_MODE.OVERSEAS).trim();
-      if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+      if (this.isChinaDispatchMode(dispatchMode)) {
         return {
           ...item,
           requestedQty,
@@ -3605,15 +3602,19 @@ export class OrdersService {
     });
 
     groups.forEach((groupRows) => {
-      const hasChinaPending = groupRows.some(
-        (data) => String(data.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
-      );
-      if (!hasChinaPending) {
+      const chinaDispatchMode =
+        groupRows
+          .map((data) => String(data.dispatchMode ?? '').trim())
+          .find((dispatchMode) => dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) ??
+        groupRows
+          .map((data) => String(data.dispatchMode ?? '').trim())
+          .find((dispatchMode) => dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK);
+      if (!chinaDispatchMode) {
         return;
       }
       groupRows.forEach((data) => {
-        data.dispatchMode = OVERSEAS_DISPATCH_MODE.CHINA_PENDING;
-        data.shippingOrigin = this.resolveAmazonShippingOriginFromDispatchMode(OVERSEAS_DISPATCH_MODE.CHINA_PENDING);
+        data.dispatchMode = chinaDispatchMode;
+        data.shippingOrigin = this.resolveAmazonShippingOriginFromDispatchMode(chinaDispatchMode);
       });
     });
   }
@@ -4032,7 +4033,7 @@ export class OrdersService {
         ...enrichedRakutenRows
           .filter((row) => {
             const dispatchMode = String(row.dispatchMode ?? '').trim();
-            if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+            if (this.isChinaDispatchMode(dispatchMode)) {
               return true;
             }
             return row.fulfillmentMode === 'xiya_api' && !activePickedRefs.has(`rakuten:${row.id.toString()}`);
@@ -4065,8 +4066,7 @@ export class OrdersService {
               deliveryTimeSlot: row.deliveryTimeSlot,
               rawPayload: row.rawPayload,
               dispatchMode: dispatchMode || null,
-              chinaDispatchReason:
-                dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ? '拣货缺货切中国发' : '系统无库存',
+              chinaDispatchReason: this.resolveChinaDispatchReason(dispatchMode),
               xiyaExportedAt: row.xiyaExportedAt?.toISOString() ?? null,
               xiyaStatus: row.shipmentNo ? ('tracking_registered' as const) : ('pending_tracking' as const),
               shipmentCompany: row.shipmentCompany,
@@ -4077,7 +4077,7 @@ export class OrdersService {
         ...enrichedAmazonRows
           .filter((row) => {
             const dispatchMode = String(row.dispatchMode ?? '').trim();
-            if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+            if (this.isChinaDispatchMode(dispatchMode)) {
               return true;
             }
             return row.fulfillmentMode === 'xiya_api' && !activePickedRefs.has(`amazon:${row.id.toString()}`);
@@ -4108,8 +4108,7 @@ export class OrdersService {
               shipAddress3: row.shipAddress3,
               rawPayload: row.rawPayload,
               dispatchMode: dispatchMode || null,
-              chinaDispatchReason:
-                dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ? '拣货缺货切中国发' : '系统无库存',
+              chinaDispatchReason: this.resolveChinaDispatchReason(dispatchMode),
               xiyaExportedAt: row.xiyaExportedAt?.toISOString() ?? null,
               xiyaStatus: row.shipmentNo ? ('tracking_registered' as const) : ('pending_tracking' as const),
               shipmentCompany: row.shipmentCompany,
@@ -4120,7 +4119,7 @@ export class OrdersService {
         ...enrichedManualRows
           .filter((row) => {
             const dispatchMode = String(row.dispatchMode ?? '').trim();
-            if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+            if (this.isChinaDispatchMode(dispatchMode)) {
               return true;
             }
             return row.fulfillmentMode === 'xiya_api' && !activePickedRefs.has(`manual:${row.id.toString()}`);
@@ -4151,8 +4150,7 @@ export class OrdersService {
               shipAddress3: row.shipAddress3,
               rawPayload: row.rawPayload,
               dispatchMode: dispatchMode || null,
-              chinaDispatchReason:
-                dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ? '拣货缺货切中国发' : '系统无库存',
+              chinaDispatchReason: this.resolveChinaDispatchReason(dispatchMode),
               xiyaExportedAt: row.xiyaExportedAt?.toISOString() ?? null,
               xiyaStatus: row.shipmentNo ? ('tracking_registered' as const) : ('pending_tracking' as const),
               shipmentCompany: row.shipmentCompany,
@@ -6710,7 +6708,7 @@ export class OrdersService {
 
   private isRakutenChinaDispatchRow(row: OrderListItem, activePickedRefs: Set<string>): boolean {
     const dispatchMode = String(row.dispatchMode ?? '').trim();
-    if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+    if (this.isChinaDispatchMode(dispatchMode)) {
       return true;
     }
     if (row.xiyaExportedAt) {
@@ -7130,11 +7128,9 @@ export class OrdersService {
 
     const trackingRow = targetRows.find((candidate) => String(candidate.shipmentNo ?? '').trim());
     const trackingNo = String(trackingRow?.shipmentNo ?? '').trim();
-    const hasChinaPendingRow = targetRows.some(
-      (candidate) => String(candidate.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
-    );
+    const hasChinaDispatchRow = targetRows.some((candidate) => this.isChinaDispatchMode(candidate.dispatchMode));
     const pushMode =
-      hasChinaPendingRow
+      hasChinaDispatchRow
         ? XYJG_PUSH_MODE.CHINA_SHIP
         : trackingNo
           ? XYJG_PUSH_MODE.LOGISTICS_ORDER
@@ -7495,7 +7491,7 @@ export class OrdersService {
         resolvedProductId: null,
         resolvedProductName: null,
         availableStock: 0,
-        fulfillmentMode: 'xiya_api',
+        fulfillmentMode: this.resolveFulfillmentModeFromDispatchMode(row.dispatchMode, 0),
       }));
     }
 
@@ -7529,7 +7525,7 @@ export class OrdersService {
         resolvedProductId: productId,
         resolvedProductName: productId ? productNameByProductId.get(productId) ?? null : null,
         availableStock,
-        fulfillmentMode: availableStock > 0 ? 'overseas_warehouse' : 'xiya_api',
+        fulfillmentMode: this.resolveFulfillmentModeFromDispatchMode(row.dispatchMode, availableStock),
       };
     });
   }
@@ -7624,7 +7620,7 @@ export class OrdersService {
         const productId = resolveProductId(row);
         return {
           orderId: row.orderId,
-          dispatchMode: row.dispatchMode,
+          dispatchMode: this.resolveEffectiveAmazonDispatchMode(row),
           availableStock: productId ? stockQtyByProductId.get(productId) ?? 0 : 0,
         };
       }),
@@ -7639,8 +7635,9 @@ export class OrdersService {
       const productId = resolveProductId(row);
       const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
       const orderId = String(row.orderId ?? '').trim();
+      const effectiveDispatchMode = this.resolveEffectiveAmazonDispatchMode(row);
       const isChinaFulfillment =
-        String(row.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ||
+        this.isChinaDispatchMode(effectiveDispatchMode) ||
         (orderId ? chinaFulfillmentOrderIds.has(orderId) : availableStock <= 0);
 
       return {
@@ -7702,10 +7699,15 @@ export class OrdersService {
       if (!orderId) {
         return;
       }
-      if (
-        String(row.dispatchMode ?? '').trim() === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ||
-        Number(row.availableStock ?? 0) <= 0
-      ) {
+      const dispatchMode = String(row.dispatchMode ?? '').trim();
+      if (this.isChinaDispatchMode(dispatchMode)) {
+        orderIds.add(orderId);
+        return;
+      }
+      if (dispatchMode === OVERSEAS_DISPATCH_MODE.OVERSEAS) {
+        return;
+      }
+      if (Number(row.availableStock ?? 0) <= 0) {
         orderIds.add(orderId);
       }
     });
@@ -7756,6 +7758,22 @@ export class OrdersService {
       const orderId = String(row.orderId ?? '').trim();
       return !orderId || !existingOrderIds.has(orderId);
     });
+    const productIds = Array.from(
+      new Set(
+        rowsToCreate
+          .map((row) => String(row.skuCode ?? row.setComponentSkuCode ?? '').trim())
+          .filter((productId) => productId.length > 0),
+      ),
+    );
+    const productRows = productIds.length
+      ? await this.prisma.masterProduct.findMany({
+          where: { productId: { in: productIds } },
+          select: { productId: true, stockQty: true },
+        })
+      : [];
+    const stockQtyByProductId = new Map(
+      productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
+    );
     const importedAt = new Date();
     const createManyInput: Prisma.RakutenOrderRecordCreateManyInput[] = rowsToCreate.map((row) => ({
       rowHash: row.rowHash,
@@ -7782,6 +7800,11 @@ export class OrdersService {
       shipmentCompany: row.shipmentCompany,
       shipmentNo: row.shipmentNo,
       shipmentNoRegisteredAt: row.shipmentNoRegisteredAt,
+      dispatchMode: (() => {
+        const productId = String(row.skuCode ?? row.setComponentSkuCode ?? '').trim();
+        const stockQty = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+        return stockQty > 0 ? OVERSEAS_DISPATCH_MODE.OVERSEAS : OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
+      })(),
       sendStatus: row.sendStatus,
       deliveryMethod: row.deliveryMethod,
       deliveryDateRaw: row.deliveryDateRaw,
@@ -8193,55 +8216,61 @@ export class OrdersService {
       }),
     );
     const importedAt = new Date();
-    const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = rowsToCreate.map((row) => ({
-      shippingOrigin: (() => {
+    const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = rowsToCreate.map((row) => {
+      const dispatchMode = (() => {
         const productId = resolveSkuMeta(row.sku)?.productId;
         const stockQty = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
         const orderId = String(row.orderId ?? '').trim();
-        return (orderId ? chinaFulfillmentOrderIds.has(orderId) : stockQty <= 0) ? '中国発' : '日本発';
-      })(),
-      rowHash: row.rowHash,
-      orderId: row.orderId,
-      orderItemId: row.orderItemId,
-      purchaseDateRaw: row.purchaseDateRaw,
-      paymentsDateRaw: row.paymentsDateRaw,
-      reportingDateRaw: row.reportingDateRaw,
-      promiseDateRaw: row.promiseDateRaw,
-      daysPastPromise: row.daysPastPromise,
-      buyerEmail: row.buyerEmail,
-      buyerName: row.buyerName,
-      buyerPhoneNumber: row.buyerPhoneNumber,
-      sku: row.sku,
-      productName: row.productName,
-      quantityPurchased: row.quantityPurchased,
-      quantityShipped: row.quantityShipped,
-      quantityToShip: row.quantityToShip,
-      shipServiceLevel: row.shipServiceLevel,
-      recipientName: row.recipientName,
-      shipAddress1: row.shipAddress1,
-      shipAddress2: row.shipAddress2,
-      shipAddress3: row.shipAddress3,
-      shipCity: row.shipCity,
-      shipState: row.shipState,
-      shipPostalCode: row.shipPostalCode,
-      shipCountry: row.shipCountry,
-      customizedUrl: row.customizedUrl,
-      customizedPage: row.customizedPage,
-      isBusinessOrder: row.isBusinessOrder,
-      purchaseOrderNumber: row.purchaseOrderNumber,
-      priceDesignation: row.priceDesignation,
-      vergeOfCancellation: row.vergeOfCancellation,
-      vergeOfLateShipment: row.vergeOfLateShipment,
-      mallName: row.mallName,
-      shopName: row.shopName,
-      shipmentCompany: row.shipmentCompany,
-      shipmentNo: row.shipmentNo,
-      shipmentNoRegisteredAt: row.shipmentNoRegisteredAt,
-      sourceFileName,
-      sourceFilePath,
-      rawPayload: row.rawPayload,
-      csvImportedAt: importedAt,
-    }));
+        return (orderId ? chinaFulfillmentOrderIds.has(orderId) : stockQty <= 0)
+          ? OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK
+          : OVERSEAS_DISPATCH_MODE.OVERSEAS;
+      })();
+      return {
+        shippingOrigin: this.resolveAmazonShippingOriginFromDispatchMode(dispatchMode),
+        rowHash: row.rowHash,
+        orderId: row.orderId,
+        orderItemId: row.orderItemId,
+        purchaseDateRaw: row.purchaseDateRaw,
+        paymentsDateRaw: row.paymentsDateRaw,
+        reportingDateRaw: row.reportingDateRaw,
+        promiseDateRaw: row.promiseDateRaw,
+        daysPastPromise: row.daysPastPromise,
+        buyerEmail: row.buyerEmail,
+        buyerName: row.buyerName,
+        buyerPhoneNumber: row.buyerPhoneNumber,
+        sku: row.sku,
+        productName: row.productName,
+        quantityPurchased: row.quantityPurchased,
+        quantityShipped: row.quantityShipped,
+        quantityToShip: row.quantityToShip,
+        shipServiceLevel: row.shipServiceLevel,
+        recipientName: row.recipientName,
+        shipAddress1: row.shipAddress1,
+        shipAddress2: row.shipAddress2,
+        shipAddress3: row.shipAddress3,
+        shipCity: row.shipCity,
+        shipState: row.shipState,
+        shipPostalCode: row.shipPostalCode,
+        shipCountry: row.shipCountry,
+        customizedUrl: row.customizedUrl,
+        customizedPage: row.customizedPage,
+        isBusinessOrder: row.isBusinessOrder,
+        purchaseOrderNumber: row.purchaseOrderNumber,
+        priceDesignation: row.priceDesignation,
+        vergeOfCancellation: row.vergeOfCancellation,
+        vergeOfLateShipment: row.vergeOfLateShipment,
+        mallName: row.mallName,
+        shopName: row.shopName,
+        shipmentCompany: row.shipmentCompany,
+        shipmentNo: row.shipmentNo,
+        shipmentNoRegisteredAt: row.shipmentNoRegisteredAt,
+        dispatchMode,
+        sourceFileName,
+        sourceFilePath,
+        rawPayload: row.rawPayload,
+        csvImportedAt: importedAt,
+      };
+    });
 
     const result = createManyInput.length
       ? await this.prisma.amazonOrderRecord.createMany({
@@ -8521,7 +8550,7 @@ export class OrdersService {
   private async resolveDispatchModeForProductId(productIdRaw: string | null): Promise<string> {
     const productId = String(productIdRaw ?? '').trim();
     if (!productId) {
-      return OVERSEAS_DISPATCH_MODE.CHINA_PENDING;
+      return OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
     }
     const product = await this.prisma.masterProduct.findUnique({
       where: { productId },
@@ -8529,7 +8558,29 @@ export class OrdersService {
     });
     return Number(product?.stockQty ?? 0) > 0
       ? OVERSEAS_DISPATCH_MODE.OVERSEAS
-      : OVERSEAS_DISPATCH_MODE.CHINA_PENDING;
+      : OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
+  }
+
+  private isChinaDispatchMode(dispatchModeRaw: string | null | undefined): boolean {
+    const dispatchMode = String(dispatchModeRaw ?? '').trim();
+    return (
+      dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING ||
+      dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK
+    );
+  }
+
+  private resolveFulfillmentModeFromDispatchMode(
+    dispatchModeRaw: string | null | undefined,
+    availableStock: number,
+  ): OrderFulfillmentMode {
+    const dispatchMode = String(dispatchModeRaw ?? '').trim();
+    if (dispatchMode === OVERSEAS_DISPATCH_MODE.OVERSEAS) {
+      return 'overseas_warehouse';
+    }
+    if (this.isChinaDispatchMode(dispatchMode)) {
+      return 'xiya_api';
+    }
+    return Number(availableStock ?? 0) > 0 ? 'overseas_warehouse' : 'xiya_api';
   }
 
   private async resolveAmazonProductIdForSku(sku: string | null): Promise<string | null> {
@@ -8563,8 +8614,23 @@ export class OrdersService {
     if (dispatchMode === OVERSEAS_DISPATCH_MODE.OVERSEAS) {
       return '日本発';
     }
-    if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+    if (this.isChinaDispatchMode(dispatchMode)) {
       return '中国発';
+    }
+    return null;
+  }
+
+  private resolveEffectiveAmazonDispatchMode(row: Pick<AmazonOrderRecord, 'dispatchMode' | 'shippingOrigin'>): string | null {
+    const dispatchMode = String(row.dispatchMode ?? '').trim();
+    if (dispatchMode === OVERSEAS_DISPATCH_MODE.OVERSEAS || this.isChinaDispatchMode(dispatchMode)) {
+      return dispatchMode;
+    }
+    const shippingOrigin = String(row.shippingOrigin ?? '').trim();
+    if (shippingOrigin === '中国発') {
+      return OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
+    }
+    if (shippingOrigin === '日本発') {
+      return OVERSEAS_DISPATCH_MODE.OVERSEAS;
     }
     return null;
   }
@@ -8994,7 +9060,7 @@ export class OrdersService {
     activePickedRefs: Set<string>,
   ): boolean {
     const dispatchMode = String(dispatchModeRaw ?? '').trim();
-    if (dispatchMode === OVERSEAS_DISPATCH_MODE.CHINA_PENDING) {
+    if (this.isChinaDispatchMode(dispatchMode)) {
       return true;
     }
     if (fulfillmentMode !== 'xiya_api') {

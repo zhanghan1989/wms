@@ -1595,6 +1595,13 @@
               <button id="returnRecordBatchDeleteBtn" class="danger" type="button" disabled>批量删除</button>
             </div>
           </div>
+          <div class="action-row order-search-row">
+            <input id="returnRecordSearchInput" type="text" autocomplete="off" list="returnRecordSearchSuggestionsList" placeholder="输入 注文番号、追跡番号、発送人或電話番号" />
+            <datalist id="returnRecordSearchSuggestionsList"></datalist>
+            <button id="returnRecordSearchSubmitBtn" type="button">检索</button>
+            <button id="returnRecordSearchClearBtn" type="button" class="ghost">清空</button>
+          </div>
+          <p id="returnRecordSearchSummary" class="muted order-import-note">请输入条件后检索。</p>
           <div id="returnRecordsTableWrap" class="master-product-table-wrap return-records-table-wrap">
             <table class="return-records-table">
               <thead>
@@ -1604,10 +1611,10 @@
                   <th>発送人</th>
                   <th>運送会社</th>
                   <th>追跡番号</th>
+                  <th>快递费</th>
                   <th>郵便番号</th>
                   <th>住所</th>
                   <th>電話番号</th>
-                  <th>荷物</th>
                   <th>販売サイト</th>
                   <th>注文番号</th>
                   <th>产品ID</th>
@@ -2022,7 +2029,9 @@
         <label class="create-sku-left-col">発送人<input id="returnRecordSenderName" maxlength="255" /></label>
         <label class="create-sku-right-col">運送会社<input id="returnRecordCarrierName" maxlength="128" /></label>
         <label class="create-sku-left-col">追跡番号<input id="returnRecordTrackingNo" maxlength="128" /></label>
-        <label class="create-sku-right-col">郵便番号<input id="returnRecordPostalCode" maxlength="32" /></label>
+        <label class="create-sku-right-col">快递费<input id="returnRecordPackageContent" maxlength="5000" /></label>
+        <label class="create-sku-left-col">郵便番号<input id="returnRecordPostalCode" maxlength="32" /></label>
+        <span class="create-sku-right-col"></span>
         <label class="create-sku-full-row">住所<input id="returnRecordAddress" maxlength="5000" /></label>
         <label class="create-sku-left-col">電話番号<input id="returnRecordPhone" maxlength="64" /></label>
         <label class="create-sku-right-col">販売サイト<input id="returnRecordSalesSite" maxlength="128" /></label>
@@ -2032,7 +2041,6 @@
           <datalist id="returnRecordProductIdList"></datalist>
         </label>
         <label class="create-sku-full-row">产品名称<input id="returnRecordProductName" readonly /></label>
-        <label class="create-sku-full-row">荷物<input id="returnRecordPackageContent" maxlength="5000" /></label>
         <label class="checkbox-label create-sku-left-col">
           <input id="returnRecordIsOpenedUsed" type="checkbox" />
           是否已拆封使用
@@ -2060,7 +2068,7 @@
           返品 Excel 文件
           <input id="returnRecordImportFile" type="file" accept=".xlsx,.xls" required />
         </label>
-        <p class="create-sku-full-row muted">支持列：発送人、運送会社、追跡番号、郵便番号、住所、電話番号、荷物、販売サイト、注文番号、产品ID、是否已拆封使用、是否可以再入库。</p>
+        <p class="create-sku-full-row muted">支持列：発送人、運送会社、追跡番号、快递费、郵便番号、住所、電話番号、販売サイト、注文番号、产品ID、是否已拆封使用、是否可以再入库。</p>
         <div class="modal-actions">
           <button type="submit" id="submitReturnRecordImportBtn">上传并导入</button>
           <button type="button" class="ghost" data-action="closeReturnRecordImportModal">取消</button>

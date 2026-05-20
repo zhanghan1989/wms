@@ -255,6 +255,7 @@ const state = {
   manualOrdersLoading: false,
   orderSearchResult: null,
   returnRecords: [],
+  returnRecordSearchResult: null,
   returnRecordsVisibleCount: 0,
   selectedReturnRecordIds: new Set(),
   overseasOrderProcessingOrders: [],
@@ -347,6 +348,8 @@ let responsiveTableLabelFrame = 0;
 let skuProductLookupToken = 0;
 let orderSearchSuggestionTimer = null;
 let orderSearchSuggestionToken = 0;
+let returnRecordSearchSuggestionTimer = null;
+let returnRecordSearchSuggestionToken = 0;
 let hasUserNavigatedSinceBootstrap = false;
 const AUTH_ERROR_STORAGE_KEY = "wms_auth_error_message";
 const AUTH_HASH_PARAM = "wmsToken";
@@ -8466,9 +8469,19 @@ function canBatchDeleteOrder(item) {
   return !hasRegisteredShipmentNo(item);
 }
 
+function isChinaDispatchModeValue(value) {
+  const mode = String(value || "").trim();
+  return mode === "china_pending" || mode === "china_no_stock";
+}
+
+function formatChinaDispatchReason(item) {
+  if (item?.chinaDispatchReason) return item.chinaDispatchReason;
+  return String(item?.dispatchMode || "").trim() === "china_pending" ? "拣货缺货切中国发" : "系统无库存";
+}
+
 function normalizeOrderDispatchModeForDisplay(item, fallbackMode = "") {
   const dispatchMode = String(item?.dispatchMode || "").trim();
-  if (dispatchMode === "china_pending") return "中国発";
+  if (isChinaDispatchModeValue(dispatchMode)) return "中国発";
   if (dispatchMode === "overseas") return "日本発";
   if (fallbackMode === "overseas_warehouse") return "日本発";
   if (fallbackMode === "xiya_api") return "中国発";
@@ -8477,21 +8490,21 @@ function normalizeOrderDispatchModeForDisplay(item, fallbackMode = "") {
 
 function resolveOrderEditDispatchMode(item, source) {
   const dispatchMode = String(item?.dispatchMode || "").trim();
-  if (dispatchMode === "overseas" || dispatchMode === "china_pending") return dispatchMode;
+  if (dispatchMode === "overseas" || isChinaDispatchModeValue(dispatchMode)) return dispatchMode;
   if (source === "amazon") {
     const origin = String(item?.shippingOrigin || "").trim();
     if (origin.includes("日本")) return "overseas";
-    if (origin.includes("中国")) return "china_pending";
+    if (origin.includes("中国")) return "china_no_stock";
   }
   if (item?.fulfillmentMode === "overseas_warehouse") return "overseas";
-  if (item?.fulfillmentMode === "xiya_api") return "china_pending";
+  if (item?.fulfillmentMode === "xiya_api") return "china_no_stock";
   return "";
 }
 
 function formatOrderEditDispatchMode(value) {
   const mode = String(value || "").trim();
   if (mode === "overseas" || mode === "日本発" || mode === "日本发") return "日本发";
-  if (mode === "china_pending" || mode === "中国発" || mode === "中国发") return "中国发";
+  if (isChinaDispatchModeValue(mode) || mode === "中国発" || mode === "中国发") return "中国发";
   return "保存后自动判断";
 }
 
@@ -8870,7 +8883,7 @@ function scheduleOrderSearchSuggestions() {
 function formatUnifiedOrderSearchMode(mode) {
   if (mode === "overseas_warehouse") return "日本発";
   if (mode === "xiya_api") return "中国発";
-  if (mode === "china_pending") return "中国発";
+  if (isChinaDispatchModeValue(mode)) return "中国発";
   if (mode === "overseas") return "日本発";
   return mode || "-";
 }
@@ -8988,24 +9001,103 @@ function clearOrderSearchResults() {
   renderOrderSearchResults();
 }
 
+async function searchReturnRecords(keyword) {
+  return request(`/return-records/search?q=${encodeURIComponent(String(keyword || "").trim())}`);
+}
+
+async function fetchReturnRecordSearchSuggestions(keyword) {
+  return request(`/return-records/search-suggestions?q=${encodeURIComponent(String(keyword || "").trim())}`);
+}
+
+function renderReturnRecordSearchSuggestions(suggestions) {
+  const datalist = $("returnRecordSearchSuggestionsList");
+  if (!datalist) return;
+  const list = Array.isArray(suggestions) ? suggestions : [];
+  datalist.innerHTML = list
+    .map((item) => {
+      const value = String(item?.value || "").trim();
+      if (!value) return "";
+      return `<option value="${escapeHtml(value)}" label="${escapeHtml(item?.label || value)}"></option>`;
+    })
+    .join("");
+}
+
+function scheduleReturnRecordSearchSuggestions() {
+  const input = $("returnRecordSearchInput");
+  const keyword = String(input?.value || "").trim();
+  if (returnRecordSearchSuggestionTimer) {
+    window.clearTimeout(returnRecordSearchSuggestionTimer);
+    returnRecordSearchSuggestionTimer = null;
+  }
+  if (!keyword) {
+    renderReturnRecordSearchSuggestions([]);
+    return;
+  }
+
+  const token = ++returnRecordSearchSuggestionToken;
+  returnRecordSearchSuggestionTimer = window.setTimeout(async () => {
+    try {
+      const suggestions = await fetchReturnRecordSearchSuggestions(keyword);
+      if (token !== returnRecordSearchSuggestionToken) return;
+      renderReturnRecordSearchSuggestions(suggestions);
+    } catch {
+      if (token !== returnRecordSearchSuggestionToken) return;
+      renderReturnRecordSearchSuggestions([]);
+    }
+  }, 220);
+}
+
+function getReturnRecordsDisplayRows() {
+  const searchRows = state.returnRecordSearchResult?.rows;
+  return Array.isArray(searchRows) ? searchRows : state.returnRecords;
+}
+
+function renderReturnRecordSearchSummary() {
+  const summary = $("returnRecordSearchSummary");
+  if (!summary) return;
+  const result = state.returnRecordSearchResult;
+  if (!result) {
+    summary.textContent = "请输入条件后检索。";
+    return;
+  }
+  summary.textContent = `找到 ${Number(result.total ?? result.rows?.length ?? 0)} 条返品记录。`;
+}
+
+function clearReturnRecordSearchResults() {
+  state.returnRecordSearchResult = null;
+  const input = $("returnRecordSearchInput");
+  if (input) {
+    input.value = "";
+  }
+  renderReturnRecordSearchSuggestions([]);
+  renderReturnRecordSearchSummary();
+  state.returnRecordsVisibleCount = state.inventoryPageSize;
+  syncSelectedReturnRecordIds();
+  renderReturnRecordsTable();
+}
+
 async function loadReturnRecords() {
   if (!state.token) {
     state.returnRecords = [];
+    state.returnRecordSearchResult = null;
     state.returnRecordsVisibleCount = 0;
     state.selectedReturnRecordIds = new Set();
+    renderReturnRecordSearchSummary();
     renderReturnRecordsTable();
     return;
   }
   const list = await request("/return-records");
   state.returnRecords = Array.isArray(list) ? list : [];
+  state.returnRecordSearchResult = null;
   state.returnRecordsVisibleCount = state.inventoryPageSize;
   state.selectedReturnRecordIds = new Set();
+  renderReturnRecordSearchSummary();
   renderReturnRecordsTable();
   setupReturnRecordsLoadObserver();
 }
 
 function syncSelectedReturnRecordIds() {
-  const selectableIds = new Set(state.returnRecords.map((item) => String(item.id)));
+  const selectableIds = new Set(getReturnRecordsDisplayRows().map((item) => String(item.id)));
   state.selectedReturnRecordIds = new Set(
     Array.from(state.selectedReturnRecordIds).filter((id) => selectableIds.has(String(id))),
   );
@@ -9018,14 +9110,15 @@ function formatReturnRecordBoolean(value) {
 function updateReturnRecordsSelectAll() {
   const selectAll = $("returnRecordsSelectAll");
   if (!selectAll) return;
-  if (!state.returnRecords.length) {
+  const rows = getReturnRecordsDisplayRows();
+  if (!rows.length) {
     selectAll.checked = false;
     selectAll.indeterminate = false;
     return;
   }
-  const selectedCount = state.returnRecords.filter((item) => state.selectedReturnRecordIds.has(String(item.id))).length;
-  selectAll.checked = selectedCount > 0 && selectedCount === state.returnRecords.length;
-  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.returnRecords.length;
+  const selectedCount = rows.filter((item) => state.selectedReturnRecordIds.has(String(item.id))).length;
+  selectAll.checked = selectedCount > 0 && selectedCount === rows.length;
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < rows.length;
 }
 
 function updateReturnRecordBatchDeleteButtonState() {
@@ -9040,12 +9133,14 @@ function renderReturnRecordsTable() {
   const tbody = $("returnRecordsBody");
   if (!tbody) return;
   syncSelectedReturnRecordIds();
+  const sourceRows = getReturnRecordsDisplayRows();
   const visibleCount = Math.max(state.inventoryPageSize, Number(state.returnRecordsVisibleCount || 0));
-  const rows = state.returnRecords.slice(0, visibleCount);
+  const rows = sourceRows.slice(0, visibleCount);
   state.returnRecordsVisibleCount = visibleCount;
 
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="15" class="muted">暂无返品记录。</td></tr>`;
+    const emptyText = state.returnRecordSearchResult ? "没有找到匹配的返品记录。" : "暂无返品记录。";
+    tbody.innerHTML = `<tr><td colspan="15" class="muted">${escapeHtml(emptyText)}</td></tr>`;
     updateReturnRecordsSelectAll();
     updateReturnRecordBatchDeleteButtonState();
     return;
@@ -9063,10 +9158,10 @@ function renderReturnRecordsTable() {
           <td>${escapeHtml(displayText(item.senderName))}</td>
           <td>${escapeHtml(displayText(item.carrierName))}</td>
           <td>${escapeHtml(displayText(item.trackingNo))}</td>
+          <td>${escapeHtml(displayText(item.packageContent))}</td>
           <td>${escapeHtml(displayText(item.postalCode))}</td>
           <td>${escapeHtml(displayText(item.address))}</td>
           <td>${escapeHtml(displayText(item.phone))}</td>
-          <td>${escapeHtml(displayText(item.packageContent))}</td>
           <td>${escapeHtml(displayText(item.salesSite))}</td>
           <td>${escapeHtml(displayText(item.orderNo))}</td>
           <td>${escapeHtml(displayText(item.productId))}</td>
@@ -9084,7 +9179,8 @@ function renderReturnRecordsTable() {
 function loadMoreReturnRecordsIfNeeded() {
   const panel = $("returnManagement");
   if (!panel || !panel.classList.contains("active")) return;
-  if (state.returnRecordsVisibleCount >= state.returnRecords.length) return;
+  const rows = getReturnRecordsDisplayRows();
+  if (state.returnRecordsVisibleCount >= rows.length) return;
   state.returnRecordsVisibleCount += state.inventoryPageSize;
   renderReturnRecordsTable();
 }
@@ -9507,7 +9603,7 @@ function renderChinaOrderProcessingTable() {
           <td>${escapeHtml(displayText(item.shopName))}</td>
           <td>${escapeHtml(displayText(item.shippingName))}</td>
           <td>${escapeHtml(displayText(item.availableStock))}</td>
-          <td>${escapeHtml(displayText(item.chinaDispatchReason || (item.dispatchMode === "china_pending" ? "拣货缺货切中国发" : "系统无库存")))}</td>
+          <td>${escapeHtml(displayText(formatChinaDispatchReason(item)))}</td>
         </tr>
       `,
       )
@@ -9532,7 +9628,7 @@ function renderChinaOrderProcessingTable() {
         <td>${escapeHtml(displayText(item.orderQuantity))}</td>
         <td>${escapeHtml(displayText(item.shopName))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>
-        <td>${escapeHtml(displayText(item.chinaDispatchReason || (item.dispatchMode === "china_pending" ? "拣货缺货切中国发" : "系统无库存")))}</td>
+        <td>${escapeHtml(displayText(formatChinaDispatchReason(item)))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
@@ -9839,12 +9935,12 @@ function renderOverseasPickingBatchOrders() {
       summary.textContent = "扫码打印后，这里会更新对应订单的面单状态。";
     } else {
       const printedCount = list.filter((item) => item.yamatoPrintedAt).length;
-      const chinaCount = list.filter((item) => item.dispatchMode === "china_pending").length;
+      const chinaCount = list.filter((item) => isChinaDispatchModeValue(item.dispatchMode)).length;
       const waitingPrintCount = list.filter(
-        (item) => item.dispatchMode !== "china_pending" && item.shipmentTrackingNo && !item.yamatoPrintedAt,
+        (item) => !isChinaDispatchModeValue(item.dispatchMode) && item.shipmentTrackingNo && !item.yamatoPrintedAt,
       ).length;
       const pendingLabelCount = list.filter(
-        (item) => item.dispatchMode !== "china_pending" && !item.shipmentTrackingNo,
+        (item) => !isChinaDispatchModeValue(item.dispatchMode) && !item.shipmentTrackingNo,
       ).length;
       summary.textContent = `当前批次共 ${list.length} 条订单，已打印 ${printedCount} 条，待打印 ${waitingPrintCount} 条，待生成/上传面单 ${pendingLabelCount} 条，中国发 ${chinaCount} 条。`;
     }
@@ -11725,6 +11821,7 @@ async function reloadAll() {
     state.manualOrdersHasMore = false;
     state.manualOrdersLoading = false;
     state.returnRecords = [];
+    state.returnRecordSearchResult = null;
     state.returnRecordsVisibleCount = 0;
     state.selectedReturnRecordIds = new Set();
     state.overseasOrderProcessingOrders = [];
@@ -13609,6 +13706,43 @@ function bindForms() {
     openModal("returnRecordImportModal");
   });
 
+  const submitReturnRecordSearch = async (button = $("returnRecordSearchSubmitBtn")) => {
+    const input = $("returnRecordSearchInput");
+    const keyword = String(input?.value || "").trim();
+    if (!keyword) {
+      showToast("请输入注文番号、追跡番号、発送人或電話番号", true);
+      input?.focus();
+      return;
+    }
+    try {
+      await withBusyButton(button, "检索中...", async () => {
+        state.returnRecordSearchResult = await searchReturnRecords(keyword);
+        state.returnRecordsVisibleCount = state.inventoryPageSize;
+        state.selectedReturnRecordIds = new Set();
+        renderReturnRecordSearchSummary();
+        renderReturnRecordsTable();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+
+  $("returnRecordSearchSubmitBtn")?.addEventListener("click", (event) => {
+    submitReturnRecordSearch(event.currentTarget);
+  });
+  $("returnRecordSearchInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    submitReturnRecordSearch($("returnRecordSearchSubmitBtn"));
+  });
+  $("returnRecordSearchInput")?.addEventListener("input", () => {
+    scheduleReturnRecordSearchSuggestions();
+  });
+  $("returnRecordSearchClearBtn")?.addEventListener("click", () => {
+    clearReturnRecordSearchResults();
+    $("returnRecordSearchInput")?.focus();
+  });
+
   $("returnRecordProductId")?.addEventListener("input", () => {
     syncSkuProductName("returnRecordProductId", "returnRecordProductName").catch(() => {});
   });
@@ -13673,7 +13807,7 @@ function bindForms() {
   $("returnRecordsSelectAll")?.addEventListener("change", (event) => {
     const checked = event.currentTarget.checked;
     state.selectedReturnRecordIds = checked
-      ? new Set(state.returnRecords.map((item) => String(item.id)))
+      ? new Set(getReturnRecordsDisplayRows().map((item) => String(item.id)))
       : new Set();
     renderReturnRecordsTable();
   });

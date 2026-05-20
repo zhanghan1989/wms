@@ -21,6 +21,12 @@ interface ParsedReturnRecordRow {
   createdAt?: Date;
 }
 
+interface ReturnRecordSearchSuggestion {
+  type: 'orderNo' | 'trackingNo' | 'senderName' | 'phone';
+  value: string;
+  label: string;
+}
+
 const RETURN_RECORD_COLUMN_ALIASES = {
   senderName: ['発送人', '发货人', '返回人', '寄件人', 'senderName'],
   carrierName: ['運送会社', '运输公司', '快递公司', 'carrierName'],
@@ -28,7 +34,7 @@ const RETURN_RECORD_COLUMN_ALIASES = {
   postalCode: ['郵便番号', '邮编', 'postalCode'],
   address: ['住所', '地址', 'address'],
   phone: ['電話番号', '电话', '手机号', 'phone'],
-  packageContent: ['荷物', '包裹', '商品', 'packageContent'],
+  packageContent: ['快递费', '荷物', '包裹', '商品', 'packageContent'],
   salesSite: ['販売サイト', '销售平台', '销售网站', 'salesSite'],
   orderNo: ['注文番号', '订单号', 'orderNo'],
   productId: ['产品ID', '产品id', 'productId', '商品ID'],
@@ -47,6 +53,47 @@ export class ReturnRecordsService {
       take: 1000,
     });
     return rows.map((row: any) => this.toListItem(row));
+  }
+
+  async search(queryRaw: string | undefined): Promise<{ query: string; total: number; rows: unknown[] }> {
+    const query = String(queryRaw ?? '').trim();
+    if (!query) {
+      throw new BadRequestException('请输入注文番号、追跡番号、発送人或電話番号');
+    }
+
+    const rows = await this.findSearchCandidateRows();
+    const matchedRows = rows.filter((row) => this.matchesSearchQuery(row, query)).slice(0, 500);
+    return {
+      query,
+      total: matchedRows.length,
+      rows: matchedRows.map((row) => this.toListItem(row)),
+    };
+  }
+
+  async searchSuggestions(queryRaw: string | undefined): Promise<ReturnRecordSearchSuggestion[]> {
+    const query = String(queryRaw ?? '').trim();
+    if (!query) return [];
+
+    const rows = await this.findSearchCandidateRows(1000);
+    const suggestions = new Map<string, ReturnRecordSearchSuggestion>();
+    const addSuggestion = (type: ReturnRecordSearchSuggestion['type'], value: unknown, labelPrefix: string) => {
+      const text = String(value ?? '').trim();
+      if (!text || !this.matchesSearchText(text, query)) return;
+      const key = `${type}:${text}`;
+      if (!suggestions.has(key)) {
+        suggestions.set(key, { type, value: text, label: `${labelPrefix}: ${text}` });
+      }
+    };
+
+    for (const row of rows) {
+      addSuggestion('orderNo', row.orderNo, '注文番号');
+      addSuggestion('trackingNo', row.trackingNo, '追跡番号');
+      addSuggestion('senderName', row.senderName, '発送人');
+      addSuggestion('phone', row.phone, '電話番号');
+      if (suggestions.size >= 20) break;
+    }
+
+    return Array.from(suggestions.values());
   }
 
   async create(payload: ReturnRecordPayload, userId: bigint): Promise<unknown> {
@@ -128,6 +175,45 @@ export class ReturnRecordsService {
       select: { productName: true },
     });
     return product?.productName ?? null;
+  }
+
+  private async findSearchCandidateRows(take = 5000): Promise<any[]> {
+    return (this.prisma as any).returnRecord.findMany({
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take,
+    });
+  }
+
+  private matchesSearchQuery(row: any, query: string): boolean {
+    return [
+      row.orderNo,
+      row.trackingNo,
+      row.senderName,
+      row.phone,
+    ].some((value) => this.matchesSearchText(value, query));
+  }
+
+  private matchesSearchText(value: unknown, query: string): boolean {
+    const text = String(value ?? '').trim();
+    if (!text) return false;
+    const normalizedText = this.normalizeSearchText(text);
+    const normalizedQuery = this.normalizeSearchText(query);
+    if (normalizedText.includes(normalizedQuery)) return true;
+
+    const looseText = this.normalizeLooseSearchText(text);
+    const looseQuery = this.normalizeLooseSearchText(query);
+    return Boolean(looseQuery && looseText.includes(looseQuery));
+  }
+
+  private normalizeSearchText(value: unknown): string {
+    return String(value ?? '').trim().toLowerCase();
+  }
+
+  private normalizeLooseSearchText(value: unknown): string {
+    return String(value ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s\-‐‑‒–—―ー－]/g, '');
   }
 
   private parsePayload(payload: ReturnRecordPayload): ParsedReturnRecordRow {
