@@ -8,6 +8,7 @@ import {
 import { readFile } from 'fs/promises';
 import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { join } from 'path';
+import * as iconv from 'iconv-lite';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
 import { normalizeNullableText, parseId } from '../common/utils';
@@ -81,6 +82,49 @@ const BULK_SKU_IMPORT_TRANSACTION_TIMEOUT_MS = 120000;
 const BULK_SKU_IMPORT_TRANSACTION_MAX_WAIT_MS = 10000;
 const SKU_EXPORT_FILE_NAME = '系统所有产品SKU.xlsx';
 const UNMATCHED_SKU_EXPORT_FILE_NAME = '未匹配产品ID的SKU.xlsx';
+const SKU_BULK_DELETE_TEMPLATE_FILE_NAME = '批量删除SKU模板.xlsx';
+const AMAZON_RB_LINK_STOCK_TEMPLATE_ROWS = [
+  ['TemplateType=PriceInventory', 'Version=2018.0924', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+  [
+    '商品管理番号',
+    '販売価格',
+    '在庫数',
+    '通貨コード',
+    'セール価格',
+    'セール開始日',
+    'セール終了日',
+    '商品の入荷予定日',
+    '販売価格の下限設定',
+    '販売価格の上限設定',
+    '出荷経路',
+    '出荷作業日数',
+    '',
+    '',
+    '',
+    '',
+    '',
+  ],
+  [
+    'sku',
+    'price',
+    'quantity',
+    'currency',
+    'sale-price',
+    'sale-from-date',
+    'sale-through-date',
+    'restock-date',
+    'minimum-seller-allowed-price',
+    'maximum-seller-allowed-price',
+    'fulfillment-channel',
+    'handling-time',
+    '',
+    '',
+    '',
+    '',
+    '',
+  ],
+];
+const AMAZON_RB_LINK_STOCK_COLUMN_COUNT = 17;
 
 @Injectable()
 export class SkusService {
@@ -225,6 +269,136 @@ export class SkusService {
     return {
       fileName: UNMATCHED_SKU_EXPORT_FILE_NAME,
       content: this.buildSkuExportWorkbook(rows),
+    };
+  }
+
+  async exportAmazonRbLinkStockTxt(): Promise<SkuExportFile> {
+    const rows = await this.prisma.sku.findMany({
+      where: {
+        status: 1,
+        rbSku: {
+          not: null,
+        },
+        productId: {
+          not: null,
+        },
+        masterProduct: {
+          is: {
+            status: 1,
+          },
+        },
+      },
+      include: {
+        masterProduct: {
+          select: {
+            stockQty: true,
+          },
+        },
+      },
+      orderBy: [{ rbSku: 'asc' }, { productId: 'asc' }, { id: 'asc' }],
+    });
+
+    const bodyRows = rows
+      .map((row) => ({
+        rbSku: String(row.rbSku ?? '').trim(),
+        stockQty: Number(row.masterProduct?.stockQty ?? 0),
+      }))
+      .filter((row) => row.rbSku.length > 0)
+      .map((row) => {
+        const cells = Array.from({ length: AMAZON_RB_LINK_STOCK_COLUMN_COUNT }, () => '');
+        cells[0] = row.rbSku;
+        cells[2] = String(row.stockQty);
+        return cells;
+      });
+
+    const text = [...AMAZON_RB_LINK_STOCK_TEMPLATE_ROWS, ...bodyRows]
+      .map((row) => row.join('\t'))
+      .join('\r\n');
+
+    return {
+      fileName: `亚马逊更新价格和数量模版-${this.formatDateTimeForFileName(new Date())}.txt`,
+      content: iconv.encode(`${text}\r\n`, 'gb18030'),
+    };
+  }
+
+  async getBulkDeleteTemplate(): Promise<SkuExportFile> {
+    const worksheet = XLSX.utils.aoa_to_sheet([['SKU']]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '批量删除SKU');
+    return {
+      fileName: SKU_BULK_DELETE_TEMPLATE_FILE_NAME,
+      content: XLSX.write(workbook, {
+        type: 'buffer',
+        bookType: 'xlsx',
+      }) as Buffer,
+    };
+  }
+
+  async importBulkDeleteExcel(
+    fileBuffer: Buffer,
+    originalName: string | undefined,
+    operatorId: bigint,
+    requestId?: string,
+  ): Promise<{ totalRows: number; deletedCount: number; fileName: string | null }> {
+    await this.assertSystemAdminCanDeleteSkus(operatorId);
+    const skuCodes = this.parseBulkDeleteSkuCodes(fileBuffer);
+    const skus = await this.prisma.sku.findMany({
+      where: {
+        sku: {
+          in: skuCodes,
+        },
+      },
+      orderBy: [{ sku: 'asc' }, { id: 'asc' }],
+    });
+    const skuByCode = new Map(skus.map((sku) => [sku.sku, sku]));
+    const missingCodes = skuCodes.filter((sku) => !skuByCode.has(sku));
+    if (missingCodes.length > 0) {
+      throw new BadRequestException(`以下SKU不存在，不能删除：${missingCodes.join('、')}`);
+    }
+
+    const blockingMessages = (
+      await Promise.all(
+        skus.map(async (sku) => {
+          const relations = await this.getSkuDeleteBlockingRelations(sku.id);
+          if (!relations.length) {
+            return null;
+          }
+          const details = relations.map((item) => `${item.label}${item.count}条`).join('、');
+          return `${sku.sku}存在${details}`;
+        }),
+      )
+    ).filter((message): message is string => Boolean(message));
+    if (blockingMessages.length > 0) {
+      throw new BadRequestException(`无法批量删除 SKU：${blockingMessages.join('；')}`);
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.sku.deleteMany({
+        where: {
+          id: {
+            in: skus.map((sku) => sku.id),
+          },
+        },
+      });
+      await this.auditService.createMany(
+        skus.map((sku) => ({
+          db: tx,
+          entityType: 'sku',
+          entityId: sku.id,
+          action: AuditAction.delete,
+          eventType: AuditEventType.SKU_DELETED,
+          beforeData: sku as unknown as Record<string, unknown>,
+          afterData: null,
+          operatorId,
+          requestId,
+        })),
+      );
+    });
+
+    return {
+      totalRows: skuCodes.length,
+      deletedCount: skus.length,
+      fileName: originalName ?? null,
     };
   }
 
@@ -462,21 +636,8 @@ export class SkusService {
     requestId?: string,
   ): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'skuId');
-    const [sku, operator] = await Promise.all([
-      this.prisma.sku.findUnique({ where: { id } }),
-      this.prisma.user.findUnique({
-        where: { id: operatorId },
-        select: {
-          role: true,
-          status: true,
-        },
-      }),
-    ]);
-    const isSystemAdmin =
-      String(operator?.role ?? '') === 'system_admin' && Number(operator?.status ?? 0) === 1;
-    if (!isSystemAdmin) {
-      throw new ForbiddenException('Only system administrators can delete SKUs');
-    }
+    await this.assertSystemAdminCanDeleteSkus(operatorId);
+    const sku = await this.prisma.sku.findUnique({ where: { id } });
     if (!sku) {
       throw new NotFoundException('SKU not found');
     }
@@ -500,6 +661,21 @@ export class SkusService {
       });
     });
     return { success: true };
+  }
+
+  private async assertSystemAdminCanDeleteSkus(operatorId: bigint): Promise<void> {
+    const operator = await this.prisma.user.findUnique({
+      where: { id: operatorId },
+      select: {
+        role: true,
+        status: true,
+      },
+    });
+    const isSystemAdmin =
+      String(operator?.role ?? '') === 'system_admin' && Number(operator?.status ?? 0) === 1;
+    if (!isSystemAdmin) {
+      throw new ForbiddenException('Only system administrators can delete SKUs');
+    }
   }
 
   private async getSkuDeleteBlockingRelations(skuId: bigint): Promise<Array<{ label: string; count: number }>> {
@@ -618,6 +794,60 @@ export class SkusService {
     return result;
   }
 
+  private parseBulkDeleteSkuCodes(fileBuffer: Buffer): string[] {
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+    } catch {
+      throw new BadRequestException('Invalid Excel file');
+    }
+
+    const firstSheet = workbook.SheetNames[0];
+    if (!firstSheet) {
+      throw new BadRequestException('No worksheet found in Excel');
+    }
+    const sheet = workbook.Sheets[firstSheet];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+    if (rows.length === 0) {
+      throw new BadRequestException('No data found in Excel');
+    }
+
+    const errors: string[] = [];
+    const result: string[] = [];
+    const seenSkuRows = new Map<string, number>();
+
+    rows.forEach((rawRow, idx) => {
+      const rowNo = idx + 2;
+      const normalized: Record<string, string> = {};
+      Object.entries(rawRow).forEach(([key, value]) => {
+        normalized[this.normalizeHeader(key)] = String(value ?? '').trim();
+      });
+      const sku = this.pickField(normalized, ['sku', 'SKU']);
+      if (!sku) {
+        errors.push(`Row ${rowNo} is missing SKU`);
+        return;
+      }
+      if (sku.length > IMPORT_FIELD_LIMITS.sku) {
+        errors.push(`Row ${rowNo} SKU length exceeds ${IMPORT_FIELD_LIMITS.sku} characters`);
+        return;
+      }
+      if (seenSkuRows.has(sku)) {
+        errors.push(`Row ${rowNo} duplicated SKU: ${sku} (first seen at row ${seenSkuRows.get(sku)})`);
+        return;
+      }
+      seenSkuRows.set(sku, rowNo);
+      result.push(sku);
+    });
+
+    if (errors.length > 0) {
+      throw new UnprocessableEntityException(errors.join(' | '));
+    }
+    if (!result.length) {
+      throw new BadRequestException('No SKU found in Excel');
+    }
+    return result;
+  }
+
   private buildSkuExportWorkbook(
     rows: Array<{
       sku: string | null;
@@ -668,6 +898,29 @@ export class SkusService {
       type: 'buffer',
       bookType: 'xlsx',
     }) as Buffer;
+  }
+
+  private formatDateTimeForFileName(date: Date): string {
+    const parts = new Intl.DateTimeFormat('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+      .formatToParts(date)
+      .reduce<Record<string, string>>((acc, part) => {
+        if (part.type !== 'literal') {
+          acc[part.type] = part.value;
+        }
+        return acc;
+      }, {});
+    return `${parts.year ?? '0000'}${parts.month ?? '00'}${parts.day ?? '00'}-${parts.hour ?? '00'}${
+      parts.minute ?? '00'
+    }${parts.second ?? '00'}`;
   }
 
   private normalizeHeader(header: string): string {

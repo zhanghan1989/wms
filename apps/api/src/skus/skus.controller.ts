@@ -91,6 +91,35 @@ export class SkusController {
     res.status(200).send(file.content);
   }
 
+  @Get('export-amazon-rb-link-stock-txt')
+  async exportAmazonRbLinkStockTxt(@Res() res: Response): Promise<void> {
+    const file = await this.skusService.exportAmazonRbLinkStockTxt();
+    res.setHeader('Content-Type', 'text/plain; charset=GB18030');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
+  @Get('bulk-delete-template')
+  async downloadBulkDeleteTemplate(@Res() res: Response): Promise<void> {
+    const file = await this.skusService.getBulkDeleteTemplate();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
   @Post()
   async create(
     @Body() payload: CreateSkuDto,
@@ -111,6 +140,24 @@ export class SkusController {
       throw new BadRequestException('请上传Excel文件');
     }
     return this.skusService.importExcel(
+      file.buffer,
+      file.originalname,
+      user.id,
+      req.requestId,
+    );
+  }
+
+  @Post('bulk-delete-excel')
+  @UseInterceptors(FileInterceptor('file'))
+  async bulkDeleteExcel(
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    if (!file?.buffer) {
+      throw new BadRequestException('请上传Excel文件');
+    }
+    return this.skusService.importBulkDeleteExcel(
       file.buffer,
       file.originalname,
       user.id,

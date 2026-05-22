@@ -1580,6 +1580,29 @@ async function downloadUnmatchedInventorySkuSummaryCsv() {
   await downloadAuthorizedFile("/skus/export-unmatched-excel", {}, "未匹配产品ID的SKU.xlsx");
 }
 
+async function downloadSkuBulkDeleteTemplate() {
+  await downloadAuthorizedFile("/skus/bulk-delete-template", {}, "批量删除SKU模板.xlsx");
+}
+
+async function bulkDeleteSkusFromExcel(file) {
+  if (!file) throw new Error("请选择Excel文件");
+  const form = new FormData();
+  form.append("file", file);
+  return request("/skus/bulk-delete-excel", {
+    method: "POST",
+    body: form,
+  });
+}
+
+async function downloadAmazonRbLinkStockTxt() {
+  const fileName = await downloadAuthorizedFile(
+    "/skus/export-amazon-rb-link-stock-txt",
+    {},
+    `亚马逊更新价格和数量模版-${formatDateForFilename(new Date())}.txt`,
+  );
+  showToast(`已下载 ${fileName}`);
+}
+
 async function downloadFbaOutboundExcel() {
   if (!state.token) {
     throw new Error("请先登录");
@@ -2554,44 +2577,93 @@ function ensureBrandingUi() {
 function ensureInventoryPanelUi() {
   const bulkUploadButton = $("openBulkSkuUploadModal");
   if (!bulkUploadButton) return;
-  if ($("downloadInventorySkuSummaryBtn")) return;
-
-  const downloadButton = document.createElement("button");
-  downloadButton.type = "button";
-  downloadButton.id = "downloadInventorySkuSummaryBtn";
-  downloadButton.textContent = "下载系统所有产品";
-  downloadButton.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      await withBusyButton(button, "下载中...", async () => {
-        await downloadInventorySkuSummaryCsv();
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-  const unmatchedDownloadButton = document.createElement("button");
-  unmatchedDownloadButton.type = "button";
-  unmatchedDownloadButton.id = "downloadUnmatchedInventorySkuSummaryBtn";
-  unmatchedDownloadButton.textContent = "未匹配产品ID的SKU下载";
-  unmatchedDownloadButton.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      await withBusyButton(button, "下载中...", async () => {
-        await downloadUnmatchedInventorySkuSummaryCsv();
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
+  let bulkDeleteButton = $("openBulkSkuDeleteModal");
+  if (!isCurrentUserSystemAdmin()) {
+    bulkDeleteButton?.remove();
+  } else if (!bulkDeleteButton) {
+    bulkDeleteButton = document.createElement("button");
+    bulkDeleteButton.type = "button";
+    bulkDeleteButton.id = "openBulkSkuDeleteModal";
+    bulkDeleteButton.textContent = "批量删除SKU";
+    bulkDeleteButton.addEventListener("click", () => {
+      $("bulkSkuDeleteForm")?.reset();
+      openModal("bulkSkuDeleteModal");
+    });
+    bulkUploadButton.insertAdjacentElement("afterend", bulkDeleteButton);
+  }
+  let downloadButton = $("downloadInventorySkuSummaryBtn");
+  if (!downloadButton) {
+    downloadButton = document.createElement("button");
+    downloadButton.type = "button";
+    downloadButton.id = "downloadInventorySkuSummaryBtn";
+    downloadButton.textContent = "下载系统所有SKU";
+    downloadButton.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      try {
+        await withBusyButton(button, "下载中...", async () => {
+          await downloadInventorySkuSummaryCsv();
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  }
+  let unmatchedDownloadButton = $("downloadUnmatchedInventorySkuSummaryBtn");
+  if (!unmatchedDownloadButton) {
+    unmatchedDownloadButton = document.createElement("button");
+    unmatchedDownloadButton.type = "button";
+    unmatchedDownloadButton.id = "downloadUnmatchedInventorySkuSummaryBtn";
+    unmatchedDownloadButton.textContent = "未匹配产品ID的SKU下载";
+    unmatchedDownloadButton.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      try {
+        await withBusyButton(button, "下载中...", async () => {
+          await downloadUnmatchedInventorySkuSummaryCsv();
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  }
+  let amazonRbLinkStockButton = $("downloadAmazonRbLinkStockTxtBtn");
+  if (!amazonRbLinkStockButton) {
+    amazonRbLinkStockButton = document.createElement("button");
+    amazonRbLinkStockButton.type = "button";
+    amazonRbLinkStockButton.id = "downloadAmazonRbLinkStockTxtBtn";
+    amazonRbLinkStockButton.textContent = "亚马逊rb链接库存下载";
+    amazonRbLinkStockButton.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      try {
+        await withBusyButton(button, "下载中...", async () => {
+          await downloadAmazonRbLinkStockTxt();
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  }
   const shopManageButton = $("openShopManageModal");
   if (shopManageButton) {
-    shopManageButton.insertAdjacentElement("afterend", downloadButton);
-    downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
+    if (!downloadButton.isConnected) {
+      shopManageButton.insertAdjacentElement("afterend", downloadButton);
+    }
+    if (!unmatchedDownloadButton.isConnected) {
+      downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
+    }
+    if (!amazonRbLinkStockButton.isConnected) {
+      unmatchedDownloadButton.insertAdjacentElement("afterend", amazonRbLinkStockButton);
+    }
     return;
   }
-  bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
-  downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
+  if (!downloadButton.isConnected) {
+    bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
+  }
+  if (!unmatchedDownloadButton.isConnected) {
+    downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
+  }
+  if (!amazonRbLinkStockButton.isConnected) {
+    unmatchedDownloadButton.insertAdjacentElement("afterend", amazonRbLinkStockButton);
+  }
 }
 
 function ensureBossStockAdjustmentUi() {
@@ -13930,6 +14002,17 @@ function bindForms() {
     openModal("bulkSkuUploadModal");
   });
 
+  $("downloadSkuBulkDeleteTemplateBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadSkuBulkDeleteTemplate();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("openBulkInventoryUpdateModal").addEventListener("click", () => {
     $("bulkInventoryUpdateForm").reset();
     openModal("bulkInventoryUpdateModal");
@@ -14182,6 +14265,29 @@ function bindForms() {
         showToast(
           `上传完成：共${result.totalRows}行，新增${result.createdCount}条，生成编辑申请${result.editRequestCount}条`,
         );
+        await Promise.all([
+          loadInventory(),
+          loadProductEditRequests({ reset: true }),
+          loadProductEditPendingSummary(),
+          loadAudit(),
+        ]);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("bulkSkuDeleteForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const ok = await openDeleteConfirmModal("确认批量物理删除模板中的SKU？删除后不可恢复。");
+    if (!ok) return;
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      await withBusyButton(submitButton, "删除中...", async () => {
+        const file = $("bulkSkuDeleteFile")?.files?.[0];
+        const result = await bulkDeleteSkusFromExcel(file);
+        closeModal("bulkSkuDeleteModal");
+        showToast(`删除完成：共${result.totalRows}行，删除${result.deletedCount}条SKU`);
         await Promise.all([
           loadInventory(),
           loadProductEditRequests({ reset: true }),
@@ -15896,6 +16002,11 @@ function bindDelegates() {
       closeModal("bulkSkuUploadModal");
       return;
     }
+    const bulkSkuDeleteClose = event.target.closest("button[data-action='closeBulkSkuDeleteModal']");
+    if (bulkSkuDeleteClose) {
+      closeModal("bulkSkuDeleteModal");
+      return;
+    }
     const bulkInventoryUpdateClose = event.target.closest(
       "button[data-action='closeBulkInventoryUpdateModal']",
     );
@@ -16158,6 +16269,12 @@ function bindDelegates() {
   $("bulkSkuUploadModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       closeModal("bulkSkuUploadModal");
+    }
+  });
+
+  $("bulkSkuDeleteModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      closeModal("bulkSkuDeleteModal");
     }
   });
 

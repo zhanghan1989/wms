@@ -1906,6 +1906,29 @@
     </div>
   </div>
 
+  <div id="bulkSkuDeleteModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>批量删除SKU</h3>
+        <button type="button" class="ghost" data-action="closeBulkSkuDeleteModal">关闭</button>
+      </div>
+      <form id="bulkSkuDeleteForm" class="form-grid modal-grid">
+        <label class="create-sku-full-row">
+          Excel 文件
+          <input id="bulkSkuDeleteFile" type="file" accept=".xlsx,.xls,.csv" required />
+        </label>
+        <p class="create-sku-full-row muted">模板只有一列：SKU。删除逻辑与一览表单行删除一致，存在历史关联记录时会拒绝删除。</p>
+        <div class="modal-actions modal-actions-split">
+          <button id="downloadSkuBulkDeleteTemplateBtn" type="button" class="ghost">下载模板</button>
+          <div class="actions">
+            <button type="submit" class="danger-solid">上传并删除</button>
+            <button type="button" class="ghost" data-action="closeBulkSkuDeleteModal">取消</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div id="bulkInventoryUpdateModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
