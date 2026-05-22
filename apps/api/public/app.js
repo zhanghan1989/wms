@@ -3276,6 +3276,7 @@ async function loadMe() {
     $("sessionInfo").textContent = "未登录";
     setAuthGate(false);
     applyRoleView();
+    ensureInventoryPanelUi();
     renderAuthGateMessage(readPersistedAuthGateMessage());
     return;
   }
@@ -3286,6 +3287,7 @@ async function loadMe() {
     $("sessionInfo").textContent = `${state.me.username}`;
     setAuthGate(true);
     applyRoleView();
+    ensureInventoryPanelUi();
     persistAuthGateMessage("");
     renderAuthGateMessage("");
   } catch (error) {
@@ -3295,6 +3297,7 @@ async function loadMe() {
       $("sessionInfo").textContent = "会话校验失败";
       setAuthGate(true);
       applyRoleView();
+      ensureInventoryPanelUi();
       throw error;
     }
     if (String(error?.path || "").trim() === "/auth/deploy-version") {
@@ -3302,6 +3305,7 @@ async function loadMe() {
       $("sessionInfo").textContent = "登录失效";
       setAuthGate(false);
       applyRoleView();
+      ensureInventoryPanelUi();
       renderAuthGateMessage(readPersistedAuthGateMessage());
       return;
     }
