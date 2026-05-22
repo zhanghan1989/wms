@@ -7553,6 +7553,7 @@ export class OrdersService {
     const skuRows = lookupCodes.length
       ? await this.prisma.sku.findMany({
           where: {
+            status: 1,
             productId: { not: null },
             OR: [{ sku: { in: lookupCodes } }, { rbSku: { in: lookupCodes } }, { fbmSku: { in: lookupCodes } }],
           },
@@ -8149,6 +8150,7 @@ export class OrdersService {
     });
     const skuRows = await this.prisma.sku.findMany({
       where: {
+        status: 1,
         productId: { not: null },
       },
       select: {
@@ -8590,6 +8592,7 @@ export class OrdersService {
     }
     const skuRows = await this.prisma.sku.findMany({
       where: {
+        status: 1,
         productId: { not: null },
         OR: [{ sku: rawCode }, { rbSku: rawCode }, { fbmSku: rawCode }],
       },

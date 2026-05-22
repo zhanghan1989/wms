@@ -578,7 +578,10 @@ export class MasterProductsService {
     }
 
     const skus = await this.prisma.sku.findMany({
-      where: { productId },
+      where: {
+        productId,
+        status: 1,
+      },
       select: {
         id: true,
         productId: true,
@@ -939,8 +942,11 @@ export class MasterProductsService {
             stockQty: true,
           },
         }),
-        tx.sku.findUnique({
-          where: { id: skuId },
+        tx.sku.findFirst({
+          where: {
+            id: skuId,
+            status: 1,
+          },
           select: {
             id: true,
             sku: true,
@@ -1165,8 +1171,11 @@ export class MasterProductsService {
             stockQty: true,
           },
         }),
-        tx.sku.findUnique({
-          where: { id: skuId },
+        tx.sku.findFirst({
+          where: {
+            id: skuId,
+            status: 1,
+          },
           select: {
             id: true,
             sku: true,
@@ -1994,6 +2003,7 @@ export class MasterProductsService {
           {
             skus: {
               some: {
+                status: 1,
                 OR: [
                   { sku: { contains: keyword } },
                   { asin: { contains: keyword } },

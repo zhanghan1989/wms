@@ -1917,7 +1917,7 @@
           Excel 文件
           <input id="bulkSkuDeleteFile" type="file" accept=".xlsx,.xls,.csv" required />
         </label>
-        <p class="create-sku-full-row muted">模板只有一列：SKU。删除逻辑与一览表单行删除一致，存在历史关联记录时会拒绝删除。</p>
+        <p class="create-sku-full-row muted">模板只有一列：SKU。删除逻辑与一览表单行删除一致，会将 SKU 停用并从正常业务页面隐藏。</p>
         <div class="modal-actions modal-actions-split">
           <button id="downloadSkuBulkDeleteTemplateBtn" type="button" class="ghost">下载模板</button>
           <div class="actions">

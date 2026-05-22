@@ -134,7 +134,7 @@ export class SkusService {
   ) {}
 
   private buildListWhere(q?: string): Prisma.SkuWhereInput {
-    const where: Prisma.SkuWhereInput = {};
+    const where: Prisma.SkuWhereInput = { status: 1 };
     if (q) {
       where.OR = [
         { productId: { contains: q } },
@@ -233,6 +233,9 @@ export class SkusService {
 
   async exportExcel(): Promise<SkuExportFile> {
     const rows = await this.prisma.sku.findMany({
+      where: {
+        status: 1,
+      },
       include: {
         masterProduct: {
           select: {
@@ -261,6 +264,7 @@ export class SkusService {
         },
       },
       where: {
+        status: 1,
         OR: [{ productId: null }, { productId: '' }, { masterProduct: null }],
       },
       orderBy: [{ productId: 'asc' }, { sku: 'asc' }, { id: 'asc' }],
@@ -356,48 +360,39 @@ export class SkusService {
       throw new BadRequestException(`以下SKU不存在，不能删除：${missingCodes.join('、')}`);
     }
 
-    const blockingMessages = (
-      await Promise.all(
-        skus.map(async (sku) => {
-          const relations = await this.getSkuDeleteBlockingRelations(sku.id);
-          if (!relations.length) {
-            return null;
-          }
-          const details = relations.map((item) => `${item.label}${item.count}条`).join('、');
-          return `${sku.sku}存在${details}`;
-        }),
-      )
-    ).filter((message): message is string => Boolean(message));
-    if (blockingMessages.length > 0) {
-      throw new BadRequestException(`无法批量删除 SKU：${blockingMessages.join('；')}`);
-    }
+    const activeSkus = skus.filter((sku) => Number(sku.status ?? 0) === 1);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.sku.deleteMany({
-        where: {
-          id: {
-            in: skus.map((sku) => sku.id),
+      if (activeSkus.length > 0) {
+        await tx.sku.updateMany({
+          where: {
+            id: {
+              in: activeSkus.map((sku) => sku.id),
+            },
           },
-        },
-      });
-      await this.auditService.createMany(
-        skus.map((sku) => ({
-          db: tx,
-          entityType: 'sku',
-          entityId: sku.id,
-          action: AuditAction.delete,
-          eventType: AuditEventType.SKU_DELETED,
-          beforeData: sku as unknown as Record<string, unknown>,
-          afterData: null,
-          operatorId,
-          requestId,
-        })),
-      );
+          data: {
+            status: 0,
+          },
+        });
+        await this.auditService.createMany(
+          activeSkus.map((sku) => ({
+            db: tx,
+            entityType: 'sku',
+            entityId: sku.id,
+            action: AuditAction.delete,
+            eventType: AuditEventType.SKU_DISABLED,
+            beforeData: sku as unknown as Record<string, unknown>,
+            afterData: { ...(sku as unknown as Record<string, unknown>), status: 0 },
+            operatorId,
+            requestId,
+          })),
+        );
+      }
     });
 
     return {
       totalRows: skuCodes.length,
-      deletedCount: skus.length,
+      deletedCount: activeSkus.length,
       fileName: originalName ?? null,
     };
   }
@@ -410,6 +405,7 @@ export class SkusService {
   ): Promise<{
     totalRows: number;
     createdCount: number;
+    restoredCount: number;
     editRequestCount: number;
     fileName: string | null;
   }> {
@@ -417,6 +413,7 @@ export class SkusService {
     let summary: {
       totalRows: number;
       createdCount: number;
+      restoredCount: number;
       editRequestCount: number;
     };
 
@@ -445,6 +442,7 @@ export class SkusService {
                 fbmSku: true,
                 shop: true,
                 remark: true,
+                status: true,
               },
             }),
             productIds.length
@@ -471,11 +469,18 @@ export class SkusService {
 
           const existingSkuByCode = new Map(existingSkus.map((item) => [item.sku, item]));
           const rowsToCreate = rows.filter((row) => !existingSkuByCode.has(row.sku));
+          const rowsToRestore = rows.filter((row) => {
+            const existing = existingSkuByCode.get(row.sku);
+            return Boolean(existing && Number(existing.status ?? 0) !== 1);
+          });
           const editRequestData: Prisma.ProductEditRequestCreateManyInput[] = [];
 
           for (const row of rows) {
             const existing = existingSkuByCode.get(row.sku);
             if (!existing) {
+              continue;
+            }
+            if (Number(existing.status ?? 0) !== 1) {
               continue;
             }
 
@@ -548,6 +553,39 @@ export class SkusService {
             );
           }
 
+          if (rowsToRestore.length > 0) {
+            for (const row of rowsToRestore) {
+              const existing = existingSkuByCode.get(row.sku);
+              if (!existing) {
+                continue;
+              }
+              const restored = await tx.sku.update({
+                where: { id: existing.id },
+                data: {
+                  productId: row.productId ?? null,
+                  rbSku: row.rbSku ?? null,
+                  asin: row.asin ?? null,
+                  fnsku: row.fnsku ?? null,
+                  fbmSku: row.fbmSku ?? null,
+                  shop: row.shop ?? null,
+                  remark: row.remark ?? null,
+                  status: 1,
+                },
+              });
+              await this.auditService.create({
+                db: tx,
+                entityType: 'sku',
+                entityId: restored.id,
+                action: AuditAction.update,
+                eventType: AuditEventType.SKU_FIELD_UPDATED,
+                beforeData: existing as unknown as Record<string, unknown>,
+                afterData: restored as unknown as Record<string, unknown>,
+                operatorId,
+                requestId,
+              });
+            }
+          }
+
           if (editRequestData.length > 0) {
             await tx.productEditRequest.createMany({
               data: editRequestData,
@@ -557,6 +595,7 @@ export class SkusService {
           return {
             totalRows: rows.length,
             createdCount: rowsToCreate.length,
+            restoredCount: rowsToRestore.length,
             editRequestCount: editRequestData.length,
           };
         },
@@ -593,6 +632,30 @@ export class SkusService {
   ): Promise<unknown> {
     const exists = await this.prisma.sku.findUnique({ where: { sku: payload.sku } });
     if (exists) {
+      if (Number(exists.status ?? 0) !== 1) {
+        await this.ensureMasterProductExists(this.prisma, payload.productId ?? null);
+        return this.prisma.$transaction(async (tx) => {
+          const restored = await tx.sku.update({
+            where: { id: exists.id },
+            data: {
+              ...payload,
+              status: 1,
+            },
+          });
+          await this.auditService.create({
+            db: tx,
+            entityType: 'sku',
+            entityId: restored.id,
+            action: AuditAction.update,
+            eventType: AuditEventType.SKU_FIELD_UPDATED,
+            beforeData: exists as unknown as Record<string, unknown>,
+            afterData: restored as unknown as Record<string, unknown>,
+            operatorId,
+            requestId,
+          });
+          return restored;
+        });
+      }
       throw new BadRequestException('SKU already exists');
     }
     await this.ensureMasterProductExists(this.prisma, payload.productId ?? null);
@@ -641,21 +704,22 @@ export class SkusService {
     if (!sku) {
       throw new NotFoundException('SKU not found');
     }
-    const blockingRelations = await this.getSkuDeleteBlockingRelations(id);
-    if (blockingRelations.length > 0) {
-      const details = blockingRelations.map((item) => `${item.label}${item.count}条`).join('、');
-      throw new BadRequestException(`无法删除 SKU：存在${details}关联记录，请先处理后再删除`);
+    if (Number(sku.status ?? 0) !== 1) {
+      return { success: true };
     }
     await this.prisma.$transaction(async (tx) => {
-      await tx.sku.delete({ where: { id } });
+      const updated = await tx.sku.update({
+        where: { id },
+        data: { status: 0 },
+      });
       await this.auditService.create({
         db: tx,
         entityType: 'sku',
         entityId: id,
         action: AuditAction.delete,
-        eventType: AuditEventType.SKU_DELETED,
+        eventType: AuditEventType.SKU_DISABLED,
         beforeData: sku as unknown as Record<string, unknown>,
-        afterData: null,
+        afterData: updated as unknown as Record<string, unknown>,
         operatorId,
         requestId,
       });
@@ -676,36 +740,6 @@ export class SkusService {
     if (!isSystemAdmin) {
       throw new ForbiddenException('Only system administrators can delete SKUs');
     }
-  }
-
-  private async getSkuDeleteBlockingRelations(skuId: bigint): Promise<Array<{ label: string; count: number }>> {
-    const [
-      itemCodeCount,
-      outboundItemCount,
-      stocktakeRecordCount,
-      stockMovementCount,
-      adjustItemCount,
-      fbaReplenishmentCount,
-      productEditRequestCount,
-    ] = await Promise.all([
-      this.prisma.itemCode.count({ where: { skuId } }),
-      this.prisma.outboundOrderItem.count({ where: { skuId } }),
-      this.prisma.stocktakeRecord.count({ where: { skuId } }),
-      this.prisma.stockMovement.count({ where: { skuId } }),
-      this.prisma.inventoryAdjustOrderItem.count({ where: { skuId } }),
-      this.prisma.fbaReplenishment.count({ where: { skuId } }),
-      this.prisma.productEditRequest.count({ where: { skuId } }),
-    ]);
-
-    return [
-      { label: '条码', count: itemCodeCount },
-      { label: '出库明细', count: outboundItemCount },
-      { label: '盘点记录', count: stocktakeRecordCount },
-      { label: '库存流水', count: stockMovementCount },
-      { label: '库存调整明细', count: adjustItemCount },
-      { label: 'FBA补货', count: fbaReplenishmentCount },
-      { label: '编辑申请', count: productEditRequestCount },
-    ].filter((item) => item.count > 0);
   }
 
   private parseImportRows(fileBuffer: Buffer): ImportSkuRow[] {

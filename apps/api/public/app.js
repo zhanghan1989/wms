@@ -14267,7 +14267,7 @@ function bindForms() {
         const result = await importSkusFromExcel(file);
         closeModal("bulkSkuUploadModal");
         showToast(
-          `上传完成：共${result.totalRows}行，新增${result.createdCount}条，生成编辑申请${result.editRequestCount}条`,
+        `上传完成：共${result.totalRows}行，新增${result.createdCount}条，恢复${Number(result.restoredCount || 0)}条，生成编辑申请${result.editRequestCount}条`,
         );
         await Promise.all([
           loadInventory(),
@@ -14283,7 +14283,7 @@ function bindForms() {
 
   $("bulkSkuDeleteForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const ok = await openDeleteConfirmModal("确认批量物理删除模板中的SKU？删除后不可恢复。");
+    const ok = await openDeleteConfirmModal("确认批量删除模板中的SKU？删除后这些SKU将停用，不再出现在正常业务页面。");
     if (!ok) return;
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
@@ -15595,7 +15595,7 @@ function bindDelegates() {
     try {
       if (button.dataset.action === "deleteSkuRow") {
         const skuCode = String(button.dataset.skuCode || `#${skuId}`).trim();
-        const ok = await openDeleteConfirmModal(`确定物理删除SKU：${skuCode}？`);
+        const ok = await openDeleteConfirmModal(`确定删除SKU：${skuCode}？删除后该SKU将停用，不再出现在正常业务页面。`);
         if (!ok) return;
         await deleteSku(skuId);
         showToast("SKU已删除");

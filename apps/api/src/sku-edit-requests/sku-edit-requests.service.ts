@@ -129,7 +129,12 @@ export class SkuEditRequestsService {
     _requestId?: string,
   ): Promise<unknown> {
     const skuId = BigInt(payload.skuId);
-    const sku = await this.prisma.sku.findUnique({ where: { id: skuId } });
+    const sku = await this.prisma.sku.findFirst({
+      where: {
+        id: skuId,
+        status: 1,
+      },
+    });
     if (!sku) {
       throw new NotFoundException('SKU不存在');
     }
@@ -216,6 +221,7 @@ export class SkuEditRequestsService {
       const duplicated = await this.prisma.sku.findFirst({
         where: {
           sku: targetSkuCode,
+          status: 1,
           id: { not: request.skuId },
         },
         select: { id: true },
@@ -384,6 +390,7 @@ export class SkuEditRequestsService {
     const duplicated = await this.prisma.sku.findFirst({
       where: {
         sku: targetSkuCode,
+        status: 1,
         id: { not: currentSkuId },
       },
       select: { id: true },
@@ -482,4 +489,3 @@ export class SkuEditRequestsService {
     return Math.floor(parsed);
   }
 }
-

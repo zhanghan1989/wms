@@ -1399,7 +1399,10 @@ export class InventoryService {
         select: { id: true },
       }),
       tx.sku.findMany({
-        where: { id: { in: uniqueSkuIds } },
+        where: {
+          id: { in: uniqueSkuIds },
+          status: 1,
+        },
         select: { id: true, productId: true },
       }),
     ]);
@@ -1453,6 +1456,7 @@ export class InventoryService {
 
     const skuRows = await tx.sku.findMany({
       where: {
+        status: 1,
         id: {
           in: Array.from(new Set(order.items.map((item) => item.skuId.toString()))).map((id) =>
             BigInt(id),
@@ -1623,8 +1627,11 @@ export class InventoryService {
     payload: ManualAdjustDto,
   ): Promise<{ id: bigint; sku: string }> {
     if (payload.skuId) {
-      const sku = await tx.sku.findUnique({
-        where: { id: BigInt(payload.skuId) },
+      const sku = await tx.sku.findFirst({
+        where: {
+          id: BigInt(payload.skuId),
+          status: 1,
+        },
         select: { id: true, sku: true },
       });
       if (!sku) throw new NotFoundException('SKU 不存在');
@@ -1638,6 +1645,7 @@ export class InventoryService {
 
     const matched = await tx.sku.findMany({
       where: {
+        status: 1,
         OR: [
           { sku: { contains: keyword } },
           { rbSku: { contains: keyword } },
@@ -2767,6 +2775,7 @@ async function searchSkusByProduct(
 
   const rows = await this.prisma.sku.findMany({
     where: {
+      status: 1,
       OR: [
         { productId: { equals: key } },
         { sku: { equals: key } },
@@ -2820,8 +2829,11 @@ async function productBoxesByProduct(
   this: InventoryService,
   skuId: number,
 ): Promise<unknown[]> {
-  const sku = await this.prisma.sku.findUnique({
-    where: { id: BigInt(skuId) },
+  const sku = await this.prisma.sku.findFirst({
+    where: {
+      id: BigInt(skuId),
+      status: 1,
+    },
     select: { productId: true },
   });
   const productId = String(sku?.productId || '').trim();
@@ -3110,8 +3122,11 @@ async function manualAdjustByProduct(
       (sku
         ? String(
             (
-              await tx.sku.findUnique({
-                where: { id: sku.id },
+              await tx.sku.findFirst({
+                where: {
+                  id: sku.id,
+                  status: 1,
+                },
                 select: { productId: true },
               })
             )?.productId || '',
@@ -3271,8 +3286,11 @@ async function createFbaReplenishmentByProduct(
 
   return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const [sku, box] = await Promise.all([
-      tx.sku.findUnique({
-        where: { id: skuId },
+      tx.sku.findFirst({
+        where: {
+          id: skuId,
+          status: 1,
+        },
         select: {
           id: true,
           sku: true,
@@ -3788,6 +3806,9 @@ async function outboundFbaReplenishmentsByProduct(
 
 async function getSkuInventoryTotalsByProduct(this: InventoryService): Promise<Record<string, number>> {
   const rows = await this.prisma.sku.findMany({
+    where: {
+      status: 1,
+    },
     select: {
       id: true,
       productId: true,
