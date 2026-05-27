@@ -175,42 +175,6 @@ export class InventoryController {
     return this.inventoryService.getOverviewDashboard();
   }
 
-  @Get('stock-adjustment-csv')
-  async downloadStockAdjustmentCsv(
-    @Query('productTypes') productTypes: string | string[] | undefined,
-    @Res() res: Response,
-  ): Promise<void> {
-    const normalizedProductTypes = (Array.isArray(productTypes) ? productTypes : [productTypes])
-      .flatMap((value) => String(value || '').split(','))
-      .map((value) => value.trim())
-      .filter(Boolean);
-    const csv = await this.inventoryService.buildStockAdjustmentCsv({
-      productTypes: normalizedProductTypes,
-    });
-    res.setHeader('Content-Type', 'text/csv; charset=Shift_JIS');
-    res.setHeader('Content-Disposition', `attachment; filename="${csv.fileName}"`);
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).send(csv.content);
-  }
-
-  @Get('boss-mapping-csv')
-  async downloadBossMappingCsv(@Res() res: Response): Promise<void> {
-    const csv = await this.inventoryService.buildBossMappingCsv();
-    res.setHeader('Content-Type', 'text/csv; charset=Shift_JIS');
-    res.setHeader('Content-Disposition', `attachment; filename="${csv.fileName}"`);
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).send(csv.content);
-  }
-
-  @Get('boss-newitem-zip')
-  async downloadBossNewItemsZip(@Res() res: Response): Promise<void> {
-    const zip = await this.inventoryService.buildBossNewItemsZip();
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${zip.fileName}"`);
-    res.setHeader('Cache-Control', 'no-store');
-    res.status(200).send(zip.content);
-  }
-
   @Get('print-agent-windows-exe')
   async downloadPrintAgentWindowsExe(@Res() res: Response): Promise<void> {
     const file = await this.inventoryService.buildPrintAgentWindowsExe();

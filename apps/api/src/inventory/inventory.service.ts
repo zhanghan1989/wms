@@ -10,8 +10,6 @@ import {
 import { execFile } from 'child_process';
 import { readFile } from 'fs/promises';
 import { AuditAction, BatchInboundOrderStatus, OrderStatus, Prisma, ProductEditRequestStatus } from '@prisma/client';
-import * as iconv from 'iconv-lite';
-import JSZip = require('jszip');
 import { dirname, join, resolve } from 'path';
 import { promisify } from 'util';
 import * as XLSX from 'xlsx';
@@ -43,12 +41,6 @@ interface BulkInventoryUpdateRow {
   sku: string;
   qty: number;
 }
-
-const BOSS_NEW_ITEM_TEMPLATE_HEADER =
-  '取扱状態,SKUコード,商品コード,選択肢コード,商品名,商品タイプ,商品カテゴリー,販売価格,原価,JANコード,メーカー品番,原産地,重量,商品状態,在庫しきい値,安全在庫設定値,RSLへ商品情報を連携します,代表商品コード,商品属性,メーカーカラー,店舗カラー,メーカーサイズ,店舗サイズ,ブランド名,服種区分,仕入区分,入荷形態,シーズンコード,シーズン年,限定区分,アダルト商品フラグ,目次,ページ数,版表示,月号,曲情報,和書区分,判型区分,提供元特定情報1,提供元特定情報2,本人確認フラグ,税抜本体価格,税抜特価,出荷期限日数,情報解禁日,発売日,特価適用開始日,特価適用終了日,セットSKUコード,セット構成品SKUコード,セット構成品名,構成品数,セット構成品削除';
-const BOSS_NEW_ITEM_TEMPLATE_ROW =
-  ',33169,sku,,,0,,,,,,,,,,,1,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,';
-const BOSS_NEW_ITEM_MAX_ROWS_PER_FILE = 950;
 
 interface BoxProductInventoryPair {
   boxId: bigint;
@@ -145,7 +137,6 @@ interface BoxInventoryAuditArgs {
 
 const FBA_REPLENISH_MARK = 'FBA补货';
 const SKU_EDIT_PENDING_BLOCK_MESSAGE = '存在待审核的产品编辑申请，请管理员确认后再执行相关操作。';
-const STOCK_ADJUSTMENT_WAREHOUSE_ID = '64774';
 const INVENTORY_BULK_UPDATE_TEMPLATE_FILE = '批量更新库存.xlsx';
 const BULK_UPDATE_DEFAULT_SHELF_CODE = '00';
 // Historical default shelf codes may still exist in old data and must keep resolving here.
@@ -984,182 +975,6 @@ export class InventoryService {
     return importBulkUpdateExcelByProduct.call(this, fileBuffer, originalName, operatorId, requestId);
   }
 
-  async buildStockAdjustmentCsv(filters?: {
-    productTypes?: string[];
-  }): Promise<{ fileName: string; content: Buffer }> {
-    return this.buildBossStockAdjustmentCsvByProduct(filters);
-  }
-
-  async buildBossMappingCsv(): Promise<{
-    fileName: string;
-    content: Buffer;
-  }> {
-    const rows = await this.prisma.sku.findMany({
-      where: {
-        status: 1,
-        productId: {
-          not: null,
-        },
-        rbSku: {
-          not: null,
-        },
-        masterProduct: {
-          is: {
-            status: 1,
-          },
-        },
-      },
-      select: {
-        productId: true,
-        rbSku: true,
-      },
-      orderBy: [{ productId: 'asc' }, { rbSku: 'asc' }, { id: 'asc' }],
-    });
-
-    const lines: string[] = [
-      [
-        '削除フラグ',
-        'ショップID',
-        'SKUコード',
-        'モール商品ID',
-        'モール商品サブコード1',
-        'モール商品サブコード2',
-        '在庫管理方法',
-        '販売在庫',
-        'バックオーダー設定',
-        'モールリードタイム',
-      ].join(','),
-    ];
-
-    rows
-      .filter((row) => String(row.productId ?? '').trim() && String(row.rbSku ?? '').trim())
-      .forEach((row) => {
-        lines.push(
-          [
-            '',
-            '74748',
-            row.productId ?? '',
-            row.rbSku ?? '',
-            '',
-            '',
-            '1',
-            '',
-            '0',
-            '',
-          ]
-            .map((value) => this.escapeCsvCell(value))
-            .join(','),
-        );
-      });
-
-    const csvText = `${lines.join('\r\n')}\r\n`;
-    const fileName = `MappingItem_${this.formatDateForFilename(new Date())}.csv`;
-    return {
-      fileName,
-      content: iconv.encode(csvText, 'shift_jis'),
-    };
-  }
-
-  async buildBossNewItemsZip(): Promise<{
-    fileName: string;
-    content: Buffer;
-  }> {
-    const products = await this.prisma.masterProduct.findMany({
-      where: {
-        status: 1,
-      },
-      select: {
-        productId: true,
-      },
-      orderBy: {
-        productId: 'asc',
-      },
-    });
-
-    const header = BOSS_NEW_ITEM_TEMPLATE_HEADER.split(',');
-    const templateRow = BOSS_NEW_ITEM_TEMPLATE_ROW.split(',');
-    const validProducts = products
-      .map((product) => String(product.productId || '').trim())
-      .filter(Boolean);
-
-    const zip = new JSZip();
-    const totalChunks = Math.max(1, Math.ceil(validProducts.length / BOSS_NEW_ITEM_MAX_ROWS_PER_FILE));
-
-    for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
-      const start = chunkIndex * BOSS_NEW_ITEM_MAX_ROWS_PER_FILE;
-      const chunkRows = validProducts.slice(start, start + BOSS_NEW_ITEM_MAX_ROWS_PER_FILE);
-      const lines: string[] = [header.map((cell) => this.escapeCsvCell(cell)).join(',')];
-
-      chunkRows.forEach((productId) => {
-        const row = [...templateRow];
-        row[1] = productId;
-        lines.push(row.map((cell) => this.escapeCsvCell(cell)).join(','));
-      });
-
-      const csvText = `${lines.join('\r\n')}\r\n`;
-      const fileName = `newitem_${String(chunkIndex + 1).padStart(3, '0')}.csv`;
-      zip.file(fileName, iconv.encode(csvText, 'shift_jis'));
-    }
-
-    return {
-      fileName: `boss_newitem_${this.formatDateForFilename(new Date())}.zip`,
-      content: await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }),
-    };
-  }
-
-  private async buildBossStockAdjustmentCsvByProduct(filters?: {
-    productTypes?: string[];
-  }): Promise<{
-    fileName: string;
-    content: Buffer;
-  }> {
-    const productTypes = Array.isArray(filters?.productTypes)
-      ? filters.productTypes.map((value) => String(value || '').trim()).filter(Boolean)
-      : [];
-    const products = await this.prisma.masterProduct.findMany({
-      where: {
-        status: 1,
-        ...(productTypes.length
-          ? {
-              productType: {
-                in: productTypes,
-              },
-            }
-          : {}),
-      },
-      select: {
-        productId: true,
-        stockQty: true,
-      },
-      orderBy: {
-        productId: 'asc',
-      },
-    });
-
-    const lines: string[] = [
-      ['SKUコード', '倉庫ID', '実在庫数', '差分指定']
-        .map((cell) => this.escapeCsvCell(cell))
-        .join(','),
-    ];
-
-    products.forEach((product) => {
-      const row = [
-        product.productId || '',
-        STOCK_ADJUSTMENT_WAREHOUSE_ID,
-        Number(product.stockQty ?? 0),
-        '',
-      ];
-      lines.push(row.map((cell) => this.escapeCsvCell(cell)).join(','));
-    });
-
-    const csvText = `${lines.join('\r\n')}\r\n`;
-    const fileName = `stock_ajustment_${this.formatDateForFilename(new Date())}.csv`;
-    return {
-      fileName,
-      content: iconv.encode(csvText, 'shift_jis'),
-    };
-  }
-
   async buildFbaOutboundExcel(): Promise<{ fileName: string; content: Buffer }> {
     const rows = await this.prisma.fbaReplenishment.findMany({
       where: {
@@ -1339,14 +1154,6 @@ export class InventoryService {
     if (!date) return '';
     const parts = getZonedDateParts(date, APP_TIMEZONE);
     return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
-  }
-
-  private escapeCsvCell(value: string | number): string {
-    const text = String(value ?? '');
-    if (/[",\r\n]/.test(text)) {
-      return `"${text.replace(/"/g, '""')}"`;
-    }
-    return text;
   }
 
   async ensureSkusNotUnderPendingEdit(
