@@ -5159,8 +5159,33 @@ async function loadInventory({ preserveSearch = false } = {}) {
   await refreshMoveProductOldBoxOptionsByProduct();
 }
 
+async function refreshInventoryViewAfterStockMutation({ preserveCurrentView = false } = {}) {
+  const keyword = String($("inventoryKeyword")?.value || state.inventoryHomeKeyword || "").trim();
+  const selectedProductId = String(
+    state.inventoryHomeSelectedDetail?.product?.productId ||
+      state.inventoryHomeSelectedDetail?.productId ||
+      "",
+  ).trim();
+  const shouldPreserveView = Boolean(preserveCurrentView && (keyword || selectedProductId));
+
+  await loadInventory({ preserveSearch: shouldPreserveView });
+
+  if (!shouldPreserveView) return;
+  if (selectedProductId) {
+    await loadInventoryHomeProductDetail(selectedProductId);
+    return;
+  }
+  if (keyword) {
+    state.inventoryHomeKeyword = keyword;
+    state.inventoryHomeSelectedDetail = null;
+    setInventoryDisplayMode(false);
+    await loadInventoryHomeProducts({ reset: true });
+  }
+}
+
 function renderInventorySearchResults(skus, locationMap, boxSkuMap) {
   const container = $("inventorySearchResults");
+  if (!container) return;
   if (!skus.length) {
     container.textContent = "未找到匹配产品";
     return;
@@ -13355,15 +13380,11 @@ function bindForms() {
         closeModal("fbaOutboundModal");
         state.selectedFbaIds = new Set();
         showToast("出库完成");
-        const keyword = $("inventoryKeyword").value.trim();
-        const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+        const shouldPreserveInventoryView = state.inventorySearchMode;
         await loadFbaReplenishments();
         await loadFbaPendingSummary();
-        await loadInventory({ preserveSearch: shouldRefreshSearch });
+        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView });
         await loadBoxes();
-        if (shouldRefreshSearch) {
-          await searchInventoryProducts(keyword);
-        }
         await loadAudit();
       });
     } catch (error) {
@@ -14433,19 +14454,15 @@ function bindForms() {
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
       await withBusyButton(submitButton, "处理中...", async () => {
-        const keyword = $("inventoryKeyword").value.trim();
-        const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+        const shouldPreserveInventoryView = state.inventorySearchMode;
         const direction = $("adjustDirection").value;
         await submitAdjustForm();
         closeModal("adjustModal");
         showToast(direction === "outbound" ? "FBA补货申请单已生成" : "入库成功");
-        await loadInventory({ preserveSearch: shouldRefreshSearch });
+        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView });
         await loadBoxes();
         await loadFbaReplenishments();
         await loadAudit();
-        if (shouldRefreshSearch) {
-          await searchInventoryProducts(keyword);
-        }
       });
     } catch (error) {
       showToast(error.message, true);
@@ -15183,16 +15200,12 @@ function bindDelegates() {
         return;
       }
 
-      const keyword = $("inventoryKeyword").value.trim();
-      const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+      const shouldPreserveInventoryView = state.inventorySearchMode;
       state.selectedFbaIds.delete(String(id));
       await loadFbaReplenishments();
       await loadFbaPendingSummary();
-      await loadInventory({ preserveSearch: shouldRefreshSearch });
+      await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView });
       await loadBoxes();
-      if (shouldRefreshSearch) {
-        await searchInventoryProducts(keyword);
-      }
       await loadAudit();
     } catch (error) {
       showToast(error.message, true);
@@ -15557,17 +15570,13 @@ function bindDelegates() {
       const action = button.dataset.action;
       const boxCode = button.dataset.boxCode || "";
       if (action === "inventoryOutboundOne") {
-        const keyword = $("inventoryKeyword").value.trim();
-        const shouldRefreshSearch = state.inventorySearchMode && Boolean(keyword);
+        const shouldPreserveInventoryView = state.inventorySearchMode;
         await quickOutboundOne(skuId, boxCode);
         const confirmed = await openActionConfirmModal("出库1件成功", "提示", "确认", { showCancel: false });
         if (!confirmed) return;
-        await loadInventory({ preserveSearch: shouldRefreshSearch });
+        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView });
         await loadBoxes();
         await loadAudit();
-        if (shouldRefreshSearch) {
-          await searchInventoryProducts(keyword);
-        }
         return;
       }
 
