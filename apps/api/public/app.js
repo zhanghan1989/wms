@@ -294,7 +294,6 @@ const state = {
   skuTypeEditingIds: new Set(),
   shopEditingIds: new Set(),
   shelfEditingIds: new Set(),
-  boxEditingIds: new Set(),
   shelfManageVisibleCount: 10,
   boxManageVisibleCount: 30,
   manageModalInitialPageSize: 10,
@@ -3908,11 +3907,6 @@ function renderBoxContentQueryActions(box) {
       `<button class="tiny-btn secondary" data-action="archiveReleaseBoxQuery" data-id="${escapeHtml(box?.id || "")}" data-code="${escapeHtml(box?.boxCode || "")}">归档释放</button>`,
     );
   }
-  if (Number(box?.status ?? 1) === 1) {
-    actions.push(
-      `<button class="tiny-btn" data-action="editBoxQuery" data-id="${escapeHtml(box?.id || "")}" data-code="${escapeHtml(box?.boxCode || "")}">变更</button>`,
-    );
-  }
   return actions.join(" ");
 }
 
@@ -3971,58 +3965,11 @@ async function archiveReleaseBox(boxId, boxCode) {
   if (!ok) return null;
 
   const result = await request(`/boxes/${boxId}/archive-release`, { method: "POST" });
-  state.boxEditingIds.delete(String(boxId));
   showToast(
     `箱号 ${result?.releasedBoxCode || boxCode} 已释放，旧箱已归档为 ${result?.archivedBoxCode || "-"}`,
   );
   await reloadBoxesAfterManageMutation();
   return result;
-}
-
-async function loadBoxManageRowsUntilBox(boxId) {
-  const targetId = String(boxId || "").trim();
-  if (!targetId) return -1;
-
-  resetBoxManageVisibleCount();
-  await loadBoxManagePage({ reset: true });
-
-  let rows = getBoxesSortedForManage();
-  let targetIndex = rows.findIndex((item) => String(item?.id || "") === targetId);
-  while (targetIndex < 0 && state.boxManageHasMore) {
-    await loadBoxManagePage({ reset: false });
-    rows = getBoxesSortedForManage();
-    targetIndex = rows.findIndex((item) => String(item?.id || "") === targetId);
-  }
-
-  return targetIndex;
-}
-
-async function openBoxManageModalForEdit(boxId) {
-  const targetId = String(boxId || "").trim();
-  if (!targetId) return;
-
-  const [, targetIndex] = await Promise.all([loadShelves(), loadBoxManageRowsUntilBox(targetId)]);
-  if (targetIndex < 0) {
-    throw new Error("箱号不存在或已停用");
-  }
-
-  state.boxEditingIds = new Set([targetId]);
-  state.boxManageVisibleCount = Math.max(
-    state.manageModalInitialPageSize,
-    targetIndex + 1,
-  );
-
-  renderBoxesManageTable();
-  openModal("boxManageModal");
-  setupBoxManageLoadObserver();
-  maybeAutoLoadBoxesManage();
-
-  const focusInput = $(`boxCodeManage-${targetId}`);
-  if (focusInput) {
-    focusInput.scrollIntoView({ block: "center", behavior: "smooth" });
-    focusInput.focus();
-    focusInput.select?.();
-  }
 }
 
 async function getShelfBoxQueryRows(shelf) {
@@ -6053,8 +6000,6 @@ function renderBoxesManageTable() {
   const rowHtml =
     visibleRows
       .map((item) => {
-        const itemId = String(item.id);
-        const editing = state.boxEditingIds.has(itemId);
         const shelfOptions = buildShelfManageSelectOptions(item?.shelf?.id);
         const archiveReleaseAction = item?.canArchiveRelease
           ? `<button class="tiny-btn secondary" data-action="archiveReleaseBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">归档释放</button>`
@@ -6066,14 +6011,14 @@ function renderBoxesManageTable() {
             id="boxCodeManage-${escapeHtml(item.id)}"
             value="${escapeHtml(item.boxCode || "")}"
             maxlength="128"
-            ${editing ? "" : "readonly"}
+            readonly
             data-original-code="${escapeHtml(item.boxCode || "")}"
           />
         </td>
         <td>
           <select
             id="boxShelfManage-${escapeHtml(item.id)}"
-            ${editing ? "" : "disabled"}
+            disabled
             data-original-shelf-id="${escapeHtml(item?.shelf?.id || "")}"
           >
             ${shelfOptions}
@@ -6082,7 +6027,6 @@ function renderBoxesManageTable() {
         <td>
           <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>
           ${archiveReleaseAction}
-          <button class="tiny-btn" data-action="editBoxManage" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
         </td>
       </tr>
     `;
@@ -7540,9 +7484,6 @@ async function loadBoxes() {
   const boxes = await request("/boxes");
   state.boxes = boxes;
   const latestIds = new Set((Array.isArray(boxes) ? boxes : []).map((item) => String(item.id)));
-  state.boxEditingIds = new Set(
-    [...state.boxEditingIds].filter((id) => latestIds.has(String(id))),
-  );
   $("statBoxes").textContent = boxes.length;
   renderAdjustBoxSuggestions($("adjustBoxCode")?.value || "");
   renderMoveShelfBoxOptions($("moveShelfBoxCode")?.value || "");
@@ -7591,9 +7532,6 @@ async function loadBoxManagePage({ reset = false } = {}) {
     state.boxManageHasMore = Boolean(result?.hasMore);
     state.boxManagePage = page + 1;
     state.boxManageVisibleCount = Math.max(state.boxManageVisibleCount, state.boxManageRows.length);
-    state.boxEditingIds = new Set(
-      [...state.boxEditingIds].filter((id) => latestIds.has(String(id))),
-    );
   } finally {
     state.boxManageLoading = false;
     renderBoxesManageTable();
@@ -11911,7 +11849,6 @@ async function reloadAll() {
     state.skuTypes = [];
     state.shops = [];
     state.shelfEditingIds = new Set();
-    state.boxEditingIds = new Set();
     state.departmentOptions = [];
     state.roleOptions = [];
     state.users = [];
@@ -13967,7 +13904,6 @@ function bindForms() {
 
   $("openBoxManageModal").addEventListener("click", async () => {
     try {
-      state.boxEditingIds = new Set();
       resetBoxManageVisibleCount();
       openModal("boxManageModal");
       const wrap = $("boxManageTableWrap");
@@ -14996,59 +14932,6 @@ function bindDelegates() {
         await openBoxContentQueryModalForBoxCode(button.dataset.code || id, id);
       } else if (action === "archiveReleaseBoxManage") {
         await archiveReleaseBox(id, button.dataset.code || id);
-      } else if (action === "editBoxManage") {
-        const codeInput = $(`boxCodeManage-${id}`);
-        const shelfSelect = $(`boxShelfManage-${id}`);
-        if (!codeInput || !shelfSelect) return;
-        const isEditing = state.boxEditingIds.has(String(id));
-        if (!isEditing) {
-          state.boxEditingIds.add(String(id));
-          renderBoxesManageTable();
-          const focusInput = $(`boxCodeManage-${id}`);
-          if (focusInput) {
-            focusInput.focus();
-            focusInput.select?.();
-          }
-          return;
-        }
-
-        const originalCode = String(codeInput.getAttribute("data-original-code") || "").trim();
-        const rawCode = String(codeInput.value || "").trim();
-        if (!rawCode) {
-          throw new Error("请输入箱号");
-        }
-        const normalizedCode = normalizeBoxCodeInput(rawCode);
-        if (!normalizedCode) {
-          throw new Error("箱号格式无效");
-        }
-        const codeChanged = normalizedCode !== originalCode;
-        if (codeChanged && !/^\d{3}$/.test(normalizedCode)) {
-          throw new Error("箱号必须是3位数字");
-        }
-
-        const shelfId = Number(shelfSelect.value);
-        if (!Number.isInteger(shelfId) || shelfId <= 0) {
-          throw new Error("请选择货架号");
-        }
-        const originalShelfId = Number(String(shelfSelect.getAttribute("data-original-shelf-id") || "0"));
-        const shelfChanged = shelfId !== originalShelfId;
-        if (!codeChanged && !shelfChanged) {
-          state.boxEditingIds.delete(String(id));
-          renderBoxesManageTable();
-          return;
-        }
-
-        const payload = {};
-        if (codeChanged) payload.boxCode = normalizedCode;
-        if (shelfChanged) payload.shelfId = shelfId;
-
-        await request(`/boxes/${id}`, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        });
-        state.boxEditingIds.delete(String(id));
-        showToast("箱号已变更");
-        await reloadBoxesAfterManageMutation();
       }
     } catch (error) {
       showToast(error.message, true);
@@ -15068,9 +14951,6 @@ function bindDelegates() {
         const result = await archiveReleaseBox(id, boxCode);
         if (!result) return;
         await openBoxContentQueryModalForBoxCode(result?.releasedBoxCode || boxCode);
-      } else if (action === "editBoxQuery") {
-        closeModal("boxContentQueryModal");
-        await openBoxManageModalForEdit(id);
       }
     } catch (error) {
       showToast(error.message, true);
