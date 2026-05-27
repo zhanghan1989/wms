@@ -3979,17 +3979,37 @@ async function archiveReleaseBox(boxId, boxCode) {
   return result;
 }
 
+async function loadBoxManageRowsUntilBox(boxId) {
+  const targetId = String(boxId || "").trim();
+  if (!targetId) return -1;
+
+  resetBoxManageVisibleCount();
+  await loadBoxManagePage({ reset: true });
+
+  let rows = getBoxesSortedForManage();
+  let targetIndex = rows.findIndex((item) => String(item?.id || "") === targetId);
+  while (targetIndex < 0 && state.boxManageHasMore) {
+    await loadBoxManagePage({ reset: false });
+    rows = getBoxesSortedForManage();
+    targetIndex = rows.findIndex((item) => String(item?.id || "") === targetId);
+  }
+
+  return targetIndex;
+}
+
 async function openBoxManageModalForEdit(boxId) {
   const targetId = String(boxId || "").trim();
   if (!targetId) return;
 
+  const [, targetIndex] = await Promise.all([loadShelves(), loadBoxManageRowsUntilBox(targetId)]);
+  if (targetIndex < 0) {
+    throw new Error("箱号不存在或已停用");
+  }
+
   state.boxEditingIds = new Set([targetId]);
-  await Promise.all([loadShelves(), loadBoxes()]);
-  const rows = getBoxesSortedForManage();
-  const targetIndex = rows.findIndex((item) => String(item?.id || "") === targetId);
   state.boxManageVisibleCount = Math.max(
     state.manageModalInitialPageSize,
-    targetIndex >= 0 ? targetIndex + 1 : state.manageModalInitialPageSize,
+    targetIndex + 1,
   );
 
   renderBoxesManageTable();
