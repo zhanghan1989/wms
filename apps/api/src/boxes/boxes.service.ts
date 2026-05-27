@@ -325,7 +325,6 @@ export class BoxesService {
         adjustRows <= 0 &&
         fbaRows <= 0;
       const canArchiveRelease =
-        !canDelete &&
         masterProductStock <= 0 &&
         activeFbaRows <= 0 &&
         !lockingOrderNo &&
