@@ -1332,6 +1332,7 @@ export class OrdersService {
   ): Promise<OverseasPickingBatchCreateResult> {
     const snapshots = await this.collectOverseasPickingBatchItemSnapshots(payload?.items);
     await this.attachOverseasPickingPlanSnapshots(snapshots);
+    await this.assertOverseasPickingBatchDemandWithinStock(snapshots);
     const activeDuplicates = await this.findActiveOverseasPickingBatchDuplicates(snapshots);
     if (activeDuplicates.length) {
       throw new ConflictException(
@@ -2024,7 +2025,7 @@ export class OrdersService {
   async removeOverseasPickingBatchItem(
     batchIdRaw: string,
     itemIdRaw: string,
-  ): Promise<{ success: true; itemId: string; batchDeleted: boolean }> {
+  ): Promise<{ success: true; itemId: string; removedItemIds: string[]; batchDeleted: boolean }> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const itemId = parseId(itemIdRaw, 'itemId');
     const item = await this.prisma.overseasPickingBatchItem.findUnique({
@@ -2052,9 +2053,20 @@ export class OrdersService {
       throw new BadRequestException('当前拣货批次已确认，不能再踢出订单');
     }
 
+    const amazonRemoveScope =
+      item.source === 'amazon' && !this.isChinaDispatchMode(item.dispatchMode)
+        ? await this.resolveAmazonOrderSwitchScope(batchId, [item.sourceRecordId])
+        : { amazonIds: [] as bigint[], batchItemIds: [] as bigint[], pickedItems: [] as OverseasPickingScopePickedItem[] };
+    this.assertNoPickedItemsBeforeSwitchingOrderScopeToChina(amazonRemoveScope.pickedItems);
+    const targetItemIds = Array.from(new Set([item.id, ...amazonRemoveScope.batchItemIds]));
+
     const batchDeleted = await this.prisma.$transaction(async (tx) => {
-      await tx.overseasPickingBatchItem.delete({
-        where: { id: item.id },
+      await tx.overseasPickingBatchItem.deleteMany({
+        where: {
+          id: {
+            in: targetItemIds,
+          },
+        },
       });
 
       const resetDispatchMode =
@@ -2092,6 +2104,7 @@ export class OrdersService {
     return {
       success: true,
       itemId: item.id.toString(),
+      removedItemIds: targetItemIds.map((id) => id.toString()),
       batchDeleted,
     };
   }
@@ -3828,7 +3841,13 @@ export class OrdersService {
   async switchOverseasWarehouseOrderToChina(
     sourceRaw: string,
     idRaw: string,
-  ): Promise<{ success: true; source: 'rakuten' | 'amazon' | 'manual'; id: string; dispatchMode: string }> {
+  ): Promise<{
+    success: true;
+    source: 'rakuten' | 'amazon' | 'manual';
+    id: string;
+    dispatchMode: string;
+    updatedIds?: string[];
+  }> {
     const source = String(sourceRaw ?? '').trim();
     if (source !== 'rakuten' && source !== 'amazon' && source !== 'manual') {
       throw new BadRequestException('source 只支持 rakuten、amazon 或 manual');
@@ -3924,12 +3943,43 @@ export class OrdersService {
       throw new BadRequestException('当前订单已不在海外仓待处理范围内，无法切中国发');
     }
     if (source === 'amazon') {
-      await this.prisma.amazonOrderRecord.update({
-        where: { id },
+      const orderId = String((row as AmazonOrderRecord).orderId ?? '').trim();
+      const scopedRows = orderId
+        ? await this.prisma.amazonOrderRecord.findMany({
+            where: {
+              orderId,
+              AND: [
+                { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
+                {
+                  OR: [
+                    { dispatchMode: null },
+                    { dispatchMode: '' },
+                    { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
+                  ],
+                },
+              ],
+            },
+            select: {
+              id: true,
+            },
+          })
+        : [];
+      const scopedIds = Array.from(
+        new Set((scopedRows.length ? scopedRows.map((item) => item.id) : [id]).map((itemId) => itemId.toString())),
+      ).map((itemId) => BigInt(itemId));
+      await this.prisma.amazonOrderRecord.updateMany({
+        where: { id: { in: scopedIds } },
         data: {
           dispatchMode: OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
         },
       });
+      return {
+        success: true,
+        source,
+        id: id.toString(),
+        dispatchMode: OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
+        updatedIds: scopedIds.map((itemId) => itemId.toString()),
+      };
     } else {
       await (this.prisma as any).manualOrderRecord.update({
         where: { id },
@@ -4640,6 +4690,45 @@ export class OrdersService {
     });
 
     return items;
+  }
+
+  private async assertOverseasPickingBatchDemandWithinStock(
+    snapshots: OverseasPickingBatchItemSnapshot[],
+  ): Promise<void> {
+    const demandByProductId = new Map<string, number>();
+    snapshots.forEach((item) => {
+      const productId = String(item.productId ?? '').trim();
+      if (!productId) return;
+      demandByProductId.set(productId, (demandByProductId.get(productId) ?? 0) + Number(item.requestedQty ?? 0));
+    });
+    const productIds = Array.from(demandByProductId.keys());
+    if (!productIds.length) {
+      return;
+    }
+    const stockRows = await this.prisma.masterProduct.findMany({
+      where: {
+        productId: {
+          in: productIds,
+        },
+      },
+      select: {
+        productId: true,
+        stockQty: true,
+      },
+    });
+    const stockByProductId = new Map(stockRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]));
+    const shortageTexts = productIds
+      .map((productId) => {
+        const requestedQty = demandByProductId.get(productId) ?? 0;
+        const stockQty = stockByProductId.get(productId) ?? 0;
+        const shortageQty = requestedQty - stockQty;
+        if (shortageQty <= 0) return null;
+        return `产品 ${productId} 待拣 ${requestedQty}，库存 ${stockQty}，需要踢出 ${shortageQty}`;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (shortageTexts.length) {
+      throw new ConflictException(`批次待拣数量超过库存：${shortageTexts.join('；')}`);
+    }
   }
 
   private async findActiveOverseasPickingBatchDuplicates(

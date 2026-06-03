@@ -274,6 +274,7 @@ const state = {
   yamatoPrintConfig: { mode: "browser", printerName: "" },
   selectedYamatoShipmentBatchId: "",
   yamatoMergedScanSession: null,
+  yamatoPrintCompletePromptedBatchIds: new Set(),
   selectedOverseasOrderKeys: new Set(),
   fbaReplenishments: [],
   fbaReplenishmentsVisibleCount: 0,
@@ -315,6 +316,8 @@ const state = {
 
 let deleteConfirmResolver = null;
 let actionConfirmResolver = null;
+let overseasPickingBatchStockResolver = null;
+let overseasPickingBatchStockContext = null;
 let suppressAuthErrorToastUntil = 0;
 let adjustBoxValidationTimer = null;
 let adjustBoxValidationToken = 0;
@@ -9694,6 +9697,248 @@ function renderOverseasPickingBatchItems() {
     .join("");
 }
 
+function getAmazonSameOrderOverseasRows(rows, target) {
+  if (!target || target.source !== "amazon") return [];
+  const orderId = String(target.orderId || "").trim();
+  if (!orderId) return [target];
+  return rows.filter(
+    (row) =>
+      row?.source === "amazon" &&
+      String(row?.orderId || "").trim() === orderId &&
+      !isChinaDispatchModeValue(row?.dispatchMode),
+  );
+}
+
+function formatAmazonMultiProductRows(rows) {
+  return rows
+    .map((row) => {
+      const productId = String(row?.productId || row?.resolvedProductId || "").trim();
+      const productName = String(row?.productName || row?.resolvedProductName || "").trim();
+      return [productId, productName].filter(Boolean).join(" / ") || displayText(row?.id || row?.itemId);
+    })
+    .join("、");
+}
+
+function getOverseasOrderRowKey(item) {
+  return `${String(item?.source || "").trim()}:${String(item?.id || "").trim()}`;
+}
+
+function getSelectedOverseasOrderRows() {
+  return state.overseasOrderProcessingOrders.filter((item) =>
+    state.selectedOverseasOrderKeys.has(getOverseasOrderRowKey(item)),
+  );
+}
+
+function getOverseasPickingBatchStockIssues(rows) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const productId = String(row?.resolvedProductId || "").trim();
+    if (!productId) return;
+    const requestedQty = Number(row?.orderQuantity || 0);
+    if (!Number.isFinite(requestedQty) || requestedQty <= 0) return;
+    const availableStock = Math.max(0, Number(row?.availableStock || 0));
+    const group =
+      groups.get(productId) ??
+      {
+        productId,
+        productName: String(row?.resolvedProductName || row?.productName || "").trim(),
+        availableStock,
+        requestedQty: 0,
+        orders: [],
+      };
+    group.availableStock = Math.max(group.availableStock, availableStock);
+    group.requestedQty += requestedQty;
+    group.orders.push(row);
+    groups.set(productId, group);
+  });
+
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      shortageQty: Math.max(group.requestedQty - group.availableStock, 0),
+    }))
+    .filter((group) => group.shortageQty > 0)
+    .sort((left, right) => left.productId.localeCompare(right.productId, "zh-Hans-CN"));
+}
+
+function expandOverseasBatchRemovalKeys(seedKeys, rows) {
+  const result = new Set(seedKeys);
+  const rowByKey = new Map(rows.map((row) => [getOverseasOrderRowKey(row), row]));
+  seedKeys.forEach((key) => {
+    const row = rowByKey.get(key);
+    if (!row || row.source !== "amazon") return;
+    const orderId = String(row.orderId || "").trim();
+    if (!orderId) return;
+    rows.forEach((candidate) => {
+      if (candidate?.source === "amazon" && String(candidate?.orderId || "").trim() === orderId) {
+        result.add(getOverseasOrderRowKey(candidate));
+      }
+    });
+  });
+  return result;
+}
+
+function validateOverseasBatchStockRemoval(issues, rows, removalKeys) {
+  const expandedKeys = expandOverseasBatchRemovalKeys(removalKeys, rows);
+  const invalidIssues = issues
+    .map((issue) => {
+      const removedQty = issue.orders
+        .filter((order) => expandedKeys.has(getOverseasOrderRowKey(order)))
+        .reduce((sum, order) => sum + Number(order?.orderQuantity || 0), 0);
+      return {
+        ...issue,
+        removedQty,
+        remainingShortageQty: Math.max(issue.shortageQty - removedQty, 0),
+      };
+    })
+    .filter((issue) => issue.remainingShortageQty > 0);
+  return { expandedKeys, invalidIssues };
+}
+
+function renderOverseasPickingBatchStockModal(issues, rows) {
+  const summary = $("overseasPickingBatchStockSummary");
+  const body = $("overseasPickingBatchStockBody");
+  if (summary) {
+    summary.textContent = `本次选择中有 ${issues.length} 个产品待拣数量超过库存，请选择需要踢出本批次生成的订单。`;
+  }
+  if (!body) return;
+  body.innerHTML = issues
+    .map((issue) => {
+      const rowsHtml = issue.orders
+        .map((order) => {
+          const key = getOverseasOrderRowKey(order);
+          const sameAmazonRows =
+            order.source === "amazon"
+              ? rows.filter(
+                  (candidate) =>
+                    candidate?.source === "amazon" &&
+                    String(candidate?.orderId || "").trim() &&
+                    String(candidate?.orderId || "").trim() === String(order?.orderId || "").trim(),
+                )
+              : [];
+          const amazonNote = sameAmazonRows.length > 1 ? "亚马逊多产品订单，选择后同订单产品会一起踢出" : "";
+          return `
+            <tr>
+              <td><input type="checkbox" data-action="toggleOverseasBatchStockRemoval" data-key="${escapeHtml(key)}" /></td>
+              <td>${escapeHtml(displayText(order.sourceLabel))}</td>
+              <td>${escapeHtml(displayText(order.orderId))}</td>
+              <td>${escapeHtml(displayText(order.skuCode))}</td>
+              <td>${escapeHtml(displayText(order.resolvedProductId))}</td>
+              <td>${escapeHtml(displayText(order.resolvedProductName || order.productName))}</td>
+              <td>${escapeHtml(displayText(order.orderQuantity))}</td>
+              <td>${escapeHtml(displayText(order.shopName))}</td>
+              <td>${escapeHtml(displayText(order.shippingName))}${amazonNote ? `<div class="muted">${escapeHtml(amazonNote)}</div>` : ""}</td>
+            </tr>
+          `;
+        })
+        .join("");
+      return `
+        <section class="overseas-batch-stock-group" data-product-id="${escapeHtml(issue.productId)}">
+          <div class="overseas-batch-stock-group-head">
+            <span>产品ID：${escapeHtml(issue.productId)}</span>
+            <span>产品名称：${escapeHtml(displayText(issue.productName))}</span>
+            <span>库存：${escapeHtml(displayText(issue.availableStock))}</span>
+            <span>待拣：${escapeHtml(displayText(issue.requestedQty))}</span>
+            <span class="overseas-batch-stock-warning">需要踢出：${escapeHtml(displayText(issue.shortageQty))}</span>
+          </div>
+          <table class="overseas-batch-stock-table">
+            <thead>
+              <tr>
+                <th>踢出</th><th>来源</th><th>订单号</th><th>SKU</th><th>产品ID</th><th>产品名称</th><th>数量</th><th>店铺</th><th>收件人</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function openOverseasPickingBatchStockModal(issues, rows) {
+  if (typeof overseasPickingBatchStockResolver === "function") {
+    overseasPickingBatchStockResolver(null);
+    overseasPickingBatchStockResolver = null;
+  }
+  overseasPickingBatchStockContext = {
+    issues,
+    rows,
+    removalKeys: new Set(),
+  };
+  renderOverseasPickingBatchStockModal(issues, rows);
+  openModal("overseasPickingBatchStockModal");
+  return new Promise((resolve) => {
+    overseasPickingBatchStockResolver = resolve;
+  });
+}
+
+function resolveOverseasPickingBatchStockModal(value) {
+  closeModal("overseasPickingBatchStockModal");
+  if (typeof overseasPickingBatchStockResolver === "function") {
+    const resolve = overseasPickingBatchStockResolver;
+    overseasPickingBatchStockResolver = null;
+    overseasPickingBatchStockContext = null;
+    resolve(value);
+  } else {
+    overseasPickingBatchStockContext = null;
+  }
+}
+
+function confirmOverseasPickingBatchStockRemoval() {
+  const context = overseasPickingBatchStockContext;
+  if (!context) {
+    resolveOverseasPickingBatchStockModal(null);
+    return;
+  }
+  const { expandedKeys, invalidIssues } = validateOverseasBatchStockRemoval(
+    context.issues,
+    context.rows,
+    context.removalKeys,
+  );
+  if (invalidIssues.length) {
+    const message = invalidIssues
+      .map((issue) => `${issue.productId} 还差 ${issue.remainingShortageQty} 个`)
+      .join("、");
+    showToast(`选择数量不足：${message}`, true);
+    return;
+  }
+  resolveOverseasPickingBatchStockModal(expandedKeys);
+}
+
+function getIncompleteOverseasPickingItems(detail) {
+  const items = Array.isArray(detail?.items) ? detail.items : [];
+  return items
+    .map((item) => {
+      const requestedQty = Number(item?.requestedQty || 0);
+      const actualQty = Number(item?.actualQty || 0);
+      return {
+        productId: String(item?.productId || "").trim(),
+        productName: String(item?.productName || "").trim(),
+        requestedQty,
+        actualQty,
+        remainingQty: Math.max(requestedQty - actualQty, 0),
+      };
+    })
+    .filter((item) => item.productId && item.remainingQty > 0);
+}
+
+async function assertOverseasPickingCompleteBeforeYamatoExport(detail) {
+  const incompleteItems = getIncompleteOverseasPickingItems(detail);
+  if (!incompleteItems.length) {
+    return true;
+  }
+  const message = incompleteItems
+    .map(
+      (item) =>
+        `${item.productId}${item.productName ? ` / ${item.productName}` : ""}：应拣 ${item.requestedQty}，已拣 ${item.actualQty}，未拣 ${item.remainingQty}`,
+    )
+    .join("；");
+  await openActionConfirmModal(`当前批次还有产品未完成拣货：${message}`, "拣货未完成", "我知道了", {
+    showCancel: false,
+  });
+  return false;
+}
+
 function renderOverseasPickingBatchOrders() {
   const tbody = $("overseasPickingBatchOrdersBody");
   const summary = $("overseasPickingBatchOrdersSummary");
@@ -10053,10 +10298,22 @@ async function waitForYamatoBatchPrintCompletion(batchId, { maxAttempts = 30, in
 }
 
 async function showYamatoBatchPrintCompletePrompt() {
-  await openActionConfirmModal("已完成该批次所有面单的打印", "提示", "确认", {
+  await openActionConfirmModal("扫码打印全部完成，当前批次所有面单都已打印。", "扫码打印完成", "确认", {
     showCancel: false,
   });
   focusOverseasYamatoScanInput();
+}
+
+async function showYamatoBatchPrintCompletePromptOnce(batchId) {
+  const targetId = String(batchId || "").trim();
+  if (targetId && state.yamatoPrintCompletePromptedBatchIds.has(targetId)) {
+    focusOverseasYamatoScanInput();
+    return;
+  }
+  if (targetId) {
+    state.yamatoPrintCompletePromptedBatchIds.add(targetId);
+  }
+  await showYamatoBatchPrintCompletePrompt();
 }
 
 function normalizeYamatoPrintConfig(config) {
@@ -10153,6 +10410,12 @@ async function loadYamatoShipmentBatches() {
     request("/orders/overseas-warehouse/yamato-print-config"),
   ]);
   state.yamatoShipmentBatches = Array.isArray(list) ? list : [];
+  state.yamatoShipmentBatches.forEach((batch) => {
+    const batchId = String(batch?.id || "").trim();
+    if (batchId && !isYamatoBatchPrintComplete(batch)) {
+      state.yamatoPrintCompletePromptedBatchIds.delete(batchId);
+    }
+  });
   state.yamatoPrintConfig = normalizeYamatoPrintConfig(printConfig);
   renderYamatoShipmentBatchControls();
 }
@@ -10550,14 +10813,14 @@ async function executeYamatoPrintForProduct(batch, productId, options = {}) {
   const isCompleteAfterPrint = pendingBeforePrint > 0 && isYamatoBatchPrintComplete(refreshedBatch);
   focusOverseasYamatoScanInput();
   if (isCompleteAfterPrint) {
-    await showYamatoBatchPrintCompletePrompt();
+    await showYamatoBatchPrintCompletePromptOnce(batch.id);
     return;
   }
   if (isAgentMode && pendingBeforePrint === 1) {
     waitForYamatoBatchPrintCompletion(batch.id)
       .then((isComplete) => {
         if (isComplete) {
-          return showYamatoBatchPrintCompletePrompt();
+          return showYamatoBatchPrintCompletePromptOnce(batch.id);
         }
         return undefined;
       })
@@ -10587,7 +10850,7 @@ async function finishYamatoMergedScanSession() {
       waitForYamatoBatchPrintCompletion(batch.id)
         .then((isComplete) => {
           if (isComplete) {
-            return showYamatoBatchPrintCompletePrompt();
+            return showYamatoBatchPrintCompletePromptOnce(batch.id);
           }
           return undefined;
         })
@@ -10662,7 +10925,7 @@ async function submitOverseasYamatoReprint(scanRequest = null) {
     waitForYamatoBatchPrintCompletion(batch.id)
       .then((isComplete) => {
         if (isComplete) {
-          return showYamatoBatchPrintCompletePrompt();
+          return showYamatoBatchPrintCompletePromptOnce(batch.id);
         }
         return undefined;
       })
@@ -11870,15 +12133,27 @@ function bindForms() {
     const button = event.currentTarget;
     try {
       await withBusyButton(button, "生成中...", async () => {
-        const items = state.overseasOrderProcessingOrders
-          .filter((item) => state.selectedOverseasOrderKeys.has(`${item.source}:${item.id || ""}`))
+        const selectedRows = getSelectedOverseasOrderRows();
+        if (!selectedRows.length) {
+          throw new Error("请先选择要批量打单的订单");
+        }
+        const stockIssues = getOverseasPickingBatchStockIssues(selectedRows);
+        let rowsForBatch = selectedRows;
+        if (stockIssues.length) {
+          const removalKeys = await openOverseasPickingBatchStockModal(stockIssues, selectedRows);
+          if (!removalKeys) return;
+          rowsForBatch = selectedRows.filter((item) => !removalKeys.has(getOverseasOrderRowKey(item)));
+          removalKeys.forEach((key) => state.selectedOverseasOrderKeys.delete(key));
+          renderOverseasOrderProcessingTable();
+        }
+        const items = rowsForBatch
           .map((item) => ({
             source: item.source,
             id: item.id,
           }))
           .filter((item) => item.id);
         if (!items.length) {
-          throw new Error("请先选择要批量打单的订单");
+          throw new Error("已选择的订单全部被踢出，无法生成批次");
         }
         const result = await createOverseasPickingBatch(items);
         state.selectedOverseasOrderKeys = new Set();
@@ -11937,6 +12212,8 @@ function bindForms() {
         if (detail.yamatoShipmentBatchId) {
           throw new Error(`当前批次已生成 Yamato 批次 #${detail.yamatoShipmentBatchId}`);
         }
+        const isPickingComplete = await assertOverseasPickingCompleteBeforeYamatoExport(detail);
+        if (!isPickingComplete) return;
         await confirmOverseasPickingBatch(detail.id, []);
         const result = await downloadOverseasPickingBatchYamatoImport(detail.id);
         await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches()]);
@@ -12433,6 +12710,22 @@ function bindForms() {
     try {
       await withBusyButton(button, "下载中...", async () => {
         await downloadInventoryUpdateTemplate();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("downloadOverseasWarehouseStockBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        const fileName = await downloadAuthorizedFile(
+          "/master-products/overseas-warehouse-stock-excel",
+          {},
+          "海外仓库存下载.xlsx",
+        );
+        showToast(`已下载 ${fileName}`);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -14912,14 +15205,30 @@ function bindDelegates() {
       if (!source || !id) {
         throw new Error("缺少订单标识");
       }
+      const target = state.overseasOrderProcessingOrders.find(
+        (row) => String(row?.source || "") === source && String(row?.id || "") === id,
+      );
+      const sameOrderRows = getAmazonSameOrderOverseasRows(state.overseasOrderProcessingOrders, target);
+      const isAmazonMultiProductOrder = source === "amazon" && sameOrderRows.length > 1;
       const ok = await openDeleteConfirmModal(
-        `确认将订单 ${orderId || id} 切换为中国发？切换后该订单会从海外仓待处理移到中国发待处理。`,
+        isAmazonMultiProductOrder
+          ? `该订单是亚马逊多产品订单，同订单产品会一起切中国发：${formatAmazonMultiProductRows(
+              sameOrderRows,
+            )}。确认继续？`
+          : source === "amazon"
+            ? `确认将亚马逊订单 ${orderId || id} 切换为中国发？如果该订单包含多个产品，系统会按同一订单号一起切中国发。`
+            : `确认将订单 ${orderId || id} 切换为中国发？切换后该订单会从海外仓待处理移到中国发待处理。`,
       );
       if (!ok) return;
-      await switchOverseasPendingOrderToChina(source, id);
+      const result = await switchOverseasPendingOrderToChina(source, id);
       state.selectedOverseasOrderKeys.delete(`${source}:${id}`);
       await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
-      showToast(`订单 ${orderId || id} 已切换为中国发`);
+      const updatedCount = Array.isArray(result?.updatedIds) ? result.updatedIds.length : 1;
+      showToast(
+        updatedCount > 1
+          ? `亚马逊订单 ${orderId || id} 已整单切换为中国发，共 ${updatedCount} 个产品`
+          : `订单 ${orderId || id} 已切换为中国发`,
+      );
     } catch (error) {
       showToast(error.message, true);
     }
@@ -15008,8 +15317,26 @@ function bindDelegates() {
       if (!productId) {
         throw new Error("缺少产品ID");
       }
+      const orders = Array.isArray(detail.orders) ? detail.orders : [];
+      const affectedAmazonOrderIds = Array.from(
+        new Set(
+          orders
+            .filter(
+              (row) =>
+                row?.source === "amazon" &&
+                String(row?.productId || "").trim() === productId &&
+                !isChinaDispatchModeValue(row?.dispatchMode),
+            )
+            .map((row) => String(row?.orderId || "").trim())
+            .filter(Boolean),
+        ),
+      ).filter((orderId) => getAmazonSameOrderOverseasRows(orders, { source: "amazon", orderId }).length > 1);
       const ok = await openDeleteConfirmModal(
-        `确认将产品 ${productId} 切换为中国发？该产品关联订单将不再参与当前海外仓 Yamato 出单。`,
+        affectedAmazonOrderIds.length
+          ? `产品 ${productId} 关联亚马逊多产品订单，同订单其他日本发产品也会一起切中国发。涉及订单：${affectedAmazonOrderIds.join(
+              "、",
+            )}。确认继续？`
+          : `确认将产品 ${productId} 切换为中国发？该产品关联订单将不再参与当前海外仓 Yamato 出单。`,
       );
       if (!ok) return;
       const result = await switchOverseasPickingBatchProductToChina(detail.id, productId);
@@ -15074,10 +15401,25 @@ function bindDelegates() {
       if (!itemId) {
         throw new Error("缺少拣货明细ID");
       }
+      const target = orders.find((row) => String(row?.itemId || "") === itemId);
+      const sameOrderRows = getAmazonSameOrderOverseasRows(orders, target);
+      const isAmazonMultiProductOrder = target?.source === "amazon" && sameOrderRows.length > 1;
       const ok = await openDeleteConfirmModal(
-        `确认将订单 ${orderId || itemId} 踢出本批次发货？该订单会退回海外仓待处理订单列表。`,
+        isAmazonMultiProductOrder
+          ? `该订单是亚马逊多产品订单，需要将同订单产品一起踢出本批次：${formatAmazonMultiProductRows(
+              sameOrderRows,
+            )}。确认继续？`
+          : `确认将订单 ${orderId || itemId} 踢出本批次发货？该订单会退回海外仓待处理订单列表。`,
       );
       if (!ok) return;
+      const pickedRows = sameOrderRows.filter((row) => Number(row?.actualQty || 0) > 0);
+      if (pickedRows.length) {
+        throw new Error(
+          `该亚马逊订单已有产品完成拣货，请先将商品重新入库并重置拣货后再踢出：${pickedRows
+            .map((row) => `${displayText(row.productId)} 已拣 ${displayText(row.actualQty)}`)
+            .join("、")}`,
+        );
+      }
       const result = await removeOverseasPickingBatchItem(detail.id, itemId);
       await Promise.all([
         loadOverseasOrderProcessingOrders(),
@@ -15093,7 +15435,12 @@ function bindDelegates() {
         return;
       }
       await loadOverseasPickingBatchDetail(detail.id);
-      showToast(`订单 ${orderId || productId || itemId} 已踢出本批次发货`);
+      const removedCount = Array.isArray(result?.removedItemIds) ? result.removedItemIds.length : 1;
+      showToast(
+        removedCount > 1
+          ? `亚马逊订单 ${orderId || itemId} 已整单踢出本批次，共 ${removedCount} 个产品`
+          : `订单 ${orderId || productId || itemId} 已踢出本批次发货`,
+      );
       focusOverseasPickingScanInput();
     } catch (error) {
       showToast(error.message, true);
@@ -15805,6 +16152,33 @@ function bindDelegates() {
       resolveActionConfirm(false);
       return;
     }
+    const stockModalClose = event.target.closest("button[data-action='closeOverseasPickingBatchStockModal']");
+    if (stockModalClose) {
+      resolveOverseasPickingBatchStockModal(null);
+      return;
+    }
+    const stockModalCancel = event.target.closest("#overseasPickingBatchStockCancelBtn");
+    if (stockModalCancel) {
+      resolveOverseasPickingBatchStockModal(null);
+      return;
+    }
+    const stockModalConfirm = event.target.closest("#overseasPickingBatchStockConfirmBtn");
+    if (stockModalConfirm) {
+      confirmOverseasPickingBatchStockRemoval();
+      return;
+    }
+    const stockModalToggle = event.target.closest("input[data-action='toggleOverseasBatchStockRemoval']");
+    if (stockModalToggle && overseasPickingBatchStockContext) {
+      const key = String(stockModalToggle.dataset.key || "").trim();
+      if (key) {
+        if (stockModalToggle.checked) {
+          overseasPickingBatchStockContext.removalKeys.add(key);
+        } else {
+          overseasPickingBatchStockContext.removalKeys.delete(key);
+        }
+      }
+      return;
+    }
     const errorModalClose = event.target.closest("button[data-action='closeErrorModal']");
     if (errorModalClose) {
       closeErrorModal();
@@ -16066,6 +16440,12 @@ function bindDelegates() {
   $("actionConfirmModal").addEventListener("click", (event) => {
     if (event.target === event.currentTarget) {
       resolveActionConfirm(false);
+    }
+  });
+
+  $("overseasPickingBatchStockModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) {
+      resolveOverseasPickingBatchStockModal(null);
     }
   });
 

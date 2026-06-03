@@ -409,6 +409,7 @@
               <button type="button" id="openSkuManagementPanel">SKU管理</button>
             </div>
             <div class="product-actions-right">
+              <button type="button" id="downloadOverseasWarehouseStockBtn">海外仓库存下载</button>
               <button type="button" id="openRakutenComboProductManagementPanel">乐天组合产品管理</button>
               <button type="button" id="openMasterProductManagementPanel">主表产品管理</button>
             </div>
@@ -2587,6 +2588,21 @@
       <div class="modal-actions">
         <button id="actionConfirmOkBtn" type="button">确认</button>
         <button id="actionConfirmCancelBtn" type="button" class="ghost">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="overseasPickingBatchStockModal" class="modal hidden">
+    <div class="modal-card modal-wide modal-manage modal-manage-scroll">
+      <div class="modal-head">
+        <h3>批次库存不足处理</h3>
+        <button type="button" class="ghost" data-action="closeOverseasPickingBatchStockModal">关闭</button>
+      </div>
+      <p id="overseasPickingBatchStockSummary" class="confirm-message"></p>
+      <div id="overseasPickingBatchStockBody" class="overseas-batch-stock-body"></div>
+      <div class="modal-actions">
+        <button id="overseasPickingBatchStockConfirmBtn" type="button">踢出所选并生成批次</button>
+        <button id="overseasPickingBatchStockCancelBtn" type="button" class="ghost">取消</button>
       </div>
     </div>
   </div>

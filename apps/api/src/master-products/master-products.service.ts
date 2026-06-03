@@ -388,6 +388,39 @@ export class MasterProductsService {
     };
   }
 
+  async exportOverseasWarehouseStockExcel(): Promise<MasterProductExportFile> {
+    const rows = await this.prisma.masterProduct.findMany({
+      where: {
+        stockQty: { gt: 0 },
+      },
+      select: {
+        productId: true,
+        productName: true,
+        stockQty: true,
+      },
+      orderBy: [{ stockQty: 'desc' }, { productId: 'asc' }, { id: 'asc' }],
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(
+      rows.map((row) => ({
+        产品ID: row.productId,
+        产品名称: row.productName ?? '',
+        在库数: Number(row.stockQty ?? 0),
+      })),
+    );
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '海外仓库存');
+    const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
+    const fileName = `海外仓库存下载-${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}.xlsx`;
+
+    return {
+      fileName,
+      content,
+      totalRows: rows.length,
+    };
+  }
+
   async getUploadTemplate(): Promise<{ fileName: string; content: Buffer }> {
     const cwd = process.cwd();
     const candidates = [
