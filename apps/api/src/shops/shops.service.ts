@@ -71,6 +71,7 @@ export class ShopsService {
       if (duplicate) {
         throw new BadRequestException('店铺已存在');
       }
+      await this.assertSkuShopMoveHasNoConflict(shop.name, name, '重命名店铺');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -115,10 +116,12 @@ export class ShopsService {
       throw new NotFoundException('店铺不存在');
     }
 
+    await this.assertSkuShopMoveHasNoConflict(shop.name, '', '删除店铺');
+
     await this.prisma.$transaction(async (tx) => {
       const clearResult = await tx.sku.updateMany({
         where: { shop: shop.name },
-        data: { shop: null },
+        data: { shop: '' },
       });
 
       await tx.shop.delete({ where: { id } });
@@ -139,5 +142,54 @@ export class ShopsService {
     });
     return { success: true };
   }
-}
 
+  private async assertSkuShopMoveHasNoConflict(
+    sourceShop: string,
+    targetShop: string,
+    actionLabel: string,
+  ): Promise<void> {
+    const normalizedSourceShop = String(sourceShop ?? '').trim();
+    const normalizedTargetShop = String(targetShop ?? '').trim();
+    if (normalizedSourceShop === normalizedTargetShop) {
+      return;
+    }
+
+    const sourceRows = await this.prisma.sku.findMany({
+      where: {
+        shop: normalizedSourceShop,
+        status: 1,
+      },
+      select: {
+        sku: true,
+      },
+    });
+    if (!sourceRows.length) {
+      return;
+    }
+
+    const sourceSkuSet = new Set(sourceRows.map((row) => row.sku));
+    const targetRows = await this.prisma.sku.findMany({
+      where: {
+        shop: normalizedTargetShop,
+        sku: {
+          in: Array.from(sourceSkuSet),
+        },
+        status: 1,
+      },
+      select: {
+        sku: true,
+      },
+      orderBy: [{ sku: 'asc' }, { id: 'asc' }],
+    });
+    if (!targetRows.length) {
+      return;
+    }
+
+    const conflictSkus = Array.from(new Set(targetRows.map((row) => row.sku))).slice(0, 20);
+    const suffix = targetRows.length > 20 ? ' 等' : '';
+    const targetName = normalizedTargetShop || '空店铺';
+    throw new BadRequestException(
+      `${actionLabel}会造成 SKU + 店铺 重复。目标店铺「${targetName}」已存在这些 SKU：${conflictSkus.join('、')}${suffix}`,
+    );
+  }
+}

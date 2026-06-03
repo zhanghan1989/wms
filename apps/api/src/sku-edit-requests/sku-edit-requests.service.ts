@@ -181,7 +181,13 @@ export class SkuEditRequestsService {
       throw new BadRequestException('未检测到任何字段变更');
     }
 
-    await this.ensureSkuCodeAvailable(afterData.sku, skuId, beforeData.sku);
+    await this.ensureSkuCodeAvailable(
+      afterData.sku,
+      this.normalizeShopValue(afterData.shop),
+      skuId,
+      beforeData.sku,
+      this.normalizeShopValue(beforeData.shop),
+    );
 
     return this.createPendingEditRequest(this.prisma, {
       skuId,
@@ -217,10 +223,12 @@ export class SkuEditRequestsService {
       throw new BadRequestException('SKU不能为空');
     }
     const targetSkuCode = afterSnapshot.sku;
-    if (targetSkuCode !== request.sku.sku) {
+    const targetShop = this.normalizeShopValue(afterSnapshot.shop);
+    if (targetSkuCode !== request.sku.sku || targetShop !== this.normalizeShopValue(request.sku.shop)) {
       const duplicated = await this.prisma.sku.findFirst({
         where: {
           sku: targetSkuCode,
+          shop: targetShop,
           status: 1,
           id: { not: request.skuId },
         },
@@ -239,7 +247,7 @@ export class SkuEditRequestsService {
         asin: afterSnapshot.asin,
         fnsku: afterSnapshot.fnsku,
         fbmSku: afterSnapshot.fbmSku,
-        shop: afterSnapshot.shop,
+        shop: targetShop,
         remark: afterSnapshot.remark,
       };
 
@@ -381,15 +389,18 @@ export class SkuEditRequestsService {
 
   private async ensureSkuCodeAvailable(
     targetSkuCode: string | null,
+    targetShop: string,
     currentSkuId: bigint,
     currentSkuCode: string | null,
+    currentShop: string,
   ): Promise<void> {
-    if (!targetSkuCode || targetSkuCode === currentSkuCode) {
+    if (!targetSkuCode || (targetSkuCode === currentSkuCode && targetShop === currentShop)) {
       return;
     }
     const duplicated = await this.prisma.sku.findFirst({
       where: {
         sku: targetSkuCode,
+        shop: targetShop,
         status: 1,
         id: { not: currentSkuId },
       },
@@ -398,6 +409,10 @@ export class SkuEditRequestsService {
     if (duplicated) {
       throw new BadRequestException('SKU 已存在');
     }
+  }
+
+  private normalizeShopValue(value: unknown): string {
+    return normalizeNullableText(value) ?? '';
   }
 
   private async ensureCanConfirmByOperator(operatorId: bigint): Promise<void> {

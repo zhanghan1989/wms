@@ -467,16 +467,20 @@ export class SkusService {
             throw new BadRequestException(`主商品ID不存在：${preview}${suffix}`);
           }
 
-          const existingSkuByCode = new Map(existingSkus.map((item) => [item.sku, item]));
-          const rowsToCreate = rows.filter((row) => !existingSkuByCode.has(row.sku));
+          const existingSkuByCodeAndShop = new Map(
+            existingSkus.map((item) => [this.buildSkuShopKey(item.sku, item.shop), item]),
+          );
+          const rowsToCreate = rows.filter(
+            (row) => !existingSkuByCodeAndShop.has(this.buildSkuShopKey(row.sku, row.shop)),
+          );
           const rowsToRestore = rows.filter((row) => {
-            const existing = existingSkuByCode.get(row.sku);
+            const existing = existingSkuByCodeAndShop.get(this.buildSkuShopKey(row.sku, row.shop));
             return Boolean(existing && Number(existing.status ?? 0) !== 1);
           });
           const editRequestData: Prisma.ProductEditRequestCreateManyInput[] = [];
 
           for (const row of rows) {
-            const existing = existingSkuByCode.get(row.sku);
+            const existing = existingSkuByCodeAndShop.get(this.buildSkuShopKey(row.sku, row.shop));
             if (!existing) {
               continue;
             }
@@ -512,7 +516,7 @@ export class SkusService {
                 asin: row.asin ?? null,
                 fnsku: row.fnsku ?? null,
                 fbmSku: row.fbmSku ?? null,
-                shop: row.shop ?? null,
+                shop: this.normalizeShopValue(row.shop),
                 remark: row.remark ?? null,
                 status: 1,
               })),
@@ -520,9 +524,10 @@ export class SkusService {
 
             const createdSkus = await tx.sku.findMany({
               where: {
-                sku: {
-                  in: rowsToCreate.map((row) => row.sku),
-                },
+                OR: rowsToCreate.map((row) => ({
+                  sku: row.sku,
+                  shop: this.normalizeShopValue(row.shop),
+                })),
               },
               select: {
                 id: true,
@@ -555,7 +560,7 @@ export class SkusService {
 
           if (rowsToRestore.length > 0) {
             for (const row of rowsToRestore) {
-              const existing = existingSkuByCode.get(row.sku);
+              const existing = existingSkuByCodeAndShop.get(this.buildSkuShopKey(row.sku, row.shop));
               if (!existing) {
                 continue;
               }
@@ -567,7 +572,7 @@ export class SkusService {
                   asin: row.asin ?? null,
                   fnsku: row.fnsku ?? null,
                   fbmSku: row.fbmSku ?? null,
-                  shop: row.shop ?? null,
+                  shop: this.normalizeShopValue(row.shop),
                   remark: row.remark ?? null,
                   status: 1,
                 },
@@ -630,15 +635,24 @@ export class SkusService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<unknown> {
-    const exists = await this.prisma.sku.findUnique({ where: { sku: payload.sku } });
+    const normalizedPayload = {
+      ...payload,
+      shop: this.normalizeShopValue(payload.shop),
+    };
+    const exists = await this.prisma.sku.findFirst({
+      where: {
+        sku: normalizedPayload.sku,
+        shop: normalizedPayload.shop,
+      },
+    });
     if (exists) {
       if (Number(exists.status ?? 0) !== 1) {
-        await this.ensureMasterProductExists(this.prisma, payload.productId ?? null);
+        await this.ensureMasterProductExists(this.prisma, normalizedPayload.productId ?? null);
         return this.prisma.$transaction(async (tx) => {
           const restored = await tx.sku.update({
             where: { id: exists.id },
             data: {
-              ...payload,
+              ...normalizedPayload,
               status: 1,
             },
           });
@@ -656,12 +670,12 @@ export class SkusService {
           return restored;
         });
       }
-      throw new BadRequestException('SKU already exists');
+      throw new BadRequestException('SKU与所属店铺组合已存在');
     }
-    await this.ensureMasterProductExists(this.prisma, payload.productId ?? null);
+    await this.ensureMasterProductExists(this.prisma, normalizedPayload.productId ?? null);
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.sku.create({
-        data: payload,
+        data: normalizedPayload,
       });
       await this.auditService.create({
         db: tx,
@@ -782,13 +796,15 @@ export class SkusService {
         errors.push(`Row ${rowNo} is missing SKU`);
         return;
       }
-      if (seenSkuRows.has(sku)) {
+      const shop = this.pickField(normalized, ['shop', '店铺']);
+      const skuShopKey = this.buildSkuShopKey(sku, shop);
+      if (seenSkuRows.has(skuShopKey)) {
         errors.push(
-          `Row ${rowNo} duplicated SKU: ${sku} (first seen at row ${seenSkuRows.get(sku)})`,
+          `Row ${rowNo} duplicated SKU + 店铺: ${sku} (first seen at row ${seenSkuRows.get(skuShopKey)})`,
         );
         return;
       }
-      seenSkuRows.set(sku, rowNo);
+      seenSkuRows.set(skuShopKey, rowNo);
 
       const importRow: ImportSkuRow = {
         productId: this.pickField(normalized, ['productId', 'productid', '产品ID', '产品Id']),
@@ -814,7 +830,7 @@ export class SkusService {
           'fbm編碼',
           'fbm',
         ]),
-        shop: this.pickField(normalized, ['shop', '店铺']),
+        shop,
         remark: this.pickField(normalized, ['remark', '备注']),
       };
       this.validateImportRow(importRow, rowNo, errors);
@@ -1010,7 +1026,7 @@ export class SkusService {
           '当前数据库仍将 skus.product_id 设为唯一值，但现在业务已支持一个主商品关联多个 SKU。请先删除唯一索引 skus_product_id_key 后再重试导入',
         );
       }
-      return new BadRequestException('Excel 中存在重复 SKU，或数据库里已有相同唯一值');
+      return new BadRequestException('Excel 中存在重复的 SKU + 店铺组合，或数据库里已有相同组合');
     }
     if (error.code === 'P2003') {
       return new BadRequestException('存在无效关联数据，请检查产品ID是否已存在于主商品表');
@@ -1071,6 +1087,14 @@ export class SkusService {
 
   private normalizeNullableString(value: unknown): string | null {
     return normalizeNullableText(value);
+  }
+
+  private normalizeShopValue(value: unknown): string {
+    return normalizeNullableText(value) ?? '';
+  }
+
+  private buildSkuShopKey(sku: unknown, shop: unknown): string {
+    return `${String(sku ?? '').trim()}\u0000${this.normalizeShopValue(shop)}`;
   }
 
   private async ensureMasterProductExists(

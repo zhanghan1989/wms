@@ -17,6 +17,10 @@
 - `audit`: 操作日志
 - `backups`: 数据备份与下载
 
+## 备份配置
+- `BACKUP_ZIP_COMPRESSION_LEVEL`: ZIP 压缩等级，默认 `1`。如需尽量降低 CPU，可设为 `0`，仍会生成 ZIP 文件但不压缩。
+- `BACKUP_SQL_ROW_BATCH_SIZE`: 数据库导出每批行数，默认 `200`。调小可降低单次查询和字符串处理峰值，调大会缩短备份耗时。
+
 ## 接口约定
 - 前缀：`/api`
 - 鉴权：JWT Bearer Token

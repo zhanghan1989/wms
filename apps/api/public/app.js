@@ -1808,25 +1808,30 @@ function clearOverviewDashboard() {
     "overviewAvailableStock",
     "overviewLockedStock",
     "overviewInTransitStock",
+    "overviewArrangedProductionStock",
+    "overviewSecuredStock",
     "overviewOutOfStockSkuCount",
     "overviewLowCoverageSkuCount",
-    "overviewCoverageDays",
+    "overviewStockCoverageDays",
+    "overviewSecuredCoverageDays",
     "overviewAvgDailyOutbound",
     "overviewOutboundQty7d",
     "overviewOutboundQty14d",
     "overviewOutboundQty30d",
+    "overviewOutboundQty90d",
     "overviewDemandAvgDailyOutbound",
     "overviewRecommendationCount",
     "overviewRecommendationUrgentCount",
     "overviewRecommendationHighCount",
     "overviewRecommendationMediumCount",
     "overviewTargetDays",
+    "overviewEstimatedArrivalDays",
     "overviewNoSales90Count",
     "overviewNoSales270Count",
   ].forEach((id) => setTextById(id, "-"));
   renderOverviewTable("overviewTopDemandBody", "", 5);
   renderOverviewTable("overviewAnomalyBody", "", 6);
-  renderOverviewTable("overviewProductionBody", "", 9);
+  renderOverviewTable("overviewProductionBody", "", 14);
   renderOverviewTable("overviewNoSales90Body", "", 5);
   renderOverviewTable("overviewNoSales270Body", "", 5);
 }
@@ -1848,14 +1853,18 @@ function renderOverviewDashboard(data) {
   setTextById("overviewAvailableStock", formatOverviewNumber(health.availableStock));
   setTextById("overviewLockedStock", formatOverviewNumber(health.lockedStock));
   setTextById("overviewInTransitStock", formatOverviewNumber(health.inTransitStock));
+  setTextById("overviewArrangedProductionStock", formatOverviewNumber(health.arrangedProductionStock));
+  setTextById("overviewSecuredStock", formatOverviewNumber(health.securedStock));
   setTextById("overviewOutOfStockSkuCount", formatOverviewNumber(health.outOfStockSkuCount));
   setTextById("overviewLowCoverageSkuCount", formatOverviewNumber(health.lowCoverageSkuCount));
-  setTextById("overviewCoverageDays", formatOverviewRatio(health.coverageDays));
+  setTextById("overviewStockCoverageDays", formatOverviewRatio(health.stockCoverageDays ?? health.coverageDays));
+  setTextById("overviewSecuredCoverageDays", formatOverviewRatio(health.securedCoverageDays));
   setTextById("overviewAvgDailyOutbound", formatOverviewNumber(health.avgDailyOutbound, 1));
 
   setTextById("overviewOutboundQty7d", formatOverviewNumber(demand.outboundQty7d));
   setTextById("overviewOutboundQty14d", formatOverviewNumber(demand.outboundQty14d));
   setTextById("overviewOutboundQty30d", formatOverviewNumber(demand.outboundQty30d));
+  setTextById("overviewOutboundQty90d", formatOverviewNumber(demand.outboundQty90d));
   setTextById("overviewDemandAvgDailyOutbound", formatOverviewNumber(demand.avgDailyOutbound, 1));
 
   setTextById("overviewRecommendationCount", formatOverviewNumber(production.recommendationCount));
@@ -1863,6 +1872,11 @@ function renderOverviewDashboard(data) {
   setTextById("overviewRecommendationHighCount", formatOverviewNumber(production.highCount));
   setTextById("overviewRecommendationMediumCount", formatOverviewNumber(production.mediumCount));
   setTextById("overviewTargetDays", formatOverviewNumber(production.targetDays));
+  const estimatedArrivalDays = Number(production.estimatedArrivalDays);
+  setTextById(
+    "overviewEstimatedArrivalDays",
+    Number.isFinite(estimatedArrivalDays) ? `发注 + ${formatOverviewNumber(estimatedArrivalDays)} 天` : "-",
+  );
   setTextById("overviewNoSales90Count", formatOverviewNumber(obsolete.noSales90dCount));
   setTextById("overviewNoSales270Count", formatOverviewNumber(obsolete.noSales270dCount));
 
@@ -1883,8 +1897,8 @@ function renderOverviewDashboard(data) {
 
   const anomalyRows = (Array.isArray(demand.anomalySkus) ? demand.anomalySkus : [])
     .map((item) => {
-      const ratio = Number(item.ratio);
-      const ratioText = Number.isFinite(ratio) ? `${formatOverviewNumber(ratio, 2)}x` : "NEW";
+      const delta = Number(item.delta);
+      const deltaText = Number.isFinite(delta) && delta > 0 ? `+${formatOverviewNumber(delta)}` : formatOverviewNumber(delta);
       return `
       <tr>
         <td>${escapeHtml(displayText(item.productId))}</td>
@@ -1892,7 +1906,7 @@ function renderOverviewDashboard(data) {
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.qty7d)}</td>
         <td>${formatOverviewNumber(item.prev7d)}</td>
-        <td>${ratioText}</td>
+        <td>${deltaText}</td>
       </tr>
     `;
     })
@@ -1911,15 +1925,20 @@ function renderOverviewDashboard(data) {
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
-        <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
-        <td>${formatOverviewRatio(item.coverageDays)}</td>
+        <td>${formatOverviewNumber(item.arrangedProductionQty)}</td>
+        <td>${formatOverviewNumber(item.securedStock)}</td>
+        <td>${formatOverviewNumber(item.avgDailyOutbound90d ?? item.avgDailyOutbound, 1)}</td>
+        <td>${formatOverviewRatio(item.stockCoverageDays ?? item.coverageDays)}</td>
+        <td>${formatOverviewRatio(item.securedCoverageDays)}</td>
+        <td>${formatOverviewNumber(item.targetDemandQty ?? item.targetStock)}</td>
         <td>${formatOverviewNumber(item.suggestedProductionQty)}</td>
+        <td>${formatOverviewRatio(item.shortageDays)}</td>
         <td><span class="priority-chip priority-${priorityClass}">${escapeHtml(priority)}</span></td>
       </tr>
     `;
     })
     .join("");
-  renderOverviewTable("overviewProductionBody", productionRows, 9);
+  renderOverviewTable("overviewProductionBody", productionRows, 14);
 
   const noSales90Rows = (Array.isArray(obsolete.noSales90dSkus) ? obsolete.noSales90dSkus : [])
     .map(

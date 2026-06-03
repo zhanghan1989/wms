@@ -12,6 +12,8 @@ services:
       DEPLOY_SESSION_VERSION: ${DEPLOY_SESSION_VERSION:-local-dev}
       THIRD_PARTY_API_KEY: xiya-t4HHGJWBDGg29yp8W8TK3QRQ3m1A
       BACKUP_DIR: /app/storage/backups
+      BACKUP_ZIP_COMPRESSION_LEVEL: ${BACKUP_ZIP_COMPRESSION_LEVEL:-1}
+      BACKUP_SQL_ROW_BATCH_SIZE: ${BACKUP_SQL_ROW_BATCH_SIZE:-200}
     depends_on:
       db:
         condition: service_healthy

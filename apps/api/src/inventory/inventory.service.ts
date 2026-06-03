@@ -161,11 +161,19 @@ const MASTER_PRODUCT_BOX_PRODUCT_WITH_STOCK_SELECT = {
   productName: true,
   stockQty: true,
 } as const;
-const LOW_COVERAGE_DAYS = 14;
-const OUT_OF_STOCK_DAYS = 7;
-const PRODUCTION_TARGET_DAYS = 45;
-const ANOMALY_MIN_7D_QTY = 20;
-const ANOMALY_RATIO = 2;
+const URGENT_STOCK_COVERAGE_DAYS = 30;
+const HIGH_TOTAL_COVERAGE_DAYS = 60;
+const MEDIUM_TOTAL_COVERAGE_DAYS = 90;
+const PRODUCTION_TARGET_DAYS = 90;
+const ESTIMATED_PRODUCTION_ARRIVAL_DAYS = 45;
+const ANOMALY_MIN_DELTA_QTY = 10;
+
+function raiseProductionPriority(priority: string): string {
+  if (priority === '紧急') return '紧急';
+  if (priority === '高') return '紧急';
+  if (priority === '中') return '高';
+  return '中';
+}
 
 function normalizeImportHeaderValue(header: string): string {
   return String(header || '')
@@ -2166,6 +2174,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     activeSkus,
     pendingRows,
     inTransitRows,
+    arrangedProductionRows,
     outbound30Rows,
     outbound14Rows,
     outbound7Rows,
@@ -2228,6 +2237,16 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
         status: 'pending',
         order: {
           status: BatchInboundOrderStatus.waiting_inbound,
+        },
+      },
+      _sum: { qty: true },
+    }),
+    service.prisma.batchInboundItem.groupBy({
+      by: ['productId'],
+      where: {
+        status: 'pending',
+        order: {
+          status: BatchInboundOrderStatus.waiting_upload,
         },
       },
       _sum: { qty: true },
@@ -2322,6 +2341,16 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     inTransitByProduct.set(productId, (inTransitByProduct.get(productId) ?? 0) + qty);
   });
 
+  const arrangedProductionByProduct = new Map<string, number>();
+  arrangedProductionRows.forEach((row) => {
+    const rawCode = String(row.productId || '').trim();
+    const productId = activeProductIdSet.has(rawCode) ? rawCode : skuCodeToProductId.get(rawCode);
+    if (!productId) return;
+    const qty = Number(row._sum?.qty ?? 0);
+    if (qty <= 0) return;
+    arrangedProductionByProduct.set(productId, (arrangedProductionByProduct.get(productId) ?? 0) + qty);
+  });
+
   const toOutboundMap = (rows: Array<{ productId: string | null; _sum: { qtyDelta: number | null } }>) => {
     const map = new Map<string, number>();
     rows.forEach((row) => {
@@ -2344,8 +2373,9 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
   let availableStock = 0;
   let lockedStock = 0;
   let inTransitStock = 0;
+  let arrangedProductionStock = 0;
   let outOfStockSkuCount = 0;
-  let lowCoverageSkuCount = 0;
+  let lowCoverageProductCount = 0;
 
   const recommendations: Array<{
     productId: string;
@@ -2354,10 +2384,18 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     availableStock: number;
     lockedStock: number;
     inTransitStock: number;
-    avgDailyOutbound: number;
-    coverageDays: number;
-    targetStock: number;
+    arrangedProductionQty: number;
+    securedStock: number;
+    outbound30d: number;
+    avgDailyOutbound90d: number;
+    stockCoverageDays: number;
+    securedCoverageDays: number;
+    targetDemandQty: number;
     suggestedProductionQty: number;
+    shortageDays: number;
+    estimatedArrivalDays: number;
+    demandSpike: boolean;
+    fluctuationQty: number;
     priority: string;
   }> = [];
   const noSales90dSkus: Array<{
@@ -2383,21 +2421,27 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     const locked = lockedByProduct.get(productId) ?? 0;
     const available = stock - locked;
     const inTransit = inTransitByProduct.get(productId) ?? 0;
+    const arrangedProductionQty = arrangedProductionByProduct.get(productId) ?? 0;
+    const securedStock = Math.max(0, available) + inTransit + arrangedProductionQty;
     const outbound30 = outbound30ByProduct.get(productId) ?? 0;
-    const avgDailyOutbound = outbound30 / 30;
-    const coverageDays =
-      avgDailyOutbound > 0 ? available / avgDailyOutbound : Number.POSITIVE_INFINITY;
+    const outbound90 = outbound90ByProduct.get(productId) ?? 0;
+    const avgDailyOutbound90d = outbound90 / 90;
+    const stockCoverageDays =
+      avgDailyOutbound90d > 0 ? Math.max(0, available) / avgDailyOutbound90d : Number.POSITIVE_INFINITY;
+    const securedCoverageDays =
+      avgDailyOutbound90d > 0 ? securedStock / avgDailyOutbound90d : Number.POSITIVE_INFINITY;
 
     totalStock += stock;
     availableStock += available;
     lockedStock += locked;
     inTransitStock += inTransit;
+    arrangedProductionStock += arrangedProductionQty;
 
     if (available <= 0) {
       outOfStockSkuCount += 1;
     }
-    if (avgDailyOutbound > 0 && coverageDays < LOW_COVERAGE_DAYS) {
-      lowCoverageSkuCount += 1;
+    if (avgDailyOutbound90d > 0 && securedCoverageDays < PRODUCTION_TARGET_DAYS) {
+      lowCoverageProductCount += 1;
     }
 
     if (stock > 0) {
@@ -2421,21 +2465,32 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       }
     }
 
-    if (avgDailyOutbound <= 0) {
+    if (avgDailyOutbound90d <= 0) {
       return;
     }
 
-    const targetStock = Math.ceil(avgDailyOutbound * PRODUCTION_TARGET_DAYS);
-    const suggestedProductionQty = Math.max(0, targetStock - (available + inTransit));
-    if (suggestedProductionQty <= 0 && coverageDays >= LOW_COVERAGE_DAYS) {
+    const targetDemandQty = Math.ceil(avgDailyOutbound90d * PRODUCTION_TARGET_DAYS);
+    const suggestedProductionQty = Math.max(0, targetDemandQty - securedStock);
+    const shortageDays = Math.max(0, PRODUCTION_TARGET_DAYS - securedCoverageDays);
+    const qty14d = outbound14ByProduct.get(productId) ?? outbound7ByProduct.get(productId) ?? 0;
+    const recent7d = outbound7ByProduct.get(productId) ?? 0;
+    const prev7d = Math.max(0, qty14d - recent7d);
+    const fluctuationQty = recent7d - prev7d;
+    const demandSpike = fluctuationQty >= ANOMALY_MIN_DELTA_QTY;
+    if (suggestedProductionQty <= 0 && securedCoverageDays >= PRODUCTION_TARGET_DAYS && !demandSpike) {
       return;
     }
 
-    let priority = '中';
-    if (coverageDays < OUT_OF_STOCK_DAYS || available <= 0) {
+    let priority = '正常';
+    if (stockCoverageDays < URGENT_STOCK_COVERAGE_DAYS || available <= 0) {
       priority = '紧急';
-    } else if (coverageDays < LOW_COVERAGE_DAYS) {
+    } else if (securedCoverageDays < HIGH_TOTAL_COVERAGE_DAYS) {
       priority = '高';
+    } else if (securedCoverageDays < MEDIUM_TOTAL_COVERAGE_DAYS) {
+      priority = '中';
+    }
+    if (demandSpike) {
+      priority = raiseProductionPriority(priority);
     }
 
     recommendations.push({
@@ -2445,21 +2500,29 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       availableStock: available,
       lockedStock: locked,
       inTransitStock: inTransit,
-      avgDailyOutbound,
-      coverageDays,
-      targetStock,
+      arrangedProductionQty,
+      securedStock,
+      outbound30d: outbound30,
+      avgDailyOutbound90d,
+      stockCoverageDays,
+      securedCoverageDays,
+      targetDemandQty,
       suggestedProductionQty,
+      shortageDays,
+      estimatedArrivalDays: ESTIMATED_PRODUCTION_ARRIVAL_DAYS,
+      demandSpike,
+      fluctuationQty,
       priority,
     });
   });
 
-  const priorityWeight: Record<string, number> = { 紧急: 3, 高: 2, 中: 1 };
+  const priorityWeight: Record<string, number> = { 紧急: 4, 高: 3, 中: 2, 正常: 1 };
   recommendations.sort((a, b) => {
     const p = (priorityWeight[b.priority] ?? 0) - (priorityWeight[a.priority] ?? 0);
     if (p !== 0) return p;
     const s = b.suggestedProductionQty - a.suggestedProductionQty;
     if (s !== 0) return s;
-    return b.avgDailyOutbound - a.avgDailyOutbound;
+    return b.avgDailyOutbound90d - a.avgDailyOutbound90d;
   });
 
   const sortByStockDesc = <T extends { totalStock: number; availableStock: number; productId: string }>(
@@ -2477,12 +2540,13 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
   const topSkus = Array.from(outbound30ByProduct.entries())
     .map(([productId, qty30d]) => {
       const product = productById.get(productId);
+      const qty90d = outbound90ByProduct.get(productId) ?? 0;
       return {
         productId,
         productName: product?.productName ?? null,
         totalStock: Number(product?.stockQty ?? 0),
         qty30d,
-        avgDailyOutbound: qty30d / 30,
+        avgDailyOutbound: qty90d / 90,
       };
     })
     .sort((a, b) => b.qty30d - a.qty30d)
@@ -2496,8 +2560,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       const delta = qty7d - prev7d;
       return { productId, qty7d, prev7d, ratio, delta };
     })
-    .filter((item) => item.qty7d >= ANOMALY_MIN_7D_QTY)
-    .filter((item) => item.prev7d === 0 || (item.ratio ?? 0) >= ANOMALY_RATIO)
+    .filter((item) => Math.abs(item.delta) >= ANOMALY_MIN_DELTA_QTY)
     .map((item) => {
       const product = productById.get(item.productId);
       return {
@@ -2510,14 +2573,18 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
         delta: item.delta,
       };
     })
-    .sort((a, b) => b.delta - a.delta)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
     .slice(0, 10);
 
   const outboundQty30d = Array.from(outbound30ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty14d = Array.from(outbound14ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty7d = Array.from(outbound7ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
-  const avgDailyOutbound = outboundQty30d / 30;
-  const coverageDays = avgDailyOutbound > 0 ? availableStock / avgDailyOutbound : null;
+  const outboundQty90d = Array.from(outbound90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
+  const avgDailyOutbound30d = outboundQty30d / 30;
+  const avgDailyOutbound90d = outboundQty90d / 90;
+  const securedStock = Math.max(0, availableStock) + inTransitStock + arrangedProductionStock;
+  const stockCoverageDays = avgDailyOutbound90d > 0 ? Math.max(0, availableStock) / avgDailyOutbound90d : null;
+  const securedCoverageDays = avgDailyOutbound90d > 0 ? securedStock / avgDailyOutbound90d : null;
 
   const urgentCount = recommendations.filter((item) => item.priority === '紧急').length;
   const highCount = recommendations.filter((item) => item.priority === '高').length;
@@ -2527,6 +2594,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     generatedAt: now.toISOString(),
     summary: {
       activeUserCount,
+      activeProductCount: activeProducts.length,
       shelfCount,
       boxCount,
       pendingInboundOrderCount,
@@ -2537,21 +2605,29 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       availableStock,
       lockedStock,
       inTransitStock,
+      arrangedProductionStock,
+      securedStock,
       outOfStockSkuCount,
-      lowCoverageSkuCount,
-      coverageDays,
-      avgDailyOutbound,
+      lowCoverageSkuCount: lowCoverageProductCount,
+      stockCoverageDays,
+      securedCoverageDays,
+      coverageDays: stockCoverageDays,
+      avgDailyOutbound: avgDailyOutbound90d,
     },
     demand: {
       outboundQty7d,
       outboundQty14d,
       outboundQty30d,
-      avgDailyOutbound,
+      outboundQty90d,
+      avgDailyOutbound: avgDailyOutbound90d,
+      avgDailyOutbound30d,
+      avgDailyOutbound90d,
       topSkus,
       anomalySkus,
     },
     production: {
       targetDays: PRODUCTION_TARGET_DAYS,
+      estimatedArrivalDays: ESTIMATED_PRODUCTION_ARRIVAL_DAYS,
       recommendationCount: recommendations.length,
       urgentCount,
       highCount,

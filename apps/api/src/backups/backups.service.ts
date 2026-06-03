@@ -7,9 +7,11 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { createReadStream, createWriteStream } from 'fs';
 import JSZip = require('jszip');
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
+import { mkdir, open, readdir, readFile, rm, stat } from 'fs/promises';
 import { join, resolve } from 'path';
+import { pipeline } from 'stream/promises';
 import { APP_TIMEZONE, getZonedDateParts } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -27,12 +29,16 @@ export type BackupSummary = {
 const WEEKLY_BACKUP_CRON = '0 59 23 * * 0';
 const BACKUP_TIMEZONE = APP_TIMEZONE;
 const DEFAULT_KEEP_ZIP_COUNT = 5;
+const DEFAULT_SQL_ROW_BATCH_SIZE = 200;
+const DEFAULT_ZIP_COMPRESSION_LEVEL = 1;
 
 @Injectable()
 export class BackupsService implements OnModuleInit {
   private readonly logger = new Logger(BackupsService.name);
   private readonly backupDir = this.resolveBackupDir();
   private readonly keepZipCount = this.resolveKeepZipCount();
+  private readonly sqlRowBatchSize = this.resolveSqlRowBatchSize();
+  private readonly zipCompressionLevel = this.resolveZipCompressionLevel();
   private isCreating = false;
 
   constructor(private readonly prisma: PrismaService) {}
@@ -117,6 +123,7 @@ export class BackupsService implements OnModuleInit {
     }
 
     this.isCreating = true;
+    let tempSqlPath: string | null = null;
     try {
       await this.ensureBackupDir();
       const now = new Date();
@@ -125,30 +132,31 @@ export class BackupsService implements OnModuleInit {
       const sqlFileName = `${baseName}.sql`;
       const zipFileName = `${baseName}.zip`;
       const zipPath = join(this.backupDir, zipFileName);
+      tempSqlPath = join(this.backupDir, `${sqlFileName}.tmp`);
 
-      const sqlContent = await this.buildSqlDump();
-      const zip = new JSZip();
-      zip.file(sqlFileName, sqlContent, { date: now });
-      const zipBuffer = await zip.generateAsync({
-        type: 'nodebuffer',
-        compression: 'DEFLATE',
-        compressionOptions: { level: 9 },
+      await this.writeSqlDumpToFile(tempSqlPath, now);
+      const zipSizeBytes = await this.writeZipFromSqlFile({
+        sqlFileName,
+        sqlPath: tempSqlPath,
+        zipPath,
+        date: now,
       });
+      await rm(tempSqlPath, { force: true });
+      tempSqlPath = null;
 
-      await writeFile(zipPath, zipBuffer);
       await this.prisma.backupRecord.upsert({
         where: { fileName: zipFileName },
         create: {
           fileName: zipFileName,
           source,
-          sizeBytes: BigInt(zipBuffer.byteLength),
+          sizeBytes: BigInt(zipSizeBytes),
           createdAt: now,
           hasFile: true,
           fileDeletedAt: null,
         },
         update: {
           source,
-          sizeBytes: BigInt(zipBuffer.byteLength),
+          sizeBytes: BigInt(zipSizeBytes),
           createdAt: now,
           hasFile: true,
           fileDeletedAt: null,
@@ -156,11 +164,11 @@ export class BackupsService implements OnModuleInit {
       });
 
       await this.reconcileBackupRecordsAndFiles();
-      this.logger.log(`数据库备份完成: ${zipFileName} (${zipBuffer.byteLength} bytes)`);
+      this.logger.log(`数据库备份完成: ${zipFileName} (${zipSizeBytes} bytes)`);
 
       return {
         fileName: zipFileName,
-        sizeBytes: zipBuffer.byteLength,
+        sizeBytes: zipSizeBytes,
         createdAt: now.toISOString(),
         source,
         hasFile: true,
@@ -169,6 +177,12 @@ export class BackupsService implements OnModuleInit {
       const message = error instanceof Error ? error.message : String(error);
       throw new InternalServerErrorException(`数据库备份失败: ${message}`);
     } finally {
+      if (tempSqlPath) {
+        await rm(tempSqlPath, { force: true }).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.warn(`清理临时备份文件失败: ${message}`);
+        });
+      }
       this.isCreating = false;
     }
   }
@@ -259,7 +273,16 @@ export class BackupsService implements OnModuleInit {
     });
   }
 
-  private async buildSqlDump(): Promise<string> {
+  private async writeSqlDumpToFile(filePath: string, generatedAt: Date): Promise<void> {
+    const handle = await open(filePath, 'w');
+    try {
+      await this.writeSqlDump(handle, generatedAt);
+    } finally {
+      await handle.close();
+    }
+  }
+
+  private async writeSqlDump(handle: Awaited<ReturnType<typeof open>>, generatedAt: Date): Promise<void> {
     const tableRows = await this.prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
       'SHOW TABLES',
     );
@@ -267,24 +290,22 @@ export class BackupsService implements OnModuleInit {
       .map((row) => String(Object.values(row)[0] || '').trim())
       .filter((name) => name.length > 0);
 
-    const lines: string[] = [];
-    lines.push('-- WMS Database Backup');
-    lines.push(`-- Generated At: ${new Date().toISOString()}`);
-    lines.push('SET FOREIGN_KEY_CHECKS=0;');
-    lines.push('');
+    await handle.write('-- WMS Database Backup\n');
+    await handle.write(`-- Generated At: ${generatedAt.toISOString()}\n`);
+    await handle.write('SET FOREIGN_KEY_CHECKS=0;\n\n');
 
     for (const tableName of tableNames) {
-      const tableSql = await this.buildTableDump(tableName);
-      lines.push(tableSql);
-      lines.push('');
+      await this.writeTableDump(handle, tableName);
+      await handle.write('\n');
     }
 
-    lines.push('SET FOREIGN_KEY_CHECKS=1;');
-    lines.push('');
-    return lines.join('\n');
+    await handle.write('SET FOREIGN_KEY_CHECKS=1;\n\n');
   }
 
-  private async buildTableDump(tableName: string): Promise<string> {
+  private async writeTableDump(
+    handle: Awaited<ReturnType<typeof open>>,
+    tableName: string,
+  ): Promise<void> {
     const safeTable = this.quoteIdentifier(tableName);
     const createRows = await this.prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
       `SHOW CREATE TABLE ${safeTable}`,
@@ -302,33 +323,61 @@ export class BackupsService implements OnModuleInit {
       .map((row) => String(row.Field || '').trim())
       .filter((name) => name.length > 0);
 
-    const dataRows = await this.prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
-      `SELECT * FROM ${safeTable}`,
-    );
+    await handle.write(`-- Table: ${tableName}\n`);
+    await handle.write(`DROP TABLE IF EXISTS ${safeTable};\n`);
+    await handle.write(`${createSql};\n`);
 
-    const lines: string[] = [];
-    lines.push(`-- Table: ${tableName}`);
-    lines.push(`DROP TABLE IF EXISTS ${safeTable};`);
-    lines.push(`${createSql};`);
-
-    if (!columns.length || !dataRows.length) {
-      return lines.join('\n');
+    if (!columns.length) {
+      return;
     }
 
     const columnSql = columns.map((name) => this.quoteIdentifier(name)).join(', ');
-    const chunkSize = 200;
-    for (let i = 0; i < dataRows.length; i += chunkSize) {
-      const chunk = dataRows.slice(i, i + chunkSize);
-      const valuesSql = chunk
+    for (let offset = 0; ; offset += this.sqlRowBatchSize) {
+      const dataRows = await this.prisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
+        `SELECT * FROM ${safeTable} LIMIT ${this.sqlRowBatchSize} OFFSET ${offset}`,
+      );
+      if (!dataRows.length) break;
+
+      const valuesSql = dataRows
         .map((row) => {
           const values = columns.map((column) => this.toSqlValue(row[column]));
           return `(${values.join(', ')})`;
         })
         .join(',\n');
-      lines.push(`INSERT INTO ${safeTable} (${columnSql}) VALUES\n${valuesSql};`);
+      await handle.write(`INSERT INTO ${safeTable} (${columnSql}) VALUES\n${valuesSql};\n`);
     }
+  }
 
-    return lines.join('\n');
+  private async writeZipFromSqlFile({
+    sqlFileName,
+    sqlPath,
+    zipPath,
+    date,
+  }: {
+    sqlFileName: string;
+    sqlPath: string;
+    zipPath: string;
+    date: Date;
+  }): Promise<number> {
+    const zip = new JSZip();
+    zip.file(sqlFileName, createReadStream(sqlPath), { date });
+
+    const compression = this.zipCompressionLevel === 0 ? 'STORE' : 'DEFLATE';
+    const compressionOptions =
+      this.zipCompressionLevel === 0 ? undefined : { level: this.zipCompressionLevel };
+
+    await pipeline(
+      zip.generateNodeStream({
+        type: 'nodebuffer',
+        streamFiles: true,
+        compression,
+        compressionOptions,
+      }),
+      createWriteStream(zipPath),
+    );
+
+    const fileStat = await stat(zipPath);
+    return Number(fileStat.size || 0);
   }
 
   private toSqlValue(value: unknown): string {
@@ -416,6 +465,27 @@ export class BackupsService implements OnModuleInit {
     if (!Number.isFinite(parsed)) return DEFAULT_KEEP_ZIP_COUNT;
     const normalized = Math.floor(parsed);
     if (normalized < 1) return DEFAULT_KEEP_ZIP_COUNT;
+    return normalized;
+  }
+
+  private resolveSqlRowBatchSize(): number {
+    const raw = String(process.env.BACKUP_SQL_ROW_BATCH_SIZE ?? '').trim();
+    const parsed = Number(raw);
+    if (!raw) return DEFAULT_SQL_ROW_BATCH_SIZE;
+    if (!Number.isFinite(parsed)) return DEFAULT_SQL_ROW_BATCH_SIZE;
+    const normalized = Math.floor(parsed);
+    if (normalized < 1) return DEFAULT_SQL_ROW_BATCH_SIZE;
+    return normalized;
+  }
+
+  private resolveZipCompressionLevel(): number {
+    const raw = String(process.env.BACKUP_ZIP_COMPRESSION_LEVEL ?? '').trim();
+    const parsed = Number(raw);
+    if (!raw) return DEFAULT_ZIP_COMPRESSION_LEVEL;
+    if (!Number.isFinite(parsed)) return DEFAULT_ZIP_COMPRESSION_LEVEL;
+    const normalized = Math.floor(parsed);
+    if (normalized < 0) return DEFAULT_ZIP_COMPRESSION_LEVEL;
+    if (normalized > 9) return 9;
     return normalized;
   }
 

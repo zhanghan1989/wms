@@ -245,12 +245,12 @@ model BatchInboundItem {
 model Sku {
   id                BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
   productId         String?                    @map("product_id") @db.VarChar(128)
-  sku               String                     @unique @db.VarChar(128)
+  sku               String                     @db.VarChar(128)
   rbSku            String?                    @db.VarChar(128)
   asin              String?                    @db.VarChar(32)
   fnsku             String?                    @db.VarChar(32)
   fbmSku            String?                    @db.VarChar(128)
-  shop              String?                    @db.VarChar(128)
+  shop              String                     @default("") @db.VarChar(128)
   remark            String?                    @db.VarChar(255)
   status            Int                        @default(1) @db.TinyInt
   createdAt         DateTime                   @default(now()) @map("created_at")
@@ -264,6 +264,7 @@ model Sku {
   masterProduct       MasterProduct?             @relation(fields: [productId], references: [productId])
   productEditRequests ProductEditRequest[]
 
+  @@unique([sku, shop], map: "skus_sku_shop_key")
   @@index([productId], map: "idx_skus_product_id")
   @@map("skus")
 }
