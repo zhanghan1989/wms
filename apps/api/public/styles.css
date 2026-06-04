@@ -912,8 +912,20 @@ button.ghost {
 }
 
 .stats li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: max-content max-content;
+  justify-content: flex-start;
+  align-items: baseline;
+  column-gap: 6px;
+}
+
+.stats li span::after {
+  content: "：";
+}
+
+.overview-key-stats li {
+  grid-template-columns: minmax(7.5em, max-content) max-content;
+  column-gap: 8px;
 }
 
 .overview-production-head {
@@ -931,16 +943,16 @@ button.ghost {
   border-color: #0b6f4c;
 }
 
-.overview-production-stats {
+.overview-inline-stats {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
-.overview-production-stats li {
+.overview-inline-stats li {
   justify-content: flex-start;
-  gap: 0;
+  column-gap: 6px;
 }
 
-.overview-production-stats strong {
+.overview-inline-stats strong {
   text-align: left;
 }
 
@@ -982,12 +994,12 @@ button.ghost {
 }
 
 #overview .cards {
-  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
 }
 
-#overview .cards .card:nth-child(3),
 #overview .cards .card:nth-child(4),
-#overview .cards .card:nth-child(5) {
+#overview .cards .card:nth-child(5),
+#overview .cards .card:nth-child(6) {
   grid-column: 1 / -1;
 }
 

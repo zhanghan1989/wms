@@ -1862,6 +1862,12 @@ function clearOverviewDashboard() {
     "overviewStockCoverageDays",
     "overviewSecuredCoverageDays",
     "overviewAvgDailyOutbound",
+    "overviewOrder30dCount",
+    "overviewOrder30dItemRows",
+    "overviewOrder30dQuantity",
+    "overviewOrder30dRakutenCount",
+    "overviewOrder30dAmazonCount",
+    "overviewOrder30dManualCount",
     "overviewOutboundQty7d",
     "overviewOutboundQty14d",
     "overviewOutboundQty30d",
@@ -1888,6 +1894,7 @@ function renderOverviewDashboard(data) {
   const summary = data?.summary || {};
   const health = data?.health || {};
   const demand = data?.demand || {};
+  const orders30d = data?.orders30d || {};
   const production = data?.production || {};
   const obsolete = data?.obsolete || {};
 
@@ -1908,6 +1915,13 @@ function renderOverviewDashboard(data) {
   setTextById("overviewStockCoverageDays", formatOverviewRatio(health.stockCoverageDays ?? health.coverageDays));
   setTextById("overviewSecuredCoverageDays", formatOverviewRatio(health.securedCoverageDays));
   setTextById("overviewAvgDailyOutbound", formatOverviewNumber(health.avgDailyOutbound, 1));
+
+  setTextById("overviewOrder30dCount", formatOverviewNumber(orders30d.totalOrderCount));
+  setTextById("overviewOrder30dItemRows", formatOverviewNumber(orders30d.totalItemRowCount));
+  setTextById("overviewOrder30dQuantity", formatOverviewNumber(orders30d.totalQuantity));
+  setTextById("overviewOrder30dRakutenCount", formatOverviewNumber(orders30d.rakutenOrderCount));
+  setTextById("overviewOrder30dAmazonCount", formatOverviewNumber(orders30d.amazonOrderCount));
+  setTextById("overviewOrder30dManualCount", formatOverviewNumber(orders30d.manualOrderCount));
 
   setTextById("overviewOutboundQty7d", formatOverviewNumber(demand.outboundQty7d));
   setTextById("overviewOutboundQty14d", formatOverviewNumber(demand.outboundQty14d));

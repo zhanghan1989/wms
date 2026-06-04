@@ -2285,6 +2285,9 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     chinaRakutenRows,
     chinaAmazonRows,
     chinaManualRows,
+    recentRakutenOrderRows,
+    recentAmazonOrderRows,
+    recentManualOrderRows,
   ] = await Promise.all([
     service.prisma.user.count({
       where: {
@@ -2423,6 +2426,36 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
         rawPayload: true,
         quantityPurchased: true,
         shipmentNoRegisteredAt: true,
+      },
+    }),
+    service.prisma.rakutenOrderRecord.findMany({
+      where: {
+        createdAt: { gte: from30d },
+      },
+      select: {
+        id: true,
+        orderId: true,
+        orderQuantity: true,
+      },
+    }),
+    service.prisma.amazonOrderRecord.findMany({
+      where: {
+        createdAt: { gte: from30d },
+      },
+      select: {
+        id: true,
+        orderId: true,
+        quantityPurchased: true,
+      },
+    }),
+    (service.prisma as any).manualOrderRecord.findMany({
+      where: {
+        createdAt: { gte: from30d },
+      },
+      select: {
+        id: true,
+        orderId: true,
+        quantityPurchased: true,
       },
     }),
   ]);
@@ -2759,6 +2792,48 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
   const urgentCount = recommendations.filter((item) => item.priority === '紧急').length;
   const highCount = recommendations.filter((item) => item.priority === '高').length;
   const mediumCount = recommendations.filter((item) => item.priority === '中').length;
+  const toOrderStats = (
+    rows: Array<{ id: bigint; orderId: string | null; qty: number | null }>,
+  ): { orderCount: number; itemRowCount: number; quantity: number } => {
+    const orderKeys = new Set<string>();
+    let quantity = 0;
+    rows.forEach((row) => {
+      const orderId = String(row.orderId ?? '').trim();
+      orderKeys.add(orderId || `row:${row.id.toString()}`);
+      const qty = Number(row.qty ?? 0);
+      if (Number.isFinite(qty) && qty > 0) {
+        quantity += qty;
+      }
+    });
+    return {
+      orderCount: orderKeys.size,
+      itemRowCount: rows.length,
+      quantity,
+    };
+  };
+  const rakutenOrderStats30d = toOrderStats(
+    recentRakutenOrderRows.map((row) => ({
+      id: row.id,
+      orderId: row.orderId,
+      qty: row.orderQuantity,
+    })),
+  );
+  const amazonOrderStats30d = toOrderStats(
+    recentAmazonOrderRows.map((row) => ({
+      id: row.id,
+      orderId: row.orderId,
+      qty: row.quantityPurchased,
+    })),
+  );
+  const manualOrderStats30d = toOrderStats(
+    (recentManualOrderRows as Array<{ id: bigint; orderId: string | null; quantityPurchased: number | null }>).map(
+      (row) => ({
+        id: row.id,
+        orderId: row.orderId,
+        qty: row.quantityPurchased,
+      }),
+    ),
+  );
 
   return {
     generatedAt: now.toISOString(),
@@ -2794,6 +2869,16 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       avgDailyOutbound90d,
       topSkus,
       anomalySkus,
+    },
+    orders30d: {
+      totalOrderCount:
+        rakutenOrderStats30d.orderCount + amazonOrderStats30d.orderCount + manualOrderStats30d.orderCount,
+      totalItemRowCount:
+        rakutenOrderStats30d.itemRowCount + amazonOrderStats30d.itemRowCount + manualOrderStats30d.itemRowCount,
+      totalQuantity: rakutenOrderStats30d.quantity + amazonOrderStats30d.quantity + manualOrderStats30d.quantity,
+      rakutenOrderCount: rakutenOrderStats30d.orderCount,
+      amazonOrderCount: amazonOrderStats30d.orderCount,
+      manualOrderCount: manualOrderStats30d.orderCount,
     },
     production: {
       targetDays: PRODUCTION_TARGET_DAYS,

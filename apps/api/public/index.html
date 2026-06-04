@@ -1405,7 +1405,7 @@
         <div class="cards">
           <article class="card">
             <h3>快速统计</h3>
-            <ul class="stats">
+            <ul class="stats overview-key-stats">
               <li><span>员工数</span><strong id="statUsers">-</strong></li>
               <li><span>产品数</span><strong id="statSkus">-</strong></li>
               <li><span>货架数</span><strong id="statShelves">-</strong></li>
@@ -1416,7 +1416,7 @@
 
           <article class="card">
             <h3>库存健康</h3>
-            <ul class="stats">
+            <ul class="stats overview-key-stats">
               <li><span>总库存</span><strong id="overviewTotalStock">-</strong></li>
               <li><span>可用库存</span><strong id="overviewAvailableStock">-</strong></li>
               <li><span>锁定库存</span><strong id="overviewLockedStock">-</strong></li>
@@ -1432,8 +1432,20 @@
           </article>
 
           <article class="card">
+            <h3>订单统计(30天)</h3>
+            <ul class="stats overview-key-stats">
+              <li><span>订单数</span><strong id="overviewOrder30dCount">-</strong></li>
+              <li><span>商品行数</span><strong id="overviewOrder30dItemRows">-</strong></li>
+              <li><span>商品件数</span><strong id="overviewOrder30dQuantity">-</strong></li>
+              <li><span>乐天订单</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
+              <li><span>亚马逊订单</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
+              <li><span>手动订单</span><strong id="overviewOrder30dManualCount">-</strong></li>
+            </ul>
+          </article>
+
+          <article class="card">
             <h3>出库需求趋势</h3>
-            <ul class="stats">
+            <ul class="stats overview-inline-stats">
               <li><span>7天出库量</span><strong id="overviewOutboundQty7d">-</strong></li>
               <li><span>14天出库量</span><strong id="overviewOutboundQty14d">-</strong></li>
               <li><span>30天出库量</span><strong id="overviewOutboundQty30d">-</strong></li>
@@ -1480,13 +1492,13 @@
                 <button type="button" id="downloadProductionRecommendationExcelBtn" class="compact-btn">Excel下载</button>
               </div>
             </div>
-            <ul class="stats overview-production-stats">
-              <li><span>建议备货产品数：</span><strong id="overviewRecommendationCount">-</strong></li>
-              <li><span>紧急：</span><strong id="overviewRecommendationUrgentCount">-</strong></li>
-              <li><span>高优先：</span><strong id="overviewRecommendationHighCount">-</strong></li>
-              <li><span>中优先：</span><strong id="overviewRecommendationMediumCount">-</strong></li>
-              <li><span>备货目标天数：</span><strong id="overviewTargetDays">-</strong></li>
-              <li><span>预计到货：</span><strong id="overviewEstimatedArrivalDays">-</strong></li>
+            <ul class="stats overview-inline-stats">
+              <li><span>建议备货产品数</span><strong id="overviewRecommendationCount">-</strong></li>
+              <li><span>紧急</span><strong id="overviewRecommendationUrgentCount">-</strong></li>
+              <li><span>高优先</span><strong id="overviewRecommendationHighCount">-</strong></li>
+              <li><span>中优先</span><strong id="overviewRecommendationMediumCount">-</strong></li>
+              <li><span>备货目标天数</span><strong id="overviewTargetDays">-</strong></li>
+              <li><span>预计到货</span><strong id="overviewEstimatedArrivalDays">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
               <table>
@@ -1516,7 +1528,7 @@
 
           <article class="card">
             <h3>废弃建议</h3>
-            <ul class="stats">
+            <ul class="stats overview-inline-stats">
               <li><span>90天无销量产品</span><strong id="overviewNoSales90Count">-</strong></li>
               <li><span>270天无销量产品</span><strong id="overviewNoSales270Count">-</strong></li>
             </ul>
