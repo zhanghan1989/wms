@@ -916,6 +916,34 @@ button.ghost {
   justify-content: space-between;
 }
 
+.overview-production-head {
+  justify-content: flex-start;
+}
+
+#downloadProductionRecommendationExcelBtn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+#downloadProductionRecommendationExcelBtn:hover {
+  background: #0b6f4c;
+  border-color: #0b6f4c;
+}
+
+.overview-production-stats {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.overview-production-stats li {
+  justify-content: flex-start;
+  gap: 0;
+}
+
+.overview-production-stats strong {
+  text-align: left;
+}
+
 .overview-table-wrap {
   margin-top: 10px;
   max-height: 70vh;
