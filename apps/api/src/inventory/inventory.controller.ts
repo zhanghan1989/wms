@@ -175,6 +175,22 @@ export class InventoryController {
     return this.inventoryService.getOverviewDashboard();
   }
 
+  @Get('dashboard/production-recommendations-excel')
+  async downloadProductionRecommendationsExcel(@Res() res: Response): Promise<void> {
+    const file = await this.inventoryService.buildProductionRecommendationsExcel();
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
   @Get('print-agent-windows-exe')
   async downloadPrintAgentWindowsExe(@Res() res: Response): Promise<void> {
     const file = await this.inventoryService.buildPrintAgentWindowsExe();

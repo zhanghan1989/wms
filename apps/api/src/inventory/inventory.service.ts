@@ -953,6 +953,68 @@ export class InventoryService {
     return getOverviewDashboardByProduct.call(this);
   }
 
+  async buildProductionRecommendationsExcel(): Promise<{ fileName: string; content: Buffer }> {
+    const dashboard = (await getOverviewDashboardByProduct.call(this)) as {
+      production?: {
+        recommendations?: Array<{
+          productId?: string | null;
+          productName?: string | null;
+          totalStock?: number | null;
+          availableStock?: number | null;
+          lockedStock?: number | null;
+          inTransitStock?: number | null;
+          arrangedProductionQty?: number | null;
+          securedStock?: number | null;
+          outbound30d?: number | null;
+          avgDailyOutbound90d?: number | null;
+          stockCoverageDays?: number | null;
+          securedCoverageDays?: number | null;
+          targetDemandQty?: number | null;
+          suggestedProductionQty?: number | null;
+          shortageDays?: number | null;
+          estimatedArrivalDays?: number | null;
+          demandSpike?: boolean | null;
+          fluctuationQty?: number | null;
+          priority?: string | null;
+        }>;
+      };
+    };
+    const recommendations = Array.isArray(dashboard.production?.recommendations)
+      ? dashboard.production.recommendations
+      : [];
+    const data = recommendations.map((row) => ({
+      '产品ID': row.productId ?? '',
+      '产品名称': row.productName ?? '',
+      '总库存': Number(row.totalStock ?? 0),
+      '可用库存': Number(row.availableStock ?? 0),
+      '锁定库存': Number(row.lockedStock ?? 0),
+      '在途库存': Number(row.inTransitStock ?? 0),
+      '已安排生产': Number(row.arrangedProductionQty ?? 0),
+      '总保障库存': Number(row.securedStock ?? 0),
+      '30天出库量': Number(row.outbound30d ?? 0),
+      '90天日均消耗': Number(row.avgDailyOutbound90d ?? 0),
+      '在库覆盖天数': Number(row.stockCoverageDays ?? 0),
+      '总覆盖天数': Number(row.securedCoverageDays ?? 0),
+      '目标需求': Number(row.targetDemandQty ?? 0),
+      '建议生产量': Number(row.suggestedProductionQty ?? 0),
+      '预计缺口天数': Number(row.shortageDays ?? 0),
+      '预计到货天数': Number(row.estimatedArrivalDays ?? 0),
+      '异常波动': row.demandSpike ? '是' : '否',
+      '波动数量': Number(row.fluctuationQty ?? 0),
+      '优先级': row.priority ?? '',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '工厂备货建议');
+    const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+
+    return {
+      fileName: `工厂备货建议-${this.formatShortDateForFilename(new Date())}.xlsx`,
+      content,
+    };
+  }
+
   async getBulkUpdateTemplate(): Promise<{ fileName: string; content: Buffer }> {
     const cwd = process.cwd();
     const candidates = [
@@ -1165,6 +1227,11 @@ export class InventoryService {
   private formatDateForFilename(date: Date): string {
     const parts = getZonedDateParts(date, APP_TIMEZONE);
     return `${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}`;
+  }
+
+  private formatShortDateForFilename(date: Date): string {
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `${parts.year.slice(-2)}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}`;
   }
 
   private formatDateTimeForExport(date: Date | null | undefined): string {
@@ -2568,7 +2635,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       }
     }
 
-    if (avgDailyOutbound90d <= 0) {
+    if (avgDailyOutbound90d < 0.1) {
       return;
     }
 

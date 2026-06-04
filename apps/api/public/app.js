@@ -2000,6 +2000,15 @@ async function loadOverviewDashboard() {
   renderOverviewDashboard(state.overviewDashboard);
 }
 
+async function downloadProductionRecommendationExcel() {
+  const fileName = await downloadAuthorizedFile(
+    "/inventory/dashboard/production-recommendations-excel",
+    {},
+    "工厂备货建议.xlsx",
+  );
+  showToast(`已下载 ${fileName}`);
+}
+
 function formatFileSize(bytes) {
   const size = Number(bytes);
   if (!Number.isFinite(size) || size <= 0) return "0 B";
@@ -7318,15 +7327,18 @@ async function loadEmptyBoxes() {
 function getBatchInboundStatusText(status, order = null) {
   if (status === "waiting_upload") {
     if (order?.domesticOrderNo && !order?.seaOrderNo) {
-      return "待发海运";
+      return "已安排生产（待发海运）";
     }
     if (order?.uploadedFileName && !order?.domesticOrderNo) {
-      return "待填国内单号";
+      return "已安排生产（待填国内单号）";
     }
-    return "等待上传批量入库文档";
+    if (order?.uploadedFileName) {
+      return "已安排生产";
+    }
+    return "待上传明细";
   }
-  if (status === "waiting_inbound") return "待入库";
-  if (status === "confirmed") return "已确认";
+  if (status === "waiting_inbound") return "在途库存（待入库）";
+  if (status === "confirmed") return "已入库";
   if (status === "void") return "已作废";
   return status || "-";
 }
@@ -13304,6 +13316,17 @@ function bindForms() {
     try {
       switchPanel("overview");
       await loadOverviewDashboard();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("downloadProductionRecommendationExcelBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", async () => {
+        await downloadProductionRecommendationExcel();
+      });
     } catch (error) {
       showToast(error.message, true);
     }
