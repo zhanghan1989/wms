@@ -167,6 +167,15 @@ const MEDIUM_TOTAL_COVERAGE_DAYS = 90;
 const PRODUCTION_TARGET_DAYS = 90;
 const ESTIMATED_PRODUCTION_ARRIVAL_DAYS = 45;
 const ANOMALY_MIN_DELTA_QTY = 10;
+const CHINA_DISPATCH_MODES = ['china_pending', 'china_no_stock'];
+
+function getJsonObjectString(value: Prisma.JsonValue | null | undefined, key: string): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return '';
+  }
+  const candidate = (value as Record<string, Prisma.JsonValue>)[key];
+  return typeof candidate === 'string' ? candidate.trim() : '';
+}
 
 function raiseProductionPriority(priority: string): string {
   if (priority === '紧急') return '紧急';
@@ -2164,6 +2173,32 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     qtyDelta: { lt: 0 },
     OR: [{ refType: 'fba_replenishment' }, { movementType: 'outbound' }],
   };
+  const chinaRakutenShipmentOrderFilter: Prisma.RakutenOrderRecordWhereInput = {
+    AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
+    shipmentNoRegisteredAt: { gte: from270d },
+    OR: [
+      { dispatchMode: { in: CHINA_DISPATCH_MODES } },
+      { xiyaExportedAt: { not: null } },
+    ],
+  };
+  const chinaAmazonShipmentOrderFilter: Prisma.AmazonOrderRecordWhereInput = {
+    AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
+    shipmentNoRegisteredAt: { gte: from270d },
+    OR: [
+      { dispatchMode: { in: CHINA_DISPATCH_MODES } },
+      { xiyaExportedAt: { not: null } },
+      { shippingOrigin: { contains: '中国' } },
+    ],
+  };
+  const chinaManualShipmentOrderFilter: Prisma.ManualOrderRecordWhereInput = {
+    AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
+    shipmentNoRegisteredAt: { gte: from270d },
+    OR: [
+      { dispatchMode: { in: CHINA_DISPATCH_MODES } },
+      { xiyaExportedAt: { not: null } },
+      { shippingOrigin: { contains: '中国' } },
+    ],
+  };
 
   const [
     activeUserCount,
@@ -2180,6 +2215,9 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     outbound7Rows,
     outbound90Rows,
     outbound270Rows,
+    chinaRakutenRows,
+    chinaAmazonRows,
+    chinaManualRows,
   ] = await Promise.all([
     service.prisma.user.count({
       where: {
@@ -2213,6 +2251,8 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       select: {
         id: true,
         sku: true,
+        rbSku: true,
+        fbmSku: true,
         productId: true,
       },
     }),
@@ -2291,6 +2331,33 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       },
       _sum: { qtyDelta: true },
     }),
+    service.prisma.rakutenOrderRecord.findMany({
+      where: chinaRakutenShipmentOrderFilter,
+      select: {
+        skuCode: true,
+        setComponentSkuCode: true,
+        orderQuantity: true,
+        shipmentNoRegisteredAt: true,
+      },
+    }),
+    service.prisma.amazonOrderRecord.findMany({
+      where: chinaAmazonShipmentOrderFilter,
+      select: {
+        sku: true,
+        rawPayload: true,
+        quantityPurchased: true,
+        shipmentNoRegisteredAt: true,
+      },
+    }),
+    (service.prisma as any).manualOrderRecord.findMany({
+      where: chinaManualShipmentOrderFilter,
+      select: {
+        sku: true,
+        rawPayload: true,
+        quantityPurchased: true,
+        shipmentNoRegisteredAt: true,
+      },
+    }),
   ]);
 
   const productById = new Map<
@@ -2314,10 +2381,12 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
   activeSkus.forEach((item) => {
     const productId = String(item.productId || '').trim();
     if (!productId) return;
-    const skuCode = String(item.sku || '').trim();
-    if (skuCode) {
-      skuCodeToProductId.set(skuCode, productId);
-    }
+    [item.sku, item.rbSku, item.fbmSku].forEach((candidate) => {
+      const skuCode = String(candidate || '').trim();
+      if (skuCode && !skuCodeToProductId.has(skuCode)) {
+        skuCodeToProductId.set(skuCode, productId);
+      }
+    });
   });
 
   const lockedByProduct = new Map<string, number>();
@@ -2368,6 +2437,40 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
   const outbound7ByProduct = toOutboundMap(outbound7Rows);
   const outbound90ByProduct = toOutboundMap(outbound90Rows);
   const outbound270ByProduct = toOutboundMap(outbound270Rows);
+
+  const resolveAmazonLikeDemandProductId = (row: { sku: string | null; rawPayload: Prisma.JsonValue | null }): string | null => {
+    const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
+    if (productIdOverride && activeProductIdSet.has(productIdOverride)) {
+      return productIdOverride;
+    }
+    const skuCode = String(row.sku ?? '').trim();
+    return skuCodeToProductId.get(skuCode) ?? null;
+  };
+  const addDemandQty = (map: Map<string, number>, productId: string, qty: number) => {
+    if (!productId || qty <= 0 || !activeProductIdSet.has(productId)) return;
+    map.set(productId, (map.get(productId) ?? 0) + qty);
+  };
+  const addChinaDemandQty = (productId: string | null, qtyRaw: number | null, registeredAt: Date | null) => {
+    const productIdText = String(productId ?? '').trim();
+    const qty = Number(qtyRaw ?? 0);
+    if (!productIdText || !registeredAt || !Number.isFinite(qty) || qty <= 0) return;
+    if (registeredAt >= from270d) addDemandQty(outbound270ByProduct, productIdText, qty);
+    if (registeredAt >= from90d) addDemandQty(outbound90ByProduct, productIdText, qty);
+    if (registeredAt >= from30d) addDemandQty(outbound30ByProduct, productIdText, qty);
+    if (registeredAt >= from14d) addDemandQty(outbound14ByProduct, productIdText, qty);
+    if (registeredAt >= from7d) addDemandQty(outbound7ByProduct, productIdText, qty);
+  };
+
+  chinaRakutenRows.forEach((row) => {
+    const productId = String(row.skuCode ?? '').trim() || String(row.setComponentSkuCode ?? '').trim() || null;
+    addChinaDemandQty(productId, row.orderQuantity, row.shipmentNoRegisteredAt);
+  });
+  chinaAmazonRows.forEach((row) => {
+    addChinaDemandQty(resolveAmazonLikeDemandProductId(row), row.quantityPurchased, row.shipmentNoRegisteredAt);
+  });
+  (chinaManualRows as Array<{ sku: string | null; rawPayload: Prisma.JsonValue | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).forEach((row) => {
+    addChinaDemandQty(resolveAmazonLikeDemandProductId(row), row.quantityPurchased, row.shipmentNoRegisteredAt);
+  });
 
   let totalStock = 0;
   let availableStock = 0;
@@ -2632,7 +2735,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       urgentCount,
       highCount,
       mediumCount,
-      recommendations: recommendations.slice(0, 50),
+      recommendations,
     },
     obsolete: {
       noSales90dCount: noSales90dSkus.length,

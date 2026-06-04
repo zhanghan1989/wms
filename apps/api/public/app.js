@@ -303,6 +303,7 @@ const state = {
   roleOptionEditingCodes: new Set(),
   auditFbaRequestNoById: {},
   overviewDashboard: null,
+  overviewProductionVisibleCount: 30,
   dataBackups: [],
   dataBackupsVisibleCount: 0,
   pendingPrintLabel: null,
@@ -342,6 +343,7 @@ let usersLoadObserver = null;
 let auditLoadObserver = null;
 let stocktakePlannerLoadObserver = null;
 let dataBackupLoadObserver = null;
+let overviewProductionLoadObserver = null;
 let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let rakutenComboProductLoadObserver = null;
@@ -1799,8 +1801,50 @@ function renderOverviewTable(bodyId, html, colspan) {
   body.innerHTML = html || `<tr><td colspan="${colspan}" class="muted">-</td></tr>`;
 }
 
+function renderOverviewProductionRecommendations(production = state.overviewDashboard?.production || {}) {
+  const allRows = Array.isArray(production.recommendations) ? production.recommendations : [];
+  const visibleCount = Math.max(30, Number(state.overviewProductionVisibleCount || 0));
+  state.overviewProductionVisibleCount = visibleCount;
+  const productionRows = allRows
+    .slice(0, visibleCount)
+    .map((item) => {
+      const priority = displayText(item.priority);
+      const priorityClass =
+        priority === "紧急" ? "urgent" : priority === "高" ? "high" : priority === "中" ? "medium" : "normal";
+      return `
+      <tr>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
+        <td>${formatOverviewNumber(item.availableStock)}</td>
+        <td>${formatOverviewNumber(item.inTransitStock)}</td>
+        <td>${formatOverviewNumber(item.arrangedProductionQty)}</td>
+        <td>${formatOverviewNumber(item.securedStock)}</td>
+        <td>${formatOverviewNumber(item.avgDailyOutbound90d ?? item.avgDailyOutbound, 1)}</td>
+        <td>${formatOverviewRatio(item.stockCoverageDays ?? item.coverageDays)}</td>
+        <td>${formatOverviewRatio(item.securedCoverageDays)}</td>
+        <td>${formatOverviewNumber(item.targetDemandQty ?? item.targetStock)}</td>
+        <td>${formatOverviewNumber(item.suggestedProductionQty)}</td>
+        <td>${formatOverviewRatio(item.shortageDays)}</td>
+        <td><span class="priority-chip priority-${priorityClass}">${escapeHtml(priority)}</span></td>
+      </tr>
+    `;
+    })
+    .join("");
+  renderOverviewTable("overviewProductionBody", productionRows, 14);
+}
+
+function loadMoreOverviewProductionIfNeeded() {
+  const production = state.overviewDashboard?.production || {};
+  const rows = Array.isArray(production.recommendations) ? production.recommendations : [];
+  if (state.overviewProductionVisibleCount >= rows.length) return;
+  state.overviewProductionVisibleCount += 30;
+  renderOverviewProductionRecommendations(production);
+}
+
 function clearOverviewDashboard() {
   state.overviewDashboard = null;
+  state.overviewProductionVisibleCount = 30;
   $("statUsers").textContent = "-";
   $("statSkus").textContent = "-";
   $("statShelves").textContent = "-";
@@ -1840,6 +1884,7 @@ function clearOverviewDashboard() {
 }
 
 function renderOverviewDashboard(data) {
+  state.overviewProductionVisibleCount = 30;
   const summary = data?.summary || {};
   const health = data?.health || {};
   const demand = data?.demand || {};
@@ -1916,32 +1961,7 @@ function renderOverviewDashboard(data) {
     .join("");
   renderOverviewTable("overviewAnomalyBody", anomalyRows, 6);
 
-  const productionRows = (Array.isArray(production.recommendations) ? production.recommendations : [])
-    .map((item) => {
-      const priority = displayText(item.priority);
-      const priorityClass =
-        priority === "紧急" ? "urgent" : priority === "高" ? "high" : priority === "中" ? "medium" : "normal";
-      return `
-      <tr>
-        <td>${escapeHtml(displayText(item.productId))}</td>
-        <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${formatOverviewNumber(item.totalStock)}</td>
-        <td>${formatOverviewNumber(item.availableStock)}</td>
-        <td>${formatOverviewNumber(item.inTransitStock)}</td>
-        <td>${formatOverviewNumber(item.arrangedProductionQty)}</td>
-        <td>${formatOverviewNumber(item.securedStock)}</td>
-        <td>${formatOverviewNumber(item.avgDailyOutbound90d ?? item.avgDailyOutbound, 1)}</td>
-        <td>${formatOverviewRatio(item.stockCoverageDays ?? item.coverageDays)}</td>
-        <td>${formatOverviewRatio(item.securedCoverageDays)}</td>
-        <td>${formatOverviewNumber(item.targetDemandQty ?? item.targetStock)}</td>
-        <td>${formatOverviewNumber(item.suggestedProductionQty)}</td>
-        <td>${formatOverviewRatio(item.shortageDays)}</td>
-        <td><span class="priority-chip priority-${priorityClass}">${escapeHtml(priority)}</span></td>
-      </tr>
-    `;
-    })
-    .join("");
-  renderOverviewTable("overviewProductionBody", productionRows, 14);
+  renderOverviewProductionRecommendations(production);
 
   const noSales90Rows = (Array.isArray(obsolete.noSales90dSkus) ? obsolete.noSales90dSkus : [])
     .map(
@@ -3973,6 +3993,31 @@ function setupDataBackupLoadObserver() {
     },
   );
   dataBackupLoadObserver.observe(sentinel);
+}
+
+function setupOverviewProductionLoadObserver() {
+  if (overviewProductionLoadObserver) {
+    overviewProductionLoadObserver.disconnect();
+    overviewProductionLoadObserver = null;
+  }
+  if (typeof IntersectionObserver !== "function") return;
+  const sentinel = $("overviewProductionLoadSentinel");
+  const tableWrap = sentinel?.closest(".overview-table-wrap");
+  if (!tableWrap || !sentinel) return;
+
+  overviewProductionLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreOverviewProductionIfNeeded();
+      }
+    },
+    {
+      root: tableWrap,
+      rootMargin: "0px 0px 160px 0px",
+      threshold: 0.01,
+    },
+  );
+  overviewProductionLoadObserver.observe(sentinel);
 }
 
 function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
@@ -16654,6 +16699,7 @@ setupAuditLoadObserver();
 setupFbaReplenishmentLoadObserver();
 setupStocktakePlannerLoadObserver();
 setupDataBackupLoadObserver();
+setupOverviewProductionLoadObserver();
 setupRakutenComboProductLoadObserver();
 setupResponsiveTableLabels();
 ensureOverseasWarehouseQueryUi();

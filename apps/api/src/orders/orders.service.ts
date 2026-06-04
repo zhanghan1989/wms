@@ -2882,6 +2882,7 @@ export class OrdersService {
       const [enriched] = await this.enrichOrderRows([updated]);
       return enriched;
     }
+    await this.assertEditableOrderNotInActiveOverseasPickingBatch('rakuten', id);
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
     let skuCode = this.normalizeEditableText(payload.skuCode, 'SKU', 128);
@@ -2987,6 +2988,7 @@ export class OrdersService {
       const [enriched] = await this.enrichAmazonOrderRows([updated]);
       return enriched;
     }
+    await this.assertEditableOrderNotInActiveOverseasPickingBatch('amazon', id);
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
     const orderItemId = this.normalizeEditableText(payload.orderItemId, 'order-item-id', 64);
@@ -3090,6 +3092,7 @@ export class OrdersService {
       const [enriched] = await this.enrichManualOrderRows([updated as ManualOrderRecordLike]);
       return enriched;
     }
+    await this.assertEditableOrderNotInActiveOverseasPickingBatch('manual', id);
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
     const orderItemId = this.normalizeEditableText(payload.orderItemId, 'order-item-id', 64);
@@ -3403,6 +3406,35 @@ export class OrdersService {
     if (pickingItem) {
       throw new ConflictException(`订单 ${pickingItem.orderId ?? ''} 已拣货，请联系海外仓`);
     }
+  }
+
+  private async assertEditableOrderNotInActiveOverseasPickingBatch(
+    source: 'rakuten' | 'amazon' | 'manual',
+    id: bigint,
+  ): Promise<void> {
+    const pickingItem = await this.prisma.overseasPickingBatchItem.findFirst({
+      where: {
+        source,
+        sourceRecordId: id,
+        batch: {
+          status: {
+            in: [
+              OVERSEAS_PICKING_BATCH_STATUS.CREATED,
+              OVERSEAS_PICKING_BATCH_STATUS.PICKED,
+              OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED,
+            ],
+          },
+        },
+      },
+      select: {
+        orderId: true,
+      },
+    });
+    if (!pickingItem) {
+      return;
+    }
+    const orderId = String(pickingItem.orderId ?? '').trim();
+    throw new ConflictException(`订单${orderId ? ` ${orderId}` : ''}正在拣货中，请联系海外仓`);
   }
 
   private async assertEditedOrderIdentityDoesNotConflict(
