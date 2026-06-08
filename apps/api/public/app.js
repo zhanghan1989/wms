@@ -8777,27 +8777,19 @@ async function openOrderSearchOrderDetail(source, id) {
     throw new Error("缺少订单详情标识");
   }
 
+  const item = await request(`/orders/detail/${encodeURIComponent(normalizedSource)}/${encodeURIComponent(normalizedId)}`);
   if (normalizedSource === "rakuten") {
-    if (!state.orders.some((item) => String(item?.id || "") === normalizedId)) {
-      await loadOrders();
-    }
-    openRakutenOrderDetailModal(normalizedId);
+    openRakutenOrderDetailModalFromItem(item);
     return;
   }
 
   if (normalizedSource === "amazon") {
-    if (!state.amazonOrders.some((item) => String(item?.id || "") === normalizedId)) {
-      await loadAmazonOrders();
-    }
-    openAmazonOrderDetailModal(normalizedId, "amazon");
+    openAmazonOrderDetailModalFromItem(item, "amazon");
     return;
   }
 
   if (normalizedSource === "manual") {
-    if (!state.manualOrders.some((item) => String(item?.id || "") === normalizedId)) {
-      await loadManualOrders();
-    }
-    openAmazonOrderDetailModal(normalizedId, "manual");
+    openAmazonOrderDetailModalFromItem(item, "manual");
     return;
   }
 

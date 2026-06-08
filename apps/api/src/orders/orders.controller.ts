@@ -56,6 +56,12 @@ export class OrdersController {
     return this.ordersService.searchOrderSuggestions(query);
   }
 
+  @Get('detail/:source/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getOrderDetail(@Param('source') source: string, @Param('id') id: string): Promise<unknown> {
+    return this.ordersService.getOrderDetail(source, id);
+  }
+
   @Put('rakuten/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async updateRakutenOrder(

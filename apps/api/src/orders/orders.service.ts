@@ -2447,6 +2447,40 @@ export class OrdersService {
       .slice(0, 50);
   }
 
+  async getOrderDetail(sourceRaw: string, idRaw: string): Promise<unknown> {
+    const source = String(sourceRaw ?? '').trim();
+    const id = parseId(idRaw, 'id');
+
+    if (source === 'rakuten') {
+      const row = await this.prisma.rakutenOrderRecord.findUnique({ where: { id } });
+      if (!row) {
+        throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
+      }
+      const [enriched] = await this.enrichOrderRows([row]);
+      return enriched;
+    }
+
+    if (source === 'amazon') {
+      const row = await this.prisma.amazonOrderRecord.findUnique({ where: { id } });
+      if (!row) {
+        throw new NotFoundException(`亚马逊订单不存在: ${idRaw}`);
+      }
+      const [enriched] = await this.enrichAmazonOrderRows([row]);
+      return enriched;
+    }
+
+    if (source === 'manual') {
+      const row = await (this.prisma as any).manualOrderRecord.findUnique({ where: { id } });
+      if (!row) {
+        throw new NotFoundException(`手动订单不存在: ${idRaw}`);
+      }
+      const [enriched] = await this.enrichManualOrderRows([row as ManualOrderRecordLike]);
+      return enriched;
+    }
+
+    throw new BadRequestException('source 只支持 rakuten、amazon 或 manual');
+  }
+
   private async findOrderSearchSuggestionsByNormalizedColumn(
     type: 'orderId' | 'phone',
     normalizedFragment: string,
