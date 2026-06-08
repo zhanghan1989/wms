@@ -4411,28 +4411,31 @@ export class OrdersService {
     const lines = [
       headers.join('\t'),
       ...rows.map((row) =>
-        [
-          row.orderId,
-          row.orderItemId,
-          String(row.quantityPurchased ?? ''),
-          this.formatAmazonShipmentConfirmationDate(row.shipmentNoRegisteredAt as Date),
-          'YAMATO TRANSPORT',
-          '',
-          this.normalizeAmazonTrackingNumber(row.shipmentNo),
-          'Yamato-bin',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-        ]
-          .map((value) => this.escapeTsvCell(value))
-          .join('\t'),
+        {
+          const shipmentProfile = this.resolveAmazonShipmentConfirmationProfile(row);
+          return [
+            row.orderId,
+            row.orderItemId,
+            String(row.quantityPurchased ?? ''),
+            this.formatAmazonShipmentConfirmationDate(row.shipmentNoRegisteredAt as Date),
+            shipmentProfile.carrierCode,
+            '',
+            this.normalizeAmazonTrackingNumber(row.shipmentNo),
+            shipmentProfile.shipMethod,
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+          ]
+            .map((value) => this.escapeTsvCell(value))
+            .join('\t');
+        },
       ),
     ];
     return Buffer.from(`${lines.join('\r\n')}\r\n`, 'utf8');
@@ -8791,6 +8794,23 @@ export class OrdersService {
       return OVERSEAS_DISPATCH_MODE.OVERSEAS;
     }
     return null;
+  }
+
+  private resolveAmazonShipmentConfirmationProfile(row: Pick<AmazonOrderRecord, 'dispatchMode' | 'shippingOrigin'>): {
+    carrierCode: string;
+    shipMethod: string;
+  } {
+    const dispatchMode = this.resolveEffectiveAmazonDispatchMode(row);
+    if (this.isChinaDispatchMode(dispatchMode)) {
+      return {
+        carrierCode: 'SAGAWA EXPRESS',
+        shipMethod: 'Hikyaku Express',
+      };
+    }
+    return {
+      carrierCode: 'YAMATO TRANSPORT',
+      shipMethod: 'Yamato-bin',
+    };
   }
 
   private async buildAmazonManualOrderCreateData(
