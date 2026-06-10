@@ -7284,6 +7284,7 @@ export class OrdersService {
         where: {
           shipmentNo: { not: null, notIn: [''] },
           trackingIsDelivered: false,
+          ...this.buildRakutenChinaDispatchWhere(),
         },
         orderBy: [
           { trackingCheckedAt: 'asc' },
@@ -7326,6 +7327,7 @@ export class OrdersService {
         where: {
           shipmentNo: { not: null, notIn: [''] },
           trackingIsDelivered: false,
+          ...this.buildRakutenChinaDispatchWhere(),
         },
         distinct: ['shipmentNo'],
         select: { shipmentNo: true },
@@ -7334,6 +7336,7 @@ export class OrdersService {
         where: {
           shipmentNo: { not: null, notIn: [''] },
           trackingCheckedAt: null,
+          ...this.buildRakutenChinaDispatchWhere(),
         },
         distinct: ['shipmentNo'],
         select: { shipmentNo: true },
@@ -9664,6 +9667,14 @@ export class OrdersService {
       return {};
     }
     return { OR: [{ shipmentNo: null }, { shipmentNo: '' }] };
+  }
+
+  private buildRakutenChinaDispatchWhere(): { dispatchMode: { in: string[] } } {
+    return {
+      dispatchMode: {
+        in: [OVERSEAS_DISPATCH_MODE.CHINA_PENDING, OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK],
+      },
+    };
   }
 
   private resolveChinaDispatchReason(dispatchModeRaw: string | null | undefined): string {
