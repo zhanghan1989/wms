@@ -874,6 +874,11 @@ const UOF_TRACKING_DELIVERED_TEXT = '配達完了';
 const UOF_TRACKING_FETCH_TIMEOUT_MS = 8000;
 const UOF_TRACKING_SYNC_BATCH_SIZE = 100;
 const UOF_TRACKING_SYNC_CONCURRENCY = 6;
+const UOF_TRACKING_SYNC_MAX_PER_RUN_RAW = Number(process.env.UOF_TRACKING_SYNC_MAX_PER_RUN ?? 500);
+const UOF_TRACKING_SYNC_MAX_PER_RUN =
+  Number.isInteger(UOF_TRACKING_SYNC_MAX_PER_RUN_RAW) && UOF_TRACKING_SYNC_MAX_PER_RUN_RAW > 0
+    ? Math.min(UOF_TRACKING_SYNC_MAX_PER_RUN_RAW, 5000)
+    : 500;
 const RAKUTEN_TRACKING_STATUS_SYNC_CRON = '0 0 5 * * *';
 const MANUAL_ORDER_UPLOAD_HEADERS = {
   orderId: ['订单号', '注文番号', 'orderId', 'order-id'],
@@ -7263,6 +7268,7 @@ export class OrdersService {
     syncedAt: string;
     candidateCount: number;
     trackingNoCount: number;
+    maxPerRun: number;
     deliveredCount: number;
     customsClearanceCount: number;
     latestCheckedAt: string | null;
@@ -7284,6 +7290,8 @@ export class OrdersService {
           { shipmentNoRegisteredAt: 'desc' },
           { id: 'desc' },
         ],
+        distinct: ['shipmentNo'],
+        take: UOF_TRACKING_SYNC_MAX_PER_RUN,
       });
       const statusByNo = await this.refreshRakutenTrackingStatusesForRows(rows);
       const statuses = Array.from(statusByNo.values());
@@ -7292,6 +7300,7 @@ export class OrdersService {
         syncedAt: new Date().toISOString(),
         candidateCount: rows.length,
         trackingNoCount: statusByNo.size,
+        maxPerRun: UOF_TRACKING_SYNC_MAX_PER_RUN,
         deliveredCount: statuses.filter((status) => this.isDeliveredRakutenTrackingStatus(status)).length,
         customsClearanceCount: statuses.filter((status) => status.hasCustomsClearance).length,
         latestCheckedAt: summary.latestCheckedAt,

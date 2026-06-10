@@ -12550,11 +12550,13 @@ function bindForms() {
           renderRakutenTrackingStatusSummary(result);
           await loadOrders();
           showToast(
-            `已同步快递状态：候选订单 ${Number(result?.candidateCount || 0)} 条，快递单号 ${Number(
+            `已同步本轮快递状态：本轮上限 ${Number(result?.maxPerRun || 0)} 个，候选订单 ${Number(
+              result?.candidateCount || 0,
+            )} 条，快递单号 ${Number(
               result?.trackingNoCount || 0,
             )} 个，配達完了 ${Number(result?.deliveredCount || 0)} 个，通関許可 ${Number(
               result?.customsClearanceCount || 0,
-            )} 个`,
+            )} 个，剩余未完成 ${Number(result?.pendingTrackingNoCount || 0)} 个`,
           );
         });
       } catch (error) {
