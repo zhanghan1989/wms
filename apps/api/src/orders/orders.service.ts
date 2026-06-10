@@ -4493,14 +4493,18 @@ export class OrdersService {
       throw new BadRequestException(`${scope.label}没有可下载的已登记发货单号乐天订单`);
     }
 
-    const clearedRows = rows.filter((row) => this.resolveRakutenTrackingClearanceStatusFromRow(row).hasCustomsClearance);
-    if (!clearedRows.length) {
+    const downloadableRows = rows.filter(
+      (row) =>
+        !this.isChinaDispatchMode(row.dispatchMode) ||
+        this.resolveRakutenTrackingClearanceStatusFromRow(row).hasCustomsClearance,
+    );
+    if (!downloadableRows.length) {
       throw new BadRequestException(
-        `${scope.label}没有已取得「${UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT}」快递状态的乐天订单`,
+        `${scope.label}没有可下载的乐天订单：中国发订单需要已取得「${UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT}」，日本发订单需要已登记发货单号`,
       );
     }
 
-    const invalidRows = clearedRows
+    const invalidRows = downloadableRows
       .map((row) => {
         const missingFields = [
           String(row.orderId ?? '').trim() ? null : '注文番号',
@@ -4515,11 +4519,11 @@ export class OrdersService {
     }
 
     const chinaDispatchOrderRecordIdsByOrderId =
-      await this.loadRakutenChinaDispatchOrderRecordIdsByOrderId(clearedRows);
+      await this.loadRakutenChinaDispatchOrderRecordIdsByOrderId(downloadableRows);
     const headers = ['注文番号', '送付先ID', '発送明細ID', 'お荷物伝票番号', '配送会社', '発送日'];
     const lines = [
       headers.map((value) => this.escapeCsvCell(value)).join(','),
-      ...clearedRows.map((row) =>
+      ...downloadableRows.map((row) =>
         [
           row.orderId,
           this.resolveRakutenShippingDestinationId(row),
@@ -4536,8 +4540,8 @@ export class OrdersService {
     return {
       fileName: `${this.formatYamatoFileNameStamp()}_${scope.fileLabel}_ShippingCompletion.csv`,
       content: iconv.encode(`${lines.join('\r\n')}\r\n`, 'cp932'),
-      rowCount: clearedRows.length,
-      skippedWithoutCustomsClearanceCount: rows.length - clearedRows.length,
+      rowCount: downloadableRows.length,
+      skippedWithoutCustomsClearanceCount: rows.length - downloadableRows.length,
     };
   }
 
