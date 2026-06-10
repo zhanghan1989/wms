@@ -912,8 +912,48 @@ button.ghost {
 }
 
 .stats li {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: max-content max-content;
+  justify-content: flex-start;
+  align-items: baseline;
+  column-gap: 6px;
+}
+
+.stats li span::after {
+  content: "：";
+}
+
+.overview-key-stats li {
+  grid-template-columns: minmax(7.5em, max-content) max-content;
+  column-gap: 8px;
+}
+
+.overview-production-head {
+  justify-content: flex-start;
+}
+
+#downloadProductionRecommendationExcelBtn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+#downloadProductionRecommendationExcelBtn:hover {
+  background: #0b6f4c;
+  border-color: #0b6f4c;
+}
+
+.overview-inline-stats {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.overview-inline-stats li {
+  justify-content: flex-start;
+  column-gap: 6px;
+}
+
+.overview-inline-stats strong {
+  text-align: left;
 }
 
 .overview-table-wrap {
@@ -954,12 +994,12 @@ button.ghost {
 }
 
 #overview .cards {
-  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
 }
 
-#overview .cards .card:nth-child(3),
 #overview .cards .card:nth-child(4),
-#overview .cards .card:nth-child(5) {
+#overview .cards .card:nth-child(5),
+#overview .cards .card:nth-child(6) {
   grid-column: 1 / -1;
 }
 
@@ -1851,6 +1891,53 @@ pre {
   z-index: 3;
   background: #f2f7f4;
   box-shadow: 0 1px 0 var(--line), 0 8px 14px rgba(17, 32, 21, 0.08);
+}
+
+.overseas-batch-stock-body {
+  display: grid;
+  gap: 12px;
+  overflow: auto;
+  min-height: 0;
+}
+
+.overseas-batch-stock-group {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.overseas-batch-stock-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: #f2f7f4;
+  border-bottom: 1px solid var(--line);
+  font-weight: 700;
+}
+
+.overseas-batch-stock-group-head span {
+  white-space: nowrap;
+}
+
+.overseas-batch-stock-table {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  margin: 0;
+}
+
+.overseas-batch-stock-table th,
+.overseas-batch-stock-table td {
+  vertical-align: middle;
+}
+
+.overseas-batch-stock-warning {
+  color: var(--danger);
+  font-weight: 700;
 }
 
 .manage-query-summary {

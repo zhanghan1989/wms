@@ -1357,6 +1357,7 @@ export class OrdersService {
   ): Promise<OverseasPickingBatchCreateResult> {
     const snapshots = await this.collectOverseasPickingBatchItemSnapshots(payload?.items);
     await this.attachOverseasPickingPlanSnapshots(snapshots);
+    await this.assertOverseasPickingBatchDemandWithinStock(snapshots);
     const activeDuplicates = await this.findActiveOverseasPickingBatchDuplicates(snapshots);
     if (activeDuplicates.length) {
       throw new ConflictException(
@@ -2049,7 +2050,7 @@ export class OrdersService {
   async removeOverseasPickingBatchItem(
     batchIdRaw: string,
     itemIdRaw: string,
-  ): Promise<{ success: true; itemId: string; batchDeleted: boolean }> {
+  ): Promise<{ success: true; itemId: string; removedItemIds: string[]; batchDeleted: boolean }> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const itemId = parseId(itemIdRaw, 'itemId');
     const item = await this.prisma.overseasPickingBatchItem.findUnique({
@@ -2077,9 +2078,20 @@ export class OrdersService {
       throw new BadRequestException('当前拣货批次已确认，不能再踢出订单');
     }
 
+    const amazonRemoveScope =
+      item.source === 'amazon' && !this.isChinaDispatchMode(item.dispatchMode)
+        ? await this.resolveAmazonOrderSwitchScope(batchId, [item.sourceRecordId])
+        : { amazonIds: [] as bigint[], batchItemIds: [] as bigint[], pickedItems: [] as OverseasPickingScopePickedItem[] };
+    this.assertNoPickedItemsBeforeSwitchingOrderScopeToChina(amazonRemoveScope.pickedItems);
+    const targetItemIds = Array.from(new Set([item.id, ...amazonRemoveScope.batchItemIds]));
+
     const batchDeleted = await this.prisma.$transaction(async (tx) => {
-      await tx.overseasPickingBatchItem.delete({
-        where: { id: item.id },
+      await tx.overseasPickingBatchItem.deleteMany({
+        where: {
+          id: {
+            in: targetItemIds,
+          },
+        },
       });
 
       const resetDispatchMode =
@@ -2117,6 +2129,7 @@ export class OrdersService {
     return {
       success: true,
       itemId: item.id.toString(),
+      removedItemIds: targetItemIds.map((id) => id.toString()),
       batchDeleted,
     };
   }
@@ -2461,6 +2474,40 @@ export class OrdersService {
         return true;
       })
       .slice(0, 50);
+  }
+
+  async getOrderDetail(sourceRaw: string, idRaw: string): Promise<unknown> {
+    const source = String(sourceRaw ?? '').trim();
+    const id = parseId(idRaw, 'id');
+
+    if (source === 'rakuten') {
+      const row = await this.prisma.rakutenOrderRecord.findUnique({ where: { id } });
+      if (!row) {
+        throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
+      }
+      const [enriched] = await this.enrichOrderRows([row]);
+      return enriched;
+    }
+
+    if (source === 'amazon') {
+      const row = await this.prisma.amazonOrderRecord.findUnique({ where: { id } });
+      if (!row) {
+        throw new NotFoundException(`亚马逊订单不存在: ${idRaw}`);
+      }
+      const [enriched] = await this.enrichAmazonOrderRows([row]);
+      return enriched;
+    }
+
+    if (source === 'manual') {
+      const row = await (this.prisma as any).manualOrderRecord.findUnique({ where: { id } });
+      if (!row) {
+        throw new NotFoundException(`手动订单不存在: ${idRaw}`);
+      }
+      const [enriched] = await this.enrichManualOrderRows([row as ManualOrderRecordLike]);
+      return enriched;
+    }
+
+    throw new BadRequestException('source 只支持 rakuten、amazon 或 manual');
   }
 
   private async findOrderSearchSuggestionsByNormalizedColumn(
@@ -2898,6 +2945,7 @@ export class OrdersService {
       const [enriched] = await this.enrichOrderRows([updated]);
       return enriched;
     }
+    await this.assertEditableOrderNotInActiveOverseasPickingBatch('rakuten', id);
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
     let skuCode = this.normalizeEditableText(payload.skuCode, 'SKU', 128);
@@ -3003,6 +3051,7 @@ export class OrdersService {
       const [enriched] = await this.enrichAmazonOrderRows([updated]);
       return enriched;
     }
+    await this.assertEditableOrderNotInActiveOverseasPickingBatch('amazon', id);
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
     const orderItemId = this.normalizeEditableText(payload.orderItemId, 'order-item-id', 64);
@@ -3106,6 +3155,7 @@ export class OrdersService {
       const [enriched] = await this.enrichManualOrderRows([updated as ManualOrderRecordLike]);
       return enriched;
     }
+    await this.assertEditableOrderNotInActiveOverseasPickingBatch('manual', id);
 
     const orderId = this.normalizeEditableText(payload.orderId, '订单号', 64);
     const orderItemId = this.normalizeEditableText(payload.orderItemId, 'order-item-id', 64);
@@ -3419,6 +3469,35 @@ export class OrdersService {
     if (pickingItem) {
       throw new ConflictException(`订单 ${pickingItem.orderId ?? ''} 已拣货，请联系海外仓`);
     }
+  }
+
+  private async assertEditableOrderNotInActiveOverseasPickingBatch(
+    source: 'rakuten' | 'amazon' | 'manual',
+    id: bigint,
+  ): Promise<void> {
+    const pickingItem = await this.prisma.overseasPickingBatchItem.findFirst({
+      where: {
+        source,
+        sourceRecordId: id,
+        batch: {
+          status: {
+            in: [
+              OVERSEAS_PICKING_BATCH_STATUS.CREATED,
+              OVERSEAS_PICKING_BATCH_STATUS.PICKED,
+              OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED,
+            ],
+          },
+        },
+      },
+      select: {
+        orderId: true,
+      },
+    });
+    if (!pickingItem) {
+      return;
+    }
+    const orderId = String(pickingItem.orderId ?? '').trim();
+    throw new ConflictException(`订单${orderId ? ` ${orderId}` : ''}正在拣货中，请联系海外仓`);
   }
 
   private async assertEditedOrderIdentityDoesNotConflict(
@@ -3857,7 +3936,13 @@ export class OrdersService {
   async switchOverseasWarehouseOrderToChina(
     sourceRaw: string,
     idRaw: string,
-  ): Promise<{ success: true; source: 'rakuten' | 'amazon' | 'manual'; id: string; dispatchMode: string }> {
+  ): Promise<{
+    success: true;
+    source: 'rakuten' | 'amazon' | 'manual';
+    id: string;
+    dispatchMode: string;
+    updatedIds?: string[];
+  }> {
     const source = String(sourceRaw ?? '').trim();
     if (source !== 'rakuten' && source !== 'amazon' && source !== 'manual') {
       throw new BadRequestException('source 只支持 rakuten、amazon 或 manual');
@@ -3953,12 +4038,43 @@ export class OrdersService {
       throw new BadRequestException('当前订单已不在海外仓待处理范围内，无法切中国发');
     }
     if (source === 'amazon') {
-      await this.prisma.amazonOrderRecord.update({
-        where: { id },
+      const orderId = String((row as AmazonOrderRecord).orderId ?? '').trim();
+      const scopedRows = orderId
+        ? await this.prisma.amazonOrderRecord.findMany({
+            where: {
+              orderId,
+              AND: [
+                { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
+                {
+                  OR: [
+                    { dispatchMode: null },
+                    { dispatchMode: '' },
+                    { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
+                  ],
+                },
+              ],
+            },
+            select: {
+              id: true,
+            },
+          })
+        : [];
+      const scopedIds = Array.from(
+        new Set((scopedRows.length ? scopedRows.map((item) => item.id) : [id]).map((itemId) => itemId.toString())),
+      ).map((itemId) => BigInt(itemId));
+      await this.prisma.amazonOrderRecord.updateMany({
+        where: { id: { in: scopedIds } },
         data: {
           dispatchMode: OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
         },
       });
+      return {
+        success: true,
+        source,
+        id: id.toString(),
+        dispatchMode: OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
+        updatedIds: scopedIds.map((itemId) => itemId.toString()),
+      };
     } else {
       await (this.prisma as any).manualOrderRecord.update({
         where: { id },
@@ -4324,28 +4440,31 @@ export class OrdersService {
     const lines = [
       headers.join('\t'),
       ...rows.map((row) =>
-        [
-          row.orderId,
-          row.orderItemId,
-          String(row.quantityPurchased ?? ''),
-          this.formatAmazonShipmentConfirmationDate(row.shipmentNoRegisteredAt as Date),
-          'YAMATO TRANSPORT',
-          '',
-          this.normalizeAmazonTrackingNumber(row.shipmentNo),
-          'Yamato-bin',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-          '',
-        ]
-          .map((value) => this.escapeTsvCell(value))
-          .join('\t'),
+        {
+          const shipmentProfile = this.resolveAmazonShipmentConfirmationProfile(row);
+          return [
+            row.orderId,
+            row.orderItemId,
+            String(row.quantityPurchased ?? ''),
+            this.formatAmazonShipmentConfirmationDate(row.shipmentNoRegisteredAt as Date),
+            shipmentProfile.carrierCode,
+            '',
+            this.normalizeAmazonTrackingNumber(row.shipmentNo),
+            shipmentProfile.shipMethod,
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+          ]
+            .map((value) => this.escapeTsvCell(value))
+            .join('\t');
+        },
       ),
     ];
     return Buffer.from(`${lines.join('\r\n')}\r\n`, 'utf8');
@@ -4677,6 +4796,45 @@ export class OrdersService {
     });
 
     return items;
+  }
+
+  private async assertOverseasPickingBatchDemandWithinStock(
+    snapshots: OverseasPickingBatchItemSnapshot[],
+  ): Promise<void> {
+    const demandByProductId = new Map<string, number>();
+    snapshots.forEach((item) => {
+      const productId = String(item.productId ?? '').trim();
+      if (!productId) return;
+      demandByProductId.set(productId, (demandByProductId.get(productId) ?? 0) + Number(item.requestedQty ?? 0));
+    });
+    const productIds = Array.from(demandByProductId.keys());
+    if (!productIds.length) {
+      return;
+    }
+    const stockRows = await this.prisma.masterProduct.findMany({
+      where: {
+        productId: {
+          in: productIds,
+        },
+      },
+      select: {
+        productId: true,
+        stockQty: true,
+      },
+    });
+    const stockByProductId = new Map(stockRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]));
+    const shortageTexts = productIds
+      .map((productId) => {
+        const requestedQty = demandByProductId.get(productId) ?? 0;
+        const stockQty = stockByProductId.get(productId) ?? 0;
+        const shortageQty = requestedQty - stockQty;
+        if (shortageQty <= 0) return null;
+        return `产品 ${productId} 待拣 ${requestedQty}，库存 ${stockQty}，需要踢出 ${shortageQty}`;
+      })
+      .filter((item): item is string => Boolean(item));
+    if (shortageTexts.length) {
+      throw new ConflictException(`批次待拣数量超过库存：${shortageTexts.join('；')}`);
+    }
   }
 
   private async findActiveOverseasPickingBatchDuplicates(
@@ -9024,6 +9182,23 @@ export class OrdersService {
       return OVERSEAS_DISPATCH_MODE.OVERSEAS;
     }
     return null;
+  }
+
+  private resolveAmazonShipmentConfirmationProfile(row: Pick<AmazonOrderRecord, 'dispatchMode' | 'shippingOrigin'>): {
+    carrierCode: string;
+    shipMethod: string;
+  } {
+    const dispatchMode = this.resolveEffectiveAmazonDispatchMode(row);
+    if (this.isChinaDispatchMode(dispatchMode)) {
+      return {
+        carrierCode: 'SAGAWA EXPRESS',
+        shipMethod: 'Hikyaku Express',
+      };
+    }
+    return {
+      carrierCode: 'YAMATO TRANSPORT',
+      shipMethod: 'Yamato-bin',
+    };
   }
 
   private async buildAmazonManualOrderCreateData(
