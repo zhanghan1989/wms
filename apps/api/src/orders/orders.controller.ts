@@ -404,7 +404,7 @@ export class OrdersController {
   @Post('rakuten/shipment-confirmation-csv')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async downloadRakutenShipmentConfirmationCsv(
-    @Body() payload: { days?: string | number },
+    @Body() payload: { days?: string | number; purpose?: string | null },
     @Res() res: Response,
   ): Promise<void> {
     const file = await this.ordersService.buildRakutenShipmentConfirmationCsv(payload);

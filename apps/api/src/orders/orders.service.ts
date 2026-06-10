@@ -4477,27 +4477,47 @@ export class OrdersService {
 
   async buildRakutenShipmentConfirmationCsv(payload: {
     days?: string | number;
+    purpose?: string | null;
   }): Promise<RakutenShipmentConfirmationFileResult> {
     const scope = this.normalizeShipmentConfirmationScope(payload?.days, '订单');
+    const purpose = String(payload?.purpose ?? '').trim();
+    const isDailyEmailCsv = purpose === 'daily-email';
     const importedAtStart = scope.days === 'all' ? null : this.getImportDateRangeStart(scope.days);
+    const dailyImportedAtStart = isDailyEmailCsv ? this.getImportDateRangeStart(1) : null;
+    const dailyImportedAtEnd = dailyImportedAtStart ? new Date(dailyImportedAtStart.getTime() + 24 * 60 * 60 * 1000) : null;
 
     const rows = await this.prisma.rakutenOrderRecord.findMany({
       where: {
-        shipmentNo: { not: null },
-        shipmentNoRegisteredAt: { not: null },
-        ...(importedAtStart ? { csvImportedAt: { gte: importedAtStart } } : {}),
+        ...(isDailyEmailCsv
+          ? {
+              csvImportedAt: dailyImportedAtStart
+                ? {
+                    gte: dailyImportedAtStart,
+                    ...(dailyImportedAtEnd ? { lt: dailyImportedAtEnd } : {}),
+                  }
+                : undefined,
+            }
+          : {
+              shipmentNo: { not: null },
+              shipmentNoRegisteredAt: { not: null },
+              ...(importedAtStart ? { csvImportedAt: { gte: importedAtStart } } : {}),
+            }),
       },
       orderBy: [{ csvImportedAt: 'desc' }, { shipmentNoRegisteredAt: 'asc' }, { id: 'asc' }],
     });
     if (!rows.length) {
-      throw new BadRequestException(`${scope.label}没有可下载的已登记发货单号乐天订单`);
+      throw new BadRequestException(
+        isDailyEmailCsv ? '当日没有可下载的已导入乐天订单' : `${scope.label}没有可下载的已登记发货单号乐天订单`,
+      );
     }
 
-    const downloadableRows = rows.filter(
-      (row) =>
-        !this.isChinaDispatchMode(row.dispatchMode) ||
-        this.resolveRakutenTrackingClearanceStatusFromRow(row).hasCustomsClearance,
-    );
+    const downloadableRows = isDailyEmailCsv
+      ? rows
+      : rows.filter(
+          (row) =>
+            !this.isChinaDispatchMode(row.dispatchMode) ||
+            this.resolveRakutenTrackingClearanceStatusFromRow(row).hasCustomsClearance,
+        );
     if (!downloadableRows.length) {
       throw new BadRequestException(
         `${scope.label}没有可下载的乐天订单：中国发订单需要已取得「${UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT}」，日本发订单需要已登记发货单号`,
@@ -4508,8 +4528,8 @@ export class OrdersService {
       .map((row) => {
         const missingFields = [
           String(row.orderId ?? '').trim() ? null : '注文番号',
-          row.shipmentNoRegisteredAt ? null : '発送日',
-          String(row.shipmentNo ?? '').trim() ? null : 'お荷物伝票番号',
+          isDailyEmailCsv || row.shipmentNoRegisteredAt ? null : '発送日',
+          isDailyEmailCsv || String(row.shipmentNo ?? '').trim() ? null : 'お荷物伝票番号',
         ].filter((item): item is string => Boolean(item));
         return missingFields.length ? `${row.orderId ?? row.id.toString()} 缺少 ${missingFields.join('、')}` : null;
       })
@@ -4529,8 +4549,8 @@ export class OrdersService {
           this.resolveRakutenShippingDestinationId(row),
           this.resolveRakutenShippingDetailId(row, chinaDispatchOrderRecordIdsByOrderId),
           this.normalizeAmazonTrackingNumber(row.shipmentNo),
-          this.resolveRakutenShipmentCarrierCode(row),
-          this.formatRakutenShipmentConfirmationDate(row.shipmentNoRegisteredAt as Date),
+          String(row.shipmentNo ?? '').trim() ? this.resolveRakutenShipmentCarrierCode(row) : '',
+          row.shipmentNoRegisteredAt ? this.formatRakutenShipmentConfirmationDate(row.shipmentNoRegisteredAt) : '',
         ]
           .map((value) => this.escapeCsvCell(value))
           .join(','),
@@ -4538,7 +4558,9 @@ export class OrdersService {
     ];
 
     return {
-      fileName: `${this.formatYamatoFileNameStamp()}_${scope.fileLabel}_ShippingCompletion.csv`,
+      fileName: `${this.formatYamatoFileNameStamp()}_${
+        isDailyEmailCsv ? '当日发送邮件用' : scope.fileLabel
+      }_ShippingCompletion.csv`,
       content: iconv.encode(`${lines.join('\r\n')}\r\n`, 'cp932'),
       rowCount: downloadableRows.length,
       skippedWithoutCustomsClearanceCount: rows.length - downloadableRows.length,

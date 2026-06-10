@@ -8047,14 +8047,7 @@ function renderRakutenTrackingClearanceStatus(item) {
 function renderRakutenTrackingStatusSummary(summary) {
   const node = $("rakutenTrackingStatusSummary");
   if (!node) return;
-  const latestCheckedAt = summary?.latestCheckedAt ? formatDate(summary.latestCheckedAt) : "";
-  const pendingCount = Number(summary?.pendingTrackingNoCount || 0);
-  const uncheckedCount = Number(summary?.uncheckedTrackingNoCount || 0);
-  if (!latestCheckedAt) {
-    node.textContent = "快递状态未同步";
-    return;
-  }
-  node.textContent = `最后同步：${latestCheckedAt}｜未完成 ${pendingCount}｜未同步 ${uncheckedCount}`;
+  node.textContent = "";
 }
 
 function renderOrdersTable() {
@@ -11063,10 +11056,10 @@ async function downloadAmazonShipmentConfirmationTxt(days) {
   return link.download;
 }
 
-async function downloadRakutenShipmentConfirmationCsv(days) {
+async function downloadRakutenShipmentConfirmationCsv(days, options = {}) {
   const response = await fetchAuthorizedResponse("/orders/rakuten/shipment-confirmation-csv", {
     method: "POST",
-    body: JSON.stringify({ days }),
+    body: JSON.stringify({ days, purpose: options.purpose || undefined }),
   });
   const skippedWithoutCustomsClearanceCount = Number(
     response.headers.get("x-rakuten-shipment-confirmation-skipped-without-customs-clearance-count") || 0,
@@ -12525,15 +12518,17 @@ function bindForms() {
       const currentButton = event.currentTarget;
       try {
         await withBusyButton(currentButton, "下载中...", async () => {
-          const summary = await loadRakutenTrackingStatusSummary();
+          const purpose = String(currentButton.dataset.purpose || "").trim();
+          const isDailyEmailCsv = purpose === "daily-email";
+          const summary = isDailyEmailCsv ? null : await loadRakutenTrackingStatusSummary();
           const uncheckedCount = Number(summary?.uncheckedTrackingNoCount || 0);
-          if (uncheckedCount > 0) {
+          if (!isDailyEmailCsv && uncheckedCount > 0) {
             showToast(`仍有 ${uncheckedCount} 个快递单号未同步，本次下载按当前已同步状态生成`, true);
           }
-          const result = await downloadRakutenShipmentConfirmationCsv(currentButton.dataset.days || "1");
+          const result = await downloadRakutenShipmentConfirmationCsv(currentButton.dataset.days || "1", { purpose });
           const skippedCount = Number(result.skippedWithoutCustomsClearanceCount || 0);
           showToast(
-            skippedCount > 0
+            !isDailyEmailCsv && skippedCount > 0
               ? `已下载 ${result.fileName}，已跳过 ${skippedCount} 条未通関許可订单`
               : `已下载 ${result.fileName}`,
           );
