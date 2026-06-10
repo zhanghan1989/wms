@@ -866,6 +866,8 @@ const XIYA_LOGISTICS_SYNC_DAYS = 5;
 const XIYA_TRACKING_SYNC_CRON = '0 0 17 * * *';
 const UOF_TRACKING_API_URL =
   process.env.UOF_TRACKING_API_URL || 'http://oms.uofexp.com/webservice/PublicService.asmx/ServiceInterfaceUTF8';
+const UOF_TRACKING_DEFAULT_APP_TOKEN = '2af105038c7f8d8b5615477faeb2be5c';
+const UOF_TRACKING_DEFAULT_APP_KEY = '562d511e34bd13579fd1634a02fffabe562d511e34bd13579fd1634a02fffabe';
 const UOF_TRACKING_SERVICE_METHOD = 'gettrack';
 const UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT = '通関許可';
 const UOF_TRACKING_DELIVERED_TEXT = '配達完了';
@@ -7784,8 +7786,8 @@ export class OrdersService {
 
   private getUofTrackingConfig(): { apiUrl: string; appToken: string; appKey: string } {
     const apiUrl = String(process.env.UOF_TRACKING_API_URL ?? UOF_TRACKING_API_URL).trim();
-    const appToken = String(process.env.UOF_TRACKING_APP_TOKEN ?? '').trim();
-    const appKey = String(process.env.UOF_TRACKING_APP_KEY ?? '').trim();
+    const appToken = String(process.env.UOF_TRACKING_APP_TOKEN ?? UOF_TRACKING_DEFAULT_APP_TOKEN).trim();
+    const appKey = String(process.env.UOF_TRACKING_APP_KEY ?? UOF_TRACKING_DEFAULT_APP_KEY).trim();
     const missingFields = [
       apiUrl ? null : 'UOF_TRACKING_API_URL',
       appToken ? null : 'UOF_TRACKING_APP_TOKEN',
