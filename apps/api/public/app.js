@@ -8025,6 +8025,9 @@ async function loadProductEditPendingSummary() {
 }
 
 function renderRakutenTrackingClearanceStatus(item) {
+  if (!isChinaDispatchModeValue(item?.dispatchMode)) {
+    return '<span class="muted">-</span>';
+  }
   const status = item?.trackingClearanceStatus || {};
   const label = displayText(status.label);
   const occurredAt = status.occurredAt ? ` ${formatDate(status.occurredAt)}` : "";
