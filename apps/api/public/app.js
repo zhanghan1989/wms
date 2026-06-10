@@ -7950,6 +7950,36 @@ async function loadProductEditPendingSummary() {
   renderProductEditPendingBadge();
 }
 
+function renderRakutenTrackingClearanceStatus(item) {
+  const status = item?.trackingClearanceStatus || {};
+  const label = displayText(status.label);
+  const occurredAt = status.occurredAt ? ` ${formatDate(status.occurredAt)}` : "";
+  const title = status.error
+    ? status.error
+    : status.hasCustomsClearance
+      ? `${label}${occurredAt}，已取得通関許可`
+      : occurredAt
+        ? `${label}${occurredAt}`
+        : label;
+  if (status.hasCustomsClearance) {
+    return `<span class="tag" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+  }
+  return `<span class="muted" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+function renderRakutenTrackingStatusSummary(summary) {
+  const node = $("rakutenTrackingStatusSummary");
+  if (!node) return;
+  const latestCheckedAt = summary?.latestCheckedAt ? formatDate(summary.latestCheckedAt) : "";
+  const pendingCount = Number(summary?.pendingTrackingNoCount || 0);
+  const uncheckedCount = Number(summary?.uncheckedTrackingNoCount || 0);
+  if (!latestCheckedAt) {
+    node.textContent = "快递状态未同步";
+    return;
+  }
+  node.textContent = `最后同步：${latestCheckedAt}｜未完成 ${pendingCount}｜未同步 ${uncheckedCount}`;
+}
+
 function renderOrdersTable() {
   const tbody = $("rakutenOrdersBody");
   if (!tbody) return;
@@ -7959,7 +7989,7 @@ function renderOrdersTable() {
   const list = state.orders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="${canEdit ? 15 : 14}" class="muted">暂无订单数据</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${canEdit ? 16 : 15}" class="muted">暂无订单数据</td></tr>`;
     updateRakutenOrdersSelectAll();
     updateRakutenBatchDeleteButtonState();
     return;
@@ -8000,6 +8030,7 @@ function renderOrdersTable() {
         <td>${escapeHtml(displayText(item.shippingName))}</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
+        <td>${renderRakutenTrackingClearanceStatus(item)}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
           canEdit
@@ -9038,6 +9069,7 @@ async function loadOrders() {
     state.ordersLoading = false;
     state.selectedRakutenOrderIds = new Set();
     renderOrdersTable();
+    renderRakutenTrackingStatusSummary(null);
     return;
   }
 
@@ -9050,6 +9082,7 @@ async function loadOrders() {
     state.ordersHasMore = state.orders.length >= pageSize;
     state.ordersVisibleCount = state.orders.length;
     renderOrdersTable();
+    await loadRakutenTrackingStatusSummary();
     setTimeout(() => maybeAutoLoadOrders(), 0);
   } finally {
     state.ordersLoading = false;
@@ -10706,6 +10739,9 @@ async function downloadRakutenShipmentConfirmationCsv(days) {
     method: "POST",
     body: JSON.stringify({ days }),
   });
+  const skippedWithoutCustomsClearanceCount = Number(
+    response.headers.get("x-rakuten-shipment-confirmation-skipped-without-customs-clearance-count") || 0,
+  );
   const blob = await response.blob();
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -10715,7 +10751,23 @@ async function downloadRakutenShipmentConfirmationCsv(days) {
   link.click();
   link.remove();
   URL.revokeObjectURL(href);
-  return link.download;
+  return {
+    fileName: link.download,
+    skippedWithoutCustomsClearanceCount,
+  };
+}
+
+async function syncRakutenTrackingStatuses() {
+  return request("/orders/rakuten/sync-tracking-statuses", {
+    method: "POST",
+    body: "{}",
+  });
+}
+
+async function loadRakutenTrackingStatusSummary() {
+  const summary = await request("/orders/rakuten/tracking-status-summary");
+  renderRakutenTrackingStatusSummary(summary);
+  return summary;
 }
 
 async function loadMoreAmazonOrdersIfNeeded() {
@@ -12130,8 +12182,40 @@ function bindForms() {
       const currentButton = event.currentTarget;
       try {
         await withBusyButton(currentButton, "下载中...", async () => {
-          const fileName = await downloadRakutenShipmentConfirmationCsv(currentButton.dataset.days || "1");
-          showToast(`已下载 ${fileName}`);
+          const summary = await loadRakutenTrackingStatusSummary();
+          const uncheckedCount = Number(summary?.uncheckedTrackingNoCount || 0);
+          if (uncheckedCount > 0) {
+            showToast(`仍有 ${uncheckedCount} 个快递单号未同步，本次下载按当前已同步状态生成`, true);
+          }
+          const result = await downloadRakutenShipmentConfirmationCsv(currentButton.dataset.days || "1");
+          const skippedCount = Number(result.skippedWithoutCustomsClearanceCount || 0);
+          showToast(
+            skippedCount > 0
+              ? `已下载 ${result.fileName}，已跳过 ${skippedCount} 条未通関許可订单`
+              : `已下载 ${result.fileName}`,
+          );
+        });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  });
+
+  document.querySelectorAll("button[data-action='syncRakutenTrackingStatuses']").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const currentButton = event.currentTarget;
+      try {
+        await withBusyButton(currentButton, "同步中...", async () => {
+          const result = await syncRakutenTrackingStatuses();
+          renderRakutenTrackingStatusSummary(result);
+          await loadOrders();
+          showToast(
+            `已同步快递状态：候选订单 ${Number(result?.candidateCount || 0)} 条，快递单号 ${Number(
+              result?.trackingNoCount || 0,
+            )} 个，配達完了 ${Number(result?.deliveredCount || 0)} 个，通関許可 ${Number(
+              result?.customsClearanceCount || 0,
+            )} 个`,
+          );
         });
       } catch (error) {
         showToast(error.message, true);

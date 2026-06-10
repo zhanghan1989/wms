@@ -1138,11 +1138,11 @@
               </div>
             </div>
             <div class="action-row-right">
-              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="1">当日订单回传单号下载</button>
-              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="2">最近2天下载</button>
-              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="3">最近3天下载</button>
-              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="5">最近5天下载</button>
+              <button type="button" data-action="syncRakutenTrackingStatuses">手动同步快递状态</button>
+              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="15">最近15天订单回传单号下载</button>
+              <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="30">最近30天下载</button>
               <button type="button" data-action="downloadRakutenShipmentConfirmation" data-days="all">全部下载</button>
+              <span id="rakutenTrackingStatusSummary" class="muted">快递状态未同步</span>
             </div>
           </div>
           <div id="rakutenOrdersTableWrap" class="master-product-table-wrap">
@@ -1162,6 +1162,7 @@
                   <th>收件人</th>
                   <th>发货公司</th>
                   <th>发货单号</th>
+                  <th>快递最新状态</th>
                   <th>发货单号登记时间</th>
                   <th class="admin-order-edit-only hidden">操作</th>
                 </tr>

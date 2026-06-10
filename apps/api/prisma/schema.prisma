@@ -612,6 +612,12 @@ model RakutenOrderRecord {
   shipmentCompany     String?  @map("shipment_company") @db.VarChar(128)
   shipmentNo          String?  @map("shipment_no") @db.VarChar(128)
   shipmentNoRegisteredAt DateTime? @map("shipment_no_registered_at")
+  trackingStatusLabel String?  @map("tracking_status_label") @db.VarChar(128)
+  trackingHasCustomsClearance Boolean @default(false) @map("tracking_has_customs_clearance")
+  trackingIsDelivered Boolean @default(false) @map("tracking_is_delivered")
+  trackingStatusOccurredAt DateTime? @map("tracking_status_occurred_at")
+  trackingCheckedAt   DateTime? @map("tracking_checked_at")
+  trackingError       String?  @map("tracking_error") @db.Text
   dispatchMode        String?  @map("dispatch_mode") @db.VarChar(32)
   xiyaExportedAt      DateTime? @map("xiya_exported_at")
   sendStatus          OrderSendStatus @default(unsent) @map("send_status")
@@ -633,6 +639,9 @@ model RakutenOrderRecord {
   @@index([csvImportedAt])
   @@index([createdAt])
   @@index([xiyaExportedAt])
+  @@index([trackingStatusLabel])
+  @@index([trackingIsDelivered])
+  @@index([trackingCheckedAt])
   @@map("rakuten_order_records")
 }
 

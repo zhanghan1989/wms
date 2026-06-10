@@ -166,6 +166,17 @@ interface OrderListItem extends RakutenOrderRecord {
   resolvedProductName: string | null;
   availableStock: number;
   fulfillmentMode: OrderFulfillmentMode;
+  trackingClearanceStatus?: RakutenTrackingClearanceStatus;
+}
+
+interface RakutenTrackingClearanceStatus {
+  trackingNo: string | null;
+  label: string;
+  hasCustomsClearance: boolean;
+  isDelivered: boolean;
+  occurredAt: string | null;
+  checkedAt: string | null;
+  error?: string | null;
 }
 
 interface UpdateRakutenOrderPayload {
@@ -298,6 +309,7 @@ interface RakutenShipmentConfirmationFileResult {
   fileName: string;
   content: Buffer;
   rowCount: number;
+  skippedWithoutCustomsClearanceCount: number;
 }
 
 interface ManualOrderXyjgFields {
@@ -852,6 +864,17 @@ const XIYA_LOGISTICS_EXPORT_URL = 'http://103.236.55.93/api/external/logistics/r
 const XIYA_LOGISTICS_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
 const XIYA_LOGISTICS_SYNC_DAYS = 5;
 const XIYA_TRACKING_SYNC_CRON = '0 0 17 * * *';
+const UOF_TRACKING_API_URL =
+  process.env.UOF_TRACKING_API_URL || 'http://oms.uofexp.com/webservice/PublicService.asmx/ServiceInterfaceUTF8';
+const UOF_TRACKING_APP_TOKEN = process.env.UOF_TRACKING_APP_TOKEN;
+const UOF_TRACKING_APP_KEY = process.env.UOF_TRACKING_APP_KEY;
+const UOF_TRACKING_SERVICE_METHOD = 'gettrack';
+const UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT = '通関許可';
+const UOF_TRACKING_DELIVERED_TEXT = '配達完了';
+const UOF_TRACKING_FETCH_TIMEOUT_MS = 8000;
+const UOF_TRACKING_SYNC_BATCH_SIZE = 100;
+const UOF_TRACKING_SYNC_CONCURRENCY = 6;
+const RAKUTEN_TRACKING_STATUS_SYNC_CRON = '0 0 5 * * *';
 const MANUAL_ORDER_UPLOAD_HEADERS = {
   orderId: ['订单号', '注文番号', 'orderId', 'order-id'],
   orderItemId: ['order-item-id', 'orderItemId', '订单商品ID', '明细ID'],
@@ -958,6 +981,8 @@ function normalizeAmazonSkuLookupKey(value: string | null | undefined): string {
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
   private xiyaTrackingSyncRunning = false;
+  private rakutenTrackingStatusSyncRunning = false;
+  private readonly deliveredRakutenTrackingStatusCache = new Map<string, RakutenTrackingClearanceStatus>();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -2314,7 +2339,11 @@ export class OrdersService {
       take: limit,
       skip: offset,
     });
-    return this.enrichOrderRows(rows);
+    const enrichedRows = await this.enrichOrderRows(rows);
+    return enrichedRows.map((row) => ({
+      ...row,
+      trackingClearanceStatus: this.resolveRakutenTrackingClearanceStatusFromRow(row),
+    }));
   }
 
   async listAmazon(limitParam?: string, offsetParam?: string): Promise<AmazonOrderListItem[]> {
@@ -4340,7 +4369,14 @@ export class OrdersService {
       throw new BadRequestException(`${scope.label}没有可下载的已登记发货单号乐天订单`);
     }
 
-    const invalidRows = rows
+    const clearedRows = rows.filter((row) => this.resolveRakutenTrackingClearanceStatusFromRow(row).hasCustomsClearance);
+    if (!clearedRows.length) {
+      throw new BadRequestException(
+        `${scope.label}没有已取得「${UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT}」快递状态的乐天订单`,
+      );
+    }
+
+    const invalidRows = clearedRows
       .map((row) => {
         const missingFields = [
           String(row.orderId ?? '').trim() ? null : '注文番号',
@@ -4355,11 +4391,11 @@ export class OrdersService {
     }
 
     const chinaDispatchOrderRecordIdsByOrderId =
-      await this.loadRakutenChinaDispatchOrderRecordIdsByOrderId(rows);
+      await this.loadRakutenChinaDispatchOrderRecordIdsByOrderId(clearedRows);
     const headers = ['注文番号', '送付先ID', '発送明細ID', 'お荷物伝票番号', '配送会社', '発送日'];
     const lines = [
       headers.map((value) => this.escapeCsvCell(value)).join(','),
-      ...rows.map((row) =>
+      ...clearedRows.map((row) =>
         [
           row.orderId,
           this.resolveRakutenShippingDestinationId(row),
@@ -4376,7 +4412,8 @@ export class OrdersService {
     return {
       fileName: `${this.formatYamatoFileNameStamp()}_${scope.fileLabel}_ShippingCompletion.csv`,
       content: iconv.encode(`${lines.join('\r\n')}\r\n`, 'cp932'),
-      rowCount: rows.length,
+      rowCount: clearedRows.length,
+      skippedWithoutCustomsClearanceCount: rows.length - clearedRows.length,
     };
   }
 
@@ -6722,7 +6759,7 @@ export class OrdersService {
   }
 
   private normalizeShipmentConfirmationScope(daysRaw: string | number | null | undefined, noun: string): {
-    days: 1 | 2 | 3 | 5 | 'all';
+    days: 1 | 2 | 3 | 5 | 15 | 30 | 'all';
     label: string;
     fileLabel: string;
   } {
@@ -6735,10 +6772,12 @@ export class OrdersService {
     if (days === 2) return { days: 2, label: `最近2天${noun}`, fileLabel: '最近2天' };
     if (days === 3) return { days: 3, label: `最近3天${noun}`, fileLabel: '最近3天' };
     if (days === 5) return { days: 5, label: `最近5天${noun}`, fileLabel: '最近5天' };
-    throw new BadRequestException('回传单号下载范围只支持当日、最近2天、最近3天、最近5天或全部');
+    if (days === 15) return { days: 15, label: `最近15天${noun}`, fileLabel: '最近15天' };
+    if (days === 30) return { days: 30, label: `最近30天${noun}`, fileLabel: '最近30天' };
+    throw new BadRequestException('回传单号下载范围只支持当日、最近2天、最近3天、最近5天、最近15天、最近30天或全部');
   }
 
-  private getImportDateRangeStart(days: 1 | 2 | 3 | 5): Date {
+  private getImportDateRangeStart(days: 1 | 2 | 3 | 5 | 15 | 30): Date {
     const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
     const year = Number(parts.year);
     const month = Number(parts.month);
@@ -7062,6 +7101,100 @@ export class OrdersService {
     }
   }
 
+  async syncRakutenTrackingStatuses(): Promise<{
+    syncedAt: string;
+    candidateCount: number;
+    trackingNoCount: number;
+    deliveredCount: number;
+    customsClearanceCount: number;
+    latestCheckedAt: string | null;
+    pendingTrackingNoCount: number;
+  }> {
+    if (this.rakutenTrackingStatusSyncRunning) {
+      throw new ConflictException('当前已有乐天快递状态同步任务正在执行，请稍后再试');
+    }
+
+    this.rakutenTrackingStatusSyncRunning = true;
+    try {
+      const rows = await this.prisma.rakutenOrderRecord.findMany({
+        where: {
+          shipmentNo: { not: null, notIn: [''] },
+          trackingIsDelivered: false,
+        },
+        orderBy: [
+          { trackingCheckedAt: 'asc' },
+          { shipmentNoRegisteredAt: 'desc' },
+          { id: 'desc' },
+        ],
+      });
+      const statusByNo = await this.refreshRakutenTrackingStatusesForRows(rows);
+      const statuses = Array.from(statusByNo.values());
+      const summary = await this.getRakutenTrackingStatusSummary();
+      return {
+        syncedAt: new Date().toISOString(),
+        candidateCount: rows.length,
+        trackingNoCount: statusByNo.size,
+        deliveredCount: statuses.filter((status) => this.isDeliveredRakutenTrackingStatus(status)).length,
+        customsClearanceCount: statuses.filter((status) => status.hasCustomsClearance).length,
+        latestCheckedAt: summary.latestCheckedAt,
+        pendingTrackingNoCount: summary.pendingTrackingNoCount,
+      };
+    } finally {
+      this.rakutenTrackingStatusSyncRunning = false;
+    }
+  }
+
+  async getRakutenTrackingStatusSummary(): Promise<{
+    latestCheckedAt: string | null;
+    pendingTrackingNoCount: number;
+    uncheckedTrackingNoCount: number;
+  }> {
+    const [latestRow, pendingRows, uncheckedRows] = await Promise.all([
+      this.prisma.rakutenOrderRecord.findFirst({
+        where: { trackingCheckedAt: { not: null } },
+        orderBy: { trackingCheckedAt: 'desc' },
+        select: { trackingCheckedAt: true },
+      }),
+      this.prisma.rakutenOrderRecord.findMany({
+        where: {
+          shipmentNo: { not: null, notIn: [''] },
+          trackingIsDelivered: false,
+        },
+        distinct: ['shipmentNo'],
+        select: { shipmentNo: true },
+      }),
+      this.prisma.rakutenOrderRecord.findMany({
+        where: {
+          shipmentNo: { not: null, notIn: [''] },
+          trackingCheckedAt: null,
+        },
+        distinct: ['shipmentNo'],
+        select: { shipmentNo: true },
+      }),
+    ]);
+    return {
+      latestCheckedAt: latestRow?.trackingCheckedAt?.toISOString() ?? null,
+      pendingTrackingNoCount: pendingRows.length,
+      uncheckedTrackingNoCount: uncheckedRows.length,
+    };
+  }
+
+  @Cron(RAKUTEN_TRACKING_STATUS_SYNC_CRON, {
+    name: 'daily-rakuten-tracking-status-sync',
+    timeZone: APP_TIMEZONE,
+  })
+  async runScheduledRakutenTrackingStatusSync(): Promise<void> {
+    try {
+      const result = await this.syncRakutenTrackingStatuses();
+      this.logger.log(
+        `daily Rakuten tracking status sync completed: candidates=${result.candidateCount}, trackingNos=${result.trackingNoCount}, delivered=${result.deliveredCount}, customsClearance=${result.customsClearanceCount}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`daily Rakuten tracking status sync failed: ${message}`);
+    }
+  }
+
   private async syncManualOrderIdsToXyjgBestEffort(ids: Array<bigint | number | string>): Promise<void> {
     const normalizedIds = Array.from(
       new Set(
@@ -7239,6 +7372,261 @@ export class OrdersService {
 
   private truncateText(value: string, maxLength: number): string {
     return value.length > maxLength ? value.slice(0, maxLength) : value;
+  }
+
+  private async refreshRakutenTrackingStatusesForRows(
+    rows: Array<
+      Pick<
+        RakutenOrderRecord,
+        | 'shipmentNo'
+        | 'trackingStatusLabel'
+        | 'trackingHasCustomsClearance'
+        | 'trackingIsDelivered'
+        | 'trackingStatusOccurredAt'
+        | 'trackingCheckedAt'
+        | 'trackingError'
+      >
+    >,
+    options: { throwOnFetchError?: boolean } = {},
+  ): Promise<Map<string, RakutenTrackingClearanceStatus>> {
+    const statusByNo = new Map<string, RakutenTrackingClearanceStatus>();
+    const rowsByTrackingNo = new Map<string, (typeof rows)[number]>();
+    rows.forEach((row) => {
+      const trackingNo = String(row.shipmentNo ?? '').trim();
+      if (!trackingNo || rowsByTrackingNo.has(trackingNo)) return;
+      rowsByTrackingNo.set(trackingNo, row);
+      statusByNo.set(
+        trackingNo,
+        this.deliveredRakutenTrackingStatusCache.get(trackingNo) ??
+          this.resolveRakutenTrackingClearanceStatusFromRow(row),
+      );
+    });
+
+    const trackingNumbersToFetch = Array.from(rowsByTrackingNo.entries())
+      .filter(([trackingNo, row]) => {
+        if (this.isDeliveredRakutenTrackingStatus(this.resolveRakutenTrackingClearanceStatusFromRow(row))) {
+          return false;
+        }
+        return !this.deliveredRakutenTrackingStatusCache.has(trackingNo);
+      })
+      .map(([trackingNo]) => trackingNo);
+    if (!trackingNumbersToFetch.length) {
+      return statusByNo;
+    }
+
+    const results: Array<readonly [string, RakutenTrackingClearanceStatus]> = [];
+    for (let index = 0; index < trackingNumbersToFetch.length; index += UOF_TRACKING_SYNC_BATCH_SIZE) {
+      const batch = trackingNumbersToFetch.slice(index, index + UOF_TRACKING_SYNC_BATCH_SIZE);
+      const batchResults = await this.mapWithConcurrency(batch, UOF_TRACKING_SYNC_CONCURRENCY, async (trackingNo) => {
+        try {
+          const status = await this.fetchUofTrackingClearanceStatus(trackingNo);
+          await this.persistRakutenTrackingStatus(trackingNo, status);
+          if (this.isDeliveredRakutenTrackingStatus(status)) {
+            this.deliveredRakutenTrackingStatusCache.set(trackingNo, status);
+          }
+          return [trackingNo, status] as const;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '未知错误';
+          if (options.throwOnFetchError) {
+            throw new BadRequestException(`快递单号 ${trackingNo} 状态取得失败：${message}`);
+          }
+          this.logger.warn(`UOF tracking lookup failed for ${trackingNo}: ${message}`);
+          const failedStatus = {
+            trackingNo,
+            label: '状态取得失败',
+            hasCustomsClearance: false,
+            isDelivered: false,
+            occurredAt: null,
+            checkedAt: new Date().toISOString(),
+            error: message,
+          };
+          await this.persistRakutenTrackingStatus(trackingNo, failedStatus);
+          return [trackingNo, failedStatus] as const;
+        }
+      });
+      results.push(...batchResults);
+    }
+
+    results.forEach(([trackingNo, status]) => {
+      statusByNo.set(trackingNo, status);
+    });
+    return statusByNo;
+  }
+
+  private resolveRakutenTrackingClearanceStatusFromRow(
+    row: Pick<
+      RakutenOrderRecord,
+      | 'shipmentNo'
+        | 'trackingStatusLabel'
+        | 'trackingHasCustomsClearance'
+        | 'trackingIsDelivered'
+        | 'trackingStatusOccurredAt'
+        | 'trackingCheckedAt'
+        | 'trackingError'
+    >,
+  ): RakutenTrackingClearanceStatus {
+    const trackingNo = String(row.shipmentNo ?? '').trim();
+    if (!trackingNo) {
+      return {
+        trackingNo: null,
+        label: '无发货单号',
+        hasCustomsClearance: false,
+        isDelivered: false,
+        occurredAt: null,
+        checkedAt: null,
+        error: null,
+      };
+    }
+    const label = String(row.trackingStatusLabel ?? '').trim();
+    return {
+      trackingNo,
+      label: label || '未取得',
+      hasCustomsClearance: Boolean(row.trackingHasCustomsClearance),
+      isDelivered: Boolean(row.trackingIsDelivered),
+      occurredAt: row.trackingStatusOccurredAt ? row.trackingStatusOccurredAt.toISOString() : null,
+      checkedAt: row.trackingCheckedAt ? row.trackingCheckedAt.toISOString() : null,
+      error: String(row.trackingError ?? '').trim() || null,
+    };
+  }
+
+  private async persistRakutenTrackingStatus(
+    trackingNo: string,
+    status: RakutenTrackingClearanceStatus,
+  ): Promise<void> {
+    await this.prisma.rakutenOrderRecord.updateMany({
+      where: { shipmentNo: trackingNo },
+      data: {
+        trackingStatusLabel: status.label,
+        trackingHasCustomsClearance: status.hasCustomsClearance,
+        trackingIsDelivered: status.isDelivered,
+        trackingStatusOccurredAt: this.parseUofTrackingOccurredAt(status.occurredAt),
+        trackingCheckedAt: new Date(),
+        trackingError: status.error ?? null,
+      },
+    });
+  }
+
+  private isDeliveredRakutenTrackingStatus(status: RakutenTrackingClearanceStatus): boolean {
+    return Boolean(status.isDelivered) || String(status.label ?? '').includes(UOF_TRACKING_DELIVERED_TEXT);
+  }
+
+  private parseUofTrackingOccurredAt(value: string | null): Date | null {
+    const text = String(value ?? '').trim();
+    if (!text) return null;
+    const normalized = text.includes('T') ? text : text.replace(' ', 'T');
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  private async mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    mapper: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    const results: R[] = [];
+    for (let index = 0; index < items.length; index += concurrency) {
+      const chunk = items.slice(index, index + concurrency);
+      results.push(...(await Promise.all(chunk.map((item) => mapper(item)))));
+    }
+    return results;
+  }
+
+  private async fetchUofTrackingClearanceStatus(trackingNo: string): Promise<RakutenTrackingClearanceStatus> {
+    const config = this.getUofTrackingConfig();
+    const body = new URLSearchParams();
+    body.set('appToken', config.appToken);
+    body.set('appKey', config.appKey);
+    body.set('serviceMethod', UOF_TRACKING_SERVICE_METHOD);
+    body.set('paramsJson', JSON.stringify({ tracking_number: trackingNo }));
+
+    const response = await fetch(config.apiUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body,
+      signal: AbortSignal.timeout(UOF_TRACKING_FETCH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const text = await response.text();
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text) as unknown;
+    } catch {
+      throw new Error('返回不是有效 JSON');
+    }
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('返回格式无效');
+    }
+
+    const root = payload as Record<string, unknown>;
+    if (Number(root.success) !== 1) {
+      throw new Error(String(root.cnmessage ?? root.enmessage ?? '接口返回失败'));
+    }
+
+    const shipmentRows = Array.isArray(root.data) ? root.data : [];
+    const details = shipmentRows.flatMap((row) => {
+      if (!row || typeof row !== 'object') return [];
+      const rowDetails = (row as Record<string, unknown>).details;
+      return Array.isArray(rowDetails) ? rowDetails : [];
+    });
+    const latestDetail = details.find((detail) => detail && typeof detail === 'object') as
+      | Record<string, unknown>
+      | undefined;
+    const latestDescription = latestDetail
+      ? String(latestDetail.track_description ?? latestDetail.track_description_en ?? '').trim()
+      : '';
+    const latestOccurredAt = latestDetail ? String(latestDetail.track_occur_date ?? '').trim() || null : null;
+    const clearanceDetail = details.find((detail) => {
+      if (!detail || typeof detail !== 'object') return false;
+      const row = detail as Record<string, unknown>;
+      return [row.track_description, row.track_description_en, row.track_status_cnname]
+        .map((value) => String(value ?? ''))
+        .some((value) => value.includes(UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT));
+    });
+    if (clearanceDetail && typeof clearanceDetail === 'object') {
+      const detail = clearanceDetail as Record<string, unknown>;
+      const isDelivered = latestDescription.includes(UOF_TRACKING_DELIVERED_TEXT);
+      return {
+        trackingNo,
+        label: latestDescription || UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT,
+        hasCustomsClearance: true,
+        isDelivered,
+        occurredAt: latestOccurredAt || String(detail.track_occur_date ?? '').trim() || null,
+        checkedAt: new Date().toISOString(),
+        error: null,
+      };
+    }
+
+    const isDelivered = latestDescription.includes(UOF_TRACKING_DELIVERED_TEXT);
+    return {
+      trackingNo,
+      label: latestDescription || '未通关许可',
+      hasCustomsClearance: false,
+      isDelivered,
+      occurredAt: latestOccurredAt,
+      checkedAt: new Date().toISOString(),
+      error: null,
+    };
+  }
+
+  private getUofTrackingConfig(): { apiUrl: string; appToken: string; appKey: string } {
+    const apiUrl = String(UOF_TRACKING_API_URL ?? '').trim();
+    const appToken = String(UOF_TRACKING_APP_TOKEN ?? '').trim();
+    const appKey = String(UOF_TRACKING_APP_KEY ?? '').trim();
+    const missingFields = [
+      apiUrl ? null : 'UOF_TRACKING_API_URL',
+      appToken ? null : 'UOF_TRACKING_APP_TOKEN',
+      appKey ? null : 'UOF_TRACKING_APP_KEY',
+    ].filter((item): item is string => Boolean(item));
+    if (missingFields.length) {
+      throw new InternalServerErrorException(`UOF 快递状态接口配置缺失：${missingFields.join('、')}`);
+    }
+    return { apiUrl, appToken, appKey };
   }
 
   private async fetchXiyaLogisticsRows(): Promise<XiyaLogisticsRow[]> {

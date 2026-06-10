@@ -410,7 +410,23 @@ export class OrdersController {
     res.setHeader('Content-Length', String(file.content.length));
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Rakuten-Shipment-Confirmation-Row-Count', String(file.rowCount));
+    res.setHeader(
+      'X-Rakuten-Shipment-Confirmation-Skipped-Without-Customs-Clearance-Count',
+      String(file.skippedWithoutCustomsClearanceCount),
+    );
     res.status(200).send(file.content);
+  }
+
+  @Post('rakuten/sync-tracking-statuses')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async syncRakutenTrackingStatuses(): Promise<unknown> {
+    return this.ordersService.syncRakutenTrackingStatuses();
+  }
+
+  @Get('rakuten/tracking-status-summary')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getRakutenTrackingStatusSummary(): Promise<unknown> {
+    return this.ordersService.getRakutenTrackingStatusSummary();
   }
 
   @Post('overseas-warehouse/yamato-batches/:batchId/upload-pdf')
