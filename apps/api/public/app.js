@@ -192,6 +192,11 @@ const state = {
   masterProductSyncRecordsPageSize: 30,
   masterProductSyncRecordsHasMore: false,
   masterProductExportFilterOptions: null,
+  amazonDashboardRows: [],
+  amazonDashboardSummary: null,
+  amazonDashboardFileName: "",
+  amazonDashboardMasterProducts: [],
+  amazonDashboardMasterProductsLoaded: false,
   rakutenComboProducts: [],
   rakutenComboProductsPage: 1,
   rakutenComboProductsPageSize: 30,
@@ -2147,6 +2152,602 @@ function displayText(value) {
     return "-";
   }
   return String(value);
+}
+
+function parseNumericValue(value) {
+  const text = String(value ?? "")
+    .replace(/[,\s]/g, "")
+    .replace(/[￥¥$]/g, "")
+    .trim();
+  if (!text || text === "-" || text === "--") return 0;
+  const number = Number(text);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatMetricNumber(value, digits = 0) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "0";
+  return number.toLocaleString("zh-CN", {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits > 0 && Math.abs(number) > 0 ? digits : 0,
+  });
+}
+
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  const source = String(text || "").replace(/^\uFEFF/, "");
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (inQuotes) {
+      if (char === '"' && next === '"') {
+        field += '"';
+        index += 1;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        field += char;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inQuotes = true;
+    } else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n") {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = "";
+    } else if (char !== "\r") {
+      field += char;
+    }
+  }
+  row.push(field);
+  if (row.some((item) => String(item || "").trim())) {
+    rows.push(row);
+  }
+
+  const headers = (rows.shift() || []).map((header) => String(header || "").trim().replace(/^\uFEFF/, ""));
+  return rows
+    .filter((item) => item.some((value) => String(value || "").trim()))
+    .map((values) =>
+      headers.reduce((record, header, index) => {
+        record[header || `column_${index + 1}`] = values[index] ?? "";
+        return record;
+      }, {}),
+    );
+}
+
+function pickRecordValue(record, candidates) {
+  for (const key of candidates) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) return record[key];
+  }
+  const normalizedMap = new Map(
+    Object.keys(record || {}).map((key) => [String(key).toLowerCase().replace(/[\s_-]/g, ""), key]),
+  );
+  for (const key of candidates) {
+    const matched = normalizedMap.get(String(key).toLowerCase().replace(/[\s_-]/g, ""));
+    if (matched) return record[matched];
+  }
+  return "";
+}
+
+const AMAZON_DASHBOARD_FBA_TARGET_DAYS = 45;
+const AMAZON_DASHBOARD_FAST_LOAD_TIMEOUT_MS = 8000;
+
+function withAmazonDashboardTimeout(promise, timeoutMs, timeoutMessage) {
+  let timer = null;
+  return Promise.race([
+    promise.finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    }),
+  ]);
+}
+
+function normalizeAmazonDashboardRow(record) {
+  const sales7 = parseNumericValue(pickRecordValue(record, ["配送商品数量（过去 7 天）", "过去 7 天内配送的售出商品"]));
+  const sales30 = parseNumericValue(pickRecordValue(record, ["配送商品数量（过去 30 天）", "过去 30 天内配送的售出商品"]));
+  const sales60 = parseNumericValue(pickRecordValue(record, ["配送商品数量（过去 60 天）", "过去 60 天内配送的售出商品"]));
+  const sales90 = parseNumericValue(pickRecordValue(record, ["配送商品数量（过去 90 天）", "过去 90 天内配送的售出商品"]));
+  const available = parseNumericValue(pickRecordValue(record, ["available", "可售库存", "可售"]));
+  const inbound =
+    parseNumericValue(pickRecordValue(record, ["入库数量"])) +
+    parseNumericValue(pickRecordValue(record, ["入库-处理中"])) +
+    parseNumericValue(pickRecordValue(record, ["入库-已发出"])) +
+    parseNumericValue(pickRecordValue(record, ["入库-已接收"]));
+  const reserved =
+    parseNumericValue(pickRecordValue(record, ["预留总数量"])) +
+    parseNumericValue(pickRecordValue(record, ["Reserved FC Transfer"])) +
+    parseNumericValue(pickRecordValue(record, ["Reserved FC Processing"])) +
+    parseNumericValue(pickRecordValue(record, ["Reserved Customer Order"])) +
+    parseNumericValue(pickRecordValue(record, ["Reserved Staging"]));
+  const age181To270 = parseNumericValue(pickRecordValue(record, ["库龄 181-270 天"]));
+  const age271To365 =
+    parseNumericValue(pickRecordValue(record, ["库龄 271-365 天"])) ||
+    parseNumericValue(pickRecordValue(record, ["库龄 331-365 天"])) +
+      parseNumericValue(pickRecordValue(record, ["quantity-to-be-charged-ais-271-300-days"])) +
+      parseNumericValue(pickRecordValue(record, ["quantity-to-be-charged-ais-301-330-days"]));
+  const age365 = parseNumericValue(pickRecordValue(record, ["库龄 365 天以上", "quantity-to-be-charged-ais-365-plus-days"]));
+  const age270Plus = age271To365 + age365;
+  const suggestedRemovalQty = parseNumericValue(pickRecordValue(record, ["建议移除数量"]));
+  const removalSuggestedQty = Math.max(suggestedRemovalQty, age181To270 + age270Plus);
+  const age181Plus = age181To270 + age270Plus;
+  const daily90 = sales90 > 0 ? sales90 / 90 : sales30 > 0 ? sales30 / 30 : sales7 > 0 ? sales7 / 7 : 0;
+  const daily30 = sales30 > 0 ? sales30 / 30 : daily90;
+  const coverageDays = daily30 > 0 ? available / daily30 : available > 0 ? 999 : 0;
+  const suggestedShipQty = parseNumericValue(pickRecordValue(record, ["建议发货数量"]));
+  const daysOfSupply = parseNumericValue(
+    pickRecordValue(record, ["供货天数", "historical-days-of-supply", "总供货天数（包括未完成货件中的商品）"]),
+  );
+  const restockScore =
+    suggestedShipQty > 0 ? 3 : daily30 > 0 && coverageDays <= 14 ? 2 : daily30 > 0 && coverageDays <= 30 ? 1 : 0;
+
+  return {
+    sku: String(pickRecordValue(record, ["sku", "SKU"]) || "").trim(),
+    fnsku: String(pickRecordValue(record, ["FNSKU", "fnsku"]) || "").trim(),
+    asin: String(pickRecordValue(record, ["asin", "ASIN"]) || "").trim(),
+    productName: String(pickRecordValue(record, ["商品名称", "product-name", "productName"]) || "").trim(),
+    snapshotDate: String(pickRecordValue(record, ["快照日期", "库龄快照日期"]) || "").trim(),
+    available,
+    inbound,
+    reserved,
+    unsellable: parseNumericValue(pickRecordValue(record, ["不可售数量"])),
+    age181To270,
+    age270Plus,
+    age365,
+    age181Plus,
+    suggestedRemovalQty,
+    removalSuggestedQty,
+    sales7,
+    sales30,
+    sales60,
+    sales90,
+    daily90,
+    daily30,
+    coverageDays,
+    daysOfSupply,
+    suggestedShipQty,
+    suggestedShipDate: String(pickRecordValue(record, ["建议发货日期"]) || "").trim(),
+    sellThrough: parseNumericValue(pickRecordValue(record, ["售出率"])),
+    price: parseNumericValue(pickRecordValue(record, ["您的价格", "推荐报价的价格"])),
+    action: String(pickRecordValue(record, ["建议操作"]) || "").trim(),
+    restockScore,
+    fbaTargetDays: AMAZON_DASHBOARD_FBA_TARGET_DAYS,
+    fbaSupplyQty: 0,
+    fbaTargetQty: 0,
+    fbaGapQty: 0,
+    overseasStockQty: 0,
+    overseasReplenishmentQty: 0,
+    factoryAmazonReplenishmentQty: 0,
+    factoryOverseasProductionQty: 0,
+    replenishmentPriority: "",
+  };
+}
+
+function buildAmazonDashboardAnalysis(rows) {
+  const normalizedRows = rows.map(normalizeAmazonDashboardRow).filter((row) => row.sku || row.asin || row.productName);
+  const totals = normalizedRows.reduce(
+    (acc, row) => {
+      acc.available += row.available;
+      acc.inbound += row.inbound;
+      acc.reserved += row.reserved;
+      acc.unsellable += row.unsellable;
+      acc.sales7 += row.sales7;
+      acc.sales30 += row.sales30;
+      acc.sales90 += row.sales90;
+      acc.age365 += row.age365;
+      acc.age181To270 += row.age181To270;
+      acc.age270Plus += row.age270Plus;
+      acc.removalQty += row.removalSuggestedQty;
+      acc.restockQty += row.suggestedShipQty;
+      if (row.available <= 0) acc.outOfStock += 1;
+      if (row.age365 > 0) acc.agedSku += 1;
+      if (row.age181To270 > 0 || row.age270Plus > 0 || row.removalSuggestedQty > 0) acc.removalSku += 1;
+      if (row.restockScore > 0) acc.restockSku += 1;
+      return acc;
+    },
+    {
+      available: 0,
+      inbound: 0,
+      reserved: 0,
+      unsellable: 0,
+      sales7: 0,
+      sales30: 0,
+      sales90: 0,
+      age365: 0,
+      age181To270: 0,
+      age270Plus: 0,
+      removalQty: 0,
+      restockQty: 0,
+      outOfStock: 0,
+      agedSku: 0,
+      removalSku: 0,
+      restockSku: 0,
+    },
+  );
+  return {
+    rows: normalizedRows,
+    totals,
+    snapshotDate: normalizedRows.find((row) => row.snapshotDate)?.snapshotDate || "",
+    salesRows: [...normalizedRows].sort((a, b) => b.sales90 - a.sales90 || b.sales30 - a.sales30 || b.sales7 - a.sales7).slice(0, 30),
+    inventoryRows: [...normalizedRows].sort((a, b) => b.available - a.available || b.inbound - a.inbound).slice(0, 30),
+    replenishmentRows: [...normalizedRows]
+      .filter((row) => row.restockScore > 0 || row.suggestedShipQty > 0)
+      .sort((a, b) => b.restockScore - a.restockScore || b.suggestedShipQty - a.suggestedShipQty || b.daily30 - a.daily30)
+      .slice(0, 30),
+    removalRows: [...normalizedRows]
+      .filter((row) => row.age181To270 > 0 || row.age270Plus > 0 || row.removalSuggestedQty > 0)
+      .sort(
+        (a, b) =>
+          b.age270Plus - a.age270Plus ||
+          b.removalSuggestedQty - a.removalSuggestedQty ||
+          b.age181To270 - a.age181To270 ||
+          b.age365 - a.age365,
+      )
+      .slice(0, 30),
+  };
+}
+
+function buildAmazonSkuProductMap() {
+  const map = new Map();
+  (Array.isArray(state.inventorySkus) ? state.inventorySkus : []).forEach((item) => {
+    const skuCode = String(item?.sku || "").trim().toLowerCase();
+    if (!skuCode || map.has(skuCode)) return;
+    map.set(skuCode, {
+      productId: String(item?.productId || "").trim(),
+      productName: String(item?.productName || "").trim(),
+    });
+  });
+  return map;
+}
+
+function buildAmazonMasterProductMap() {
+  const map = new Map();
+  (Array.isArray(state.amazonDashboardMasterProducts) ? state.amazonDashboardMasterProducts : []).forEach((item) => {
+    const productId = String(item?.productId || "").trim();
+    if (!productId || map.has(productId)) return;
+    map.set(productId, {
+      productId,
+      productName: String(item?.productName || "").trim(),
+      stockQty: Number(item?.stockQty ?? 0),
+    });
+  });
+  return map;
+}
+
+function buildAmazonProductionRecommendationMap() {
+  const map = new Map();
+  const rows = Array.isArray(state.overviewDashboard?.production?.recommendations)
+    ? state.overviewDashboard.production.recommendations
+    : [];
+  rows.forEach((item) => {
+    const productId = String(item?.productId || "").trim();
+    if (!productId || map.has(productId)) return;
+    map.set(productId, {
+      suggestedProductionQty: Number(item?.suggestedProductionQty ?? 0),
+      priority: String(item?.priority || "").trim(),
+      securedCoverageDays: Number(item?.securedCoverageDays ?? 0),
+    });
+  });
+  return map;
+}
+
+function enrichAmazonDashboardRowsWithProducts(analysis) {
+  const skuProductMap = buildAmazonSkuProductMap();
+  const masterProductMap = buildAmazonMasterProductMap();
+  const productionMap = buildAmazonProductionRecommendationMap();
+  (analysis?.rows || []).forEach((row) => {
+    const matched = skuProductMap.get(String(row?.sku || "").trim().toLowerCase()) || null;
+    row.matchedProductId = matched?.productId || "";
+    const masterProduct = row.matchedProductId ? masterProductMap.get(row.matchedProductId) || null : null;
+    row.matchedProductName = masterProduct?.productName || matched?.productName || "";
+    row.overseasStockQty = Number(masterProduct?.stockQty ?? 0);
+
+    const dailyDemand = Number(row.daily90 || 0);
+    const amazonSupply = Math.max(0, Number(row.available || 0) + Number(row.inbound || 0) - Number(row.reserved || 0));
+    const targetQty = Math.ceil(dailyDemand * AMAZON_DASHBOARD_FBA_TARGET_DAYS);
+    const calculatedGap = dailyDemand > 0 ? Math.max(0, targetQty - amazonSupply) : 0;
+    row.fbaSupplyQty = amazonSupply;
+    row.fbaTargetQty = targetQty;
+    row.fbaGapQty = Math.ceil(Math.max(Number(row.suggestedShipQty || 0), calculatedGap));
+    row.overseasReplenishmentQty = Math.min(row.fbaGapQty, Math.max(0, row.overseasStockQty));
+
+    const production = row.matchedProductId ? productionMap.get(row.matchedProductId) || null : null;
+    const remainingGap = Math.max(0, row.fbaGapQty - row.overseasReplenishmentQty);
+    row.factoryAmazonReplenishmentQty = Math.ceil(remainingGap);
+    row.factoryOverseasProductionQty = Math.ceil(Number(production?.suggestedProductionQty ?? 0));
+
+    if (row.fbaGapQty > 0 && row.overseasReplenishmentQty > 0 && row.coverageDays <= 14) {
+      row.replenishmentPriority = "立即补FBA";
+    } else if (row.fbaGapQty > 0 && row.factoryAmazonReplenishmentQty > 0) {
+      row.replenishmentPriority = "工厂直补亚马逊";
+    } else if (row.fbaGapQty > 0) {
+      row.replenishmentPriority = "计划补货";
+    } else if (row.coverageDays <= 45 && dailyDemand > 0) {
+      row.replenishmentPriority = "观察";
+    } else {
+      row.replenishmentPriority = production?.priority ? `工厂${production.priority}` : "观察";
+    }
+  });
+
+  const rows = analysis?.rows || [];
+  const replenishmentRows = rows
+    .filter(
+      (row) =>
+        row.fbaGapQty > 0 ||
+        row.factoryAmazonReplenishmentQty > 0 ||
+        row.factoryOverseasProductionQty > 0 ||
+        row.restockScore > 0,
+    )
+    .sort((a, b) => {
+      const priorityWeight = {
+        立即补FBA: 5,
+        工厂直补亚马逊: 4,
+        计划补货: 3,
+        观察: 2,
+      };
+      const priorityDiff =
+        (priorityWeight[b.replenishmentPriority] ?? 1) - (priorityWeight[a.replenishmentPriority] ?? 1);
+      if (priorityDiff !== 0) return priorityDiff;
+      const gapDiff = b.fbaGapQty - a.fbaGapQty;
+      if (gapDiff !== 0) return gapDiff;
+      return b.daily90 - a.daily90;
+    })
+    .slice(0, 30);
+  analysis.replenishmentRows = replenishmentRows;
+  const totals = analysis?.totals || {};
+  totals.restockSku = replenishmentRows.length;
+  totals.restockQty = rows.reduce((sum, row) => sum + Number(row.overseasReplenishmentQty || 0), 0);
+  totals.factoryAmazonReplenishmentQty = rows.reduce(
+    (sum, row) => sum + Number(row.factoryAmazonReplenishmentQty || 0),
+    0,
+  );
+  totals.factoryOverseasProductionQty = rows.reduce(
+    (sum, row) => sum + Number(row.factoryOverseasProductionQty || 0),
+    0,
+  );
+  totals.fbaGapQty = rows.reduce((sum, row) => sum + Number(row.fbaGapQty || 0), 0);
+  return analysis;
+}
+
+function renderAmazonMatchedProductId(row) {
+  const productId = String(row?.matchedProductId || "").trim();
+  if (!productId) {
+    return '<span class="muted">未匹配</span>';
+  }
+  return renderMasterProductDetailLink(productId);
+}
+
+function renderAmazonMetricCards(containerId, items) {
+  const container = $(containerId);
+  if (!container) return;
+  container.innerHTML = items
+    .map(
+      (item) => `
+        <div class="amazon-dashboard-metric">
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${escapeHtml(item.value)}</strong>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+function renderAmazonDashboardTable(bodyId, rows, columns, emptyText) {
+  const body = $(bodyId);
+  if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="${columns.length}" class="muted">${escapeHtml(emptyText)}</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows
+    .map(
+      (row) => `
+        <tr>
+          ${columns.map((column) => `<td>${column(row)}</td>`).join("")}
+        </tr>
+      `,
+    )
+    .join("");
+}
+
+function buildAmazonPriorityChip(row) {
+  if (row.suggestedShipQty > 0 || row.restockScore >= 3) {
+    return '<span class="amazon-dashboard-chip danger">立即补货</span>';
+  }
+  if (row.restockScore >= 2) {
+    return '<span class="amazon-dashboard-chip warning">库存偏低</span>';
+  }
+  return '<span class="amazon-dashboard-chip">观察</span>';
+}
+
+function buildAmazonRemovalRiskChip(row) {
+  if (row.age365 > 0) {
+    return '<span class="amazon-dashboard-chip danger">365天以上</span>';
+  }
+  if (row.age270Plus > 0 || row.removalSuggestedQty > 0) {
+    return '<span class="amazon-dashboard-chip danger">超过270天</span>';
+  }
+  return '<span class="amazon-dashboard-chip warning">即将270天</span>';
+}
+
+function renderAmazonDashboardAnalysis(analysis) {
+  const rows = analysis?.rows || [];
+  const totals = analysis?.totals || {};
+  $("amazonDashboardResult")?.classList.toggle("hidden", !rows.length);
+  $("amazonDashboardFileMeta").textContent = rows.length
+    ? `${displayText(state.amazonDashboardFileName)} / ${formatMetricNumber(rows.length)} 条 / 快照 ${displayText(analysis.snapshotDate)}`
+    : "尚未上传 CSV";
+
+  renderAmazonMetricCards("amazonDashboardSummary", [
+    { label: "SKU数", value: formatMetricNumber(rows.length) },
+    { label: "30天销量", value: formatMetricNumber(totals.sales30) },
+    { label: "可售库存", value: formatMetricNumber(totals.available) },
+    { label: "建议补货", value: formatMetricNumber(totals.restockQty) },
+    { label: "断货SKU", value: formatMetricNumber(totals.outOfStock) },
+    { label: "365天库龄SKU", value: formatMetricNumber(totals.agedSku) },
+  ]);
+  renderAmazonMetricCards("amazonDashboardSalesCards", [
+    { label: "7天销量", value: formatMetricNumber(totals.sales7) },
+    { label: "30天销量", value: formatMetricNumber(totals.sales30) },
+    { label: "90天销量", value: formatMetricNumber(totals.sales90) },
+  ]);
+  renderAmazonMetricCards("amazonDashboardInventoryCards", [
+    { label: "可售", value: formatMetricNumber(totals.available) },
+    { label: "入库", value: formatMetricNumber(totals.inbound) },
+    { label: "预留", value: formatMetricNumber(totals.reserved) },
+    { label: "不可售", value: formatMetricNumber(totals.unsellable) },
+    { label: "365天以上", value: formatMetricNumber(totals.age365) },
+  ]);
+  renderAmazonMetricCards("amazonDashboardReplenishmentCards", [
+    { label: "建议SKU", value: formatMetricNumber(totals.restockSku) },
+    { label: "FBA缺口", value: formatMetricNumber(totals.fbaGapQty) },
+    { label: "海外仓补货", value: formatMetricNumber(totals.restockQty) },
+    { label: "工厂备货(亚马逊直发)", value: formatMetricNumber(totals.factoryAmazonReplenishmentQty) },
+    { label: "工厂备货(海外仓)", value: formatMetricNumber(totals.factoryOverseasProductionQty) },
+    { label: "断货SKU", value: formatMetricNumber(totals.outOfStock) },
+  ]);
+  renderAmazonMetricCards("amazonDashboardRemovalCards", [
+    { label: "退仓SKU", value: formatMetricNumber(totals.removalSku) },
+    { label: "建议退仓", value: formatMetricNumber(totals.removalQty) },
+    { label: "181-270天", value: formatMetricNumber(totals.age181To270) },
+    { label: "271天以上", value: formatMetricNumber(totals.age270Plus) },
+    { label: "365天以上", value: formatMetricNumber(totals.age365) },
+  ]);
+
+  $("amazonDashboardSalesMeta").textContent = `按90天销量排序，显示前 ${formatMetricNumber(analysis.salesRows.length)} 条`;
+  $("amazonDashboardInventoryMeta").textContent = `按在库数量排序，显示前 ${formatMetricNumber(analysis.inventoryRows.length)} 条`;
+  $("amazonDashboardReplenishmentMeta").textContent = `显示 ${formatMetricNumber(analysis.replenishmentRows.length)} 条建议`;
+  $("amazonDashboardRemovalMeta").textContent = `显示 ${formatMetricNumber(analysis.removalRows.length)} 条库龄风险`;
+
+  const commonColumns = [
+    (row) => escapeHtml(displayText(row.sku)),
+    (row) => escapeHtml(displayText(row.asin)),
+    (row) => renderAmazonMatchedProductId(row),
+    (row) => `<span class="amazon-dashboard-name">${escapeHtml(displayText(row.matchedProductName))}</span>`,
+  ];
+  renderAmazonDashboardTable(
+    "amazonDashboardSalesBody",
+    analysis.salesRows,
+    [
+      ...commonColumns,
+      (row) => escapeHtml(formatMetricNumber(row.sales7)),
+      (row) => escapeHtml(formatMetricNumber(row.sales30)),
+      (row) => escapeHtml(formatMetricNumber(row.sales90)),
+      (row) => escapeHtml(formatMetricNumber(row.available)),
+      (row) => escapeHtml(row.coverageDays >= 999 ? "充足" : `${formatMetricNumber(row.coverageDays, 1)}天`),
+    ],
+    "暂无销售数据",
+  );
+  renderAmazonDashboardTable(
+    "amazonDashboardInventoryBody",
+    analysis.inventoryRows,
+    [
+      ...commonColumns,
+      (row) => escapeHtml(formatMetricNumber(row.available)),
+      (row) => escapeHtml(formatMetricNumber(row.inbound)),
+      (row) => escapeHtml(formatMetricNumber(row.reserved)),
+      (row) => escapeHtml(formatMetricNumber(row.unsellable)),
+      (row) => escapeHtml(formatMetricNumber(row.age365)),
+    ],
+    "暂无库存数据",
+  );
+  renderAmazonDashboardTable(
+    "amazonDashboardReplenishmentBody",
+    analysis.replenishmentRows,
+    [
+      ...commonColumns,
+      (row) => escapeHtml(formatMetricNumber(row.sales90)),
+      (row) => escapeHtml(formatMetricNumber(row.daily90, 2)),
+      (row) => escapeHtml(formatMetricNumber(row.available)),
+      (row) => escapeHtml(formatMetricNumber(row.inbound)),
+      (row) => escapeHtml(formatMetricNumber(row.overseasStockQty)),
+      (row) => escapeHtml(formatMetricNumber(row.fbaGapQty)),
+      (row) => escapeHtml(formatMetricNumber(row.overseasReplenishmentQty)),
+      (row) => escapeHtml(formatMetricNumber(row.factoryAmazonReplenishmentQty)),
+      (row) => escapeHtml(formatMetricNumber(row.factoryOverseasProductionQty)),
+      (row) => `<span class="amazon-dashboard-chip ${row.replenishmentPriority === "立即补FBA" || row.replenishmentPriority === "工厂直补亚马逊" ? "danger" : row.replenishmentPriority === "计划补货" ? "warning" : ""}">${escapeHtml(displayText(row.replenishmentPriority))}</span>`,
+    ],
+    "暂无补货建议",
+  );
+  renderAmazonDashboardTable(
+    "amazonDashboardRemovalBody",
+    analysis.removalRows,
+    [
+      ...commonColumns,
+      (row) => escapeHtml(formatMetricNumber(row.age181To270)),
+      (row) => escapeHtml(formatMetricNumber(row.age270Plus)),
+      (row) => escapeHtml(formatMetricNumber(row.age365)),
+      (row) => escapeHtml(formatMetricNumber(row.removalSuggestedQty)),
+      (row) => buildAmazonRemovalRiskChip(row),
+    ],
+    "暂无退仓建议",
+  );
+  hydrateResponsiveTableLabels($("amazonDashboard"));
+}
+
+async function handleAmazonDashboardCsvUpload(file) {
+  if (!file) throw new Error("请选择 CSV 文件");
+  const text = await file.text();
+  const rows = parseCsvText(text);
+  if (!rows.length) throw new Error("CSV 没有可分析的数据行");
+  try {
+    await withAmazonDashboardTimeout(
+      loadAmazonDashboardSkuList(),
+      AMAZON_DASHBOARD_FAST_LOAD_TIMEOUT_MS,
+      "SKU匹配数据读取较慢，先展示CSV分析结果",
+    );
+  } catch (error) {
+    showToast(error.message, true);
+  }
+  const analysis = buildAmazonDashboardAnalysis(rows);
+  if (!analysis.rows.length) throw new Error("CSV 未识别到 SKU、ASIN 或商品名称");
+  enrichAmazonDashboardRowsWithProducts(analysis);
+  state.amazonDashboardRows = analysis.rows;
+  state.amazonDashboardSummary = analysis;
+  state.amazonDashboardFileName = file.name || "";
+  renderAmazonDashboardAnalysis(analysis);
+  if (state.token && (!state.amazonDashboardMasterProductsLoaded || !state.overviewDashboard)) {
+    $("amazonDashboardFileMeta").textContent = `${$("amazonDashboardFileMeta").textContent} / 正在补充海外仓库存和工厂备货建议...`;
+    loadAmazonDashboardSupportData()
+      .then(() => {
+        if (state.amazonDashboardSummary !== analysis) return;
+        enrichAmazonDashboardRowsWithProducts(analysis);
+        renderAmazonDashboardAnalysis(analysis);
+        showToast("海外仓库存和工厂备货建议已更新");
+      })
+      .catch((error) => {
+        showToast(`CSV 已分析完成，但补充系统库存/工厂建议失败：${error.message}`, true);
+      });
+  }
+}
+
+function resetAmazonDashboard() {
+  state.amazonDashboardRows = [];
+  state.amazonDashboardSummary = null;
+  state.amazonDashboardFileName = "";
+  $("amazonDashboardUploadForm")?.reset();
+  $("amazonDashboardResult")?.classList.add("hidden");
+  $("amazonDashboardFileMeta").textContent = "尚未上传 CSV";
+  [
+    "amazonDashboardSummary",
+    "amazonDashboardSalesCards",
+    "amazonDashboardInventoryCards",
+    "amazonDashboardReplenishmentCards",
+    "amazonDashboardRemovalCards",
+  ].forEach((id) => {
+    const node = $(id);
+    if (node) node.innerHTML = "";
+  });
 }
 
 function hydrateResponsiveTableLabels(root = document) {
@@ -4907,6 +5508,47 @@ async function loadInventory({ preserveSearch = false } = {}) {
     renderInventoryTable();
   }
   await refreshMoveProductOldBoxOptionsByProduct();
+}
+
+async function loadAmazonDashboardMasterProducts({ force = false } = {}) {
+  if (!force && state.amazonDashboardMasterProductsLoaded) {
+    return state.amazonDashboardMasterProducts;
+  }
+  const pageSize = 100;
+  let page = 1;
+  const products = [];
+  while (page <= 1000) {
+    const result = await request(`/master-products?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(pageSize)}`);
+    const items = Array.isArray(result?.items) ? result.items : [];
+    products.push(...items);
+    if (!result?.hasMore || items.length === 0) break;
+    page += 1;
+  }
+  state.amazonDashboardMasterProducts = products;
+  state.amazonDashboardMasterProductsLoaded = true;
+  return products;
+}
+
+async function loadAmazonDashboardSkuList() {
+  if (state.token && (!Array.isArray(state.inventorySkus) || state.inventorySkus.length === 0)) {
+    state.inventorySkus = await request("/skus");
+    $("statSkus").textContent = Array.isArray(state.inventorySkus) ? state.inventorySkus.length : "-";
+  }
+  return state.inventorySkus;
+}
+
+async function loadAmazonDashboardSupportData() {
+  const jobs = [];
+  if (state.token && (!Array.isArray(state.inventorySkus) || state.inventorySkus.length === 0)) {
+    jobs.push(loadAmazonDashboardSkuList());
+  }
+  if (state.token && !state.amazonDashboardMasterProductsLoaded) {
+    jobs.push(loadAmazonDashboardMasterProducts());
+  }
+  if (state.token && !state.overviewDashboard) {
+    jobs.push(loadOverviewDashboard());
+  }
+  await Promise.all(jobs);
 }
 
 async function refreshInventoryViewAfterStockMutation({ preserveCurrentView = false } = {}) {
@@ -12147,6 +12789,24 @@ function bindForms() {
     toggle.textContent = expanded ? "收起功能" : "更多功能";
   });
 
+  $("amazonDashboardUploadForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    const file = $("amazonDashboardCsvFile")?.files?.[0];
+    try {
+      await withBusyButton(submitButton, "分析中...", async () => {
+        await handleAmazonDashboardCsvUpload(file);
+        showToast("亚马逊大盘分析完成");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("resetAmazonDashboardBtn")?.addEventListener("click", () => {
+    resetAmazonDashboard();
+  });
+
   const submitOrderSearch = async (button = $("orderSearchSubmitBtn")) => {
     const input = $("orderSearchInput");
     const keyword = String(input?.value || "").trim();
@@ -13521,6 +14181,14 @@ function bindForms() {
   $("openProductManagementPanel").addEventListener("click", async () => {
     try {
       await openProductManagementPanelView();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openAmazonDashboardPanel")?.addEventListener("click", () => {
+    try {
+      switchPanel("amazonDashboard");
     } catch (error) {
       showToast(error.message, true);
     }

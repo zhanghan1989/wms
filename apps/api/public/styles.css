@@ -520,6 +520,103 @@ button.ghost {
   flex-wrap: wrap;
 }
 
+.amazon-dashboard-upload-card {
+  max-width: 980px;
+}
+
+.amazon-dashboard-upload-form {
+  grid-template-columns: minmax(260px, 540px) auto;
+  align-items: end;
+  margin-bottom: 8px;
+}
+
+.amazon-dashboard-file-meta {
+  font-size: 13px;
+}
+
+.amazon-dashboard-summary-grid,
+.amazon-dashboard-metric-row {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.amazon-dashboard-summary-grid {
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+}
+
+.amazon-dashboard-metric-row {
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.amazon-dashboard-metric {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbf8;
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.amazon-dashboard-metric span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.amazon-dashboard-metric strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.15;
+  word-break: break-word;
+}
+
+.amazon-dashboard-table-wrap {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.amazon-dashboard-table-wrap table {
+  min-width: 1180px;
+}
+
+.amazon-dashboard-name {
+  display: block;
+  max-width: 420px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.amazon-dashboard-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  border-radius: 999px;
+  border: 1px solid #c8d7cc;
+  background: #f5f8f5;
+  color: var(--ink);
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.amazon-dashboard-chip.warning {
+  border-color: #d8bd6d;
+  background: #fff8df;
+  color: #7a5a00;
+}
+
+.amazon-dashboard-chip.danger {
+  border-color: rgba(194, 59, 59, 0.36);
+  background: rgba(194, 59, 59, 0.1);
+  color: #9d2e2e;
+}
+
 .master-product-import-actions .actions {
   margin-left: auto;
   align-items: center;
@@ -2143,6 +2240,7 @@ button.danger-solid {
 
   .form-grid,
   .form-grid.compact,
+  .amazon-dashboard-upload-form,
   .inventory-search-form,
   .manage-inline-form,
   .modal-grid,
@@ -2157,6 +2255,10 @@ button.danger-solid {
 
   .master-product-summary-grid {
     grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+
+  .amazon-dashboard-summary-grid {
+    grid-template-columns: repeat(2, minmax(150px, 1fr));
   }
 
   .inventory-search-card .card-head,

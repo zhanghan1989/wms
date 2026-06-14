@@ -185,6 +185,7 @@
           产品管理
           <span id="productEditPendingBadge" class="quick-badge hidden">0</span>
         </button>
+        <button type="button" id="openAmazonDashboardPanel">亚马逊大盘</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -438,6 +439,139 @@
             <div id="productEditRequestLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
           </div>
         </article>
+      </section>
+
+      <section class="panel" id="amazonDashboard">
+        <div class="panel-head">
+          <h2>亚马逊大盘</h2>
+          <div class="panel-tools">
+            <button type="button" id="resetAmazonDashboardBtn" class="ghost">清空</button>
+          </div>
+        </div>
+
+        <article class="card amazon-dashboard-upload-card">
+          <form id="amazonDashboardUploadForm" class="form-grid amazon-dashboard-upload-form">
+            <label>
+              CSV文件
+              <input id="amazonDashboardCsvFile" type="file" accept=".csv,text/csv" required />
+            </label>
+            <button type="submit">上传分析</button>
+          </form>
+          <div id="amazonDashboardFileMeta" class="amazon-dashboard-file-meta muted">尚未上传 CSV</div>
+        </article>
+
+        <div id="amazonDashboardResult" class="hidden">
+          <div id="amazonDashboardSummary" class="amazon-dashboard-summary-grid"></div>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>销售分析</h3>
+              <span id="amazonDashboardSalesMeta" class="muted">-</span>
+            </div>
+            <div id="amazonDashboardSalesCards" class="amazon-dashboard-metric-row"></div>
+            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>ASIN</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>7天</th>
+                    <th>30天</th>
+                    <th>90天</th>
+                    <th>在库</th>
+                    <th>售罄预估</th>
+                  </tr>
+                </thead>
+                <tbody id="amazonDashboardSalesBody"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>在库分析</h3>
+              <span id="amazonDashboardInventoryMeta" class="muted">-</span>
+            </div>
+            <div id="amazonDashboardInventoryCards" class="amazon-dashboard-metric-row"></div>
+            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>ASIN</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>可售</th>
+                    <th>入库</th>
+                    <th>预留</th>
+                    <th>不可售</th>
+                    <th>库龄365+</th>
+                  </tr>
+                </thead>
+                <tbody id="amazonDashboardInventoryBody"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>补货建议</h3>
+              <span id="amazonDashboardReplenishmentMeta" class="muted">-</span>
+            </div>
+            <div id="amazonDashboardReplenishmentCards" class="amazon-dashboard-metric-row"></div>
+            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>ASIN</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>90天销量</th>
+                    <th>日均销量</th>
+                    <th>亚马逊可售</th>
+                    <th>亚马逊入库</th>
+                    <th>海外仓库存</th>
+                    <th>FBA缺口</th>
+                    <th>海外仓补货</th>
+                    <th>工厂备货(亚马逊直发)</th>
+                    <th>工厂备货(海外仓)</th>
+                    <th>优先级</th>
+                  </tr>
+                </thead>
+                <tbody id="amazonDashboardReplenishmentBody"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>退仓建议</h3>
+              <span id="amazonDashboardRemovalMeta" class="muted">-</span>
+            </div>
+            <div id="amazonDashboardRemovalCards" class="amazon-dashboard-metric-row"></div>
+            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SKU</th>
+                    <th>ASIN</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>181-270天</th>
+                    <th>271天以上</th>
+                    <th>365天以上</th>
+                    <th>建议退仓</th>
+                    <th>风险</th>
+                  </tr>
+                </thead>
+                <tbody id="amazonDashboardRemovalBody"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
       </section>
 
       <section class="panel" id="skuManagement">
