@@ -603,58 +603,45 @@ export class MasterProductsService {
       throw new BadRequestException('产品ID不能为空');
     }
 
-    const product = await this.prisma.masterProduct.findUnique({
-      where: { productId },
-    });
+    const [product, skus, currentProductBoxRows] = await Promise.all([
+      this.prisma.masterProduct.findUnique({
+        where: { productId },
+      }),
+      this.prisma.sku.findMany({
+        where: {
+          productId,
+          status: 1,
+        },
+        select: {
+          id: true,
+          productId: true,
+          sku: true,
+          asin: true,
+          fnsku: true,
+          fbmSku: true,
+          rbSku: true,
+          shop: true,
+        },
+        orderBy: [{ sku: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.masterProductBoxInventory.findMany({
+        where: {
+          productId,
+          qty: { gt: 0 },
+        },
+        select: {
+          boxId: true,
+        },
+      }),
+    ]);
     if (!product) {
       throw new NotFoundException('未找到产品主表信息');
     }
 
-    const skus = await this.prisma.sku.findMany({
-      where: {
-        productId,
-        status: 1,
-      },
-      select: {
-        id: true,
-        productId: true,
-        sku: true,
-        asin: true,
-        fnsku: true,
-        fbmSku: true,
-        rbSku: true,
-        shop: true,
-      },
-      orderBy: [{ sku: 'asc' }, { id: 'asc' }],
-    });
-
-    const currentProductBoxRows = await this.prisma.masterProductBoxInventory.findMany({
-      where: {
-        productId,
-        qty: { gt: 0 },
-      },
-      select: {
-        qty: true,
-        updatedAt: true,
-        box: {
-          select: {
-            id: true,
-            boxCode: true,
-            shelf: {
-              select: {
-                shelfCode: true,
-                name: true,
-              },
-            },
-          },
-        },
-      },
-    });
-
     const relatedBoxIds = Array.from(
       new Set(
         currentProductBoxRows
-          .map((row) => Number(row.box.id))
+          .map((row) => Number(row.boxId))
           .filter((boxId) => Number.isInteger(boxId) && boxId > 0),
       ),
     );

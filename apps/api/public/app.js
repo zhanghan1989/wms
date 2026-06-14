@@ -2929,6 +2929,16 @@ async function openInventoryStartupView() {
   await openInventoryHomeDefault();
 }
 
+async function openStartupView() {
+  if (getPendingMasterProductDetailIdFromUrl()) {
+    await loadMe();
+    await openInventoryStartupView();
+    return;
+  }
+  await reloadAll();
+  await openInventoryStartupView();
+}
+
 function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
   if (markAsUserNavigation && state.token) {
     hasUserNavigatedSinceBootstrap = true;
@@ -17502,6 +17512,5 @@ updateFbaOutboundButtonState();
 updateFbaSelectAll();
 bootstrapAuthTokenFromLocationHash();
 switchPanel("inventory", { markAsUserNavigation: false });
-reloadAll()
-  .then(() => openInventoryStartupView())
+openStartupView()
   .catch((error) => showToast(error.message, true));
