@@ -19,7 +19,7 @@ on:
           - "false"
 
 concurrency:
-  group: deploy-main-${{ github.event_name }}
+  group: deploy-main
   cancel-in-progress: true
 
 permissions:
@@ -74,7 +74,36 @@ jobs:
             echo "- Ref: \`${DEPLOY_REF}\`"
             echo "- Run migrations: \`${RUN_MIGRATIONS}\`"
             echo "- Trigger: \`${{ github.event_name }}\`"
+            echo "- Build mode: GitHub Actions image build, ECS image load"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          tags: wms-api:${{ github.sha }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save API image
+        run: |
+          docker save "wms-api:${DEPLOY_REF}" | gzip > "wms-api-${DEPLOY_REF}.tar.gz"
+          ls -lh "wms-api-${DEPLOY_REF}.tar.gz"
+
+      - name: Copy API image to ECS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          port: ${{ secrets.ECS_PORT }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          source: wms-api-${{ github.sha }}.tar.gz
+          target: /tmp
 
       - name: Deploy to ECS by SSH
         uses: appleboy/ssh-action@v1.2.0
@@ -136,17 +165,29 @@ jobs:
             export DEPLOY_SESSION_VERSION
             echo "Using DEPLOY_SESSION_VERSION=${DEPLOY_SESSION_VERSION}"
             timed "git_show_head" git show -s --format="%H %s" HEAD
+            IMAGE_TAR="/tmp/wms-api-${DEPLOY_REF}.tar.gz"
+            IMAGE_TAG="wms-api:${DEPLOY_REF}"
+            if [ ! -s "${IMAGE_TAR}" ]; then
+              echo "Missing deployment image tar: ${IMAGE_TAR}"
+              exit 1
+            fi
+            timed "docker_load_api_image" sh -c "gzip -dc '${IMAGE_TAR}' | docker load"
+            cat > /tmp/wms-api-image-compose.yml <<EOF
+            services:
+              api:
+                image: ${IMAGE_TAG}
+                build: null
+            EOF
             timed_retry "compose_up_db_redis" 3 docker compose up -d db redis
-            timed_retry "compose_build_api_once" 3 docker compose build api
             if [ "${RUN_MIGRATIONS}" = "true" ]; then
               echo "Running prisma migrate deploy..."
-              timed_retry "prisma_migrate_deploy" 3 docker compose run --rm --no-deps api npm run -w api prisma:migrate:deploy
+              timed_retry "prisma_migrate_deploy" 3 docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml run --rm --no-deps api npm run -w api prisma:migrate:deploy
             else
               echo "Skipping prisma migrate deploy."
             fi
-            timed_retry "compose_up_api_recreate" 3 docker compose up -d --force-recreate api
-            timed "compose_ps" docker compose ps
-            timed "api_logs_tail_120" sh -c "docker compose logs --tail=120 api || true"
+            timed_retry "compose_up_api_recreate" 3 docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml up -d --force-recreate --remove-orphans api
+            timed "compose_ps" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml ps
+            timed "api_logs_tail_120" sh -c "docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml logs --tail=120 api || true"
             echo "Smoke check static assets..."
             READY=0
             SMOKE_START_TS="$(date +%s)"
@@ -160,8 +201,8 @@ jobs:
             done
             if [ "${READY}" -ne 1 ]; then
               echo "API readiness check timeout."
-              docker compose ps
-              docker compose logs --tail=200 api || true
+              docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml ps
+              docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml logs --tail=200 api || true
               exit 1
             fi
             SMOKE_END_TS="$(date +%s)"
@@ -170,6 +211,8 @@ jobs:
             timed "smoke_head_app_js" curl -fI http://127.0.0.1:3000/app.js
             timed "smoke_download_app_js" curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
             timed "smoke_grep_marker" grep -q "normalizeErrorMessage" /tmp/wms_app.js
+            timed "cleanup_image_tar" rm -f "${IMAGE_TAR}"
+            timed "cleanup_old_wms_images" sh -c "docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk -v keep='${IMAGE_TAG}' '\$1 ~ /^wms-api:/ && \$1 != keep {print \$2}' | sort -u | xargs -r docker rmi || true"
             JOB_END_TS="$(date +%s)"
             echo "=== Deploy total elapsed: $((JOB_END_TS - JOB_START_TS))s ==="
             echo "Smoke check passed."
