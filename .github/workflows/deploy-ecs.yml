@@ -172,12 +172,14 @@ jobs:
               exit 1
             fi
             timed "docker_load_api_image" sh -c "gzip -dc '${IMAGE_TAR}' | docker load"
-            cat > /tmp/wms-api-image-compose.yml <<EOF
-            services:
-              api:
-                image: ${IMAGE_TAG}
-                build: null
-            EOF
+            {
+              printf '%s\n' 'services:'
+              printf '%s\n' '  api:'
+              printf '    image: %s\n' "${IMAGE_TAG}"
+              printf '%s\n' '    build: null'
+            } > /tmp/wms-api-image-compose.yml
+            timed "show_api_image_compose" cat /tmp/wms-api-image-compose.yml
+            timed "validate_api_image_compose" sh -c "docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml config >/tmp/wms-api-compose-config.yml"
             timed_retry "compose_up_db_redis" 3 docker compose up -d db redis
             if [ "${RUN_MIGRATIONS}" = "true" ]; then
               echo "Running prisma migrate deploy..."
