@@ -150,8 +150,8 @@ export class InventoryController {
   }
 
   @Get('fba-replenishments/outbound-excel')
-  async downloadFbaOutboundExcel(@Res() res: Response): Promise<void> {
-    const file = await this.inventoryService.buildFbaOutboundExcel();
+  async downloadFbaReplenishmentsExcel(@Res() res: Response): Promise<void> {
+    const file = await this.inventoryService.buildFbaReplenishmentsExcel();
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

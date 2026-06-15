@@ -1054,14 +1054,9 @@ export class InventoryService {
     return importBulkUpdateExcelByProduct.call(this, fileBuffer, originalName, operatorId, requestId);
   }
 
-  async buildFbaOutboundExcel(): Promise<{ fileName: string; content: Buffer }> {
+  async buildFbaReplenishmentsExcel(): Promise<{ fileName: string; content: Buffer }> {
     const rows = await this.prisma.fbaReplenishment.findMany({
-      where: {
-        status: 'outbound',
-      },
-      orderBy: {
-        outboundAt: 'desc',
-      },
+      orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
       include: {
         sku: {
           select: {
@@ -1104,7 +1099,7 @@ export class InventoryService {
 
     const data = rows.map((row) => ({
       '申请单号': row.requestNo ?? '',
-      '状态': '已出库',
+      '状态': this.getFbaStatusLabel(row.status),
       'SKU': row.sku?.sku ?? '',
       'rbSKU': row.sku?.rbSku ?? '',
       'ASIN': row.sku?.asin ?? '',
@@ -1127,11 +1122,11 @@ export class InventoryService {
 
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'FBA出库记录');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'FBA补货申请');
     const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
 
     return {
-      fileName: `fba_outbound_${this.formatDateForFilename(new Date())}.xlsx`,
+      fileName: `fba_replenishments_${this.formatDateForFilename(new Date())}.xlsx`,
       content,
     };
   }
