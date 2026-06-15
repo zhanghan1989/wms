@@ -1067,6 +1067,12 @@ export class InventoryService {
             fbmSku: true,
             shop: true,
             remark: true,
+            productId: true,
+            masterProduct: {
+              select: {
+                productName: true,
+              },
+            },
           },
         },
         box: {
@@ -1106,6 +1112,8 @@ export class InventoryService {
       'FNSKU': row.sku?.fnsku ?? '',
       'FBMSKU': row.sku?.fbmSku ?? '',
       '店铺': row.sku?.shop ?? '',
+      '产品ID': row.sku?.productId ?? '',
+      '产品名称': row.sku?.masterProduct?.productName ?? '',
       '产品备注': row.sku?.remark ?? '',
       '箱号': row.box?.boxCode ?? '',
       '货架号': row.box?.shelf?.shelfCode ?? '',
