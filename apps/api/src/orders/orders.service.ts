@@ -523,6 +523,7 @@ interface ThirdPartyExportAckItem {
 interface XiyaLogisticsRow {
   id?: string | number | null;
   logistics_order_id?: string | null;
+  tracking_number?: string | null;
   sales_order_id?: string | null;
   store_name?: string | null;
   created_at?: string | null;
@@ -862,6 +863,8 @@ const XIYA_MANUAL_ORDER_SOURCE_FILE_PATH = 'external:xiya-manual-order';
 const MANUAL_ORDER_UPLOAD_TEMPLATE_FILE = '手动订单上传模板.xlsx';
 const XIYA_LOGISTICS_EXPORT_URL = 'http://103.236.55.93/api/external/logistics/rakuten';
 const XIYA_LOGISTICS_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
+const XIYA_COMPANY_NAME = 'XYJG';
+const XIYA_SUCCESS_CODES = new Set([0, 200]);
 const XIYA_LOGISTICS_SYNC_DAYS = 5;
 const XIYA_TRACKING_SYNC_CRON = '0 0 17 * * *';
 const UOF_TRACKING_API_URL =
@@ -7481,6 +7484,7 @@ export class OrdersService {
     }
 
     const payload = {
+      company_name: XIYA_COMPANY_NAME,
       blogger_cooperation_id: bloggerCooperationId,
       switch_to_china_ship: pushMode === XYJG_PUSH_MODE.CHINA_SHIP,
       ...(pushTrackingNo ? { tracking_number: pushTrackingNo } : {}),
@@ -7500,7 +7504,7 @@ export class OrdersService {
         responsePayload && typeof responsePayload === 'object'
           ? Number((responsePayload as Record<string, unknown>).code)
           : NaN;
-      if (!response.ok || responseCode !== 200) {
+      if (!response.ok || !XIYA_SUCCESS_CODES.has(responseCode)) {
         const message =
           responsePayload && typeof responsePayload === 'object'
             ? String((responsePayload as Record<string, unknown>).message ?? '')
@@ -7827,6 +7831,7 @@ export class OrdersService {
 
   private async fetchXiyaLogisticsRows(): Promise<XiyaLogisticsRow[]> {
     const url = new URL(XIYA_LOGISTICS_EXPORT_URL);
+    url.searchParams.set('company_name', XIYA_COMPANY_NAME);
     url.searchParams.set('storeName', Object.keys(XIYA_LOGISTICS_STORE_SOURCE).join(','));
     url.searchParams.set('days', String(XIYA_LOGISTICS_SYNC_DAYS));
 
@@ -7856,7 +7861,7 @@ export class OrdersService {
       throw new InternalServerErrorException('Xiya 运单号接口返回格式无效');
     }
     const root = payload as Record<string, unknown>;
-    if (Number(root.code) !== 200) {
+    if (!XIYA_SUCCESS_CODES.has(Number(root.code))) {
       throw new InternalServerErrorException(`Xiya 运单号接口返回失败：${String(root.message ?? '未知错误')}`);
     }
     const data = root.data;
@@ -7872,7 +7877,7 @@ export class OrdersService {
         const storeName = String(row?.store_name ?? '').trim();
         const source = XIYA_LOGISTICS_STORE_SOURCE[storeName];
         const orderId = String(row?.sales_order_id ?? '').trim();
-        const trackingNo = String(row?.logistics_order_id ?? '').trim();
+        const trackingNo = String(row?.logistics_order_id || row?.tracking_number || '').trim();
         if (!source || !orderId || !trackingNo) {
           return null;
         }
