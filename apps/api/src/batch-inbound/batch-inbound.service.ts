@@ -54,6 +54,7 @@ interface BatchInboundOrderDetail extends BatchInboundOrderSummary {
     id: string;
     boxCode: string;
     productId: string;
+    productName: string | null;
     qty: number;
     sourceRowNo: number | null;
     status: BatchInboundItemStatus;
@@ -135,7 +136,7 @@ export class BatchInboundService {
       throw new NotFoundException('批量入库单不存在');
     }
 
-    return this.toOrderDetail(order);
+    return this.toOrderDetail(order, this.prisma);
   }
 
   async removeOrder(
@@ -275,7 +276,7 @@ export class BatchInboundService {
         requestId,
       });
 
-      return this.toOrderDetail(created);
+      return this.toOrderDetail(created, tx);
     });
   }
 
@@ -396,7 +397,7 @@ export class BatchInboundService {
         remark: '上传批量入库Excel',
       });
 
-      return this.toOrderDetail(updatedOrder);
+      return this.toOrderDetail(updatedOrder, tx);
     });
   }
 
@@ -479,7 +480,7 @@ export class BatchInboundService {
         remark: '保存国内单号',
       });
 
-      return this.toOrderDetail(updatedOrder);
+      return this.toOrderDetail(updatedOrder, tx);
     });
   }
 
@@ -564,7 +565,7 @@ export class BatchInboundService {
         remark: '保存海运单号',
       });
 
-      return this.toOrderDetail(updatedOrder);
+      return this.toOrderDetail(updatedOrder, tx);
     });
   }
 
@@ -1188,7 +1189,7 @@ export class BatchInboundService {
       throw new NotFoundException('批量入库单不存在');
     }
 
-    return this.toOrderDetail(order);
+    return this.toOrderDetail(order, tx);
   }
 
   private toOrderSummary(order: {
@@ -1233,7 +1234,8 @@ export class BatchInboundService {
     };
   }
 
-  private toOrderDetail(order: {
+  private async toOrderDetail(
+    order: {
     id: bigint;
     orderNo: string;
     status: BatchInboundOrderStatus;
@@ -1257,9 +1259,19 @@ export class BatchInboundService {
       confirmedAt: Date | null;
       createdAt: Date;
     }>;
-  }): BatchInboundOrderDetail {
+    },
+    db: Tx | PrismaService,
+  ): Promise<BatchInboundOrderDetail> {
     const pendingCount = order.items.filter((item) => item.status === BatchInboundItemStatus.pending).length;
     const confirmedCount = order.items.length - pendingCount;
+    const productIds = Array.from(new Set(order.items.map((item) => item.productId).filter(Boolean)));
+    const products = productIds.length
+      ? await db.masterProduct.findMany({
+          where: { productId: { in: productIds } },
+          select: { productId: true, productName: true },
+        })
+      : [];
+    const productNameById = new Map(products.map((product) => [product.productId, product.productName]));
 
     return {
       id: order.id.toString(),
@@ -1285,6 +1297,7 @@ export class BatchInboundService {
         id: item.id.toString(),
         boxCode: item.boxCode,
         productId: item.productId,
+        productName: productNameById.get(item.productId) ?? null,
         qty: item.qty,
         sourceRowNo: item.sourceRowNo,
         status: item.status,

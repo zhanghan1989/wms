@@ -8261,7 +8261,8 @@ function renderBatchInboundDetail(detail) {
           <table class="batch-detail-table">
             <thead>
               <tr>
-                <th>SKU</th>
+                <th>产品ID</th>
+                <th>产品名称</th>
                 <th>数量</th>
                 <th>状态</th>
                 <th>操作</th>
@@ -8274,11 +8275,12 @@ function renderBatchInboundDetail(detail) {
                     canConfirm && item.status === "pending"
                       ? `<button class="tiny-btn" data-action="batchInboundConfirmItem" data-order-id="${escapeHtml(
                           detail.id,
-                        )}" data-item-id="${escapeHtml(item.id)}">确认SKU</button>`
+                        )}" data-item-id="${escapeHtml(item.id)}">确认产品</button>`
                       : '<span class="muted">-</span>';
                   return `
                     <tr>
-                      <td>${escapeHtml(item.skuCode)}</td>
+                      <td>${escapeHtml(displayText(item.productId))}</td>
+                      <td>${escapeHtml(displayText(item.productName))}</td>
                       <td>${escapeHtml(item.qty)}</td>
                       <td>${escapeHtml(item.status === "pending" ? "待确认" : "已确认")}</td>
                       <td>${itemAction}</td>
@@ -15841,7 +15843,7 @@ function bindDelegates() {
       } else if (action === "batchInboundConfirmItem") {
         const itemId = button.dataset.itemId;
         await confirmBatchInboundAction("item", orderId, { itemId });
-        showToast("SKU确认入库成功");
+        showToast("产品确认入库成功");
       } else {
         return;
       }
