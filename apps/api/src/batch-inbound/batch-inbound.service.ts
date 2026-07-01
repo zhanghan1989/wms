@@ -216,7 +216,8 @@ export class BatchInboundService {
       const reservedNumbers = await this.getReservedBoxNumbers(tx);
       reservedNumbers.forEach((num) => usedNumbers.add(num));
 
-      const rangeStart = this.findContinuousRangeStart(usedNumbers, payload.boxCount);
+      const initialBoxNumber = payload.initialBoxNumber ?? 1;
+      const rangeStart = this.findContinuousRangeStart(usedNumbers, payload.boxCount, initialBoxNumber);
       const rangeEnd = rangeStart + payload.boxCount - 1;
       const collectedBoxCodes = Array.from({ length: payload.boxCount }, (_, index) =>
         this.formatBoxCode(rangeStart + index),
@@ -1071,8 +1072,8 @@ export class BatchInboundService {
     return reserved;
   }
 
-  private findContinuousRangeStart(used: Set<number>, count: number): number {
-    let start = 1;
+  private findContinuousRangeStart(used: Set<number>, count: number, initialBoxNumber = 1): number {
+    let start = initialBoxNumber;
     const maxStart = 999999 - count + 1;
 
     while (start <= maxStart) {

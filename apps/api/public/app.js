@@ -3634,6 +3634,7 @@ function bindInputRules() {
   bindDigitInput("boxManageCodeInput", 3);
   bindShelfCodeInput("modalNewShelfCodeDigits");
   bindShelfCodeInput("shelfManageCodeInput");
+  bindPositiveIntegerInput("batchCollectInitialBoxNumber", { min: 1, max: 999999 });
   bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
   bindBatchNoInput("batchCollectBatchNo");
 }
@@ -8355,8 +8356,13 @@ async function loadBatchInboundOrderDetail(orderId, { silent = false } = {}) {
 }
 
 async function submitCollectBatchInboundForm() {
+  const initialBoxNumberRaw = String($("batchCollectInitialBoxNumber").value || "").trim();
   const batchNoRaw = String($("batchCollectBatchNo").value || "").trim();
   const boxCount = Number($("batchCollectBoxCount").value);
+  const initialBoxNumber = initialBoxNumberRaw ? Number(initialBoxNumberRaw) : null;
+  if (initialBoxNumberRaw && (!Number.isInteger(initialBoxNumber) || initialBoxNumber <= 0)) {
+    throw new Error("初始箱号必须是大于0的整数");
+  }
   if (!batchNoRaw) {
     throw new Error("批号不能为空");
   }
@@ -8372,6 +8378,7 @@ async function submitCollectBatchInboundForm() {
     body: JSON.stringify({
       batchNo: batchNoRaw,
       boxCount,
+      ...(initialBoxNumber ? { initialBoxNumber } : {}),
     }),
   });
 

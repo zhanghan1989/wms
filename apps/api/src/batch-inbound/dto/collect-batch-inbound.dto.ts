@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsString, Length, Matches, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Length, Matches, Max, Min } from 'class-validator';
 
 export class CollectBatchInboundDto {
   @IsString()
@@ -12,4 +12,11 @@ export class CollectBatchInboundDto {
   @Min(1)
   @Max(500)
   boxCount!: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(999999)
+  initialBoxNumber?: number;
 }

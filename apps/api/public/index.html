@@ -1421,6 +1421,16 @@
             <h3>第一步：输入批号并采集箱号</h3>
             <form id="collectBatchInboundForm" class="form-grid batch-collect-form">
               <label>
+                初始箱号
+                <input
+                  id="batchCollectInitialBoxNumber"
+                  type="text"
+                  inputmode="numeric"
+                  placeholder="不填则从1开始"
+                  autocomplete="off"
+                />
+              </label>
+              <label>
                 批号
                 <input
                   id="batchCollectBatchNo"
