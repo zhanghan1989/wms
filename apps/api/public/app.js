@@ -8014,6 +8014,41 @@ function getSeaOrderTrackUrl(seaOrderNo) {
   return `http://jp.uofexp.com/search_order.aspx?trackNumber=${encodeURIComponent(seaOrderNo)}`;
 }
 
+function renderBatchInboundOrderNoEditor({ order, kind, value, placeholder }) {
+  const safeOrderId = escapeHtml(order.id);
+  const inputId = `${kind}OrderNo-${safeOrderId}`;
+  const hasValue = Boolean(String(value || "").trim());
+  const saveAction = kind === "domestic" ? "batchInboundSaveDomesticOrderNo" : "batchInboundSaveSeaOrderNo";
+  return `
+    <div class="batch-no-editor">
+      <input
+        id="${inputId}"
+        class="batch-no-input"
+        value="${escapeHtml(value || "")}"
+        placeholder="${escapeHtml(placeholder)}"
+        ${hasValue ? "readonly" : ""}
+      />
+      <button
+        class="tiny-btn"
+        data-action="${hasValue ? "batchInboundEditOrderNo" : saveAction}"
+        data-save-action="${saveAction}"
+        data-order-id="${safeOrderId}"
+        data-input-id="${inputId}"
+      >${hasValue ? "修改" : "保存"}</button>
+      ${
+        kind === "sea" && hasValue
+          ? `<button
+              class="tiny-btn ghost"
+              data-action="batchInboundQuerySeaOrderNo"
+              data-order-id="${safeOrderId}"
+              data-input-id="${inputId}"
+            >查询</button>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 function formatBatchRange(order) {
   if (!order?.rangeStart || !order?.rangeEnd || !order?.expectedBoxCount) {
     return "-";
@@ -8080,43 +8115,20 @@ function renderBatchInboundOrders() {
           <td>${escapeHtml(getBatchInboundStatusText(order.status, order))}</td>
           <td>${escapeHtml(formatBatchRange(order))}</td>
           <td>
-            <div class="batch-no-editor">
-              <input
-                id="domesticOrderNo-${escapeHtml(order.id)}"
-                class="batch-no-input"
-                value="${escapeHtml(order.domesticOrderNo || "")}"
-                placeholder="请输入国内单号"
-              />
-              <button
-                class="tiny-btn"
-                data-action="batchInboundSaveDomesticOrderNo"
-                data-order-id="${escapeHtml(order.id)}"
-                data-input-id="domesticOrderNo-${escapeHtml(order.id)}"
-              >保存</button>
-            </div>
+            ${renderBatchInboundOrderNoEditor({
+              order,
+              kind: "domestic",
+              value: order.domesticOrderNo,
+              placeholder: "请输入国内单号",
+            })}
           </td>
           <td>
-            <div class="batch-no-editor">
-              <input
-                id="seaOrderNo-${escapeHtml(order.id)}"
-                class="batch-no-input"
-                value="${escapeHtml(order.seaOrderNo || "")}"
-                placeholder="请输入海运单号"
-              />
-              <button
-                class="tiny-btn"
-                data-action="batchInboundSaveSeaOrderNo"
-                data-order-id="${escapeHtml(order.id)}"
-                data-input-id="seaOrderNo-${escapeHtml(order.id)}"
-              >保存</button>
-            </div>
-            ${
-              order.seaOrderNo
-                ? `<a class="batch-sea-link" href="${escapeHtml(
-                    getSeaOrderTrackUrl(order.seaOrderNo),
-                  )}" target="_blank" rel="noopener noreferrer">${escapeHtml(order.seaOrderNo)}</a>`
-                : ""
-            }
+            ${renderBatchInboundOrderNoEditor({
+              order,
+              kind: "sea",
+              value: order.seaOrderNo,
+              placeholder: "请输入海运单号",
+            })}
           </td>
           <td>${escapeHtml(order.confirmedCount ?? 0)} / ${escapeHtml(order.itemCount ?? 0)}</td>
           <td><div class="action-row">${actions.join("")}</div></td>
@@ -15472,6 +15484,21 @@ function bindDelegates() {
       if (action === "batchInboundSelectOrder" || action === "batchInboundOpenConfirm") {
         await loadBatchInboundOrderDetail(orderId, { silent: true });
         openModal("batchInboundDetailModal");
+      } else if (action === "batchInboundEditOrderNo") {
+        const input = $(button.dataset.inputId || "");
+        if (!input) return;
+        input.readOnly = false;
+        input.focus();
+        input.select();
+        button.dataset.action = button.dataset.saveAction || "";
+        button.textContent = "保存";
+      } else if (action === "batchInboundQuerySeaOrderNo") {
+        const input = $(button.dataset.inputId || "");
+        const seaOrderNo = String(input?.value || "").trim();
+        if (!seaOrderNo) {
+          throw new Error("请输入海运单号");
+        }
+        window.open(getSeaOrderTrackUrl(seaOrderNo), "_blank", "noopener,noreferrer");
       } else if (action === "batchInboundSaveDomesticOrderNo") {
         const input = $(button.dataset.inputId || "");
         const domesticOrderNo = String(input?.value || "").trim();
