@@ -8091,24 +8091,10 @@ function renderBatchInboundOrders() {
   tbody.innerHTML = orders
     .map((order) => {
       const actions = [
-        `<button class="tiny-btn ghost" data-action="batchInboundSelectOrder" data-order-id="${escapeHtml(
+        `<button class="tiny-btn" data-action="batchInboundSelectOrder" data-order-id="${escapeHtml(
           order.id,
         )}">查看</button>`,
       ];
-      if (order.status === "waiting_inbound") {
-        actions.push(
-          `<button class="tiny-btn" data-action="batchInboundOpenConfirm" data-order-id="${escapeHtml(
-            order.id,
-          )}">确认入库</button>`,
-        );
-      }
-      if (order.status !== "confirmed" && !order.seaOrderNo) {
-        actions.push(
-          `<button class="tiny-btn danger" data-action="batchInboundDeleteOrder" data-order-id="${escapeHtml(
-            order.id,
-          )}" data-order-no="${escapeHtml(order.orderNo)}">删除</button>`,
-        );
-      }
       return `
         <tr>
           <td>${escapeHtml(order.orderNo)}</td>
@@ -8276,6 +8262,7 @@ function renderBatchInboundDetail(detail) {
                 <th>产品ID</th>
                 <th>产品名称</th>
                 <th>数量</th>
+                <th>实际数量</th>
                 <th>状态</th>
                 <th>操作</th>
               </tr>
@@ -8287,13 +8274,25 @@ function renderBatchInboundDetail(detail) {
                     canConfirm && item.status === "pending"
                       ? `<button class="tiny-btn" data-action="batchInboundConfirmItem" data-order-id="${escapeHtml(
                           detail.id,
-                        )}" data-item-id="${escapeHtml(item.id)}">确认产品</button>`
+                        )}" data-item-id="${escapeHtml(item.id)}">确认产品和数量</button>`
                       : '<span class="muted">-</span>';
+                  const canEditQty = canConfirm && item.status === "pending";
                   return `
                     <tr>
                       <td>${escapeHtml(displayText(item.productId))}</td>
                       <td>${escapeHtml(displayText(item.productName))}</td>
                       <td>${escapeHtml(item.qty)}</td>
+                      <td>
+                        <input
+                          class="tiny-input batch-actual-qty-input"
+                          type="text"
+                          inputmode="numeric"
+                          value="${escapeHtml(item.qty)}"
+                          data-item-id="${escapeHtml(item.id)}"
+                          data-box-code="${escapeHtml(boxCode)}"
+                          ${canEditQty ? "" : "disabled"}
+                        />
+                      </td>
                       <td>${escapeHtml(item.status === "pending" ? "待确认" : "已确认")}</td>
                       <td>${itemAction}</td>
                     </tr>
@@ -8450,8 +8449,32 @@ async function confirmBatchInboundAction(action, orderId, payload = {}) {
   }
   await request(path, {
     method: "POST",
-    body: "{}",
+    body: JSON.stringify({
+      actualQuantities: payload.actualQuantities || {},
+    }),
   });
+}
+
+function collectBatchInboundActualQuantities({ itemId = "", boxCode = "" } = {}) {
+  const container = $("batchInboundDetail");
+  if (!container) return {};
+  const inputs = Array.from(container.querySelectorAll(".batch-actual-qty-input"));
+  const result = {};
+  inputs.forEach((input) => {
+    if (input.disabled) return;
+    const currentItemId = String(input.dataset.itemId || "").trim();
+    const currentBoxCode = String(input.dataset.boxCode || "").trim();
+    if (!currentItemId) return;
+    if (itemId && currentItemId !== String(itemId)) return;
+    if (boxCode && currentBoxCode !== String(boxCode)) return;
+    const raw = String(input.value || "").trim();
+    const qty = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isInteger(qty) || qty < 0) {
+      throw new Error("实际数量必须是0或正整数");
+    }
+    result[currentItemId] = qty;
+  });
+  return result;
 }
 
 async function deleteBatchInboundOrder(orderId) {
@@ -15861,16 +15884,19 @@ function bindDelegates() {
 
     try {
       if (action === "batchInboundConfirmAll") {
-        await confirmBatchInboundAction("all", orderId);
+        const actualQuantities = collectBatchInboundActualQuantities();
+        await confirmBatchInboundAction("all", orderId, { actualQuantities });
         showToast("整单确认入库成功");
       } else if (action === "batchInboundConfirmBox") {
         const boxCode = button.dataset.boxCode;
-        await confirmBatchInboundAction("box", orderId, { boxCode });
+        const actualQuantities = collectBatchInboundActualQuantities({ boxCode });
+        await confirmBatchInboundAction("box", orderId, { boxCode, actualQuantities });
         showToast("整箱确认入库成功");
       } else if (action === "batchInboundConfirmItem") {
         const itemId = button.dataset.itemId;
-        await confirmBatchInboundAction("item", orderId, { itemId });
-        showToast("产品确认入库成功");
+        const actualQuantities = collectBatchInboundActualQuantities({ itemId });
+        await confirmBatchInboundAction("item", orderId, { itemId, actualQuantities });
+        showToast("产品和数量确认入库成功");
       } else {
         return;
       }

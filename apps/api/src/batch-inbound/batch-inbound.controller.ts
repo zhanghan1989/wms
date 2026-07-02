@@ -20,6 +20,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { BatchInboundService } from './batch-inbound.service';
 import { CollectBatchInboundDto } from './dto/collect-batch-inbound.dto';
+import { ConfirmBatchInboundDto } from './dto/confirm-batch-inbound.dto';
 import {
   UpdateDomesticOrderNoDto,
   UpdateSeaOrderNoDto,
@@ -117,30 +118,33 @@ export class BatchInboundController {
   @Post('orders/:id/confirm-all')
   async confirmAll(
     @Param('id') id: string,
+    @Body() payload: ConfirmBatchInboundDto,
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.batchInboundService.confirmAll(id, user.id, req.requestId);
+    return this.batchInboundService.confirmAll(id, user.id, req.requestId, payload);
   }
 
   @Post('orders/:id/boxes/:boxCode/confirm')
   async confirmBox(
     @Param('id') id: string,
     @Param('boxCode') boxCode: string,
+    @Body() payload: ConfirmBatchInboundDto,
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.batchInboundService.confirmBox(id, boxCode, user.id, req.requestId);
+    return this.batchInboundService.confirmBox(id, boxCode, user.id, req.requestId, payload);
   }
 
   @Post('orders/:id/items/:itemId/confirm')
   async confirmItem(
     @Param('id') id: string,
     @Param('itemId') itemId: string,
+    @Body() payload: ConfirmBatchInboundDto,
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.batchInboundService.confirmItem(id, itemId, user.id, req.requestId);
+    return this.batchInboundService.confirmItem(id, itemId, user.id, req.requestId, payload);
   }
 
   @Delete('orders/:id')

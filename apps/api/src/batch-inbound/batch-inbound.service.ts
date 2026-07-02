@@ -19,6 +19,7 @@ import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CollectBatchInboundDto } from './dto/collect-batch-inbound.dto';
+import { ConfirmBatchInboundDto } from './dto/confirm-batch-inbound.dto';
 
 interface ParsedInboundLine {
   boxCode: string;
@@ -574,9 +575,11 @@ export class BatchInboundService {
     itemIdParam: string,
     operatorId: bigint,
     requestId?: string,
+    payload?: ConfirmBatchInboundDto,
   ): Promise<BatchInboundConfirmResult> {
     const orderId = parseId(orderIdParam, 'batchInboundOrderId');
     const itemId = parseId(itemIdParam, 'batchInboundItemId');
+    const actualQuantityByItemId = this.parseActualQuantityMap(payload);
 
     return this.prisma.$transaction(async (tx) => {
       const order = await this.lockOrder(tx, orderId);
@@ -601,7 +604,14 @@ export class BatchInboundService {
         };
       }
 
-      await this.applyItemConfirm(tx, order, item, operatorId, requestId);
+      await this.applyItemConfirm(
+        tx,
+        order,
+        item,
+        this.resolveActualQuantity(item, actualQuantityByItemId),
+        operatorId,
+        requestId,
+      );
       const status = await this.syncOrderStatus(tx, order.id, operatorId, requestId);
       const detail = await this.loadOrderDetailInTx(tx, order.id);
 
@@ -620,9 +630,11 @@ export class BatchInboundService {
     boxCodeParam: string,
     operatorId: bigint,
     requestId?: string,
+    payload?: ConfirmBatchInboundDto,
   ): Promise<BatchInboundConfirmResult> {
     const orderId = parseId(orderIdParam, 'batchInboundOrderId');
     const boxCode = this.normalizeBoxCode(boxCodeParam);
+    const actualQuantityByItemId = this.parseActualQuantityMap(payload);
     if (!boxCode) {
       throw new BadRequestException('箱号格式不正确');
     }
@@ -650,7 +662,14 @@ export class BatchInboundService {
       }
 
       for (const item of pendingItems) {
-        await this.applyItemConfirm(tx, order, item, operatorId, requestId);
+        await this.applyItemConfirm(
+          tx,
+          order,
+          item,
+          this.resolveActualQuantity(item, actualQuantityByItemId),
+          operatorId,
+          requestId,
+        );
       }
 
       const status = await this.syncOrderStatus(tx, order.id, operatorId, requestId);
@@ -670,8 +689,10 @@ export class BatchInboundService {
     orderIdParam: string,
     operatorId: bigint,
     requestId?: string,
+    payload?: ConfirmBatchInboundDto,
   ): Promise<BatchInboundConfirmResult> {
     const orderId = parseId(orderIdParam, 'batchInboundOrderId');
+    const actualQuantityByItemId = this.parseActualQuantityMap(payload);
 
     return this.prisma.$transaction(async (tx) => {
       const order = await this.lockOrder(tx, orderId);
@@ -695,7 +716,14 @@ export class BatchInboundService {
       }
 
       for (const item of pendingItems) {
-        await this.applyItemConfirm(tx, order, item, operatorId, requestId);
+        await this.applyItemConfirm(
+          tx,
+          order,
+          item,
+          this.resolveActualQuantity(item, actualQuantityByItemId),
+          operatorId,
+          requestId,
+        );
       }
 
       const status = await this.syncOrderStatus(tx, order.id, operatorId, requestId);
@@ -816,26 +844,39 @@ export class BatchInboundService {
       qty: number;
       status: BatchInboundItemStatus;
     },
+    actualQty: number,
     operatorId: bigint,
     requestId?: string,
   ): Promise<void> {
+    if (!Number.isInteger(actualQty) || actualQty < 0) {
+      throw new UnprocessableEntityException('实际数量必须是0或正整数');
+    }
     const productId = String(item.productId || '').trim();
-    const [product, box] = await Promise.all([
-      tx.masterProduct.findUnique({
-        where: { productId },
-        select: {
-          id: true,
-          productId: true,
-          stockQty: true,
-        },
-      }),
-      this.resolveOrCreateBox(tx, item.boxCode, operatorId, requestId, order.orderNo),
-    ]);
+    const product = await tx.masterProduct.findUnique({
+      where: { productId },
+      select: {
+        id: true,
+        productId: true,
+        stockQty: true,
+      },
+    });
 
     if (!product) {
       throw new UnprocessableEntityException(`产品ID不存在：${productId}`);
     }
 
+    if (actualQty === 0) {
+      await tx.batchInboundItem.update({
+        where: { id: item.id },
+        data: {
+          status: BatchInboundItemStatus.confirmed,
+          confirmedAt: new Date(),
+        },
+      });
+      return;
+    }
+
+    const box = await this.resolveOrCreateBox(tx, item.boxCode, operatorId, requestId, order.orderNo);
     const inventory = await tx.masterProductBoxInventory.findUnique({
       where: {
         boxId_productId: {
@@ -846,7 +887,7 @@ export class BatchInboundService {
     });
 
     const beforeQty = Number(inventory?.qty ?? 0);
-    const afterQty = beforeQty + item.qty;
+    const afterQty = beforeQty + actualQty;
 
     if (inventory) {
       await tx.masterProductBoxInventory.update({
@@ -865,7 +906,7 @@ export class BatchInboundService {
         data: {
           boxId: box.id,
           productId,
-          qty: item.qty,
+          qty: actualQty,
         },
       });
     }
@@ -897,7 +938,7 @@ export class BatchInboundService {
         boxCode: box.boxCode,
         productId,
         qty: afterQty,
-        qtyDelta: item.qty,
+        qtyDelta: actualQty,
       },
       operatorId,
       requestId,
@@ -918,12 +959,41 @@ export class BatchInboundService {
         productId,
         stockQty: totalQty,
         boxCode: box.boxCode,
-        qtyDelta: item.qty,
+        qtyDelta: actualQty,
       },
       operatorId,
       requestId,
       remark: `batch inbound ${order.orderNo}`,
     });
+  }
+
+  private parseActualQuantityMap(payload?: ConfirmBatchInboundDto): Map<string, number> {
+    const source = payload?.actualQuantities;
+    const result = new Map<string, number>();
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+      return result;
+    }
+
+    Object.entries(source).forEach(([key, value]) => {
+      const itemId = String(key || '').trim();
+      if (!itemId) {
+        return;
+      }
+      const qty = Number(value);
+      if (!Number.isInteger(qty) || qty < 0) {
+        throw new UnprocessableEntityException('实际数量必须是0或正整数');
+      }
+      result.set(itemId, qty);
+    });
+
+    return result;
+  }
+
+  private resolveActualQuantity(
+    item: { id: bigint; qty: number },
+    actualQuantityByItemId: Map<string, number>,
+  ): number {
+    return actualQuantityByItemId.get(item.id.toString()) ?? item.qty;
   }
 
   private async resolveOrCreateBox(
