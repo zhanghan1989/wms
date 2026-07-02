@@ -8272,7 +8272,13 @@ function renderBatchInboundDetail(detail) {
                 .map((item) => {
                   const itemAction =
                     canConfirm && item.status === "pending"
-                      ? `<button class="tiny-btn" data-action="batchInboundConfirmItem" data-order-id="${escapeHtml(
+                      ? `<button class="tiny-btn ghost" data-action="batchInboundPrintItemLabel" data-item-id="${escapeHtml(
+                          item.id,
+                        )}" data-order-id="${escapeHtml(detail.id)}" data-label-fnsku="${escapeHtml(
+                          item.labelFnsku || "",
+                        )}" data-label-sku="${escapeHtml(
+                          item.labelSku || "",
+                        )}">打印入库标</button><button class="tiny-btn" data-action="batchInboundConfirmItem" data-order-id="${escapeHtml(
                           detail.id,
                         )}" data-item-id="${escapeHtml(item.id)}">确认产品和数量</button>`
                       : '<span class="muted">-</span>';
@@ -8475,6 +8481,18 @@ function collectBatchInboundActualQuantities({ itemId = "", boxCode = "" } = {})
     result[currentItemId] = qty;
   });
   return result;
+}
+
+function getBatchInboundActualQuantityForItem(itemId) {
+  const input = Array.from(document.querySelectorAll(".batch-actual-qty-input")).find(
+    (candidate) => String(candidate.dataset.itemId || "") === String(itemId || ""),
+  );
+  const raw = String(input?.value || "").trim();
+  const qty = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isInteger(qty) || qty <= 0) {
+    throw new Error("实际数量必须是大于0的整数，才能打印入库标");
+  }
+  return qty;
 }
 
 async function deleteBatchInboundOrder(orderId) {
@@ -15897,10 +15915,22 @@ function bindDelegates() {
         const actualQuantities = collectBatchInboundActualQuantities({ itemId });
         await confirmBatchInboundAction("item", orderId, { itemId, actualQuantities });
         showToast("产品和数量确认入库成功");
+      } else if (action === "batchInboundPrintItemLabel") {
+        const itemId = button.dataset.itemId;
+        const fnsku = String(button.dataset.labelFnsku || "").trim();
+        const sku = String(button.dataset.labelSku || "").trim();
+        if (!fnsku) {
+          throw new Error("该产品没有可打印的FNSKU，请先在SKU管理中补充FNSKU");
+        }
+        const qty = getBatchInboundActualQuantityForItem(itemId);
+        openPrintLabelWindow({ fnsku, sku, qty });
       } else {
         return;
       }
 
+      if (action === "batchInboundPrintItemLabel") {
+        return;
+      }
       await loadBatchInboundOrders();
       await loadBatchInboundOrderDetail(orderId, { silent: true });
       await loadInventory();
