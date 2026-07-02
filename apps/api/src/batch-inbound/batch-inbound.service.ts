@@ -56,8 +56,6 @@ interface BatchInboundOrderDetail extends BatchInboundOrderSummary {
     boxCode: string;
     productId: string;
     productName: string | null;
-    labelSku: string | null;
-    labelFnsku: string | null;
     qty: number;
     sourceRowNo: number | null;
     status: BatchInboundItemStatus;
@@ -1344,25 +1342,6 @@ export class BatchInboundService {
         })
       : [];
     const productNameById = new Map(products.map((product) => [product.productId, product.productName]));
-    const labelSkus = productIds.length
-      ? await db.sku.findMany({
-          where: {
-            productId: { in: productIds },
-            status: 1,
-            fnsku: { not: '' },
-          },
-          select: { productId: true, sku: true, fnsku: true },
-          orderBy: { id: 'asc' },
-        })
-      : [];
-    const labelSkuByProductId = new Map<string, { sku: string; fnsku: string }>();
-    labelSkus.forEach((sku) => {
-      const productId = String(sku.productId || '').trim();
-      const fnsku = String(sku.fnsku || '').trim();
-      if (productId && fnsku && !labelSkuByProductId.has(productId)) {
-        labelSkuByProductId.set(productId, { sku: sku.sku, fnsku });
-      }
-    });
 
     return {
       id: order.id.toString(),
@@ -1389,8 +1368,6 @@ export class BatchInboundService {
         boxCode: item.boxCode,
         productId: item.productId,
         productName: productNameById.get(item.productId) ?? null,
-        labelSku: labelSkuByProductId.get(item.productId)?.sku ?? null,
-        labelFnsku: labelSkuByProductId.get(item.productId)?.fnsku ?? null,
         qty: item.qty,
         sourceRowNo: item.sourceRowNo,
         status: item.status,

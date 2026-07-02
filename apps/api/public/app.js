@@ -8274,10 +8274,8 @@ function renderBatchInboundDetail(detail) {
                     canConfirm && item.status === "pending"
                       ? `<button class="tiny-btn ghost" data-action="batchInboundPrintItemLabel" data-item-id="${escapeHtml(
                           item.id,
-                        )}" data-order-id="${escapeHtml(detail.id)}" data-label-fnsku="${escapeHtml(
-                          item.labelFnsku || "",
-                        )}" data-label-sku="${escapeHtml(
-                          item.labelSku || "",
+                        )}" data-order-id="${escapeHtml(detail.id)}" data-product-id="${escapeHtml(
+                          item.productId,
                         )}">打印入库标</button><button class="tiny-btn" data-action="batchInboundConfirmItem" data-order-id="${escapeHtml(
                           detail.id,
                         )}" data-item-id="${escapeHtml(item.id)}">确认产品和数量</button>`
@@ -15917,13 +15915,12 @@ function bindDelegates() {
         showToast("产品和数量确认入库成功");
       } else if (action === "batchInboundPrintItemLabel") {
         const itemId = button.dataset.itemId;
-        const fnsku = String(button.dataset.labelFnsku || "").trim();
-        const sku = String(button.dataset.labelSku || "").trim();
-        if (!fnsku) {
-          throw new Error("该产品没有可打印的FNSKU，请先在SKU管理中补充FNSKU");
+        const productId = String(button.dataset.productId || "").trim();
+        if (!productId) {
+          throw new Error("该行没有产品ID，无法打印入库标");
         }
         const qty = getBatchInboundActualQuantityForItem(itemId);
-        openPrintLabelWindow({ fnsku, sku, qty });
+        openBatchProductIdLabelWindow([{ productId, qty }]);
       } else {
         return;
       }
