@@ -2161,6 +2161,14 @@ export class OrdersService {
     if (!batch) {
       throw new NotFoundException(`拣货批次不存在: ${batchIdRaw}`);
     }
+    if (batch.status === OVERSEAS_PICKING_BATCH_STATUS.PICKED && batch.confirmedAt) {
+      return {
+        id: batch.id.toString(),
+        batchNo: batch.batchNo,
+        status: batch.status,
+        confirmedAt: batch.confirmedAt.toISOString(),
+      };
+    }
     if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.CREATED) {
       throw new BadRequestException('当前拣货批次已确认，不能重复扣库存');
     }

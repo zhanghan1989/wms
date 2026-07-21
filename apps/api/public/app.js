@@ -10819,15 +10819,23 @@ function updateOverseasPickingBatchActionButtons() {
   const scanInput = $("overseasPickingScanInput");
   const detail = state.selectedOverseasPickingBatchDetail;
   const status = String(detail?.status || "").trim();
-  const canComplete = Boolean(detail && detail.orders?.length && status === "created");
+  const hasYamatoBatch = Boolean(detail?.yamatoShipmentBatchId);
+  const canComplete = Boolean(
+    detail &&
+      detail.orders?.length &&
+      !hasYamatoBatch &&
+      (status === "created" || status === "picked"),
+  );
   const canPick = Boolean(detail && detail.items?.length && status === "created");
 
   if (completeBtn) {
     completeBtn.disabled = !canComplete;
     completeBtn.textContent =
-      detail && detail.yamatoShipmentBatchId
+      hasYamatoBatch
         ? `2.已生成 Yamato 批次 #${detail.yamatoShipmentBatchId}`
-        : "2.确认拣货并生成 Yamato Excel";
+        : status === "picked"
+          ? "2.继续生成 Yamato Excel"
+          : "2.确认拣货并生成 Yamato Excel";
   }
   if (scanBtn) {
     scanBtn.disabled = !canPick;
@@ -13053,9 +13061,14 @@ function bindForms() {
         if (detail.yamatoShipmentBatchId) {
           throw new Error(`当前批次已生成 Yamato 批次 #${detail.yamatoShipmentBatchId}`);
         }
-        const isPickingComplete = await assertOverseasPickingCompleteBeforeYamatoExport(detail);
-        if (!isPickingComplete) return;
-        await confirmOverseasPickingBatch(detail.id, []);
+        const status = String(detail.status || "").trim();
+        if (status === "created") {
+          const isPickingComplete = await assertOverseasPickingCompleteBeforeYamatoExport(detail);
+          if (!isPickingComplete) return;
+          await confirmOverseasPickingBatch(detail.id, []);
+        } else if (status !== "picked") {
+          throw new Error(`当前批次状态为 ${status || "未知"}，不能生成 Yamato Excel`);
+        }
         const result = await downloadOverseasPickingBatchYamatoImport(detail.id);
         await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches()]);
         await loadOverseasPickingBatchDetail(detail.id);
