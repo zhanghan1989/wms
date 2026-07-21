@@ -441,6 +441,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 button.ghost {
   background: #fff;
   color: var(--ink);
