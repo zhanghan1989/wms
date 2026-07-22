@@ -1656,23 +1656,27 @@
                 <h4>渠道构成</h4>
                 <div class="overview-demand-channel-row">
                   <div>
-                    <span>系统出单商品件数</span>
-                    <small>乐天 + 亚马逊FBM + 手动出单</small>
+                    <span>乐天</span>
+                    <small>包含组合订单拆分后的具体产品</small>
                   </div>
-                  <strong id="overviewDemandSystemQty90d">-</strong>
-                  <em id="overviewDemandSystemShare90d">-</em>
+                  <strong id="overviewDemandRakutenQty90d">-</strong>
+                  <em id="overviewDemandRakutenShare90d">-</em>
                 </div>
                 <div class="overview-demand-channel-row">
                   <div>
-                    <span>亚马逊FBA出单商品件数</span>
-                    <small>来自本次上传的90天销售报告</small>
+                    <span>亚马逊（FBM + FBA）</span>
+                    <small id="overviewDemandAmazonBreakdown90d">FBM - 件 + FBA - 件</small>
                   </div>
-                  <strong id="overviewDemandFbaQty90d">-</strong>
-                  <em id="overviewDemandFbaShare90d">-</em>
+                  <strong id="overviewDemandAmazonQty90d">-</strong>
+                  <em id="overviewDemandAmazonShare90d">-</em>
                 </div>
-                <div class="overview-demand-secondary-stat">
-                  <span>近30天系统出单商品件数</span>
-                  <strong id="overviewOutboundQty30d">-</strong>
+                <div class="overview-demand-channel-row">
+                  <div>
+                    <span>手动订单</span>
+                    <small>系统中登记的手动出单商品</small>
+                  </div>
+                  <strong id="overviewDemandManualQty90d">-</strong>
+                  <em id="overviewDemandManualShare90d">-</em>
                 </div>
               </section>
               <section class="overview-demand-panel overview-demand-quality-panel">
@@ -1743,8 +1747,6 @@
               <li><span>中优先</span><strong id="overviewRecommendationMediumCount">-</strong></li>
               <li><span>备货目标天数</span><strong id="overviewTargetDays">-</strong></li>
               <li><span>预计到货</span><strong id="overviewEstimatedArrivalDays">-</strong></li>
-              <li><span>90天系统订单</span><strong id="overviewSystemOrderQty90d">-</strong></li>
-              <li><span>90天FBA订单</span><strong id="overviewFbaOrderedQty90d">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
               <table>

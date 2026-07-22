@@ -18,6 +18,7 @@ import { buildEquivalentBoxCodes, normalizeBoxCode } from '../common/box-code';
 import { APP_TIMEZONE, generateOrderNo, getZonedDateParts, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
+import { PLACEHOLDER_PRODUCT_NAME_PREFIX } from '../master-products/master-product-archive';
 import {
   CreateAdjustOrderDto,
   CreateAdjustOrderItemDto,
@@ -2049,6 +2050,13 @@ export class InventoryService {
       where: { productId },
       data: { stockQty: totalQty },
     });
+    await tx.masterProduct.updateMany({
+      where: {
+        productId,
+        productName: { startsWith: PLACEHOLDER_PRODUCT_NAME_PREFIX },
+      },
+      data: { status: totalQty === 0 ? 0 : 1 },
+    });
     if (totalQty > 0) {
       await tx.masterProduct.updateMany({
         where: { productId, firstStockedAt: null },
@@ -2093,13 +2101,32 @@ export class InventoryService {
         data: { stockQty: totalQty },
       });
     }
+    const zeroStockProductIds = [...stockQtyByProductId.entries()]
+      .filter(([, totalQty]) => totalQty === 0)
+      .map(([productId]) => productId);
     const stockedProductIds = [...stockQtyByProductId.entries()]
       .filter(([, totalQty]) => totalQty > 0)
       .map(([productId]) => productId);
+    if (zeroStockProductIds.length) {
+      await tx.masterProduct.updateMany({
+        where: {
+          productId: { in: zeroStockProductIds },
+          productName: { startsWith: PLACEHOLDER_PRODUCT_NAME_PREFIX },
+        },
+        data: { status: 0 },
+      });
+    }
     if (stockedProductIds.length) {
       await tx.masterProduct.updateMany({
         where: { productId: { in: stockedProductIds }, firstStockedAt: null },
         data: { firstStockedAt: new Date() },
+      });
+      await tx.masterProduct.updateMany({
+        where: {
+          productId: { in: stockedProductIds },
+          productName: { startsWith: PLACEHOLDER_PRODUCT_NAME_PREFIX },
+        },
+        data: { status: 1 },
       });
     }
 
@@ -2616,8 +2643,7 @@ async function getOverviewDashboardByProduct(
           where: { id: fbaSnapshotId },
           include: {
             items: {
-              where: { channel: 'fba', productId: { not: null } },
-              select: { productId: true, orderedQty: true },
+              select: { sellerSku: true, productId: true, channel: true, orderedQty: true },
             },
           },
         })
@@ -2685,9 +2711,15 @@ async function getOverviewDashboardByProduct(
   });
 
   const skuCodeToProductIds = new Map<string, Set<string>>();
+  const primarySkuToProductIds = new Map<string, Set<string>>();
   activeSkus.forEach((item) => {
     const productId = String(item.productId || '').trim();
     if (!productId) return;
+    const primarySku = String(item.sku || '').trim();
+    if (primarySku) {
+      if (!primarySkuToProductIds.has(primarySku)) primarySkuToProductIds.set(primarySku, new Set());
+      primarySkuToProductIds.get(primarySku)!.add(productId);
+    }
     [item.sku, item.rbSku, item.fbmSku].forEach((candidate) => {
       const skuCode = String(candidate || '').trim();
       if (!skuCode) return;
@@ -2698,6 +2730,11 @@ async function getOverviewDashboardByProduct(
   const resolveUniqueProductIdBySkuCode = (skuCodeRaw: unknown): string | null => {
     const skuCode = String(skuCodeRaw ?? '').trim();
     const productIds = skuCode ? skuCodeToProductIds.get(skuCode) : undefined;
+    return productIds?.size === 1 ? [...productIds][0] : null;
+  };
+  const resolveUniqueProductIdByPrimarySku = (skuCodeRaw: unknown): string | null => {
+    const skuCode = String(skuCodeRaw ?? '').trim();
+    const productIds = skuCode ? primarySkuToProductIds.get(skuCode) : undefined;
     return productIds?.size === 1 ? [...productIds][0] : null;
   };
 
@@ -2736,6 +2773,7 @@ async function getOverviewDashboardByProduct(
   const outbound14ByProduct = new Map<string, number>();
   const outbound7ByProduct = new Map<string, number>();
   const outbound90ByProduct = new Map<string, number>();
+  const systemDemandQty90dByChannel = { rakuten: 0, amazon: 0, manual: 0 };
 
   const resolveAmazonLikeDemandProductId = (row: { sku: string | null; rawPayload: Prisma.JsonValue | null }): string | null => {
     const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
@@ -2751,6 +2789,7 @@ async function getOverviewDashboardByProduct(
     return true;
   };
   const addSystemOrderDemandQty = (
+    channel: 'rakuten' | 'amazon' | 'manual',
     productId: string | null,
     qtyRaw: number | null,
     registeredAt: Date | null,
@@ -2766,7 +2805,9 @@ async function getOverviewDashboardByProduct(
     ) {
       return false;
     }
-    if (registeredAt >= from90d) addDemandQty(outbound90ByProduct, productIdText, qty);
+    if (registeredAt >= from90d && addDemandQty(outbound90ByProduct, productIdText, qty)) {
+      systemDemandQty90dByChannel[channel] += qty;
+    }
     if (registeredAt >= from30d) addDemandQty(outbound30ByProduct, productIdText, qty);
     if (registeredAt >= from14d) addDemandQty(outbound14ByProduct, productIdText, qty);
     if (registeredAt >= from7d) addDemandQty(outbound7ByProduct, productIdText, qty);
@@ -2868,7 +2909,7 @@ async function getOverviewDashboardByProduct(
       : resolveUniqueProductIdBySkuCode(skuCode);
 
     if (row.isComboOrder) {
-      if (addSystemOrderDemandQty(directProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
+      if (addSystemOrderDemandQty('rakuten', directProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
         return;
       }
       recordUnmatchedSystemOrder({
@@ -2888,7 +2929,7 @@ async function getOverviewDashboardByProduct(
       .map((value) => String(value ?? '').trim())
       .find((value) => Boolean(value && (comboProductIdsBySku.has(normalizeComboSku(value)) || /^zh-/i.test(value))));
     if (!comboSku) {
-      if (addSystemOrderDemandQty(directProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
+      if (addSystemOrderDemandQty('rakuten', directProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
         return;
       }
       recordUnmatchedSystemOrder({
@@ -2916,7 +2957,7 @@ async function getOverviewDashboardByProduct(
     }
 
     componentProductIds.forEach((componentProductId) => {
-      if (addSystemOrderDemandQty(componentProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) return;
+      if (addSystemOrderDemandQty('rakuten', componentProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) return;
       recordUnmatchedSystemOrder({
         channel: 'rakuten',
         orderId: row.orderId,
@@ -2929,7 +2970,7 @@ async function getOverviewDashboardByProduct(
   });
   systemAmazonRows.forEach((row) => {
     const productId = resolveAmazonLikeDemandProductId(row);
-    if (!addSystemOrderDemandQty(productId, row.quantityPurchased, row.shipmentNoRegisteredAt)) {
+    if (!addSystemOrderDemandQty('amazon', productId, row.quantityPurchased, row.shipmentNoRegisteredAt)) {
       const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
       recordUnmatchedSystemOrder({
         channel: 'amazon',
@@ -2943,7 +2984,7 @@ async function getOverviewDashboardByProduct(
   });
   (systemManualRows as Array<{ id: bigint; orderId: string | null; sku: string | null; rawPayload: Prisma.JsonValue | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).forEach((row) => {
     const productId = resolveAmazonLikeDemandProductId(row);
-    if (!addSystemOrderDemandQty(productId, row.quantityPurchased, row.shipmentNoRegisteredAt)) {
+    if (!addSystemOrderDemandQty('manual', productId, row.quantityPurchased, row.shipmentNoRegisteredAt)) {
       const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
       recordUnmatchedSystemOrder({
         channel: 'manual',
@@ -2963,7 +3004,10 @@ async function getOverviewDashboardByProduct(
   const systemOrder90ByProduct = new Map(outbound90ByProduct);
   const fbaSales90ByProduct = new Map<string, number>();
   (latestFbaSalesSnapshot?.items ?? []).forEach((row) => {
-    const productId = String(row.productId ?? '').trim();
+    const storedProductId = String(row.productId ?? '').trim();
+    const currentPrimarySkuProductId = resolveUniqueProductIdByPrimarySku(row.sellerSku);
+    const productId = currentPrimarySkuProductId
+      ?? (row.channel === 'fba' && activeProductIdSet.has(storedProductId) ? storedProductId : null);
     const qty = Number(row.orderedQty ?? 0);
     if (!productId || !Number.isFinite(qty) || qty <= 0) return;
     addDemandQty(fbaSales90ByProduct, productId, qty);
@@ -3260,6 +3304,9 @@ async function getOverviewDashboardByProduct(
       outboundQty90d,
       outboundProductCount90d,
       systemOrderQty90d,
+      rakutenOrderedQty90d: systemDemandQty90dByChannel.rakuten,
+      amazonFbmOrderedQty90d: systemDemandQty90dByChannel.amazon,
+      manualOrderedQty90d: systemDemandQty90dByChannel.manual,
       fbaOrderedQty90d,
       unmatchedSystemOrderRowCount90d: unmatchedSystemOrders90d.rowCount,
       unmatchedSystemOrderQty90d: unmatchedSystemOrders90d.quantity,

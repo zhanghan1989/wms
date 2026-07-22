@@ -58,7 +58,12 @@ describe('inventory dashboard no-sales age classification', () => {
           { productId: 'P2', productName: '产品2', stockQty: 10, firstStockedAt: null },
         ]),
       },
-      sku: { findMany: jest.fn().mockResolvedValue([]) },
+      sku: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 1n, sku: 'FBA-P1', fbmSku: null, rbSku: null, productId: 'P1' },
+          { id: 2n, sku: 'FBA-P2', fbmSku: 'FBM-P2', rbSku: null, productId: 'P2' },
+        ]),
+      },
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
       batchInboundItem: { groupBy: jest.fn().mockResolvedValue([]) },
       rakutenOrderRecord: {
@@ -93,18 +98,57 @@ describe('inventory dashboard no-sales age classification', () => {
           { comboName: 'zh-new', items: [{ productId: 'P1' }, { productId: 'P2' }] },
         ]),
       },
+      fbaSalesSnapshot: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 10n,
+          fileName: 'fba.csv',
+          periodDays: 90,
+          periodStart: new Date('2026-04-24T00:00:00.000Z'),
+          periodEnd: new Date('2026-07-22T00:00:00.000Z'),
+          totalRows: 2,
+          fbaRows: 0,
+          fbmRows: 1,
+          unmatchedRows: 1,
+          ambiguousRows: 0,
+          fbaOrderedQty: 10,
+          createdAt: registeredAt,
+          items: [
+            { sellerSku: 'FBA-P1', productId: null, channel: 'unmatched', orderedQty: 10 },
+            { sellerSku: 'FBM-P2', productId: 'P2', channel: 'fbm', orderedQty: 99 },
+          ],
+        }),
+      },
     };
     const service = new InventoryService(prisma as never, {} as never);
 
     const dashboard = (await service.getOverviewDashboard()) as any;
 
     expect(dashboard.demand.systemOrderQty90d).toBe(7);
+    expect(dashboard.demand.rakutenOrderedQty90d).toBe(7);
+    expect(dashboard.demand.amazonFbmOrderedQty90d).toBe(0);
+    expect(dashboard.demand.manualOrderedQty90d).toBe(0);
     expect(dashboard.demand.outboundProductCount90d).toBe(2);
     expect(dashboard.demand.unmatchedSystemOrderRowCount90d).toBe(0);
     expect(dashboard.demand.topSkus).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ productId: 'P1', systemOrderQty90d: 5 }),
         expect.objectContaining({ productId: 'P2', systemOrderQty90d: 2 }),
+      ]),
+    );
+
+    const dashboardWithFba = (await service.getOverviewDashboard({
+      includeFba: true,
+      fbaSnapshotId: '10',
+    })) as any;
+    expect(dashboardWithFba.demand.fbaOrderedQty90d).toBe(10);
+    expect(dashboardWithFba.production.recommendations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          productId: 'P1',
+          systemOrderQty90d: 5,
+          fbaOrderedQty90d: 10,
+          totalOrderQty90d: 15,
+        }),
       ]),
     );
   });

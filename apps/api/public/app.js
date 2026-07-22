@@ -1889,14 +1889,15 @@ function clearOverviewDashboard() {
     "overviewOrder30dRakutenCount",
     "overviewOrder30dAmazonCount",
     "overviewOrder30dManualCount",
-    "overviewOutboundQty30d",
     "overviewOutboundQty90d",
     "overviewOutboundProductCount90d",
     "overviewDemandAvgDailyOutbound",
-    "overviewDemandSystemQty90d",
-    "overviewDemandSystemShare90d",
-    "overviewDemandFbaQty90d",
-    "overviewDemandFbaShare90d",
+    "overviewDemandRakutenQty90d",
+    "overviewDemandRakutenShare90d",
+    "overviewDemandAmazonQty90d",
+    "overviewDemandAmazonShare90d",
+    "overviewDemandManualQty90d",
+    "overviewDemandManualShare90d",
     "overviewDemandMatchedRate90d",
     "overviewUnmatchedOrderRows90d",
     "overviewUnmatchedOrderQty90d",
@@ -1906,10 +1907,9 @@ function clearOverviewDashboard() {
     "overviewRecommendationMediumCount",
     "overviewTargetDays",
     "overviewEstimatedArrivalDays",
-    "overviewSystemOrderQty90d",
-    "overviewFbaOrderedQty90d",
     "overviewNoSales90Count",
   ].forEach((id) => setTextById(id, "-"));
+  setTextById("overviewDemandAmazonBreakdown90d", "FBM - 件 + FBA - 件");
   renderOverviewTable("overviewTopDemandBody", "", 5);
   $("overviewFbaSalesSnapshotMeta").textContent =
     "尚未上传本次计算所需的FBA销售报告。";
@@ -1964,21 +1964,30 @@ function renderOverviewDashboard(data) {
   setTextById("overviewOrder30dAmazonCount", formatOverviewNumber(orders30d.amazonOrderCount));
   setTextById("overviewOrder30dManualCount", formatOverviewNumber(orders30d.manualOrderCount));
 
-  setTextById("overviewOutboundQty30d", formatOverviewNumber(demand.outboundQty30d));
   setTextById("overviewOutboundQty90d", formatOverviewNumber(demand.outboundQty90d));
   setTextById("overviewOutboundProductCount90d", formatOverviewNumber(demand.outboundProductCount90d));
   setTextById("overviewDemandAvgDailyOutbound", formatOverviewNumber(demand.avgDailyOutbound, 1));
   const totalDemand90d = Number(demand.outboundQty90d || 0);
   const systemDemand90d = Number(demand.systemOrderQty90d || 0);
   const fbaDemand90d = Number(demand.fbaOrderedQty90d || 0);
+  const rakutenDemand90d = Number(demand.rakutenOrderedQty90d || 0);
+  const amazonFbmDemand90d = Number(demand.amazonFbmOrderedQty90d || 0);
+  const amazonDemand90d = amazonFbmDemand90d + fbaDemand90d;
+  const manualDemand90d = Number(demand.manualOrderedQty90d || 0);
   const unmatchedDemand90d = Number(demand.unmatchedSystemOrderQty90d || 0);
   const formatDemandShare = (qty) =>
     totalDemand90d > 0 ? `${formatOverviewNumber((Number(qty || 0) / totalDemand90d) * 100, 1)}%` : "-";
   const systemDemandTotal90d = systemDemand90d + unmatchedDemand90d;
-  setTextById("overviewDemandSystemQty90d", formatOverviewNumber(systemDemand90d));
-  setTextById("overviewDemandSystemShare90d", formatDemandShare(systemDemand90d));
-  setTextById("overviewDemandFbaQty90d", formatOverviewNumber(fbaDemand90d));
-  setTextById("overviewDemandFbaShare90d", formatDemandShare(fbaDemand90d));
+  setTextById("overviewDemandRakutenQty90d", formatOverviewNumber(rakutenDemand90d));
+  setTextById("overviewDemandRakutenShare90d", formatDemandShare(rakutenDemand90d));
+  setTextById("overviewDemandAmazonQty90d", formatOverviewNumber(amazonDemand90d));
+  setTextById("overviewDemandAmazonShare90d", formatDemandShare(amazonDemand90d));
+  setTextById(
+    "overviewDemandAmazonBreakdown90d",
+    `FBM ${formatOverviewNumber(amazonFbmDemand90d)} 件 + FBA ${formatOverviewNumber(fbaDemand90d)} 件`,
+  );
+  setTextById("overviewDemandManualQty90d", formatOverviewNumber(manualDemand90d));
+  setTextById("overviewDemandManualShare90d", formatDemandShare(manualDemand90d));
   setTextById(
     "overviewDemandMatchedRate90d",
     systemDemandTotal90d > 0
@@ -2036,8 +2045,6 @@ function renderOverviewDashboard(data) {
   setTextById("overviewRecommendationHighCount", formatOverviewNumber(production.highCount));
   setTextById("overviewRecommendationMediumCount", formatOverviewNumber(production.mediumCount));
   setTextById("overviewTargetDays", formatOverviewNumber(production.targetDays));
-  setTextById("overviewSystemOrderQty90d", formatOverviewNumber(demand.systemOrderQty90d));
-  setTextById("overviewFbaOrderedQty90d", formatOverviewNumber(demand.fbaOrderedQty90d));
   const estimatedArrivalDays = Number(production.estimatedArrivalDays);
   setTextById(
     "overviewEstimatedArrivalDays",

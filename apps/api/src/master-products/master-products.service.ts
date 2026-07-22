@@ -21,6 +21,12 @@ import { CreateMasterProductOutboundOneDto } from './dto/create-master-product-o
 import { ExportMasterProductsDto } from './dto/export-master-products.dto';
 import { ManualAdjustMasterProductBoxDto } from './dto/manual-adjust-master-product-box.dto';
 import { UpdateMasterProductPrintSettingsDto } from './dto/update-master-product-print-settings.dto';
+import {
+  PLACEHOLDER_PRODUCT_NAME_PREFIX,
+  shouldArchivePlaceholderProduct,
+} from './master-product-archive';
+
+export { shouldArchivePlaceholderProduct } from './master-product-archive';
 
 type MasterProductListResult = {
   items: unknown[];
@@ -450,6 +456,7 @@ export class MasterProductsService {
       MASTER_PRODUCT_EXPORT_SELECT_FIELDS.map(async (field) => {
         const rows = await this.prisma.masterProduct.findMany({
           where: {
+            status: 1,
             [field]: {
               not: null,
             },
@@ -1457,6 +1464,13 @@ export class MasterProductsService {
         stockQty: totalQty,
       },
     });
+    await tx.masterProduct.updateMany({
+      where: {
+        productId,
+        productName: { startsWith: PLACEHOLDER_PRODUCT_NAME_PREFIX },
+      },
+      data: { status: totalQty === 0 ? 0 : 1 },
+    });
     if (totalQty > 0) {
       await tx.masterProduct.updateMany({
         where: { productId, firstStockedAt: null },
@@ -1739,7 +1753,12 @@ export class MasterProductsService {
       addAssignment('size', 'size', (row) => row.size);
       addAssignment('yamatoPrinterName', 'yamato_printer_name', (row) => row.yamatoPrinterName);
 
-      assignments.push(Prisma.sql`status = 1`);
+      assignments.push(
+        Prisma.sql`status = CASE
+          WHEN product_name LIKE ${`${PLACEHOLDER_PRODUCT_NAME_PREFIX}%`} AND stock_qty = 0 THEN 0
+          ELSE 1
+        END`,
+      );
       assignments.push(Prisma.sql`updated_at = CURRENT_TIMESTAMP(3)`);
 
       await this.prisma.$executeRaw(
@@ -1921,7 +1940,7 @@ export class MasterProductsService {
       size: row.size,
       yamatoPrinterName: row.yamatoPrinterName,
       stockQty: 0,
-      status: 1,
+      status: shouldArchivePlaceholderProduct(row.productName, 0) ? 0 : 1,
     };
   }
 
@@ -2023,7 +2042,7 @@ export class MasterProductsService {
     filters: Partial<ExportMasterProductsDto>,
   ): Prisma.MasterProductWhereInput | undefined {
     const keyword = String(filters.keyword ?? '').trim();
-    const conditions: Prisma.MasterProductWhereInput[] = [];
+    const conditions: Prisma.MasterProductWhereInput[] = [{ status: 1 }];
 
     if (keyword) {
       conditions.push({

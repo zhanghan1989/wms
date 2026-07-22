@@ -1202,20 +1202,6 @@ button.ghost {
   text-align: right;
 }
 
-.overview-demand-secondary-stat {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-top: 12px;
-  color: var(--muted);
-}
-
-.overview-demand-secondary-stat strong {
-  color: var(--text);
-  font-size: 18px;
-}
-
 .overview-demand-quality-rate {
   display: grid;
   gap: 3px;
