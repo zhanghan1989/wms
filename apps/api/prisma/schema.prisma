@@ -939,6 +939,7 @@ model MasterProduct {
   size            String?  @db.VarChar(64)
   yamatoPrinterName String? @map("yamato_printer_name") @db.VarChar(128)
   stockQty        Int      @default(0) @map("stock_qty")
+  firstStockedAt  DateTime? @map("first_stocked_at")
   status          Int      @default(1) @db.TinyInt
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
@@ -949,6 +950,7 @@ model MasterProduct {
   syncRecords     MasterProductSyncRecord[]
   rakutenComboItems RakutenComboProductItem[]
 
+  @@index([firstStockedAt], map: "idx_master_products_first_stocked_at")
   @@map("master_products")
 }
 

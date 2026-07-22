@@ -1865,6 +1865,8 @@ function clearOverviewDashboard() {
   state.overviewProductionVisibleCount = 30;
   setTextById("overviewOutboundQty90dLabel", "90天系统订单量");
   setTextById("overviewDemandAvgDailyOutboundLabel", "90天系统日均");
+  setTextById("overviewNoSales90Label", "90天系统无出单产品");
+  setTextById("overviewNoSales90Heading", "废弃候选（首次有库存已满90天、90天系统无出单）");
   $("statUsers").textContent = "-";
   $("statSkus").textContent = "-";
   $("statShelves").textContent = "-";
@@ -1904,13 +1906,17 @@ function clearOverviewDashboard() {
     "overviewSystemOrderQty90d",
     "overviewFbaOrderedQty90d",
     "overviewNoSales90Count",
+    "overviewNewProductObservationCount",
+    "overviewUnknownStockAgeCount",
   ].forEach((id) => setTextById(id, "-"));
   renderOverviewTable("overviewTopDemandBody", "", 5);
   renderOverviewTable("overviewAnomalyBody", "", 6);
   $("overviewFbaSalesSnapshotMeta").textContent =
     "当前为基础备货建议（不包含FBA出单）；上传最近90天、包含SKU列的CSV后重新计算。";
   renderOverviewTable("overviewProductionBody", "", 17);
-  renderOverviewTable("overviewNoSales90Body", "", 5);
+  renderOverviewTable("overviewNoSales90Body", "", 7);
+  renderOverviewTable("overviewNewProductObservationBody", "", 7);
+  renderOverviewTable("overviewUnknownStockAgeBody", "", 5);
 }
 
 function renderOverviewDashboard(data) {
@@ -1929,6 +1935,16 @@ function renderOverviewDashboard(data) {
   setTextById(
     "overviewDemandAvgDailyOutboundLabel",
     production.includesFba ? "90天全渠道日均" : "90天系统日均",
+  );
+  setTextById(
+    "overviewNoSales90Label",
+    production.includesFba ? "90天全渠道无出单产品" : "90天系统无出单产品",
+  );
+  setTextById(
+    "overviewNoSales90Heading",
+    production.includesFba
+      ? "废弃候选（首次有库存已满90天、90天全渠道无出单）"
+      : "废弃候选（首次有库存已满90天、90天系统无出单）",
   );
 
   setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
@@ -1977,6 +1993,11 @@ function renderOverviewDashboard(data) {
     Number.isFinite(estimatedArrivalDays) ? `发注 + ${formatOverviewNumber(estimatedArrivalDays)} 天` : "-",
   );
   setTextById("overviewNoSales90Count", formatOverviewNumber(obsolete.noSales90dCount));
+  setTextById(
+    "overviewNewProductObservationCount",
+    formatOverviewNumber(obsolete.newProductObservationCount),
+  );
+  setTextById("overviewUnknownStockAgeCount", formatOverviewNumber(obsolete.unknownStockAgeCount));
 
   const fbaSnapshot = production.fbaSalesSnapshot;
   $("overviewFbaSalesSnapshotMeta").textContent = fbaSnapshot
@@ -2034,6 +2055,8 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.productId))}</td>
         <td>${escapeHtml(displayText(item.productName))}</td>
+        <td>${escapeHtml(formatDate(item.firstStockedAt))}</td>
+        <td>${formatOverviewNumber(item.observedDays)}天</td>
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
@@ -2041,7 +2064,43 @@ function renderOverviewDashboard(data) {
     `,
     )
     .join("");
-  renderOverviewTable("overviewNoSales90Body", noSales90Rows, 5);
+  renderOverviewTable("overviewNoSales90Body", noSales90Rows, 7);
+
+  const newProductObservationRows = (
+    Array.isArray(obsolete.newProductObservationSkus) ? obsolete.newProductObservationSkus : []
+  )
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
+        <td>${escapeHtml(formatDate(item.firstStockedAt))}</td>
+        <td>${formatOverviewNumber(item.observedDays)}天</td>
+        <td>${formatOverviewNumber(item.remainingDays)}天</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
+        <td>${formatOverviewNumber(item.availableStock)}</td>
+      </tr>
+    `,
+    )
+    .join("");
+  renderOverviewTable("overviewNewProductObservationBody", newProductObservationRows, 7);
+
+  const unknownStockAgeRows = (
+    Array.isArray(obsolete.unknownStockAgeSkus) ? obsolete.unknownStockAgeSkus : []
+  )
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.productName))}</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
+        <td>${formatOverviewNumber(item.availableStock)}</td>
+        <td>${formatOverviewNumber(item.inTransitStock)}</td>
+      </tr>
+    `,
+    )
+    .join("");
+  renderOverviewTable("overviewUnknownStockAgeBody", unknownStockAgeRows, 5);
 }
 
 function loadOverviewDashboard(options = {}) {

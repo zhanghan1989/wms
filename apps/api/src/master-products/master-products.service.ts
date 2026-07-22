@@ -1457,6 +1457,12 @@ export class MasterProductsService {
         stockQty: totalQty,
       },
     });
+    if (totalQty > 0) {
+      await tx.masterProduct.updateMany({
+        where: { productId, firstStockedAt: null },
+        data: { firstStockedAt: new Date() },
+      });
+    }
 
     return totalQty;
   }

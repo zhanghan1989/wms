@@ -37,6 +37,7 @@ import {
   parseAmazonReplenishmentCsv,
   validateAmazonReplenishmentReports,
 } from './amazon-replenishment-report';
+import { classifyNoSalesInventoryAge } from './inventory-dashboard';
 
 interface AdjustOrderResult {
   orderId: string;
@@ -2045,6 +2046,12 @@ export class InventoryService {
       where: { productId },
       data: { stockQty: totalQty },
     });
+    if (totalQty > 0) {
+      await tx.masterProduct.updateMany({
+        where: { productId, firstStockedAt: null },
+        data: { firstStockedAt: new Date() },
+      });
+    }
     return totalQty;
   }
 
@@ -2081,6 +2088,15 @@ export class InventoryService {
       await tx.masterProduct.update({
         where: { productId },
         data: { stockQty: totalQty },
+      });
+    }
+    const stockedProductIds = [...stockQtyByProductId.entries()]
+      .filter(([, totalQty]) => totalQty > 0)
+      .map(([productId]) => productId);
+    if (stockedProductIds.length) {
+      await tx.masterProduct.updateMany({
+        where: { productId: { in: stockedProductIds }, firstStockedAt: null },
+        data: { firstStockedAt: new Date() },
       });
     }
 
@@ -2534,6 +2550,7 @@ async function getOverviewDashboardByProduct(
         productId: true,
         productName: true,
         stockQty: true,
+        firstStockedAt: true,
       },
     }),
     service.prisma.sku.findMany({
@@ -2648,7 +2665,7 @@ async function getOverviewDashboardByProduct(
 
   const productById = new Map<
     string,
-    { productId: string; productName: string | null; stockQty: number }
+    { productId: string; productName: string | null; stockQty: number; firstStockedAt: Date | null }
   >();
   const activeProductIdSet = new Set<string>();
   activeProducts.forEach((item) => {
@@ -2658,6 +2675,7 @@ async function getOverviewDashboardByProduct(
       productId,
       productName: item.productName ?? null,
       stockQty: Number(item.stockQty ?? 0),
+      firstStockedAt: item.firstStockedAt ?? null,
     };
     productById.set(productId, product);
     activeProductIdSet.add(productId);
@@ -2829,6 +2847,25 @@ async function getOverviewDashboardByProduct(
     totalStock: number;
     availableStock: number;
     inTransitStock: number;
+    firstStockedAt: string;
+    observedDays: number;
+  }> = [];
+  const newProductObservationSkus: Array<{
+    productId: string;
+    productName: string | null;
+    totalStock: number;
+    availableStock: number;
+    inTransitStock: number;
+    firstStockedAt: string;
+    observedDays: number;
+    remainingDays: number;
+  }> = [];
+  const unknownStockAgeSkus: Array<{
+    productId: string;
+    productName: string | null;
+    totalStock: number;
+    availableStock: number;
+    inTransitStock: number;
   }> = [];
 
   activeProducts.forEach((rawProduct) => {
@@ -2864,9 +2901,31 @@ async function getOverviewDashboardByProduct(
       lowCoverageProductCount += 1;
     }
 
-    if (stock > 0) {
-      if (!(outbound90ByProduct.get(productId) ?? 0)) {
+    if (stock > 0 && !(outbound90ByProduct.get(productId) ?? 0)) {
+      const stockAge = classifyNoSalesInventoryAge(rawProduct.firstStockedAt, now);
+      if (stockAge.status === 'obsolete') {
         noSales90dSkus.push({
+          productId,
+          productName: rawProduct.productName ?? null,
+          totalStock: stock,
+          availableStock: available,
+          inTransitStock: inTransit,
+          firstStockedAt: rawProduct.firstStockedAt!.toISOString(),
+          observedDays: stockAge.observedDays!,
+        });
+      } else if (stockAge.status === 'observing') {
+        newProductObservationSkus.push({
+          productId,
+          productName: rawProduct.productName ?? null,
+          totalStock: stock,
+          availableStock: available,
+          inTransitStock: inTransit,
+          firstStockedAt: rawProduct.firstStockedAt!.toISOString(),
+          observedDays: stockAge.observedDays!,
+          remainingDays: stockAge.remainingDays!,
+        });
+      } else {
+        unknownStockAgeSkus.push({
           productId,
           productName: rawProduct.productName ?? null,
           totalStock: stock,
@@ -2945,6 +3004,11 @@ async function getOverviewDashboardByProduct(
     });
   };
   sortByStockDesc(noSales90dSkus);
+  newProductObservationSkus.sort((a, b) => {
+    const timeDiff = new Date(b.firstStockedAt).getTime() - new Date(a.firstStockedAt).getTime();
+    return timeDiff || b.totalStock - a.totalStock;
+  });
+  sortByStockDesc(unknownStockAgeSkus);
 
   const topSkus = Array.from(outbound30ByProduct.entries())
     .map(([productId, qty30d]) => {
@@ -3122,6 +3186,10 @@ async function getOverviewDashboardByProduct(
     obsolete: {
       noSales90dCount: noSales90dSkus.length,
       noSales90dSkus: noSales90dSkus.slice(0, 100),
+      newProductObservationCount: newProductObservationSkus.length,
+      newProductObservationSkus: newProductObservationSkus.slice(0, 100),
+      unknownStockAgeCount: unknownStockAgeSkus.length,
+      unknownStockAgeSkus: unknownStockAgeSkus.slice(0, 100),
     },
   };
 };
