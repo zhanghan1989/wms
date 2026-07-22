@@ -182,7 +182,7 @@
     );
     const age270Plus = age271To365 + age365;
     const suggestedRemovalQty = parseNumericValue(pickRecordValue(record, ["建议移除数量"]));
-    const removalSuggestedQty = Math.max(suggestedRemovalQty, age181To270 + age270Plus);
+    const removalSuggestedQty = Math.max(suggestedRemovalQty, age270Plus);
     const daily90 = sales90 > 0 ? sales90 / 90 : sales30 > 0 ? sales30 / 30 : sales7 > 0 ? sales7 / 7 : 0;
     const daily30 = sales30 > 0 ? sales30 / 30 : daily90;
     const coverageDays = daily30 > 0 ? available / daily30 : available > 0 ? 999 : 0;
