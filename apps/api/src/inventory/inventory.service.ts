@@ -2622,6 +2622,7 @@ async function getOverviewDashboardByProduct(
       : Promise.resolve(null),
     service.prisma.rakutenOrderRecord.findMany({
       where: rakutenShipmentOrderFilter,
+      orderBy: { shipmentNoRegisteredAt: 'desc' },
       select: {
         id: true,
         orderId: true,
@@ -2633,6 +2634,7 @@ async function getOverviewDashboardByProduct(
     }),
     service.prisma.amazonOrderRecord.findMany({
       where: amazonShipmentOrderFilter,
+      orderBy: { shipmentNoRegisteredAt: 'desc' },
       select: {
         id: true,
         orderId: true,
@@ -2644,6 +2646,7 @@ async function getOverviewDashboardByProduct(
     }),
     (service.prisma as any).manualOrderRecord.findMany({
       where: manualShipmentOrderFilter,
+      orderBy: { shipmentNoRegisteredAt: 'desc' },
       select: {
         id: true,
         orderId: true,
@@ -2750,7 +2753,15 @@ async function getOverviewDashboardByProduct(
   ): boolean => {
     const productIdText = String(productId ?? '').trim();
     const qty = Number(qtyRaw ?? 0);
-    if (!productIdText || !registeredAt || !Number.isFinite(qty) || qty <= 0) return false;
+    if (
+      !productIdText ||
+      !activeProductIdSet.has(productIdText) ||
+      !registeredAt ||
+      !Number.isFinite(qty) ||
+      qty <= 0
+    ) {
+      return false;
+    }
     if (registeredAt >= from90d) addDemandQty(outbound90ByProduct, productIdText, qty);
     if (registeredAt >= from30d) addDemandQty(outbound30ByProduct, productIdText, qty);
     if (registeredAt >= from14d) addDemandQty(outbound14ByProduct, productIdText, qty);
@@ -2764,36 +2775,102 @@ async function getOverviewDashboardByProduct(
     rakutenRowCount: 0,
     amazonRowCount: 0,
     manualRowCount: 0,
+    details: [] as Array<{
+      channel: 'rakuten' | 'amazon' | 'manual';
+      orderId: string | null;
+      skuCode: string | null;
+      quantity: number;
+      registeredAt: string;
+      reason: string;
+    }>,
+  };
+  const describeDemandMatchFailure = (skuCodeRaw: unknown, productIdOverride?: string | null): string => {
+    const skuCode = String(skuCodeRaw ?? '').trim();
+    const override = String(productIdOverride ?? '').trim();
+    const overrideInvalid = Boolean(override && !activeProductIdSet.has(override));
+    if (!skuCode) {
+      return overrideInvalid ? '订单产品ID无效，且SKU为空' : '订单SKU为空';
+    }
+    const productIds = skuCodeToProductIds.get(skuCode);
+    if (!productIds?.size) {
+      return overrideInvalid ? '订单产品ID无效，且SKU未维护产品关联' : 'SKU未维护产品关联';
+    }
+    if (productIds.size > 1) return 'SKU对应多个产品，无法唯一匹配';
+    const productId = [...productIds][0];
+    if (!activeProductIdSet.has(productId)) return 'SKU关联的产品已停用';
+    return '无法匹配产品';
   };
   const recordUnmatchedSystemOrder = (
-    channel: 'rakuten' | 'amazon' | 'manual',
-    qtyRaw: number | null,
-    registeredAt: Date | null,
+    item: {
+      channel: 'rakuten' | 'amazon' | 'manual';
+      orderId: string | null;
+      skuCode: string | null;
+      qtyRaw: number | null;
+      registeredAt: Date | null;
+      reason: string;
+    },
   ) => {
-    const qty = Number(qtyRaw ?? 0);
-    if (!registeredAt || registeredAt < from90d || !Number.isFinite(qty) || qty <= 0) return;
+    const qty = Number(item.qtyRaw ?? 0);
+    if (!item.registeredAt || item.registeredAt < from90d || !Number.isFinite(qty) || qty <= 0) return;
     unmatchedSystemOrders90d.rowCount += 1;
     unmatchedSystemOrders90d.quantity += qty;
-    unmatchedSystemOrders90d[`${channel}RowCount`] += 1;
+    unmatchedSystemOrders90d[`${item.channel}RowCount`] += 1;
+    unmatchedSystemOrders90d.details.push({
+      channel: item.channel,
+      orderId: item.orderId,
+      skuCode: item.skuCode,
+      quantity: qty,
+      registeredAt: item.registeredAt.toISOString(),
+      reason: item.reason,
+    });
   };
 
   systemRakutenRows.forEach((row) => {
     const rawCode = String(row.setComponentSkuCode ?? '').trim() || String(row.skuCode ?? '').trim();
     const productId = activeProductIdSet.has(rawCode) ? rawCode : resolveUniqueProductIdBySkuCode(rawCode);
     if (!addSystemOrderDemandQty(productId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
-      recordUnmatchedSystemOrder('rakuten', row.orderQuantity, row.shipmentNoRegisteredAt);
+      recordUnmatchedSystemOrder({
+        channel: 'rakuten',
+        orderId: row.orderId,
+        skuCode: rawCode || null,
+        qtyRaw: row.orderQuantity,
+        registeredAt: row.shipmentNoRegisteredAt,
+        reason: describeDemandMatchFailure(rawCode),
+      });
     }
   });
   systemAmazonRows.forEach((row) => {
-    if (!addSystemOrderDemandQty(resolveAmazonLikeDemandProductId(row), row.quantityPurchased, row.shipmentNoRegisteredAt)) {
-      recordUnmatchedSystemOrder('amazon', row.quantityPurchased, row.shipmentNoRegisteredAt);
+    const productId = resolveAmazonLikeDemandProductId(row);
+    if (!addSystemOrderDemandQty(productId, row.quantityPurchased, row.shipmentNoRegisteredAt)) {
+      const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
+      recordUnmatchedSystemOrder({
+        channel: 'amazon',
+        orderId: row.orderId,
+        skuCode: String(row.sku ?? '').trim() || null,
+        qtyRaw: row.quantityPurchased,
+        registeredAt: row.shipmentNoRegisteredAt,
+        reason: describeDemandMatchFailure(row.sku, productIdOverride),
+      });
     }
   });
   (systemManualRows as Array<{ id: bigint; orderId: string | null; sku: string | null; rawPayload: Prisma.JsonValue | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).forEach((row) => {
-    if (!addSystemOrderDemandQty(resolveAmazonLikeDemandProductId(row), row.quantityPurchased, row.shipmentNoRegisteredAt)) {
-      recordUnmatchedSystemOrder('manual', row.quantityPurchased, row.shipmentNoRegisteredAt);
+    const productId = resolveAmazonLikeDemandProductId(row);
+    if (!addSystemOrderDemandQty(productId, row.quantityPurchased, row.shipmentNoRegisteredAt)) {
+      const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
+      recordUnmatchedSystemOrder({
+        channel: 'manual',
+        orderId: row.orderId,
+        skuCode: String(row.sku ?? '').trim() || null,
+        qtyRaw: row.quantityPurchased,
+        registeredAt: row.shipmentNoRegisteredAt,
+        reason: describeDemandMatchFailure(row.sku, productIdOverride),
+      });
     }
   });
+  unmatchedSystemOrders90d.details.sort(
+    (a, b) => new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime(),
+  );
+  unmatchedSystemOrders90d.details.splice(200);
 
   const systemOrder90ByProduct = new Map(outbound90ByProduct);
   const fbaSales90ByProduct = new Map<string, number>();
@@ -2843,25 +2920,8 @@ async function getOverviewDashboardByProduct(
     totalStock: number;
     availableStock: number;
     inTransitStock: number;
-    firstStockedAt: string;
-    observedDays: number;
-  }> = [];
-  const newProductObservationSkus: Array<{
-    productId: string;
-    productName: string | null;
-    totalStock: number;
-    availableStock: number;
-    inTransitStock: number;
-    firstStockedAt: string;
-    observedDays: number;
-    remainingDays: number;
-  }> = [];
-  const unknownStockAgeSkus: Array<{
-    productId: string;
-    productName: string | null;
-    totalStock: number;
-    availableStock: number;
-    inTransitStock: number;
+    firstStockedAt: string | null;
+    observedDays: number | null;
   }> = [];
 
   activeProducts.forEach((rawProduct) => {
@@ -2911,24 +2971,15 @@ async function getOverviewDashboardByProduct(
           firstStockedAt: rawProduct.firstStockedAt!.toISOString(),
           observedDays: stockAge.observedDays!,
         });
-      } else if (stockAge.status === 'observing') {
-        newProductObservationSkus.push({
+      } else if (stockAge.status === 'unknown') {
+        noSales90dSkus.push({
           productId,
           productName: rawProduct.productName ?? null,
           totalStock: stock,
           availableStock: available,
           inTransitStock: inTransit,
-          firstStockedAt: rawProduct.firstStockedAt!.toISOString(),
-          observedDays: stockAge.observedDays!,
-          remainingDays: stockAge.remainingDays!,
-        });
-      } else {
-        unknownStockAgeSkus.push({
-          productId,
-          productName: rawProduct.productName ?? null,
-          totalStock: stock,
-          availableStock: available,
-          inTransitStock: inTransit,
+          firstStockedAt: null,
+          observedDays: null,
         });
       }
     }
@@ -3002,25 +3053,26 @@ async function getOverviewDashboardByProduct(
     });
   };
   sortByStockDesc(noSales90dSkus);
-  newProductObservationSkus.sort((a, b) => {
-    const timeDiff = new Date(b.firstStockedAt).getTime() - new Date(a.firstStockedAt).getTime();
-    return timeDiff || b.totalStock - a.totalStock;
-  });
-  sortByStockDesc(unknownStockAgeSkus);
 
-  const topSkus = Array.from(outbound30ByProduct.entries())
-    .map(([productId, qty30d]) => {
+  const topSkus = Array.from(outbound90ByProduct.entries())
+    .map(([productId, totalOrderQty90d]) => {
       const product = productById.get(productId);
-      const qty90d = outbound90ByProduct.get(productId) ?? 0;
+      const systemOrderQty90d = systemOrder90ByProduct.get(productId) ?? 0;
+      const fbaOrderedQty90d = fbaSales90ByProduct.get(productId) ?? 0;
+      const totalStock = Number(product?.stockQty ?? 0);
+      const avgDailyOutbound = totalOrderQty90d / 90;
       return {
         productId,
         productName: product?.productName ?? null,
-        totalStock: Number(product?.stockQty ?? 0),
-        qty30d,
-        avgDailyOutbound: qty90d / 90,
+        totalStock,
+        systemOrderQty90d,
+        fbaOrderedQty90d,
+        totalOrderQty90d,
+        avgDailyOutbound,
+        stockCoverageDays: avgDailyOutbound > 0 ? totalStock / avgDailyOutbound : null,
       };
     })
-    .sort((a, b) => b.qty30d - a.qty30d)
+    .sort((a, b) => b.totalOrderQty90d - a.totalOrderQty90d)
     .slice(0, 10);
 
   const anomalySkus = Array.from(outbound7ByProduct.entries())
@@ -3185,10 +3237,6 @@ async function getOverviewDashboardByProduct(
     obsolete: {
       noSales90dCount: noSales90dSkus.length,
       noSales90dSkus: noSales90dSkus.slice(0, 100),
-      newProductObservationCount: newProductObservationSkus.length,
-      newProductObservationSkus: newProductObservationSkus.slice(0, 100),
-      unknownStockAgeCount: unknownStockAgeSkus.length,
-      unknownStockAgeSkus: unknownStockAgeSkus.slice(0, 100),
     },
   };
 };

@@ -1870,10 +1870,8 @@ function clearOverviewDashboard() {
   state.overviewDashboard = null;
   state.overviewProductionVisibleCount = 30;
   setOverviewFbaDependentVisibility(false);
-  setTextById("overviewOutboundQty90dLabel", "90天系统订单量");
-  setTextById("overviewDemandAvgDailyOutboundLabel", "90天系统日均");
   setTextById("overviewNoSales90Label", "90天系统无出单产品");
-  setTextById("overviewNoSales90Heading", "废弃候选（首次有库存已满90天、90天系统无出单）");
+  setTextById("overviewNoSales90Heading", "90天系统无出单产品（入库日期未知的不计入废弃建议）");
   setTextById("overviewLowCoverageLabel", "低覆盖产品数（系统口径）");
   setTextById("overviewStockCoverageLabel", "在库覆盖天数（系统口径）");
   setTextById("overviewSecuredCoverageLabel", "总覆盖天数（系统口径）");
@@ -1904,6 +1902,11 @@ function clearOverviewDashboard() {
     "overviewOutboundQty30d",
     "overviewOutboundQty90d",
     "overviewDemandAvgDailyOutbound",
+    "overviewDemandSystemQty90d",
+    "overviewDemandSystemShare90d",
+    "overviewDemandFbaQty90d",
+    "overviewDemandFbaShare90d",
+    "overviewDemandMatchedRate90d",
     "overviewUnmatchedOrderRows90d",
     "overviewUnmatchedOrderQty90d",
     "overviewRecommendationCount",
@@ -1915,16 +1918,21 @@ function clearOverviewDashboard() {
     "overviewSystemOrderQty90d",
     "overviewFbaOrderedQty90d",
     "overviewNoSales90Count",
-    "overviewNewProductObservationCount",
-    "overviewUnknownStockAgeCount",
   ].forEach((id) => setTextById(id, "-"));
   renderOverviewTable("overviewTopDemandBody", "", 5);
   $("overviewFbaSalesSnapshotMeta").textContent =
     "尚未上传本次计算所需的FBA销售报告。";
+  setTextById("overviewDemandQualityHint", "未匹配订单不会进入产品需求和备货计算。");
   renderOverviewTable("overviewProductionBody", "", 17);
+  renderOverviewTable("overviewUnmatchedDemandBody", "", 6);
   renderOverviewTable("overviewNoSales90Body", "", 7);
-  renderOverviewTable("overviewNewProductObservationBody", "", 7);
-  renderOverviewTable("overviewUnknownStockAgeBody", "", 5);
+  $("overviewUnmatchedDemandDetails")?.classList.add("hidden");
+  const unmatchedToggleButton = $("overviewUnmatchedDemandToggleBtn");
+  if (unmatchedToggleButton) {
+    unmatchedToggleButton.disabled = true;
+    unmatchedToggleButton.dataset.count = "0";
+    unmatchedToggleButton.textContent = "查看未匹配明细";
+  }
 }
 
 function renderOverviewDashboard(data) {
@@ -1939,22 +1947,14 @@ function renderOverviewDashboard(data) {
   setOverviewFbaDependentVisibility(includesFba);
 
   setTextById(
-    "overviewOutboundQty90dLabel",
-    includesFba ? "90天全渠道订单量" : "90天系统订单量",
-  );
-  setTextById(
-    "overviewDemandAvgDailyOutboundLabel",
-    includesFba ? "90天全渠道日均" : "90天系统日均",
-  );
-  setTextById(
     "overviewNoSales90Label",
     includesFba ? "90天全渠道无出单产品" : "90天系统无出单产品",
   );
   setTextById(
     "overviewNoSales90Heading",
     includesFba
-      ? "废弃候选（首次有库存已满90天、90天全渠道无出单）"
-      : "废弃候选（首次有库存已满90天、90天系统无出单）",
+      ? "90天全渠道无出单产品（入库日期未知的不计入废弃建议）"
+      : "90天系统无出单产品（入库日期未知的不计入废弃建议）",
   );
   setTextById("overviewLowCoverageLabel", includesFba ? "低覆盖产品数（全渠道）" : "低覆盖产品数（系统口径）");
   setTextById("overviewStockCoverageLabel", includesFba ? "在库覆盖天数（全渠道）" : "在库覆盖天数（系统口径）");
@@ -1989,8 +1989,68 @@ function renderOverviewDashboard(data) {
   setTextById("overviewOutboundQty30d", formatOverviewNumber(demand.outboundQty30d));
   setTextById("overviewOutboundQty90d", formatOverviewNumber(demand.outboundQty90d));
   setTextById("overviewDemandAvgDailyOutbound", formatOverviewNumber(demand.avgDailyOutbound, 1));
+  const totalDemand90d = Number(demand.outboundQty90d || 0);
+  const systemDemand90d = Number(demand.systemOrderQty90d || 0);
+  const fbaDemand90d = Number(demand.fbaOrderedQty90d || 0);
+  const unmatchedDemand90d = Number(demand.unmatchedSystemOrderQty90d || 0);
+  const formatDemandShare = (qty) =>
+    totalDemand90d > 0 ? `${formatOverviewNumber((Number(qty || 0) / totalDemand90d) * 100, 1)}%` : "-";
+  const systemDemandTotal90d = systemDemand90d + unmatchedDemand90d;
+  setTextById("overviewDemandSystemQty90d", formatOverviewNumber(systemDemand90d));
+  setTextById("overviewDemandSystemShare90d", formatDemandShare(systemDemand90d));
+  setTextById("overviewDemandFbaQty90d", formatOverviewNumber(fbaDemand90d));
+  setTextById("overviewDemandFbaShare90d", formatDemandShare(fbaDemand90d));
+  setTextById(
+    "overviewDemandMatchedRate90d",
+    systemDemandTotal90d > 0
+      ? `${formatOverviewNumber((systemDemand90d / systemDemandTotal90d) * 100, 1)}%`
+      : "-",
+  );
   setTextById("overviewUnmatchedOrderRows90d", formatOverviewNumber(demand.unmatchedSystemOrderRowCount90d));
   setTextById("overviewUnmatchedOrderQty90d", formatOverviewNumber(demand.unmatchedSystemOrderQty90d));
+  setTextById(
+    "overviewDemandQualityHint",
+    unmatchedDemand90d > 0
+      ? `有 ${formatOverviewNumber(unmatchedDemand90d)} 件系统订单尚未匹配产品，不会进入需求和备货计算。`
+      : "系统订单均已匹配产品，可完整进入需求和备货计算。",
+  );
+  const unmatchedDetails = Array.isArray(demand.unmatchedSystemOrders90d?.details)
+    ? demand.unmatchedSystemOrders90d.details
+    : [];
+  const channelLabels = { rakuten: "乐天", amazon: "亚马逊FBM", manual: "手动订单" };
+  const unmatchedDetailRows = unmatchedDetails
+    .map(
+      (item) => `
+      <tr>
+        <td>${escapeHtml(channelLabels[item.channel] || displayText(item.channel))}</td>
+        <td>${escapeHtml(formatDate(item.registeredAt))}</td>
+        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td>${escapeHtml(displayText(item.skuCode))}</td>
+        <td>${formatOverviewNumber(item.quantity)}</td>
+        <td>${escapeHtml(displayText(item.reason))}</td>
+      </tr>
+    `,
+    )
+    .join("");
+  renderOverviewTable("overviewUnmatchedDemandBody", unmatchedDetailRows, 6);
+  const unmatchedToggleButton = $("overviewUnmatchedDemandToggleBtn");
+  const unmatchedDetailsPanel = $("overviewUnmatchedDemandDetails");
+  if (unmatchedToggleButton) {
+    unmatchedToggleButton.disabled = unmatchedDetails.length === 0;
+    unmatchedToggleButton.dataset.count = String(unmatchedDetails.length);
+    unmatchedToggleButton.textContent = unmatchedDetails.length
+      ? `查看未匹配明细（${formatOverviewNumber(unmatchedDetails.length)}）`
+      : "无未匹配明细";
+  }
+  unmatchedDetailsPanel?.classList.add("hidden");
+  setTextById(
+    "overviewUnmatchedDemandHeading",
+    unmatchedDetails.length < Number(demand.unmatchedSystemOrderRowCount90d || 0)
+      ? `未匹配订单明细（显示最新 ${formatOverviewNumber(unmatchedDetails.length)} / ${formatOverviewNumber(
+          demand.unmatchedSystemOrderRowCount90d,
+        )} 行）`
+      : `未匹配订单明细（${formatOverviewNumber(unmatchedDetails.length)} 行）`,
+  );
 
   setTextById("overviewRecommendationCount", formatOverviewNumber(production.recommendationCount));
   setTextById("overviewRecommendationUrgentCount", formatOverviewNumber(production.urgentCount));
@@ -2005,11 +2065,6 @@ function renderOverviewDashboard(data) {
     Number.isFinite(estimatedArrivalDays) ? `发注 + ${formatOverviewNumber(estimatedArrivalDays)} 天` : "-",
   );
   setTextById("overviewNoSales90Count", formatOverviewNumber(obsolete.noSales90dCount));
-  setTextById(
-    "overviewNewProductObservationCount",
-    formatOverviewNumber(obsolete.newProductObservationCount),
-  );
-  setTextById("overviewUnknownStockAgeCount", formatOverviewNumber(obsolete.unknownStockAgeCount));
 
   const fbaSnapshot = production.fbaSalesSnapshot;
   $("overviewFbaSalesSnapshotMeta").textContent = fbaSnapshot
@@ -2032,14 +2087,17 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.productId))}</td>
         <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${formatOverviewNumber(item.totalStock)}</td>
-        <td>${formatOverviewNumber(item.qty30d)}</td>
+        <td>${formatOverviewNumber(item.systemOrderQty90d)}</td>
+        <td>${formatOverviewNumber(item.fbaOrderedQty90d)}</td>
+        <td>${formatOverviewNumber(item.totalOrderQty90d)}</td>
         <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
+        <td>${formatOverviewNumber(item.totalStock)}</td>
+        <td>${formatOverviewRatio(item.stockCoverageDays)}</td>
       </tr>
     `,
     )
     .join("");
-  renderOverviewTable("overviewTopDemandBody", topRows, 5);
+  renderOverviewTable("overviewTopDemandBody", topRows, 8);
 
   renderOverviewProductionRecommendations(production);
 
@@ -2049,8 +2107,8 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.productId))}</td>
         <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${escapeHtml(formatDate(item.firstStockedAt))}</td>
-        <td>${formatOverviewNumber(item.observedDays)}天</td>
+        <td>${item.firstStockedAt ? escapeHtml(formatDate(item.firstStockedAt)) : "未知"}</td>
+        <td>${item.observedDays == null ? "未知" : `${formatOverviewNumber(item.observedDays)}天`}</td>
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
@@ -2059,42 +2117,6 @@ function renderOverviewDashboard(data) {
     )
     .join("");
   renderOverviewTable("overviewNoSales90Body", noSales90Rows, 7);
-
-  const newProductObservationRows = (
-    Array.isArray(obsolete.newProductObservationSkus) ? obsolete.newProductObservationSkus : []
-  )
-    .map(
-      (item) => `
-      <tr>
-        <td>${escapeHtml(displayText(item.productId))}</td>
-        <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${escapeHtml(formatDate(item.firstStockedAt))}</td>
-        <td>${formatOverviewNumber(item.observedDays)}天</td>
-        <td>${formatOverviewNumber(item.remainingDays)}天</td>
-        <td>${formatOverviewNumber(item.totalStock)}</td>
-        <td>${formatOverviewNumber(item.availableStock)}</td>
-      </tr>
-    `,
-    )
-    .join("");
-  renderOverviewTable("overviewNewProductObservationBody", newProductObservationRows, 7);
-
-  const unknownStockAgeRows = (
-    Array.isArray(obsolete.unknownStockAgeSkus) ? obsolete.unknownStockAgeSkus : []
-  )
-    .map(
-      (item) => `
-      <tr>
-        <td>${escapeHtml(displayText(item.productId))}</td>
-        <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${formatOverviewNumber(item.totalStock)}</td>
-        <td>${formatOverviewNumber(item.availableStock)}</td>
-        <td>${formatOverviewNumber(item.inTransitStock)}</td>
-      </tr>
-    `,
-    )
-    .join("");
-  renderOverviewTable("overviewUnknownStockAgeBody", unknownStockAgeRows, 5);
 }
 
 function loadOverviewDashboard(options = {}) {
@@ -14193,6 +14215,17 @@ function bindForms() {
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("overviewUnmatchedDemandToggleBtn")?.addEventListener("click", (event) => {
+    const button = event.currentTarget;
+    const details = $("overviewUnmatchedDemandDetails");
+    if (!details || button.disabled) return;
+    const isHidden = details.classList.toggle("hidden");
+    const count = Number(button.dataset.count || 0);
+    button.textContent = isHidden
+      ? `查看未匹配明细（${formatOverviewNumber(count)}）`
+      : "收起未匹配明细";
   });
 
   $("downloadProductionRecommendationExcelBtn")?.addEventListener("click", async (event) => {

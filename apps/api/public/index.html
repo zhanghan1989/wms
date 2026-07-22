@@ -1629,24 +1629,96 @@
           </article>
 
           <article id="overviewDemandCard" class="card hidden">
-            <h3>订单需求趋势（90天含FBA）</h3>
-            <ul class="stats overview-inline-stats">
-              <li><span>30天系统订单量</span><strong id="overviewOutboundQty30d">-</strong></li>
-              <li><span id="overviewOutboundQty90dLabel">90天系统订单量</span><strong id="overviewOutboundQty90d">-</strong></li>
-              <li><span id="overviewDemandAvgDailyOutboundLabel">90天系统日均</span><strong id="overviewDemandAvgDailyOutbound">-</strong></li>
-              <li><span>90天未匹配订单行</span><strong id="overviewUnmatchedOrderRows90d">-</strong></li>
-              <li><span>90天未匹配订单量</span><strong id="overviewUnmatchedOrderQty90d">-</strong></li>
-            </ul>
+            <div class="overview-demand-head">
+              <div>
+                <h3>全渠道订单需求分析</h3>
+                <p class="muted">统一按最近90天统计：系统已出单 + 上传的亚马逊FBA销量。</p>
+              </div>
+              <span class="overview-demand-period">统计周期 90 天</span>
+            </div>
+            <div class="overview-demand-summary">
+              <div class="overview-demand-primary-metric">
+                <span>全渠道订单总量</span>
+                <strong id="overviewOutboundQty90d">-</strong>
+                <small>系统订单与FBA订单合计</small>
+              </div>
+              <div class="overview-demand-primary-metric">
+                <span>全渠道日均需求</span>
+                <strong id="overviewDemandAvgDailyOutbound">-</strong>
+                <small>用于库存覆盖和备货计算</small>
+              </div>
+            </div>
+            <div class="overview-demand-details">
+              <section class="overview-demand-panel">
+                <h4>渠道构成</h4>
+                <div class="overview-demand-channel-row">
+                  <div>
+                    <span>系统订单</span>
+                    <small>乐天 + 亚马逊FBM + 手动订单</small>
+                  </div>
+                  <strong id="overviewDemandSystemQty90d">-</strong>
+                  <em id="overviewDemandSystemShare90d">-</em>
+                </div>
+                <div class="overview-demand-channel-row">
+                  <div>
+                    <span>亚马逊FBA订单</span>
+                    <small>来自本次上传的90天销售报告</small>
+                  </div>
+                  <strong id="overviewDemandFbaQty90d">-</strong>
+                  <em id="overviewDemandFbaShare90d">-</em>
+                </div>
+                <div class="overview-demand-secondary-stat">
+                  <span>近30天系统订单</span>
+                  <strong id="overviewOutboundQty30d">-</strong>
+                </div>
+              </section>
+              <section class="overview-demand-panel overview-demand-quality-panel">
+                <div class="overview-demand-panel-head">
+                  <h4>系统订单匹配质量</h4>
+                  <button id="overviewUnmatchedDemandToggleBtn" type="button" class="ghost compact-btn" disabled>
+                    查看未匹配明细
+                  </button>
+                </div>
+                <div class="overview-demand-quality-rate">
+                  <strong id="overviewDemandMatchedRate90d">-</strong>
+                  <span>按订单商品数量计算的匹配率</span>
+                </div>
+                <dl>
+                  <div><dt>未匹配商品行</dt><dd id="overviewUnmatchedOrderRows90d">-</dd></div>
+                  <div><dt>未匹配商品数量</dt><dd id="overviewUnmatchedOrderQty90d">-</dd></div>
+                </dl>
+                <p id="overviewDemandQualityHint" class="muted">未匹配订单不会进入产品需求和备货计算。</p>
+              </section>
+            </div>
+            <div id="overviewUnmatchedDemandDetails" class="overview-table-wrap overview-unmatched-demand-details hidden">
+              <h4 id="overviewUnmatchedDemandHeading">未匹配订单明细</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>渠道</th>
+                    <th>面单登记时间</th>
+                    <th>订单号</th>
+                    <th>原始SKU</th>
+                    <th>数量</th>
+                    <th>未匹配原因</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewUnmatchedDemandBody"></tbody>
+              </table>
+            </div>
             <div class="overview-table-wrap">
-              <h4>Top 系统订单商品（30天，不含上传FBA汇总）</h4>
+              <h4>全渠道需求最高的产品（最近90天）</h4>
               <table>
                 <thead>
                   <tr>
                     <th>产品ID</th>
                     <th>产品名称</th>
+                    <th>系统订单</th>
+                    <th>FBA订单</th>
+                    <th>全渠道订单</th>
+                    <th>日均需求</th>
                     <th>产品库存</th>
-                    <th>30天系统订单量</th>
-                    <th>日均消耗</th>
+                    <th>库存覆盖天数</th>
                   </tr>
                 </thead>
                 <tbody id="overviewTopDemandBody"></tbody>
@@ -1704,11 +1776,9 @@
             <h3>废弃建议</h3>
             <ul class="stats overview-inline-stats">
               <li><span id="overviewNoSales90Label">90天系统无出单产品</span><strong id="overviewNoSales90Count">-</strong></li>
-              <li><span>新品观察中</span><strong id="overviewNewProductObservationCount">-</strong></li>
-              <li><span>入库日期未知</span><strong id="overviewUnknownStockAgeCount">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
-              <h4 id="overviewNoSales90Heading">废弃候选（首次有库存已满90天、90天系统无出单）</h4>
+              <h4 id="overviewNoSales90Heading">90天系统无出单产品（入库日期未知的不计入废弃建议）</h4>
               <table>
                 <thead>
                   <tr>
@@ -1722,38 +1792,6 @@
                   </tr>
                 </thead>
                 <tbody id="overviewNoSales90Body"></tbody>
-              </table>
-            </div>
-            <div class="overview-table-wrap">
-              <h4>新品观察中（未满90天，不计入废弃建议）</h4>
-              <table>
-                <thead>
-                  <tr>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>首次有库存</th>
-                    <th>已观察</th>
-                    <th>剩余观察</th>
-                    <th>总库存</th>
-                    <th>可用库存</th>
-                  </tr>
-                </thead>
-                <tbody id="overviewNewProductObservationBody"></tbody>
-              </table>
-            </div>
-            <div class="overview-table-wrap">
-              <h4>入库日期未知（不计入废弃建议，需补充或核对历史记录）</h4>
-              <table>
-                <thead>
-                  <tr>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>总库存</th>
-                    <th>可用库存</th>
-                    <th>在途库存</th>
-                  </tr>
-                </thead>
-                <tbody id="overviewUnknownStockAgeBody"></tbody>
               </table>
             </div>
           </article>
