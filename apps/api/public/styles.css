@@ -526,11 +526,11 @@ button.ghost {
 }
 
 .amazon-dashboard-upload-card {
-  max-width: 980px;
+  max-width: 1240px;
 }
 
 .amazon-dashboard-upload-form {
-  grid-template-columns: minmax(260px, 540px) auto;
+  grid-template-columns: repeat(2, minmax(260px, 1fr)) auto;
   align-items: end;
   margin-bottom: 8px;
 }
@@ -1043,6 +1043,16 @@ button.ghost {
 #downloadProductionRecommendationExcelBtn:hover {
   background: #0b6f4c;
   border-color: #0b6f4c;
+}
+
+.overview-fba-sales-upload-form {
+  grid-template-columns: minmax(320px, 620px) auto;
+  align-items: end;
+  margin-bottom: 8px;
+}
+
+.overview-fba-sales-meta {
+  margin-bottom: 12px;
 }
 
 .overview-inline-stats {

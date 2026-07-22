@@ -552,6 +552,61 @@ model FbaReplenishment {
   @@map("fba_replenishments")
 }
 
+model FbaSalesSnapshot {
+  id                BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  fileName          String                 @map("file_name") @db.VarChar(255)
+  periodDays        Int                    @default(90) @map("period_days")
+  totalRows         Int                    @map("total_rows")
+  fbaRows           Int                    @map("fba_rows")
+  fbmRows           Int                    @map("fbm_rows")
+  unmatchedRows     Int                    @map("unmatched_rows")
+  ambiguousRows     Int                    @map("ambiguous_rows")
+  fbaOrderedQty     Int                    @map("fba_ordered_qty")
+  importedBy        BigInt                 @map("imported_by") @db.UnsignedBigInt
+  createdAt         DateTime               @default(now()) @map("created_at")
+  items             FbaSalesSnapshotItem[]
+
+  @@index([createdAt])
+  @@map("fba_sales_snapshots")
+}
+
+model FbaSalesSnapshotItem {
+  id             BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  snapshotId     BigInt           @map("snapshot_id") @db.UnsignedBigInt
+  sellerSku      String           @map("seller_sku") @db.VarChar(128)
+  asin           String?          @db.VarChar(32)
+  productName    String?          @map("product_name") @db.Text
+  productId      String?          @map("product_id") @db.VarChar(128)
+  channel        String           @db.VarChar(16)
+  matchedBy      String?          @map("matched_by") @db.VarChar(16)
+  orderedQty     Int              @map("ordered_qty")
+  orderItemQty   Int              @map("order_item_qty")
+  salesAmount    Decimal          @default(0) @map("sales_amount") @db.Decimal(16, 2)
+  snapshot       FbaSalesSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, sellerSku], map: "uq_fba_sales_snapshot_item_sku")
+  @@index([productId], map: "idx_fba_sales_snapshot_items_product_id")
+  @@map("fba_sales_snapshot_items")
+}
+
+model AmazonReplenishmentSnapshot {
+  id                    BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  businessFileName      String   @map("business_file_name") @db.VarChar(255)
+  inventoryFileName     String   @map("inventory_file_name") @db.VarChar(255)
+  businessRowCount      Int      @map("business_row_count")
+  inventoryRowCount     Int      @map("inventory_row_count")
+  businessRows          Json     @map("business_rows")
+  inventoryRows         Json     @map("inventory_rows")
+  store                  String?  @db.VarChar(128)
+  snapshotDate           String?  @map("snapshot_date") @db.VarChar(32)
+  importedBy             BigInt   @map("imported_by") @db.UnsignedBigInt
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([store, createdAt])
+  @@map("amazon_replenishment_snapshots")
+}
+
 model ProductEditRequest {
   id            BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
   skuId         BigInt                   @map("sku_id") @db.UnsignedBigInt

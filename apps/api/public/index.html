@@ -90,10 +90,19 @@
         document.head.appendChild(script);
       }
 
+      function appendScript(src, onload) {
+        var script = document.createElement("script");
+        script.src = src;
+        script.onload = onload;
+        document.head.appendChild(script);
+      }
+
       function appendVersionedAssets(version) {
         var assetVersion = String(version || "").trim() || String(Date.now());
         appendStylesheet("/styles.css?v=" + encodeURIComponent(assetVersion));
-        appendModuleScript("/app.js?v=" + encodeURIComponent(assetVersion));
+        appendScript("/amazon-dashboard-logic.js?v=" + encodeURIComponent(assetVersion), function () {
+          appendModuleScript("/app.js?v=" + encodeURIComponent(assetVersion));
+        });
       }
 
       async function fetchDeployVersion() {
@@ -185,7 +194,7 @@
           产品管理
           <span id="productEditPendingBadge" class="quick-badge hidden">0</span>
         </button>
-        <button type="button" id="openAmazonDashboardPanel">亚马逊大盘</button>
+        <button type="button" id="openAmazonDashboardPanel">亚马逊海外仓补货</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -443,7 +452,7 @@
 
       <section class="panel" id="amazonDashboard">
         <div class="panel-head">
-          <h2>亚马逊大盘</h2>
+          <h2>亚马逊海外仓补货</h2>
           <div class="panel-tools">
             <button type="button" id="resetAmazonDashboardBtn" class="ghost">清空</button>
           </div>
@@ -452,12 +461,17 @@
         <article class="card amazon-dashboard-upload-card">
           <form id="amazonDashboardUploadForm" class="form-grid amazon-dashboard-upload-form">
             <label>
-              CSV文件
-              <input id="amazonDashboardCsvFile" type="file" accept=".csv,text/csv" required />
+              销售和流量报告（按子 ASIN）CSV
+              <input id="amazonDashboardBusinessCsvFile" type="file" accept=".csv,text/csv" required />
+            </label>
+            <label>
+              亚马逊FBA库存报告 CSV
+              <input id="amazonDashboardInventoryCsvFile" type="file" accept=".csv,text/csv" required />
             </label>
             <button type="submit">上传分析</button>
           </form>
-          <div id="amazonDashboardFileMeta" class="amazon-dashboard-file-meta muted">尚未上传 CSV</div>
+          <div class="muted">第一份请选择不含 SKU 列的“详情页面销售和流量（按子商品）”报告；第二份请选择 FBA 库存报告。</div>
+          <div id="amazonDashboardFileMeta" class="amazon-dashboard-file-meta muted">尚未上传两份 CSV</div>
         </article>
 
         <div id="amazonDashboardResult" class="hidden">
@@ -477,11 +491,13 @@
                     <th>ASIN</th>
                     <th>产品ID</th>
                     <th>产品名称</th>
-                    <th>7天</th>
-                    <th>30天</th>
-                    <th>90天</th>
-                    <th>在库</th>
-                    <th>售罄预估</th>
+                    <th>会话数</th>
+                    <th>浏览量</th>
+                    <th>转化率</th>
+                    <th>订购量</th>
+                    <th>销售额</th>
+                    <th>FBA近30天配送</th>
+                    <th>FBA可售</th>
                   </tr>
                 </thead>
                 <tbody id="amazonDashboardSalesBody"></tbody>
@@ -517,7 +533,7 @@
 
           <article class="card">
             <div class="card-head">
-              <h3>补货建议</h3>
+              <h3>海外仓补货建议</h3>
               <span id="amazonDashboardReplenishmentMeta" class="muted">-</span>
             </div>
             <div id="amazonDashboardReplenishmentCards" class="amazon-dashboard-metric-row"></div>
@@ -534,10 +550,10 @@
                     <th>亚马逊可售</th>
                     <th>亚马逊入库</th>
                     <th>海外仓库存</th>
+                    <th>已有待处理补货</th>
+                    <th>海外仓可用库存</th>
                     <th>FBA缺口</th>
-                    <th>海外仓补货</th>
-                    <th>工厂备货(亚马逊直发)</th>
-                    <th>工厂备货(海外仓)</th>
+                    <th>建议海外仓补货</th>
                     <th>优先级</th>
                   </tr>
                 </thead>
@@ -1590,23 +1606,23 @@
           </article>
 
           <article class="card">
-            <h3>出库需求趋势</h3>
+            <h3>全渠道订单需求趋势</h3>
             <ul class="stats overview-inline-stats">
-              <li><span>7天出库量</span><strong id="overviewOutboundQty7d">-</strong></li>
-              <li><span>14天出库量</span><strong id="overviewOutboundQty14d">-</strong></li>
-              <li><span>30天出库量</span><strong id="overviewOutboundQty30d">-</strong></li>
-              <li><span>90天出库量</span><strong id="overviewOutboundQty90d">-</strong></li>
-              <li><span>90天日均消耗</span><strong id="overviewDemandAvgDailyOutbound">-</strong></li>
+              <li><span>7天系统订单量</span><strong id="overviewOutboundQty7d">-</strong></li>
+              <li><span>14天系统订单量</span><strong id="overviewOutboundQty14d">-</strong></li>
+              <li><span>30天系统订单量</span><strong id="overviewOutboundQty30d">-</strong></li>
+              <li><span>90天全渠道订单量</span><strong id="overviewOutboundQty90d">-</strong></li>
+              <li><span>90天全渠道日均</span><strong id="overviewDemandAvgDailyOutbound">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
-              <h4>Top 产品消耗排行（30天）</h4>
+              <h4>Top 系统订单商品（30天，不含上传FBA汇总）</h4>
               <table>
                 <thead>
                   <tr>
                     <th>产品ID</th>
                     <th>产品名称</th>
                     <th>产品库存</th>
-                    <th>30天出库量</th>
+                    <th>30天系统订单量</th>
                     <th>日均消耗</th>
                   </tr>
                 </thead>
@@ -1638,6 +1654,16 @@
                 <button type="button" id="downloadProductionRecommendationExcelBtn" class="compact-btn">Excel下载</button>
               </div>
             </div>
+            <form id="overviewFbaSalesUploadForm" class="form-grid overview-fba-sales-upload-form">
+              <label>
+                90天销售报告（必须包含 SKU 列）CSV
+                <input id="overviewFbaSalesCsvFile" type="file" accept=".csv,text/csv" required />
+              </label>
+              <button type="submit">上传并重新计算</button>
+            </form>
+            <div id="overviewFbaSalesSnapshotMeta" class="muted overview-fba-sales-meta">
+              尚未上传90天FBA销售数据；CSV必须选择最近90天范围。
+            </div>
             <ul class="stats overview-inline-stats">
               <li><span>建议备货产品数</span><strong id="overviewRecommendationCount">-</strong></li>
               <li><span>紧急</span><strong id="overviewRecommendationUrgentCount">-</strong></li>
@@ -1645,6 +1671,8 @@
               <li><span>中优先</span><strong id="overviewRecommendationMediumCount">-</strong></li>
               <li><span>备货目标天数</span><strong id="overviewTargetDays">-</strong></li>
               <li><span>预计到货</span><strong id="overviewEstimatedArrivalDays">-</strong></li>
+              <li><span>90天系统订单</span><strong id="overviewSystemOrderQty90d">-</strong></li>
+              <li><span>90天FBA订单</span><strong id="overviewFbaOrderedQty90d">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
               <table>
@@ -1657,6 +1685,9 @@
                     <th>在途库存</th>
                     <th>已安排生产</th>
                     <th>总保障库存</th>
+                    <th>90天系统订单</th>
+                    <th>90天FBA订单</th>
+                    <th>90天全渠道订单</th>
                     <th>90天日均消耗</th>
                     <th>在库覆盖天数</th>
                     <th>总覆盖天数</th>
