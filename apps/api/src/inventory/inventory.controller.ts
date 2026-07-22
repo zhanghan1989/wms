@@ -172,8 +172,14 @@ export class InventoryController {
   }
 
   @Get('dashboard')
-  async getOverviewDashboard(): Promise<unknown> {
-    return this.inventoryService.getOverviewDashboard();
+  async getOverviewDashboard(
+    @Query('includeFba') includeFba?: string,
+    @Query('fbaSnapshotId') fbaSnapshotId?: string,
+  ): Promise<unknown> {
+    return this.inventoryService.getOverviewDashboard({
+      includeFba: includeFba === 'true',
+      fbaSnapshotId,
+    });
   }
 
   @Post('dashboard/fba-sales-report')
@@ -218,8 +224,15 @@ export class InventoryController {
   }
 
   @Get('dashboard/production-recommendations-excel')
-  async downloadProductionRecommendationsExcel(@Res() res: Response): Promise<void> {
-    const file = await this.inventoryService.buildProductionRecommendationsExcel();
+  async downloadProductionRecommendationsExcel(
+    @Res() res: Response,
+    @Query('includeFba') includeFba?: string,
+    @Query('fbaSnapshotId') fbaSnapshotId?: string,
+  ): Promise<void> {
+    const file = await this.inventoryService.buildProductionRecommendationsExcel({
+      includeFba: includeFba === 'true',
+      fbaSnapshotId,
+    });
     res.setHeader(
       'Content-Type',
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

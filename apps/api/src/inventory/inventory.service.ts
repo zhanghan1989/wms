@@ -1090,12 +1090,14 @@ export class InventoryService {
     return result;
   }
 
-  async getOverviewDashboard(): Promise<unknown> {
-    return getOverviewDashboardByProduct.call(this);
+  async getOverviewDashboard(options: { includeFba?: boolean; fbaSnapshotId?: string } = {}): Promise<unknown> {
+    return getOverviewDashboardByProduct.call(this, options);
   }
 
-  async buildProductionRecommendationsExcel(): Promise<{ fileName: string; content: Buffer }> {
-    const dashboard = (await getOverviewDashboardByProduct.call(this)) as {
+  async buildProductionRecommendationsExcel(
+    options: { includeFba?: boolean; fbaSnapshotId?: string } = {},
+  ): Promise<{ fileName: string; content: Buffer }> {
+    const dashboard = (await getOverviewDashboardByProduct.call(this, options)) as {
       production?: {
         recommendations?: Array<{
           productId?: string | null;
@@ -2376,7 +2378,10 @@ function parseBulkInventoryUpdateRowsByProduct(
   return result;
 }
 
-async function getOverviewDashboardByProduct(this: InventoryService): Promise<unknown> {
+async function getOverviewDashboardByProduct(
+  this: InventoryService,
+  options: { includeFba?: boolean; fbaSnapshotId?: string } = {},
+): Promise<unknown> {
   const service = this;
   const now = new Date();
   const dayMs = 24 * 60 * 60 * 1000;
@@ -2384,19 +2389,24 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
   const from14d = new Date(now.getTime() - 14 * dayMs);
   const from30d = new Date(now.getTime() - 30 * dayMs);
   const from90d = new Date(now.getTime() - 90 * dayMs);
-  const from270d = new Date(now.getTime() - 270 * dayMs);
+  const includeFba = options.includeFba === true;
+  const fbaSnapshotIdText = String(options.fbaSnapshotId || '').trim();
+  if (fbaSnapshotIdText && !/^\d+$/.test(fbaSnapshotIdText)) {
+    throw new BadRequestException('FBA销量快照编号无效，请重新上传90天CSV');
+  }
+  const fbaSnapshotId = /^\d+$/.test(fbaSnapshotIdText) ? BigInt(fbaSnapshotIdText) : null;
 
   const rakutenShipmentOrderFilter: Prisma.RakutenOrderRecordWhereInput = {
     AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-    shipmentNoRegisteredAt: { gte: from270d },
+    shipmentNoRegisteredAt: { gte: from90d },
   };
   const amazonShipmentOrderFilter: Prisma.AmazonOrderRecordWhereInput = {
     AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-    shipmentNoRegisteredAt: { gte: from270d },
+    shipmentNoRegisteredAt: { gte: from90d },
   };
   const manualShipmentOrderFilter: Prisma.ManualOrderRecordWhereInput = {
     AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-    shipmentNoRegisteredAt: { gte: from270d },
+    shipmentNoRegisteredAt: { gte: from90d },
   };
 
   const [
@@ -2489,15 +2499,18 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       },
       _sum: { qty: true },
     }),
-    service.prisma.fbaSalesSnapshot.findFirst({
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      include: {
-        items: {
-          where: { channel: 'fba', productId: { not: null } },
-          select: { productId: true, orderedQty: true },
-        },
-      },
-    }),
+    includeFba
+      ? service.prisma.fbaSalesSnapshot.findFirst({
+          where: fbaSnapshotId ? { id: fbaSnapshotId } : undefined,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          include: {
+            items: {
+              where: { channel: 'fba', productId: { not: null } },
+              select: { productId: true, orderedQty: true },
+            },
+          },
+        })
+      : Promise.resolve(null),
     service.prisma.rakutenOrderRecord.findMany({
       where: rakutenShipmentOrderFilter,
       select: {
@@ -2556,6 +2569,10 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       },
     }),
   ]);
+
+  if (includeFba && !latestFbaSalesSnapshot) {
+    throw new BadRequestException('指定的FBA销量快照不存在，请重新上传90天CSV');
+  }
 
   const productById = new Map<
     string,
@@ -2621,7 +2638,6 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
   const outbound14ByProduct = new Map<string, number>();
   const outbound7ByProduct = new Map<string, number>();
   const outbound90ByProduct = new Map<string, number>();
-  const outbound270ByProduct = new Map<string, number>();
 
   const resolveAmazonLikeDemandProductId = (row: { sku: string | null; rawPayload: Prisma.JsonValue | null }): string | null => {
     const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
@@ -2639,7 +2655,6 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     const productIdText = String(productId ?? '').trim();
     const qty = Number(qtyRaw ?? 0);
     if (!productIdText || !registeredAt || !Number.isFinite(qty) || qty <= 0) return;
-    if (registeredAt >= from270d) addDemandQty(outbound270ByProduct, productIdText, qty);
     if (registeredAt >= from90d) addDemandQty(outbound90ByProduct, productIdText, qty);
     if (registeredAt >= from30d) addDemandQty(outbound30ByProduct, productIdText, qty);
     if (registeredAt >= from14d) addDemandQty(outbound14ByProduct, productIdText, qty);
@@ -2666,7 +2681,6 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     if (!productId || !Number.isFinite(qty) || qty <= 0) return;
     addDemandQty(fbaSales90ByProduct, productId, qty);
     addDemandQty(outbound90ByProduct, productId, qty);
-    addDemandQty(outbound270ByProduct, productId, qty);
   });
 
   let totalStock = 0;
@@ -2702,13 +2716,6 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     priority: string;
   }> = [];
   const noSales90dSkus: Array<{
-    productId: string;
-    productName: string | null;
-    totalStock: number;
-    availableStock: number;
-    inTransitStock: number;
-  }> = [];
-  const noSales270dSkus: Array<{
     productId: string;
     productName: string | null;
     totalStock: number;
@@ -2752,15 +2759,6 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     if (stock > 0) {
       if (!(outbound90ByProduct.get(productId) ?? 0)) {
         noSales90dSkus.push({
-          productId,
-          productName: rawProduct.productName ?? null,
-          totalStock: stock,
-          availableStock: available,
-          inTransitStock: inTransit,
-        });
-      }
-      if (!(outbound270ByProduct.get(productId) ?? 0)) {
-        noSales270dSkus.push({
           productId,
           productName: rawProduct.productName ?? null,
           totalStock: stock,
@@ -2843,7 +2841,6 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     });
   };
   sortByStockDesc(noSales90dSkus);
-  sortByStockDesc(noSales270dSkus);
 
   const topSkus = Array.from(outbound30ByProduct.entries())
     .map(([productId, qty30d]) => {
@@ -2990,6 +2987,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
       manualOrderCount: manualOrderStats30d.orderCount,
     },
     production: {
+      includesFba: Boolean(latestFbaSalesSnapshot),
       targetDays: PRODUCTION_TARGET_DAYS,
       estimatedArrivalDays: ESTIMATED_PRODUCTION_ARRIVAL_DAYS,
       recommendationCount: recommendations.length,
@@ -3014,9 +3012,7 @@ async function getOverviewDashboardByProduct(this: InventoryService): Promise<un
     },
     obsolete: {
       noSales90dCount: noSales90dSkus.length,
-      noSales270dCount: noSales270dSkus.length,
       noSales90dSkus: noSales90dSkus.slice(0, 100),
-      noSales270dSkus: noSales270dSkus.slice(0, 100),
     },
   };
 };

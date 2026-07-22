@@ -311,6 +311,8 @@ const state = {
   roleOptionEditingCodes: new Set(),
   auditFbaRequestNoById: {},
   overviewDashboard: null,
+  overviewIncludesFba: false,
+  overviewFbaSnapshotId: "",
   overviewProductionVisibleCount: 30,
   dataBackups: [],
   dataBackupsVisibleCount: 0,
@@ -333,6 +335,8 @@ let adjustBoxValidationToken = 0;
 let inventoryDetailInboundBoxValidationTimer = null;
 let inventoryDetailInboundBoxValidationToken = 0;
 let modalZIndexSeed = 20;
+let overviewDashboardLoadPromise = null;
+let overviewDashboardLoadKey = "";
 let errorModalAutoActionTimer = null;
 let errorModalCountdownTimer = null;
 let errorModalAutoAction = null;
@@ -1893,14 +1897,13 @@ function clearOverviewDashboard() {
     "overviewSystemOrderQty90d",
     "overviewFbaOrderedQty90d",
     "overviewNoSales90Count",
-    "overviewNoSales270Count",
   ].forEach((id) => setTextById(id, "-"));
   renderOverviewTable("overviewTopDemandBody", "", 5);
   renderOverviewTable("overviewAnomalyBody", "", 6);
-  $("overviewFbaSalesSnapshotMeta").textContent = "尚未上传90天FBA销售数据；CSV必须选择最近90天范围。";
+  $("overviewFbaSalesSnapshotMeta").textContent =
+    "当前为基础备货建议（不包含FBA出单）；上传最近90天、包含SKU列的CSV后重新计算。";
   renderOverviewTable("overviewProductionBody", "", 17);
   renderOverviewTable("overviewNoSales90Body", "", 5);
-  renderOverviewTable("overviewNoSales270Body", "", 5);
 }
 
 function renderOverviewDashboard(data) {
@@ -1956,7 +1959,6 @@ function renderOverviewDashboard(data) {
     Number.isFinite(estimatedArrivalDays) ? `发注 + ${formatOverviewNumber(estimatedArrivalDays)} 天` : "-",
   );
   setTextById("overviewNoSales90Count", formatOverviewNumber(obsolete.noSales90dCount));
-  setTextById("overviewNoSales270Count", formatOverviewNumber(obsolete.noSales270dCount));
 
   const fbaSnapshot = production.fbaSalesSnapshot;
   $("overviewFbaSalesSnapshotMeta").textContent = fbaSnapshot
@@ -1967,7 +1969,7 @@ function renderOverviewDashboard(data) {
       )} 行已排除 / 未匹配 ${formatOverviewNumber(
         Number(fbaSnapshot.unmatchedRows || 0) + Number(fbaSnapshot.ambiguousRows || 0),
       )} 行 / 上传 ${formatDate(fbaSnapshot.importedAt)}`
-    : "尚未上传90天FBA销售数据；CSV必须选择最近90天范围。";
+    : "当前为基础备货建议（不包含FBA出单）；上传最近90天、包含SKU列的CSV后重新计算。";
 
   const topRows = (Array.isArray(demand.topSkus) ? demand.topSkus : [])
     .map(
@@ -2018,27 +2020,50 @@ function renderOverviewDashboard(data) {
     )
     .join("");
   renderOverviewTable("overviewNoSales90Body", noSales90Rows, 5);
-
-  const noSales270Rows = (Array.isArray(obsolete.noSales270dSkus) ? obsolete.noSales270dSkus : [])
-    .map(
-      (item) => `
-      <tr>
-        <td>${escapeHtml(displayText(item.productId))}</td>
-        <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${formatOverviewNumber(item.totalStock)}</td>
-        <td>${formatOverviewNumber(item.availableStock)}</td>
-        <td>${formatOverviewNumber(item.inTransitStock)}</td>
-      </tr>
-    `,
-    )
-    .join("");
-  renderOverviewTable("overviewNoSales270Body", noSales270Rows, 5);
 }
 
-async function loadOverviewDashboard() {
-  const data = await request("/inventory/dashboard");
-  state.overviewDashboard = data || null;
-  renderOverviewDashboard(state.overviewDashboard);
+function loadOverviewDashboard(options = {}) {
+  const includeFba = Object.prototype.hasOwnProperty.call(options, "includeFba")
+    ? options.includeFba === true
+    : state.overviewIncludesFba === true;
+  const fbaSnapshotId = includeFba
+    ? String(
+        Object.prototype.hasOwnProperty.call(options, "fbaSnapshotId")
+          ? options.fbaSnapshotId || ""
+          : state.overviewFbaSnapshotId || "",
+      ).trim()
+    : "";
+  const loadKey = `${includeFba ? "fba" : "base"}:${fbaSnapshotId}`;
+
+  state.overviewIncludesFba = includeFba;
+  state.overviewFbaSnapshotId = fbaSnapshotId;
+
+  if (overviewDashboardLoadPromise && overviewDashboardLoadKey === loadKey) {
+    return overviewDashboardLoadPromise;
+  }
+
+  const query = new URLSearchParams();
+  if (includeFba) query.set("includeFba", "true");
+  if (fbaSnapshotId) query.set("fbaSnapshotId", fbaSnapshotId);
+  const endpoint = `/inventory/dashboard${query.toString() ? `?${query.toString()}` : ""}`;
+  const loadPromise = request(endpoint).then((data) => {
+    const currentKey = `${state.overviewIncludesFba ? "fba" : "base"}:${state.overviewFbaSnapshotId || ""}`;
+    if (currentKey === loadKey) {
+      state.overviewDashboard = data || null;
+      renderOverviewDashboard(state.overviewDashboard);
+    }
+    return data;
+  });
+  overviewDashboardLoadPromise = loadPromise;
+  overviewDashboardLoadKey = loadKey;
+  const clearLoad = () => {
+    if (overviewDashboardLoadPromise === loadPromise) {
+      overviewDashboardLoadPromise = null;
+      overviewDashboardLoadKey = "";
+    }
+  };
+  loadPromise.then(clearLoad, clearLoad);
+  return loadPromise;
 }
 
 async function uploadOverviewFbaSalesReport(file) {
@@ -2052,8 +2077,16 @@ async function uploadOverviewFbaSalesReport(file) {
 }
 
 async function downloadProductionRecommendationExcel() {
+  const query = new URLSearchParams();
+  if (state.overviewIncludesFba) query.set("includeFba", "true");
+  if (state.overviewIncludesFba && state.overviewFbaSnapshotId) {
+    query.set("fbaSnapshotId", state.overviewFbaSnapshotId);
+  }
+  const endpoint = `/inventory/dashboard/production-recommendations-excel${
+    query.toString() ? `?${query.toString()}` : ""
+  }`;
   const fileName = await downloadAuthorizedFile(
-    "/inventory/dashboard/production-recommendations-excel",
+    endpoint,
     {},
     "工厂备货建议.xlsx",
   );
@@ -12642,6 +12675,8 @@ async function reloadAll() {
     state.departmentOptionEditingCodes = new Set();
     state.roleOptionEditingCodes = new Set();
     state.overviewDashboard = null;
+    state.overviewIncludesFba = false;
+    state.overviewFbaSnapshotId = "";
     renderUserSelectOptions();
     renderUserOptionsTable();
     renderFbaPendingBadge();
@@ -14033,13 +14068,11 @@ function bindForms() {
     }
   });
 
-  $("openSystemDashboardPanel").addEventListener("click", async () => {
-    try {
-      switchPanel("overview");
-      await loadOverviewDashboard();
-    } catch (error) {
-      showToast(error.message, true);
-    }
+  $("openSystemDashboardPanel").addEventListener("click", () => {
+    state.overviewDashboard = null;
+    state.overviewIncludesFba = false;
+    state.overviewFbaSnapshotId = "";
+    switchPanel("overview");
   });
 
   $("overviewFbaSalesUploadForm")?.addEventListener("submit", async (event) => {
@@ -14049,7 +14082,7 @@ function bindForms() {
     try {
       await withBusyButton(submitButton, "上传计算中...", async () => {
         const result = await uploadOverviewFbaSalesReport(file);
-        await loadOverviewDashboard();
+        await loadOverviewDashboard({ includeFba: true, fbaSnapshotId: result?.snapshotId });
         $("overviewFbaSalesUploadForm")?.reset();
         showToast(
           `FBA销售数据已更新：FBA ${formatOverviewNumber(result?.fbaRows)} 个SKU，${formatOverviewNumber(
