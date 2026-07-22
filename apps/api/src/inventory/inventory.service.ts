@@ -2629,6 +2629,8 @@ async function getOverviewDashboardByProduct(
         id: true,
         orderId: true,
         skuCode: true,
+        isComboOrder: true,
+        comboOrderSku: true,
         setComponentSkuCode: true,
         orderQuantity: true,
         shipmentNoRegisteredAt: true,
@@ -2827,19 +2829,103 @@ async function getOverviewDashboardByProduct(
     });
   };
 
+  const normalizeComboSku = (value: unknown): string => String(value ?? '').trim().toLowerCase();
+  const referencedComboSkus = Array.from(
+    new Set(
+      systemRakutenRows
+        .flatMap((row) => [
+          row.comboOrderSku,
+          row.setComponentSkuCode,
+          /^zh-/i.test(String(row.skuCode ?? '').trim()) ? row.skuCode : null,
+        ])
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean),
+    ),
+  );
+  const rakutenComboProducts = referencedComboSkus.length
+    ? await service.prisma.rakutenComboProduct.findMany({
+        where: { comboName: { in: referencedComboSkus } },
+        select: {
+          comboName: true,
+          items: {
+            orderBy: { position: 'asc' },
+            select: { productId: true },
+          },
+        },
+      })
+    : [];
+  const comboProductIdsBySku = new Map(
+    rakutenComboProducts.map((combo) => [
+      normalizeComboSku(combo.comboName),
+      combo.items.map((item) => String(item.productId ?? '').trim()).filter(Boolean),
+    ]),
+  );
+
   systemRakutenRows.forEach((row) => {
-    const rawCode = String(row.setComponentSkuCode ?? '').trim() || String(row.skuCode ?? '').trim();
-    const productId = activeProductIdSet.has(rawCode) ? rawCode : resolveUniqueProductIdBySkuCode(rawCode);
-    if (!addSystemOrderDemandQty(productId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
+    const skuCode = String(row.skuCode ?? '').trim();
+    const directProductId = activeProductIdSet.has(skuCode)
+      ? skuCode
+      : resolveUniqueProductIdBySkuCode(skuCode);
+
+    if (row.isComboOrder) {
+      if (addSystemOrderDemandQty(directProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
+        return;
+      }
       recordUnmatchedSystemOrder({
         channel: 'rakuten',
         orderId: row.orderId,
-        skuCode: rawCode || null,
+        skuCode: skuCode || String(row.comboOrderSku ?? row.setComponentSkuCode ?? '').trim() || null,
         qtyRaw: row.orderQuantity,
         registeredAt: row.shipmentNoRegisteredAt,
-        reason: describeDemandMatchFailure(rawCode),
+        reason: skuCode
+          ? `乐天组合明细产品 ${skuCode} 已停用或不存在`
+          : '乐天组合明细缺少具体产品ID',
       });
+      return;
     }
+
+    const comboSku = [row.comboOrderSku, row.setComponentSkuCode, row.skuCode]
+      .map((value) => String(value ?? '').trim())
+      .find((value) => Boolean(value && (comboProductIdsBySku.has(normalizeComboSku(value)) || /^zh-/i.test(value))));
+    if (!comboSku) {
+      if (addSystemOrderDemandQty(directProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
+        return;
+      }
+      recordUnmatchedSystemOrder({
+        channel: 'rakuten',
+        orderId: row.orderId,
+        skuCode: skuCode || null,
+        qtyRaw: row.orderQuantity,
+        registeredAt: row.shipmentNoRegisteredAt,
+        reason: describeDemandMatchFailure(skuCode),
+      });
+      return;
+    }
+
+    const componentProductIds = comboProductIdsBySku.get(normalizeComboSku(comboSku)) ?? [];
+    if (!componentProductIds.length) {
+      recordUnmatchedSystemOrder({
+        channel: 'rakuten',
+        orderId: row.orderId,
+        skuCode: comboSku,
+        qtyRaw: row.orderQuantity,
+        registeredAt: row.shipmentNoRegisteredAt,
+        reason: '乐天组合SKU未配置组合产品',
+      });
+      return;
+    }
+
+    componentProductIds.forEach((componentProductId) => {
+      if (addSystemOrderDemandQty(componentProductId, row.orderQuantity, row.shipmentNoRegisteredAt)) return;
+      recordUnmatchedSystemOrder({
+        channel: 'rakuten',
+        orderId: row.orderId,
+        skuCode: `${comboSku} → ${componentProductId}`,
+        qtyRaw: row.orderQuantity,
+        registeredAt: row.shipmentNoRegisteredAt,
+        reason: `乐天组合明细产品 ${componentProductId} 已停用或不存在`,
+      });
+    });
   });
   systemAmazonRows.forEach((row) => {
     const productId = resolveAmazonLikeDemandProductId(row);
@@ -3096,6 +3182,7 @@ async function getOverviewDashboardByProduct(
   const outboundQty14d = Array.from(outbound14ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty7d = Array.from(outbound7ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty90d = Array.from(outbound90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
+  const outboundProductCount90d = outbound90ByProduct.size;
   const systemOrderQty90d = Array.from(systemOrder90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const fbaOrderedQty90d = Array.from(fbaSales90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const avgDailyOutbound30d = outboundQty30d / 30;
@@ -3171,6 +3258,7 @@ async function getOverviewDashboardByProduct(
       outboundQty14d,
       outboundQty30d,
       outboundQty90d,
+      outboundProductCount90d,
       systemOrderQty90d,
       fbaOrderedQty90d,
       unmatchedSystemOrderRowCount90d: unmatchedSystemOrders90d.rowCount,

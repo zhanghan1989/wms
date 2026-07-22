@@ -1629,19 +1629,24 @@
           <article id="overviewDemandCard" class="card hidden">
             <div class="overview-demand-head">
               <div>
-                <h3>全渠道订单需求分析</h3>
-                <p class="muted">统一按最近90天统计：系统已出单 + 上传的亚马逊FBA销量。</p>
+                <h3>全渠道出单商品分析</h3>
+                <p class="muted">统一按最近90天统计商品件数：系统已出单商品 + 上传的亚马逊FBA销量。</p>
               </div>
               <span class="overview-demand-period">统计周期 90 天</span>
             </div>
             <div class="overview-demand-summary">
               <div class="overview-demand-primary-metric">
-                <span>全渠道订单总量</span>
+                <span>全渠道出单商品件数</span>
                 <strong id="overviewOutboundQty90d">-</strong>
-                <small>系统订单与FBA订单合计</small>
+                <small>系统与FBA出单商品件数合计</small>
               </div>
               <div class="overview-demand-primary-metric">
-                <span>全渠道日均需求</span>
+                <span>有出单产品数</span>
+                <strong id="overviewOutboundProductCount90d">-</strong>
+                <small>按系统主产品ID去重</small>
+              </div>
+              <div class="overview-demand-primary-metric">
+                <span>日均出单商品件数</span>
                 <strong id="overviewDemandAvgDailyOutbound">-</strong>
                 <small>用于库存覆盖和备货计算</small>
               </div>
@@ -1651,22 +1656,22 @@
                 <h4>渠道构成</h4>
                 <div class="overview-demand-channel-row">
                   <div>
-                    <span>系统订单</span>
-                    <small>乐天 + 亚马逊FBM + 手动订单</small>
+                    <span>系统出单商品件数</span>
+                    <small>乐天 + 亚马逊FBM + 手动出单</small>
                   </div>
                   <strong id="overviewDemandSystemQty90d">-</strong>
                   <em id="overviewDemandSystemShare90d">-</em>
                 </div>
                 <div class="overview-demand-channel-row">
                   <div>
-                    <span>亚马逊FBA订单</span>
+                    <span>亚马逊FBA出单商品件数</span>
                     <small>来自本次上传的90天销售报告</small>
                   </div>
                   <strong id="overviewDemandFbaQty90d">-</strong>
                   <em id="overviewDemandFbaShare90d">-</em>
                 </div>
                 <div class="overview-demand-secondary-stat">
-                  <span>近30天系统订单</span>
+                  <span>近30天系统出单商品件数</span>
                   <strong id="overviewOutboundQty30d">-</strong>
                 </div>
               </section>
@@ -1679,11 +1684,11 @@
                 </div>
                 <div class="overview-demand-quality-rate">
                   <strong id="overviewDemandMatchedRate90d">-</strong>
-                  <span>按订单商品数量计算的匹配率</span>
+                  <span>按出单商品件数计算的匹配率</span>
                 </div>
                 <dl>
                   <div><dt>未匹配商品行</dt><dd id="overviewUnmatchedOrderRows90d">-</dd></div>
-                  <div><dt>未匹配商品数量</dt><dd id="overviewUnmatchedOrderQty90d">-</dd></div>
+                  <div><dt>未匹配商品件数</dt><dd id="overviewUnmatchedOrderQty90d">-</dd></div>
                 </dl>
                 <p id="overviewDemandQualityHint" class="muted">未匹配订单不会进入产品需求和备货计算。</p>
               </section>
@@ -1705,16 +1710,16 @@
               </table>
             </div>
             <div class="overview-table-wrap">
-              <h4>全渠道需求最高的产品（最近90天）</h4>
+              <h4>出单商品件数最高的产品（最近90天）</h4>
               <table>
                 <thead>
                   <tr>
                     <th>产品ID</th>
                     <th>产品名称</th>
-                    <th>系统订单</th>
-                    <th>FBA订单</th>
-                    <th>全渠道订单</th>
-                    <th>日均需求</th>
+                    <th>系统出单件数</th>
+                    <th>FBA出单件数</th>
+                    <th>全渠道出单件数</th>
+                    <th>日均出单件数</th>
                     <th>产品库存</th>
                     <th>库存覆盖天数</th>
                   </tr>
@@ -1772,11 +1777,11 @@
 
           <article id="overviewObsoleteCard" class="card hidden">
             <h3>废弃建议</h3>
-            <ul class="stats overview-inline-stats">
-              <li><span id="overviewNoSales90Label">90天系统无出单产品</span><strong id="overviewNoSales90Count">-</strong></li>
-            </ul>
             <div class="overview-table-wrap">
-              <h4 id="overviewNoSales90Heading">90天系统无出单产品（入库日期未知的不计入废弃建议）</h4>
+              <div class="overview-table-title-row">
+                <h4 id="overviewNoSales90Heading">90天系统无出单产品（入库日期未知的不计入废弃建议）</h4>
+                <span class="overview-table-total">合计 <strong id="overviewNoSales90Count">-</strong> 个</span>
+              </div>
               <table>
                 <thead>
                   <tr>
