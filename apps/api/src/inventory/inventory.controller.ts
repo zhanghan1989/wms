@@ -9,11 +9,12 @@ import {
   Req,
   Res,
   UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -173,6 +174,47 @@ export class InventoryController {
   @Get('dashboard')
   async getOverviewDashboard(): Promise<unknown> {
     return this.inventoryService.getOverviewDashboard();
+  }
+
+  @Post('dashboard/fba-sales-report')
+  @UseInterceptors(FileInterceptor('file'))
+  async importFbaSalesReport(
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string; size?: number } | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    if (!file?.buffer) {
+      throw new BadRequestException('请上传最近90天、包含SKU列的亚马逊销售报告CSV');
+    }
+    if (file.size && file.size > 10 * 1024 * 1024) {
+      throw new BadRequestException('CSV文件不能超过10MB');
+    }
+    return this.inventoryService.importFbaSalesReport(file.buffer, file.originalname, user.id);
+  }
+
+  @Post('dashboard/amazon-replenishment-reports')
+  @UseInterceptors(AnyFilesInterceptor({ limits: { files: 2, fileSize: 10 * 1024 * 1024 } }))
+  async importAmazonReplenishmentReports(
+    @UploadedFiles()
+    files: Array<{ buffer?: Buffer; originalname?: string; fieldname?: string }> | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    const businessFile = (files ?? []).find((file) => file.fieldname === 'businessFile');
+    const inventoryFile = (files ?? []).find((file) => file.fieldname === 'inventoryFile');
+    if (!businessFile?.buffer || !inventoryFile?.buffer) {
+      throw new BadRequestException('请同时上传按子ASIN销售报告和FBA库存报告');
+    }
+    return this.inventoryService.importAmazonReplenishmentReports(
+      businessFile.buffer,
+      businessFile.originalname,
+      inventoryFile.buffer,
+      inventoryFile.originalname,
+      user.id,
+    );
+  }
+
+  @Get('dashboard/amazon-replenishment-reports/latest')
+  async getLatestAmazonReplenishmentReports(): Promise<unknown> {
+    return this.inventoryService.getLatestAmazonReplenishmentReports();
   }
 
   @Get('dashboard/production-recommendations-excel')
