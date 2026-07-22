@@ -241,6 +241,12 @@ export class InboundService {
           where: { productId },
           data: { stockQty: totalQty },
         });
+        if (totalQty > 0) {
+          await tx.masterProduct.updateMany({
+            where: { productId, firstStockedAt: null },
+            data: { firstStockedAt: new Date() },
+          });
+        }
 
         await this.auditService.create({
           db: tx,

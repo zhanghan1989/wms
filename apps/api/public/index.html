@@ -1716,10 +1716,46 @@
           <article class="card">
             <h3>废弃建议</h3>
             <ul class="stats overview-inline-stats">
-              <li><span>90天无销量产品</span><strong id="overviewNoSales90Count">-</strong></li>
+              <li><span id="overviewNoSales90Label">90天系统无出单产品</span><strong id="overviewNoSales90Count">-</strong></li>
+              <li><span>新品观察中</span><strong id="overviewNewProductObservationCount">-</strong></li>
+              <li><span>入库日期未知</span><strong id="overviewUnknownStockAgeCount">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
-              <h4>90天无销量产品（仅显示有库存）</h4>
+              <h4 id="overviewNoSales90Heading">废弃候选（首次有库存已满90天、90天系统无出单）</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>首次有库存</th>
+                    <th>观察天数</th>
+                    <th>总库存</th>
+                    <th>可用库存</th>
+                    <th>在途库存</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewNoSales90Body"></tbody>
+              </table>
+            </div>
+            <div class="overview-table-wrap">
+              <h4>新品观察中（未满90天，不计入废弃建议）</h4>
+              <table>
+                <thead>
+                  <tr>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>首次有库存</th>
+                    <th>已观察</th>
+                    <th>剩余观察</th>
+                    <th>总库存</th>
+                    <th>可用库存</th>
+                  </tr>
+                </thead>
+                <tbody id="overviewNewProductObservationBody"></tbody>
+              </table>
+            </div>
+            <div class="overview-table-wrap">
+              <h4>入库日期未知（不计入废弃建议，需补充或核对历史记录）</h4>
               <table>
                 <thead>
                   <tr>
@@ -1730,7 +1766,7 @@
                     <th>在途库存</th>
                   </tr>
                 </thead>
-                <tbody id="overviewNoSales90Body"></tbody>
+                <tbody id="overviewUnknownStockAgeBody"></tbody>
               </table>
             </div>
           </article>
