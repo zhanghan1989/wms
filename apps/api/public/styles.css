@@ -1105,7 +1105,7 @@ button.ghost {
 
 .overview-demand-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1282,6 +1282,31 @@ button.ghost {
   color: var(--muted);
   font-size: 13px;
   padding: 12px 12px 0;
+}
+
+.overview-table-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 12px 0;
+  margin-bottom: 8px;
+}
+
+.overview-table-title-row h4 {
+  margin: 0;
+  padding: 0;
+}
+
+.overview-table-total {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.overview-table-total strong {
+  color: var(--ink);
+  font-size: 16px;
 }
 
 .overview-table-wrap table {

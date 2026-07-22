@@ -1870,7 +1870,6 @@ function clearOverviewDashboard() {
   state.overviewDashboard = null;
   state.overviewProductionVisibleCount = 30;
   setOverviewFbaDependentVisibility(false);
-  setTextById("overviewNoSales90Label", "90天系统无出单产品");
   setTextById("overviewNoSales90Heading", "90天系统无出单产品（入库日期未知的不计入废弃建议）");
   $("statUsers").textContent = "-";
   $("statSkus").textContent = "-";
@@ -1892,6 +1891,7 @@ function clearOverviewDashboard() {
     "overviewOrder30dManualCount",
     "overviewOutboundQty30d",
     "overviewOutboundQty90d",
+    "overviewOutboundProductCount90d",
     "overviewDemandAvgDailyOutbound",
     "overviewDemandSystemQty90d",
     "overviewDemandSystemShare90d",
@@ -1938,10 +1938,6 @@ function renderOverviewDashboard(data) {
   setOverviewFbaDependentVisibility(includesFba);
 
   setTextById(
-    "overviewNoSales90Label",
-    includesFba ? "90天全渠道无出单产品" : "90天系统无出单产品",
-  );
-  setTextById(
     "overviewNoSales90Heading",
     includesFba
       ? "90天全渠道无出单产品（入库日期未知的不计入废弃建议）"
@@ -1970,6 +1966,7 @@ function renderOverviewDashboard(data) {
 
   setTextById("overviewOutboundQty30d", formatOverviewNumber(demand.outboundQty30d));
   setTextById("overviewOutboundQty90d", formatOverviewNumber(demand.outboundQty90d));
+  setTextById("overviewOutboundProductCount90d", formatOverviewNumber(demand.outboundProductCount90d));
   setTextById("overviewDemandAvgDailyOutbound", formatOverviewNumber(demand.avgDailyOutbound, 1));
   const totalDemand90d = Number(demand.outboundQty90d || 0);
   const systemDemand90d = Number(demand.systemOrderQty90d || 0);
@@ -1993,8 +1990,8 @@ function renderOverviewDashboard(data) {
   setTextById(
     "overviewDemandQualityHint",
     unmatchedDemand90d > 0
-      ? `有 ${formatOverviewNumber(unmatchedDemand90d)} 件系统订单尚未匹配产品，不会进入需求和备货计算。`
-      : "系统订单均已匹配产品，可完整进入需求和备货计算。",
+      ? `有 ${formatOverviewNumber(unmatchedDemand90d)} 件系统出单商品尚未匹配产品，不会进入需求和备货计算。`
+      : "系统出单商品均已匹配产品，可完整进入需求和备货计算。",
   );
   const unmatchedDetails = Array.isArray(demand.unmatchedSystemOrders90d?.details)
     ? demand.unmatchedSystemOrders90d.details
