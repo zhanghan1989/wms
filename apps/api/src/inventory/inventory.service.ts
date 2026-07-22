@@ -1188,6 +1188,9 @@ export class InventoryService {
   async buildProductionRecommendationsExcel(
     options: { includeFba?: boolean; fbaSnapshotId?: string } = {},
   ): Promise<{ fileName: string; content: Buffer }> {
+    if (!options.includeFba || !String(options.fbaSnapshotId || '').trim()) {
+      throw new BadRequestException('请先上传最近90天FBA销售报告，再下载工厂备货建议');
+    }
     const dashboard = (await getOverviewDashboardByProduct.call(this, options)) as {
       production?: {
         recommendations?: Array<{
@@ -2497,6 +2500,9 @@ async function getOverviewDashboardByProduct(
   const from90d = new Date(now.getTime() - 90 * dayMs);
   const includeFba = options.includeFba === true;
   const fbaSnapshotIdText = String(options.fbaSnapshotId || '').trim();
+  if (includeFba && !fbaSnapshotIdText) {
+    throw new BadRequestException('请先上传最近90天FBA销售报告，再计算全渠道需求');
+  }
   if (fbaSnapshotIdText && !/^\d+$/.test(fbaSnapshotIdText)) {
     throw new BadRequestException('FBA销量快照编号无效，请重新上传90天CSV');
   }
@@ -2603,26 +2609,16 @@ async function getOverviewDashboardByProduct(
       },
       _sum: { qty: true },
     }),
-    includeFba
-      ? fbaSnapshotId
-        ? service.prisma.fbaSalesSnapshot.findUnique({
-            where: { id: fbaSnapshotId },
-            include: {
-              items: {
-                where: { channel: 'fba', productId: { not: null } },
-                select: { productId: true, orderedQty: true },
-              },
+    includeFba && fbaSnapshotId
+      ? service.prisma.fbaSalesSnapshot.findUnique({
+          where: { id: fbaSnapshotId },
+          include: {
+            items: {
+              where: { channel: 'fba', productId: { not: null } },
+              select: { productId: true, orderedQty: true },
             },
-          })
-        : service.prisma.fbaSalesSnapshot.findFirst({
-            orderBy: { id: 'desc' },
-            include: {
-              items: {
-                where: { channel: 'fba', productId: { not: null } },
-                select: { productId: true, orderedQty: true },
-              },
-            },
-          })
+          },
+        })
       : Promise.resolve(null),
     service.prisma.rakutenOrderRecord.findMany({
       where: rakutenShipmentOrderFilter,
@@ -2901,6 +2897,8 @@ async function getOverviewDashboardByProduct(
       lowCoverageProductCount += 1;
     }
 
+    if (!latestFbaSalesSnapshot) return;
+
     if (stock > 0 && !(outbound90ByProduct.get(productId) ?? 0)) {
       const stockAge = classifyNoSalesInventoryAge(rawProduct.firstStockedAt, now);
       if (stockAge.status === 'obsolete') {
@@ -3159,6 +3157,7 @@ async function getOverviewDashboardByProduct(
     },
     production: {
       includesFba: Boolean(latestFbaSalesSnapshot),
+      requiresFbaUpload: !latestFbaSalesSnapshot,
       targetDays: PRODUCTION_TARGET_DAYS,
       estimatedArrivalDays: ESTIMATED_PRODUCTION_ARRIVAL_DAYS,
       recommendationCount: recommendations.length,
