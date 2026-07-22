@@ -166,17 +166,20 @@ export function classifyFbaSalesRows(
 
   return reportRows.map((row) => {
     const fbaProductId = resolveUniqueProductIds(skuIndex.get(row.sellerSku));
+    const fbmProductIds = new Set<string>([
+      ...(fbmSkuIndex.get(row.sellerSku) ?? []),
+      ...(rbSkuIndex.get(row.sellerSku) ?? []),
+    ]);
     if (fbaProductId === 'ambiguous') {
       return { ...row, channel: 'ambiguous', productId: null, matchedBy: 'sku' };
+    }
+    if (fbaProductId && fbmProductIds.size > 0) {
+      return { ...row, channel: 'ambiguous', productId: null, matchedBy: null };
     }
     if (fbaProductId) {
       return { ...row, channel: 'fba', productId: fbaProductId, matchedBy: 'sku' };
     }
 
-    const fbmProductIds = new Set<string>([
-      ...(fbmSkuIndex.get(row.sellerSku) ?? []),
-      ...(rbSkuIndex.get(row.sellerSku) ?? []),
-    ]);
     const fbmProductId = resolveUniqueProductIds(fbmProductIds);
     if (fbmProductId === 'ambiguous') {
       return { ...row, channel: 'ambiguous', productId: null, matchedBy: null };

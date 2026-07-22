@@ -61,4 +61,18 @@ describe('FBA sales Business Report', () => {
       matchedBy: 'sku',
     });
   });
+
+  it('excludes a seller SKU that is configured as both FBA and FBM', () => {
+    const rows = [{ sellerSku: 'channel-conflict', asin: '', productName: '', orderedQty: 8, orderItemQty: 7, salesAmount: 800 }];
+    const systemSkus = [
+      { sku: 'channel-conflict', fbmSku: null, rbSku: null, productId: 'P-FBA' },
+      { sku: 'another-fba-sku', fbmSku: 'channel-conflict', rbSku: null, productId: 'P-FBM' },
+    ];
+
+    expect(classifyFbaSalesRows(rows, systemSkus)[0]).toMatchObject({
+      channel: 'ambiguous',
+      productId: null,
+      matchedBy: null,
+    });
+  });
 });

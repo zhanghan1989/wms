@@ -1028,7 +1028,11 @@ export class InventoryService {
     }
 
     const systemSkus = await this.prisma.sku.findMany({
-      where: { status: 1, productId: { not: null } },
+      where: {
+        status: 1,
+        productId: { not: null },
+        masterProduct: { is: { status: 1 } },
+      },
       select: { sku: true, fbmSku: true, rbSku: true, productId: true },
     });
     const classifiedRows = classifyFbaSalesRows(reportRows, systemSkus);
@@ -2594,6 +2598,9 @@ async function getOverviewDashboardByProduct(
         productId: {
           not: null,
         },
+        masterProduct: {
+          is: { status: 1 },
+        },
       },
       select: {
         id: true,
@@ -2712,6 +2719,7 @@ async function getOverviewDashboardByProduct(
 
   const skuCodeToProductIds = new Map<string, Set<string>>();
   const primarySkuToProductIds = new Map<string, Set<string>>();
+  const fbmOrRbSkuToProductIds = new Map<string, Set<string>>();
   activeSkus.forEach((item) => {
     const productId = String(item.productId || '').trim();
     if (!productId) return;
@@ -2720,6 +2728,12 @@ async function getOverviewDashboardByProduct(
       if (!primarySkuToProductIds.has(primarySku)) primarySkuToProductIds.set(primarySku, new Set());
       primarySkuToProductIds.get(primarySku)!.add(productId);
     }
+    [item.fbmSku, item.rbSku].forEach((candidate) => {
+      const skuCode = String(candidate || '').trim();
+      if (!skuCode) return;
+      if (!fbmOrRbSkuToProductIds.has(skuCode)) fbmOrRbSkuToProductIds.set(skuCode, new Set());
+      fbmOrRbSkuToProductIds.get(skuCode)!.add(productId);
+    });
     [item.sku, item.rbSku, item.fbmSku].forEach((candidate) => {
       const skuCode = String(candidate || '').trim();
       if (!skuCode) return;
@@ -3005,9 +3019,24 @@ async function getOverviewDashboardByProduct(
   const fbaSales90ByProduct = new Map<string, number>();
   (latestFbaSalesSnapshot?.items ?? []).forEach((row) => {
     const storedProductId = String(row.productId ?? '').trim();
-    const currentPrimarySkuProductId = resolveUniqueProductIdByPrimarySku(row.sellerSku);
+    const sellerSku = String(row.sellerSku ?? '').trim();
+    const currentPrimaryProductIds = primarySkuToProductIds.get(sellerSku);
+    const currentFbmOrRbProductIds = fbmOrRbSkuToProductIds.get(sellerSku);
+    const hasCurrentPrimaryMatch = Boolean(currentPrimaryProductIds?.size);
+    const hasCurrentFbmOrRbMatch = Boolean(currentFbmOrRbProductIds?.size);
+    const hasCurrentChannelConflict = hasCurrentPrimaryMatch && hasCurrentFbmOrRbMatch;
+    const currentPrimarySkuProductId = hasCurrentChannelConflict || hasCurrentFbmOrRbMatch
+      ? null
+      : resolveUniqueProductIdByPrimarySku(sellerSku);
+    const hasNoCurrentSkuMapping = !hasCurrentPrimaryMatch && !hasCurrentFbmOrRbMatch;
     const productId = currentPrimarySkuProductId
-      ?? (row.channel === 'fba' && activeProductIdSet.has(storedProductId) ? storedProductId : null);
+      ?? (
+        hasNoCurrentSkuMapping
+        && row.channel === 'fba'
+        && activeProductIdSet.has(storedProductId)
+          ? storedProductId
+          : null
+      );
     const qty = Number(row.orderedQty ?? 0);
     if (!productId || !Number.isFinite(qty) || qty <= 0) return;
     addDemandQty(fbaSales90ByProduct, productId, qty);
@@ -3195,8 +3224,7 @@ async function getOverviewDashboardByProduct(
         stockCoverageDays: avgDailyOutbound > 0 ? totalStock / avgDailyOutbound : null,
       };
     })
-    .sort((a, b) => b.totalOrderQty90d - a.totalOrderQty90d)
-    .slice(0, 10);
+    .sort((a, b) => b.totalOrderQty90d - a.totalOrderQty90d);
 
   const anomalySkus = Array.from(outbound7ByProduct.entries())
     .map(([productId, qty7d]) => {
@@ -3226,6 +3254,7 @@ async function getOverviewDashboardByProduct(
   const outboundQty14d = Array.from(outbound14ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty7d = Array.from(outbound7ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty90d = Array.from(outbound90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
+  const outboundQty30dCalculated = outboundQty90d / 3;
   const outboundProductCount90d = outbound90ByProduct.size;
   const systemOrderQty90d = Array.from(systemOrder90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const fbaOrderedQty90d = Array.from(fbaSales90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
@@ -3302,6 +3331,7 @@ async function getOverviewDashboardByProduct(
       outboundQty14d,
       outboundQty30d,
       outboundQty90d,
+      outboundQty30dCalculated,
       outboundProductCount90d,
       systemOrderQty90d,
       rakutenOrderedQty90d: systemDemandQty90dByChannel.rakuten,
@@ -3356,7 +3386,7 @@ async function getOverviewDashboardByProduct(
     },
     obsolete: {
       noSales90dCount: noSales90dSkus.length,
-      noSales90dSkus: noSales90dSkus.slice(0, 100),
+      noSales90dSkus,
     },
   };
 };

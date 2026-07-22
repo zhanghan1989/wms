@@ -1870,7 +1870,7 @@ function clearOverviewDashboard() {
   state.overviewDashboard = null;
   state.overviewProductionVisibleCount = 30;
   setOverviewFbaDependentVisibility(false);
-  setTextById("overviewNoSales90Heading", "90天系统无出单产品（入库日期未知的不计入废弃建议）");
+  setTextById("overviewNoSales90Heading", "90天系统无出单产品");
   $("statUsers").textContent = "-";
   $("statSkus").textContent = "-";
   $("statShelves").textContent = "-";
@@ -1890,7 +1890,7 @@ function clearOverviewDashboard() {
     "overviewOrder30dAmazonCount",
     "overviewOrder30dManualCount",
     "overviewOutboundQty90d",
-    "overviewOutboundProductCount90d",
+    "overviewOutboundQty30dCalculated",
     "overviewDemandAvgDailyOutbound",
     "overviewDemandRakutenQty90d",
     "overviewDemandRakutenShare90d",
@@ -1940,8 +1940,8 @@ function renderOverviewDashboard(data) {
   setTextById(
     "overviewNoSales90Heading",
     includesFba
-      ? "90天全渠道无出单产品（入库日期未知的不计入废弃建议）"
-      : "90天系统无出单产品（入库日期未知的不计入废弃建议）",
+      ? "90天全渠道无出单产品"
+      : "90天系统无出单产品",
   );
 
   setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
@@ -1965,7 +1965,10 @@ function renderOverviewDashboard(data) {
   setTextById("overviewOrder30dManualCount", formatOverviewNumber(orders30d.manualOrderCount));
 
   setTextById("overviewOutboundQty90d", formatOverviewNumber(demand.outboundQty90d));
-  setTextById("overviewOutboundProductCount90d", formatOverviewNumber(demand.outboundProductCount90d));
+  setTextById(
+    "overviewOutboundQty30dCalculated",
+    formatOverviewNumber(demand.outboundQty30dCalculated, 1),
+  );
   setTextById("overviewDemandAvgDailyOutbound", formatOverviewNumber(demand.avgDailyOutbound, 1));
   const totalDemand90d = Number(demand.outboundQty90d || 0);
   const systemDemand90d = Number(demand.systemOrderQty90d || 0);
@@ -2050,7 +2053,8 @@ function renderOverviewDashboard(data) {
     "overviewEstimatedArrivalDays",
     Number.isFinite(estimatedArrivalDays) ? `发注 + ${formatOverviewNumber(estimatedArrivalDays)} 天` : "-",
   );
-  setTextById("overviewNoSales90Count", formatOverviewNumber(obsolete.noSales90dCount));
+  const noSales90Items = Array.isArray(obsolete.noSales90dSkus) ? obsolete.noSales90dSkus : [];
+  setTextById("overviewNoSales90Count", formatOverviewNumber(noSales90Items.length));
 
   const fbaSnapshot = production.fbaSalesSnapshot;
   $("overviewFbaSalesSnapshotMeta").textContent = fbaSnapshot
@@ -2087,7 +2091,7 @@ function renderOverviewDashboard(data) {
 
   renderOverviewProductionRecommendations(production);
 
-  const noSales90Rows = (Array.isArray(obsolete.noSales90dSkus) ? obsolete.noSales90dSkus : [])
+  const noSales90Rows = noSales90Items
     .map(
       (item) => `
       <tr>

@@ -60,8 +60,8 @@ describe('inventory dashboard no-sales age classification', () => {
       },
       sku: {
         findMany: jest.fn().mockResolvedValue([
-          { id: 1n, sku: 'FBA-P1', fbmSku: null, rbSku: null, productId: 'P1' },
-          { id: 2n, sku: 'FBA-P2', fbmSku: 'FBM-P2', rbSku: null, productId: 'P2' },
+          { id: 1n, sku: 'FBA-P1', fbmSku: 'CHANNEL-CONFLICT', rbSku: null, productId: 'P1' },
+          { id: 2n, sku: 'CHANNEL-CONFLICT', fbmSku: 'FBM-P2', rbSku: null, productId: 'P2' },
         ]),
       },
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
@@ -105,7 +105,7 @@ describe('inventory dashboard no-sales age classification', () => {
           periodDays: 90,
           periodStart: new Date('2026-04-24T00:00:00.000Z'),
           periodEnd: new Date('2026-07-22T00:00:00.000Z'),
-          totalRows: 2,
+          totalRows: 3,
           fbaRows: 0,
           fbmRows: 1,
           unmatchedRows: 1,
@@ -115,6 +115,7 @@ describe('inventory dashboard no-sales age classification', () => {
           items: [
             { sellerSku: 'FBA-P1', productId: null, channel: 'unmatched', orderedQty: 10 },
             { sellerSku: 'FBM-P2', productId: 'P2', channel: 'fbm', orderedQty: 99 },
+            { sellerSku: 'CHANNEL-CONFLICT', productId: 'P2', channel: 'fba', orderedQty: 77 },
           ],
         }),
       },
@@ -122,6 +123,16 @@ describe('inventory dashboard no-sales age classification', () => {
     const service = new InventoryService(prisma as never, {} as never);
 
     const dashboard = (await service.getOverviewDashboard()) as any;
+
+    expect(prisma.sku.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          status: 1,
+          productId: { not: null },
+          masterProduct: { is: { status: 1 } },
+        },
+      }),
+    );
 
     expect(dashboard.demand.systemOrderQty90d).toBe(7);
     expect(dashboard.demand.rakutenOrderedQty90d).toBe(7);
@@ -141,6 +152,12 @@ describe('inventory dashboard no-sales age classification', () => {
       fbaSnapshotId: '10',
     })) as any;
     expect(dashboardWithFba.demand.fbaOrderedQty90d).toBe(10);
+    expect(dashboardWithFba.demand.outboundQty30dCalculated).toBeCloseTo(
+      dashboardWithFba.demand.outboundQty90d / 3,
+    );
+    expect(dashboardWithFba.obsolete.noSales90dCount).toBe(
+      dashboardWithFba.obsolete.noSales90dSkus.length,
+    );
     expect(dashboardWithFba.production.recommendations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
