@@ -2526,6 +2526,7 @@ async function getOverviewDashboardByProduct(
     shelfCount,
     boxCount,
     pendingInboundOrderCount,
+    masterProductCount,
     activeProducts,
     activeSkus,
     pendingRows,
@@ -2550,6 +2551,7 @@ async function getOverviewDashboardByProduct(
         },
       },
     }),
+    service.prisma.masterProduct.count(),
     service.prisma.masterProduct.findMany({
       where: { status: 1 },
       select: {
@@ -2887,8 +2889,6 @@ async function getOverviewDashboardByProduct(
   let lockedStock = 0;
   let inTransitStock = 0;
   let arrangedProductionStock = 0;
-  let outOfStockSkuCount = 0;
-  let lowCoverageProductCount = 0;
 
   const recommendations: Array<{
     productId: string;
@@ -2949,13 +2949,6 @@ async function getOverviewDashboardByProduct(
     lockedStock += locked;
     inTransitStock += inTransit;
     arrangedProductionStock += arrangedProductionQty;
-
-    if (available <= 0) {
-      outOfStockSkuCount += 1;
-    }
-    if (avgDailyOutbound90d > 0 && securedCoverageDays < PRODUCTION_TARGET_DAYS) {
-      lowCoverageProductCount += 1;
-    }
 
     if (!latestFbaSalesSnapshot) return;
 
@@ -3108,8 +3101,6 @@ async function getOverviewDashboardByProduct(
   const avgDailyOutbound30d = outboundQty30d / 30;
   const avgDailyOutbound90d = outboundQty90d / 90;
   const securedStock = Math.max(0, availableStock) + inTransitStock + arrangedProductionStock;
-  const stockCoverageDays = avgDailyOutbound90d > 0 ? Math.max(0, availableStock) / avgDailyOutbound90d : null;
-  const securedCoverageDays = avgDailyOutbound90d > 0 ? securedStock / avgDailyOutbound90d : null;
 
   const urgentCount = recommendations.filter((item) => item.priority === '紧急').length;
   const highCount = recommendations.filter((item) => item.priority === '高').length;
@@ -3161,7 +3152,7 @@ async function getOverviewDashboardByProduct(
     generatedAt: now.toISOString(),
     summary: {
       activeUserCount,
-      activeProductCount: activeProducts.length,
+      masterProductCount,
       shelfCount,
       boxCount,
       pendingInboundOrderCount,
@@ -3174,12 +3165,6 @@ async function getOverviewDashboardByProduct(
       inTransitStock,
       arrangedProductionStock,
       securedStock,
-      outOfStockSkuCount,
-      lowCoverageSkuCount: lowCoverageProductCount,
-      stockCoverageDays,
-      securedCoverageDays,
-      coverageDays: stockCoverageDays,
-      avgDailyOutbound: avgDailyOutbound90d,
     },
     demand: {
       outboundQty7d,

@@ -1567,17 +1567,19 @@
         <div class="cards">
           <article class="card">
             <h3>快速统计</h3>
+            <p class="muted overview-card-description">员工统计启用状态；主产品、货架和箱号统计系统现有记录。</p>
             <ul class="stats overview-key-stats">
-              <li><span>员工数</span><strong id="statUsers">-</strong></li>
-              <li><span>产品数</span><strong id="statSkus">-</strong></li>
-              <li><span>货架数</span><strong id="statShelves">-</strong></li>
-              <li><span>箱号数</span><strong id="statBoxes">-</strong></li>
-              <li><span>待确认入库单</span><strong id="statInboundDraft">-</strong></li>
+              <li><span>启用员工数</span><strong id="statUsers">-</strong></li>
+              <li><span>系统主产品数</span><strong id="statSkus">-</strong></li>
+              <li><span>货架总数</span><strong id="statShelves">-</strong></li>
+              <li><span>箱号总数</span><strong id="statBoxes">-</strong></li>
+              <li><span>待处理入库单</span><strong id="statInboundDraft">-</strong></li>
             </ul>
           </article>
 
           <article class="card">
             <h3>库存健康</h3>
+            <p class="muted overview-card-description">展示当前库存，以及已锁定、在途和已安排生产的库存构成。</p>
             <ul class="stats overview-key-stats">
               <li><span>总库存</span><strong id="overviewTotalStock">-</strong></li>
               <li><span>可用库存</span><strong id="overviewAvailableStock">-</strong></li>
@@ -1585,23 +1587,19 @@
               <li><span>在途库存</span><strong id="overviewInTransitStock">-</strong></li>
               <li><span>已安排生产</span><strong id="overviewArrangedProductionStock">-</strong></li>
               <li><span>总保障库存</span><strong id="overviewSecuredStock">-</strong></li>
-              <li><span>缺货产品数</span><strong id="overviewOutOfStockSkuCount">-</strong></li>
-              <li><span id="overviewLowCoverageLabel">低覆盖产品数（系统口径）</span><strong id="overviewLowCoverageSkuCount">-</strong></li>
-              <li><span id="overviewStockCoverageLabel">在库覆盖天数（系统口径）</span><strong id="overviewStockCoverageDays">-</strong></li>
-              <li><span id="overviewSecuredCoverageLabel">总覆盖天数（系统口径）</span><strong id="overviewSecuredCoverageDays">-</strong></li>
-              <li><span id="overviewHealthAvgDailyLabel">90天系统日均</span><strong id="overviewAvgDailyOutbound">-</strong></li>
             </ul>
           </article>
 
           <article class="card">
-            <h3>已出单统计（按面单登记时间，30天）</h3>
+            <h3>已出单统计</h3>
+            <p class="muted overview-card-description">按面单登记时间统计最近30天，渠道指标均为订单数。</p>
             <ul class="stats overview-key-stats">
-              <li><span>订单数</span><strong id="overviewOrder30dCount">-</strong></li>
-              <li><span>商品行数</span><strong id="overviewOrder30dItemRows">-</strong></li>
+              <li><span>总订单数</span><strong id="overviewOrder30dCount">-</strong></li>
+              <li><span>商品明细行</span><strong id="overviewOrder30dItemRows">-</strong></li>
               <li><span>商品件数</span><strong id="overviewOrder30dQuantity">-</strong></li>
-              <li><span>乐天订单</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
-              <li><span>亚马逊订单（FBM）</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
-              <li><span>手动订单</span><strong id="overviewOrder30dManualCount">-</strong></li>
+              <li><span>乐天订单数</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
+              <li><span>亚马逊FBM订单数</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
+              <li><span>手动订单数</span><strong id="overviewOrder30dManualCount">-</strong></li>
             </ul>
           </article>
 
