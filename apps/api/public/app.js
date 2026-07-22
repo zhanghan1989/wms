@@ -1872,10 +1872,6 @@ function clearOverviewDashboard() {
   setOverviewFbaDependentVisibility(false);
   setTextById("overviewNoSales90Label", "90天系统无出单产品");
   setTextById("overviewNoSales90Heading", "90天系统无出单产品（入库日期未知的不计入废弃建议）");
-  setTextById("overviewLowCoverageLabel", "低覆盖产品数（系统口径）");
-  setTextById("overviewStockCoverageLabel", "在库覆盖天数（系统口径）");
-  setTextById("overviewSecuredCoverageLabel", "总覆盖天数（系统口径）");
-  setTextById("overviewHealthAvgDailyLabel", "90天系统日均");
   $("statUsers").textContent = "-";
   $("statSkus").textContent = "-";
   $("statShelves").textContent = "-";
@@ -1888,11 +1884,6 @@ function clearOverviewDashboard() {
     "overviewInTransitStock",
     "overviewArrangedProductionStock",
     "overviewSecuredStock",
-    "overviewOutOfStockSkuCount",
-    "overviewLowCoverageSkuCount",
-    "overviewStockCoverageDays",
-    "overviewSecuredCoverageDays",
-    "overviewAvgDailyOutbound",
     "overviewOrder30dCount",
     "overviewOrder30dItemRows",
     "overviewOrder30dQuantity",
@@ -1956,13 +1947,9 @@ function renderOverviewDashboard(data) {
       ? "90天全渠道无出单产品（入库日期未知的不计入废弃建议）"
       : "90天系统无出单产品（入库日期未知的不计入废弃建议）",
   );
-  setTextById("overviewLowCoverageLabel", includesFba ? "低覆盖产品数（全渠道）" : "低覆盖产品数（系统口径）");
-  setTextById("overviewStockCoverageLabel", includesFba ? "在库覆盖天数（全渠道）" : "在库覆盖天数（系统口径）");
-  setTextById("overviewSecuredCoverageLabel", includesFba ? "总覆盖天数（全渠道）" : "总覆盖天数（系统口径）");
-  setTextById("overviewHealthAvgDailyLabel", includesFba ? "90天全渠道日均" : "90天系统日均");
 
   setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
-  setTextById("statSkus", formatOverviewNumber(summary.activeProductCount));
+  setTextById("statSkus", formatOverviewNumber(summary.masterProductCount));
   setTextById("statShelves", formatOverviewNumber(summary.shelfCount));
   setTextById("statBoxes", formatOverviewNumber(summary.boxCount));
   setTextById("statInboundDraft", formatOverviewNumber(summary.pendingInboundOrderCount));
@@ -1973,11 +1960,6 @@ function renderOverviewDashboard(data) {
   setTextById("overviewInTransitStock", formatOverviewNumber(health.inTransitStock));
   setTextById("overviewArrangedProductionStock", formatOverviewNumber(health.arrangedProductionStock));
   setTextById("overviewSecuredStock", formatOverviewNumber(health.securedStock));
-  setTextById("overviewOutOfStockSkuCount", formatOverviewNumber(health.outOfStockSkuCount));
-  setTextById("overviewLowCoverageSkuCount", formatOverviewNumber(health.lowCoverageSkuCount));
-  setTextById("overviewStockCoverageDays", formatOverviewRatio(health.stockCoverageDays ?? health.coverageDays));
-  setTextById("overviewSecuredCoverageDays", formatOverviewRatio(health.securedCoverageDays));
-  setTextById("overviewAvgDailyOutbound", formatOverviewNumber(health.avgDailyOutbound, 1));
 
   setTextById("overviewOrder30dCount", formatOverviewNumber(orders30d.totalOrderCount));
   setTextById("overviewOrder30dItemRows", formatOverviewNumber(orders30d.totalItemRowCount));
@@ -5555,7 +5537,6 @@ async function loadInventory({ preserveSearch = false } = {}) {
   state.inventorySkus = skus;
   state.inventoryTotalsBySku = totals || {};
   state.inventoryLocations = new Map();
-  $("statSkus").textContent = skus.length;
   renderMasterProductOptionsForInput("moveProductProductId", "moveProductProductIdList");
 
   state.inventorySortedSkus = [...skus].sort((a, b) => {
