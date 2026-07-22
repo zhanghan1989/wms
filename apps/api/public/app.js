@@ -1816,6 +1816,12 @@ function renderOverviewTable(bodyId, html, colspan) {
   body.innerHTML = html || `<tr><td colspan="${colspan}" class="muted">-</td></tr>`;
 }
 
+function setOverviewFbaDependentVisibility(visible) {
+  ["overviewDemandCard", "overviewProductionCard", "overviewObsoleteCard"].forEach((id) => {
+    $(id)?.classList.toggle("hidden", !visible);
+  });
+}
+
 function renderOverviewProductionRecommendations(production = state.overviewDashboard?.production || {}) {
   const allRows = Array.isArray(production.recommendations) ? production.recommendations : [];
   const visibleCount = Math.max(30, Number(state.overviewProductionVisibleCount || 0));
@@ -1863,10 +1869,15 @@ function loadMoreOverviewProductionIfNeeded() {
 function clearOverviewDashboard() {
   state.overviewDashboard = null;
   state.overviewProductionVisibleCount = 30;
+  setOverviewFbaDependentVisibility(false);
   setTextById("overviewOutboundQty90dLabel", "90天系统订单量");
   setTextById("overviewDemandAvgDailyOutboundLabel", "90天系统日均");
   setTextById("overviewNoSales90Label", "90天系统无出单产品");
   setTextById("overviewNoSales90Heading", "废弃候选（首次有库存已满90天、90天系统无出单）");
+  setTextById("overviewLowCoverageLabel", "低覆盖产品数（系统口径）");
+  setTextById("overviewStockCoverageLabel", "在库覆盖天数（系统口径）");
+  setTextById("overviewSecuredCoverageLabel", "总覆盖天数（系统口径）");
+  setTextById("overviewHealthAvgDailyLabel", "90天系统日均");
   $("statUsers").textContent = "-";
   $("statSkus").textContent = "-";
   $("statShelves").textContent = "-";
@@ -1890,8 +1901,6 @@ function clearOverviewDashboard() {
     "overviewOrder30dRakutenCount",
     "overviewOrder30dAmazonCount",
     "overviewOrder30dManualCount",
-    "overviewOutboundQty7d",
-    "overviewOutboundQty14d",
     "overviewOutboundQty30d",
     "overviewOutboundQty90d",
     "overviewDemandAvgDailyOutbound",
@@ -1910,9 +1919,8 @@ function clearOverviewDashboard() {
     "overviewUnknownStockAgeCount",
   ].forEach((id) => setTextById(id, "-"));
   renderOverviewTable("overviewTopDemandBody", "", 5);
-  renderOverviewTable("overviewAnomalyBody", "", 6);
   $("overviewFbaSalesSnapshotMeta").textContent =
-    "当前为基础备货建议（不包含FBA出单）；上传最近90天、包含SKU列的CSV后重新计算。";
+    "尚未上传本次计算所需的FBA销售报告。";
   renderOverviewTable("overviewProductionBody", "", 17);
   renderOverviewTable("overviewNoSales90Body", "", 7);
   renderOverviewTable("overviewNewProductObservationBody", "", 7);
@@ -1927,25 +1935,31 @@ function renderOverviewDashboard(data) {
   const orders30d = data?.orders30d || {};
   const production = data?.production || {};
   const obsolete = data?.obsolete || {};
+  const includesFba = production.includesFba === true;
+  setOverviewFbaDependentVisibility(includesFba);
 
   setTextById(
     "overviewOutboundQty90dLabel",
-    production.includesFba ? "90天全渠道订单量" : "90天系统订单量",
+    includesFba ? "90天全渠道订单量" : "90天系统订单量",
   );
   setTextById(
     "overviewDemandAvgDailyOutboundLabel",
-    production.includesFba ? "90天全渠道日均" : "90天系统日均",
+    includesFba ? "90天全渠道日均" : "90天系统日均",
   );
   setTextById(
     "overviewNoSales90Label",
-    production.includesFba ? "90天全渠道无出单产品" : "90天系统无出单产品",
+    includesFba ? "90天全渠道无出单产品" : "90天系统无出单产品",
   );
   setTextById(
     "overviewNoSales90Heading",
-    production.includesFba
+    includesFba
       ? "废弃候选（首次有库存已满90天、90天全渠道无出单）"
       : "废弃候选（首次有库存已满90天、90天系统无出单）",
   );
+  setTextById("overviewLowCoverageLabel", includesFba ? "低覆盖产品数（全渠道）" : "低覆盖产品数（系统口径）");
+  setTextById("overviewStockCoverageLabel", includesFba ? "在库覆盖天数（全渠道）" : "在库覆盖天数（系统口径）");
+  setTextById("overviewSecuredCoverageLabel", includesFba ? "总覆盖天数（全渠道）" : "总覆盖天数（系统口径）");
+  setTextById("overviewHealthAvgDailyLabel", includesFba ? "90天全渠道日均" : "90天系统日均");
 
   setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
   setTextById("statSkus", formatOverviewNumber(summary.activeProductCount));
@@ -1972,8 +1986,6 @@ function renderOverviewDashboard(data) {
   setTextById("overviewOrder30dAmazonCount", formatOverviewNumber(orders30d.amazonOrderCount));
   setTextById("overviewOrder30dManualCount", formatOverviewNumber(orders30d.manualOrderCount));
 
-  setTextById("overviewOutboundQty7d", formatOverviewNumber(demand.outboundQty7d));
-  setTextById("overviewOutboundQty14d", formatOverviewNumber(demand.outboundQty14d));
   setTextById("overviewOutboundQty30d", formatOverviewNumber(demand.outboundQty30d));
   setTextById("overviewOutboundQty90d", formatOverviewNumber(demand.outboundQty90d));
   setTextById("overviewDemandAvgDailyOutbound", formatOverviewNumber(demand.avgDailyOutbound, 1));
@@ -2012,7 +2024,7 @@ function renderOverviewDashboard(data) {
       )} 行已排除 / 未匹配 ${formatOverviewNumber(
         Number(fbaSnapshot.unmatchedRows || 0) + Number(fbaSnapshot.ambiguousRows || 0),
       )} 行 / 上传 ${formatDate(fbaSnapshot.importedAt)}`
-    : "当前为基础备货建议（不包含FBA出单）；上传最近90天、包含SKU列的CSV后重新计算。";
+    : "尚未上传本次计算所需的FBA销售报告。";
 
   const topRows = (Array.isArray(demand.topSkus) ? demand.topSkus : [])
     .map(
@@ -2028,24 +2040,6 @@ function renderOverviewDashboard(data) {
     )
     .join("");
   renderOverviewTable("overviewTopDemandBody", topRows, 5);
-
-  const anomalyRows = (Array.isArray(demand.anomalySkus) ? demand.anomalySkus : [])
-    .map((item) => {
-      const delta = Number(item.delta);
-      const deltaText = Number.isFinite(delta) && delta > 0 ? `+${formatOverviewNumber(delta)}` : formatOverviewNumber(delta);
-      return `
-      <tr>
-        <td>${escapeHtml(displayText(item.productId))}</td>
-        <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${formatOverviewNumber(item.totalStock)}</td>
-        <td>${formatOverviewNumber(item.qty7d)}</td>
-        <td>${formatOverviewNumber(item.prev7d)}</td>
-        <td>${deltaText}</td>
-      </tr>
-    `;
-    })
-    .join("");
-  renderOverviewTable("overviewAnomalyBody", anomalyRows, 6);
 
   renderOverviewProductionRecommendations(production);
 

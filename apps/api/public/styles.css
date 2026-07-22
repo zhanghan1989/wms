@@ -1109,9 +1109,10 @@ button.ghost {
   grid-template-columns: repeat(3, minmax(260px, 1fr));
 }
 
-#overview .cards .card:nth-child(4),
-#overview .cards .card:nth-child(5),
-#overview .cards .card:nth-child(6) {
+#overviewFbaUploadCard,
+#overviewDemandCard,
+#overviewProductionCard,
+#overviewObsoleteCard {
   grid-column: 1 / -1;
 }
 

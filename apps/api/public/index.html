@@ -1586,10 +1586,10 @@
               <li><span>已安排生产</span><strong id="overviewArrangedProductionStock">-</strong></li>
               <li><span>总保障库存</span><strong id="overviewSecuredStock">-</strong></li>
               <li><span>缺货产品数</span><strong id="overviewOutOfStockSkuCount">-</strong></li>
-              <li><span>低覆盖产品数</span><strong id="overviewLowCoverageSkuCount">-</strong></li>
-              <li><span>在库覆盖天数</span><strong id="overviewStockCoverageDays">-</strong></li>
-              <li><span>总覆盖天数</span><strong id="overviewSecuredCoverageDays">-</strong></li>
-              <li><span>90天日均消耗</span><strong id="overviewAvgDailyOutbound">-</strong></li>
+              <li><span id="overviewLowCoverageLabel">低覆盖产品数（系统口径）</span><strong id="overviewLowCoverageSkuCount">-</strong></li>
+              <li><span id="overviewStockCoverageLabel">在库覆盖天数（系统口径）</span><strong id="overviewStockCoverageDays">-</strong></li>
+              <li><span id="overviewSecuredCoverageLabel">总覆盖天数（系统口径）</span><strong id="overviewSecuredCoverageDays">-</strong></li>
+              <li><span id="overviewHealthAvgDailyLabel">90天系统日均</span><strong id="overviewAvgDailyOutbound">-</strong></li>
             </ul>
           </article>
 
@@ -1600,16 +1600,37 @@
               <li><span>商品行数</span><strong id="overviewOrder30dItemRows">-</strong></li>
               <li><span>商品件数</span><strong id="overviewOrder30dQuantity">-</strong></li>
               <li><span>乐天订单</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
-              <li><span>亚马逊订单</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
+              <li><span>亚马逊订单（FBM）</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
               <li><span>手动订单</span><strong id="overviewOrder30dManualCount">-</strong></li>
             </ul>
           </article>
 
-          <article class="card">
-            <h3>全渠道订单需求趋势</h3>
+          <article id="overviewFbaUploadCard" class="card overview-fba-upload-card">
+            <h3>计算全渠道需求和工厂备货建议</h3>
+            <p class="muted">请先上传最近90天的亚马逊FBA销售报告。上传成功前不显示订单需求趋势、工厂备货建议和废弃建议。</p>
+            <form id="overviewFbaSalesUploadForm" class="form-grid overview-fba-sales-upload-form">
+              <label>
+                报告开始日期
+                <input id="overviewFbaSalesPeriodStart" type="date" required />
+              </label>
+              <label>
+                报告结束日期
+                <input id="overviewFbaSalesPeriodEnd" type="date" required />
+              </label>
+              <label>
+                90天销售报告（必须包含 SKU 列）CSV
+                <input id="overviewFbaSalesCsvFile" type="file" accept=".csv,text/csv" required />
+              </label>
+              <button type="submit">上传并计算</button>
+            </form>
+            <div id="overviewFbaSalesSnapshotMeta" class="muted overview-fba-sales-meta">
+              尚未上传本次计算所需的FBA销售报告。
+            </div>
+          </article>
+
+          <article id="overviewDemandCard" class="card hidden">
+            <h3>订单需求趋势（90天含FBA）</h3>
             <ul class="stats overview-inline-stats">
-              <li><span>7天系统订单量</span><strong id="overviewOutboundQty7d">-</strong></li>
-              <li><span>14天系统订单量</span><strong id="overviewOutboundQty14d">-</strong></li>
               <li><span>30天系统订单量</span><strong id="overviewOutboundQty30d">-</strong></li>
               <li><span id="overviewOutboundQty90dLabel">90天系统订单量</span><strong id="overviewOutboundQty90d">-</strong></li>
               <li><span id="overviewDemandAvgDailyOutboundLabel">90天系统日均</span><strong id="overviewDemandAvgDailyOutbound">-</strong></li>
@@ -1631,48 +1652,14 @@
                 <tbody id="overviewTopDemandBody"></tbody>
               </table>
             </div>
-            <div class="overview-table-wrap">
-              <h4>异常波动产品（近7天 vs 前7天）</h4>
-              <table>
-                <thead>
-                  <tr>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>产品库存</th>
-                    <th>近7天</th>
-                    <th>前7天</th>
-                    <th>波动数量</th>
-                  </tr>
-                </thead>
-                <tbody id="overviewAnomalyBody"></tbody>
-              </table>
-            </div>
           </article>
 
-          <article class="card overview-production-card">
+          <article id="overviewProductionCard" class="card overview-production-card hidden">
             <div class="card-head overview-production-head">
               <div class="card-title-actions">
                 <h3>工厂备货建议</h3>
                 <button type="button" id="downloadProductionRecommendationExcelBtn" class="compact-btn">Excel下载</button>
               </div>
-            </div>
-            <form id="overviewFbaSalesUploadForm" class="form-grid overview-fba-sales-upload-form">
-              <label>
-                报告开始日期
-                <input id="overviewFbaSalesPeriodStart" type="date" required />
-              </label>
-              <label>
-                报告结束日期
-                <input id="overviewFbaSalesPeriodEnd" type="date" required />
-              </label>
-              <label>
-                90天销售报告（必须包含 SKU 列）CSV
-                <input id="overviewFbaSalesCsvFile" type="file" accept=".csv,text/csv" required />
-              </label>
-              <button type="submit">上传并重新计算</button>
-            </form>
-            <div id="overviewFbaSalesSnapshotMeta" class="muted overview-fba-sales-meta">
-              当前为基础备货建议（不包含FBA出单）；上传最近90天、包含SKU列的CSV后重新计算。
             </div>
             <ul class="stats overview-inline-stats">
               <li><span>建议备货产品数</span><strong id="overviewRecommendationCount">-</strong></li>
@@ -1713,7 +1700,7 @@
             </div>
           </article>
 
-          <article class="card">
+          <article id="overviewObsoleteCard" class="card hidden">
             <h3>废弃建议</h3>
             <ul class="stats overview-inline-stats">
               <li><span id="overviewNoSales90Label">90天系统无出单产品</span><strong id="overviewNoSales90Count">-</strong></li>

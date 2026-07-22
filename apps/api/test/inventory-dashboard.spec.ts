@@ -1,4 +1,5 @@
 import { classifyNoSalesInventoryAge } from '../src/inventory/inventory-dashboard';
+import { InventoryService } from '../src/inventory/inventory.service';
 
 describe('inventory dashboard no-sales age classification', () => {
   const now = new Date('2026-07-22T12:00:00.000Z');
@@ -30,5 +31,15 @@ describe('inventory dashboard no-sales age classification', () => {
       observedDays: null,
       remainingDays: null,
     });
+  });
+
+  it('does not export factory recommendations before an FBA report is selected', async () => {
+    const service = new InventoryService({} as never, {} as never);
+    await expect(service.buildProductionRecommendationsExcel()).rejects.toThrow(
+      '请先上传最近90天FBA销售报告',
+    );
+    await expect(service.getOverviewDashboard({ includeFba: true })).rejects.toThrow(
+      '请先上传最近90天FBA销售报告',
+    );
   });
 });
