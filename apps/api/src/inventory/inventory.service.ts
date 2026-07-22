@@ -30,6 +30,7 @@ import { OutboundFbaReplenishmentDto } from './dto/outbound-fba-replenishment.dt
 import {
   classifyFbaSalesRows,
   parseFbaSalesBusinessReport,
+  parseFbaSalesPeriod,
 } from './fba-sales-report';
 import {
   getAmazonInventorySnapshotMetadata,
@@ -176,6 +177,7 @@ const MEDIUM_TOTAL_COVERAGE_DAYS = 90;
 const PRODUCTION_TARGET_DAYS = 90;
 const ESTIMATED_PRODUCTION_ARRIVAL_DAYS = 45;
 const ANOMALY_MIN_DELTA_QTY = 10;
+const DASHBOARD_SNAPSHOT_RETENTION_LIMIT = 10;
 
 function getJsonObjectString(value: Prisma.JsonValue | null | undefined, key: string): string {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -957,11 +959,65 @@ export class InventoryService {
     return getSkuInventoryTotalsByProduct.call(this);
   }
 
+  async getAmazonReplenishmentSupportData(): Promise<unknown> {
+    const [skus, masterProducts, pendingRows] = await Promise.all([
+      this.prisma.sku.findMany({
+        where: { status: 1, productId: { not: null } },
+        select: {
+          id: true,
+          sku: true,
+          fnsku: true,
+          asin: true,
+          productId: true,
+          masterProduct: { select: { productName: true } },
+        },
+      }),
+      this.prisma.masterProduct.findMany({
+        where: { status: 1 },
+        select: { productId: true, productName: true, stockQty: true },
+      }),
+      this.prisma.fbaReplenishment.findMany({
+        where: { status: { in: ['pending_confirm', 'pending_outbound'] } },
+        select: { skuId: true, status: true, requestedQty: true, actualQty: true },
+      }),
+    ]);
+    const pendingBySku: Record<string, number> = {};
+    pendingRows.forEach((row) => {
+      const qty = Number(
+        row.status === 'pending_outbound' ? (row.actualQty ?? row.requestedQty) : row.requestedQty,
+      );
+      if (qty <= 0) return;
+      const skuId = row.skuId.toString();
+      pendingBySku[skuId] = (pendingBySku[skuId] ?? 0) + qty;
+    });
+    return {
+      skus: skus.map((row) => ({
+        id: row.id.toString(),
+        sku: row.sku,
+        fnsku: row.fnsku,
+        asin: row.asin,
+        productId: row.productId,
+        productName: row.masterProduct?.productName ?? null,
+      })),
+      masterProducts,
+      pendingConfirmCount: pendingRows.length,
+      pendingBySku,
+    };
+  }
+
   async importFbaSalesReport(
     buffer: Buffer,
     originalName: string | undefined,
+    periodStartRaw: string | undefined,
+    periodEndRaw: string | undefined,
     operatorId: bigint,
   ): Promise<unknown> {
+    let reportPeriod: ReturnType<typeof parseFbaSalesPeriod>;
+    try {
+      reportPeriod = parseFbaSalesPeriod(periodStartRaw, periodEndRaw);
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : '销售报告日期无效');
+    }
     let reportRows: ReturnType<typeof parseFbaSalesBusinessReport>;
     try {
       reportRows = parseFbaSalesBusinessReport(buffer);
@@ -981,38 +1037,53 @@ export class InventoryService {
     const fbaOrderedQty = fbaRows.reduce((sum, row) => sum + row.orderedQty, 0);
     const fileName = String(originalName || 'amazon-business-report.csv').trim().slice(0, 255);
 
-    const snapshot = await this.prisma.fbaSalesSnapshot.create({
-      data: {
-        fileName,
-        periodDays: 90,
-        totalRows: classifiedRows.length,
-        fbaRows: fbaRows.length,
-        fbmRows: fbmRows.length,
-        unmatchedRows: unmatchedRows.length,
-        ambiguousRows: ambiguousRows.length,
-        fbaOrderedQty,
-        importedBy: operatorId,
-        items: {
-          create: classifiedRows.map((row) => ({
-            sellerSku: row.sellerSku,
-            asin: row.asin || null,
-            productName: row.productName || null,
-            productId: row.productId,
-            channel: row.channel,
-            matchedBy: row.matchedBy,
-            orderedQty: row.orderedQty,
-            orderItemQty: row.orderItemQty,
-            salesAmount: row.salesAmount,
-          })),
+    const snapshot = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.fbaSalesSnapshot.create({
+        data: {
+          fileName,
+          periodDays: reportPeriod.periodDays,
+          periodStart: reportPeriod.periodStart,
+          periodEnd: reportPeriod.periodEnd,
+          totalRows: classifiedRows.length,
+          fbaRows: fbaRows.length,
+          fbmRows: fbmRows.length,
+          unmatchedRows: unmatchedRows.length,
+          ambiguousRows: ambiguousRows.length,
+          fbaOrderedQty,
+          importedBy: operatorId,
+          items: {
+            create: classifiedRows.map((row) => ({
+              sellerSku: row.sellerSku,
+              asin: row.asin || null,
+              productName: row.productName || null,
+              productId: row.productId,
+              channel: row.channel,
+              matchedBy: row.matchedBy,
+              orderedQty: row.orderedQty,
+              orderItemQty: row.orderItemQty,
+              salesAmount: row.salesAmount,
+            })),
+          },
         },
-      },
-      select: { id: true, createdAt: true },
+        select: { id: true, createdAt: true },
+      });
+      const expired = await tx.fbaSalesSnapshot.findMany({
+        orderBy: { id: 'desc' },
+        skip: DASHBOARD_SNAPSHOT_RETENTION_LIMIT,
+        select: { id: true },
+      });
+      if (expired.length) {
+        await tx.fbaSalesSnapshot.deleteMany({ where: { id: { in: expired.map((row) => row.id) } } });
+      }
+      return created;
     });
 
     return {
       snapshotId: snapshot.id.toString(),
       fileName,
-      periodDays: 90,
+      periodDays: reportPeriod.periodDays,
+      periodStart: reportPeriod.periodStart.toISOString().slice(0, 10),
+      periodEnd: reportPeriod.periodEnd.toISOString().slice(0, 10),
       totalRows: classifiedRows.length,
       fbaRows: fbaRows.length,
       fbmRows: fbmRows.length,
@@ -1035,18 +1106,31 @@ export class InventoryService {
       const inventoryRows = parseAmazonReplenishmentCsv(inventoryBuffer);
       validateAmazonReplenishmentReports(businessRows, inventoryRows);
       const metadata = getAmazonInventorySnapshotMetadata(inventoryRows);
-      const snapshot = await this.prisma.amazonReplenishmentSnapshot.create({
-        data: {
-          businessFileName: String(businessOriginalName || 'amazon-sales-by-child-asin.csv').trim().slice(0, 255),
-          inventoryFileName: String(inventoryOriginalName || 'amazon-fba-inventory.csv').trim().slice(0, 255),
-          businessRowCount: businessRows.length,
-          inventoryRowCount: inventoryRows.length,
-          businessRows: businessRows as Prisma.InputJsonValue,
-          inventoryRows: inventoryRows as Prisma.InputJsonValue,
-          store: metadata.store,
-          snapshotDate: metadata.snapshotDate,
-          importedBy: operatorId,
-        },
+      const snapshot = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.amazonReplenishmentSnapshot.create({
+          data: {
+            businessFileName: String(businessOriginalName || 'amazon-sales-by-child-asin.csv').trim().slice(0, 255),
+            inventoryFileName: String(inventoryOriginalName || 'amazon-fba-inventory.csv').trim().slice(0, 255),
+            businessRowCount: businessRows.length,
+            inventoryRowCount: inventoryRows.length,
+            businessRows: businessRows as Prisma.InputJsonValue,
+            inventoryRows: inventoryRows as Prisma.InputJsonValue,
+            store: metadata.store,
+            snapshotDate: metadata.snapshotDate,
+            importedBy: operatorId,
+          },
+        });
+        const expired = await tx.amazonReplenishmentSnapshot.findMany({
+          orderBy: { id: 'desc' },
+          skip: DASHBOARD_SNAPSHOT_RETENTION_LIMIT,
+          select: { id: true },
+        });
+        if (expired.length) {
+          await tx.amazonReplenishmentSnapshot.deleteMany({
+            where: { id: { in: expired.map((row) => row.id) } },
+          });
+        }
+        return created;
       });
       return this.serializeAmazonReplenishmentSnapshot(snapshot, false);
     } catch (error) {
@@ -1055,8 +1139,14 @@ export class InventoryService {
   }
 
   async getLatestAmazonReplenishmentReports(): Promise<unknown> {
-    const snapshot = await this.prisma.amazonReplenishmentSnapshot.findFirst({
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    const latestSnapshot = await this.prisma.amazonReplenishmentSnapshot.findFirst({
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    if (!latestSnapshot) return null;
+
+    const snapshot = await this.prisma.amazonReplenishmentSnapshot.findUnique({
+      where: { id: latestSnapshot.id },
     });
     return snapshot ? this.serializeAmazonReplenishmentSnapshot(snapshot) : null;
   }
@@ -2423,9 +2513,6 @@ async function getOverviewDashboardByProduct(
     systemRakutenRows,
     systemAmazonRows,
     systemManualRows,
-    recentRakutenOrderRows,
-    recentAmazonOrderRows,
-    recentManualOrderRows,
   ] = await Promise.all([
     service.prisma.user.count({
       where: {
@@ -2500,20 +2587,31 @@ async function getOverviewDashboardByProduct(
       _sum: { qty: true },
     }),
     includeFba
-      ? service.prisma.fbaSalesSnapshot.findFirst({
-          where: fbaSnapshotId ? { id: fbaSnapshotId } : undefined,
-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-          include: {
-            items: {
-              where: { channel: 'fba', productId: { not: null } },
-              select: { productId: true, orderedQty: true },
+      ? fbaSnapshotId
+        ? service.prisma.fbaSalesSnapshot.findUnique({
+            where: { id: fbaSnapshotId },
+            include: {
+              items: {
+                where: { channel: 'fba', productId: { not: null } },
+                select: { productId: true, orderedQty: true },
+              },
             },
-          },
-        })
+          })
+        : service.prisma.fbaSalesSnapshot.findFirst({
+            orderBy: { id: 'desc' },
+            include: {
+              items: {
+                where: { channel: 'fba', productId: { not: null } },
+                select: { productId: true, orderedQty: true },
+              },
+            },
+          })
       : Promise.resolve(null),
     service.prisma.rakutenOrderRecord.findMany({
       where: rakutenShipmentOrderFilter,
       select: {
+        id: true,
+        orderId: true,
         skuCode: true,
         setComponentSkuCode: true,
         orderQuantity: true,
@@ -2523,6 +2621,8 @@ async function getOverviewDashboardByProduct(
     service.prisma.amazonOrderRecord.findMany({
       where: amazonShipmentOrderFilter,
       select: {
+        id: true,
+        orderId: true,
         sku: true,
         rawPayload: true,
         quantityPurchased: true,
@@ -2532,40 +2632,12 @@ async function getOverviewDashboardByProduct(
     (service.prisma as any).manualOrderRecord.findMany({
       where: manualShipmentOrderFilter,
       select: {
+        id: true,
+        orderId: true,
         sku: true,
         rawPayload: true,
         quantityPurchased: true,
         shipmentNoRegisteredAt: true,
-      },
-    }),
-    service.prisma.rakutenOrderRecord.findMany({
-      where: {
-        createdAt: { gte: from30d },
-      },
-      select: {
-        id: true,
-        orderId: true,
-        orderQuantity: true,
-      },
-    }),
-    service.prisma.amazonOrderRecord.findMany({
-      where: {
-        createdAt: { gte: from30d },
-      },
-      select: {
-        id: true,
-        orderId: true,
-        quantityPurchased: true,
-      },
-    }),
-    (service.prisma as any).manualOrderRecord.findMany({
-      where: {
-        createdAt: { gte: from30d },
-      },
-      select: {
-        id: true,
-        orderId: true,
-        quantityPurchased: true,
       },
     }),
   ]);
@@ -2591,17 +2663,22 @@ async function getOverviewDashboardByProduct(
     activeProductIdSet.add(productId);
   });
 
-  const skuCodeToProductId = new Map<string, string>();
+  const skuCodeToProductIds = new Map<string, Set<string>>();
   activeSkus.forEach((item) => {
     const productId = String(item.productId || '').trim();
     if (!productId) return;
     [item.sku, item.rbSku, item.fbmSku].forEach((candidate) => {
       const skuCode = String(candidate || '').trim();
-      if (skuCode && !skuCodeToProductId.has(skuCode)) {
-        skuCodeToProductId.set(skuCode, productId);
-      }
+      if (!skuCode) return;
+      if (!skuCodeToProductIds.has(skuCode)) skuCodeToProductIds.set(skuCode, new Set());
+      skuCodeToProductIds.get(skuCode)!.add(productId);
     });
   });
+  const resolveUniqueProductIdBySkuCode = (skuCodeRaw: unknown): string | null => {
+    const skuCode = String(skuCodeRaw ?? '').trim();
+    const productIds = skuCode ? skuCodeToProductIds.get(skuCode) : undefined;
+    return productIds?.size === 1 ? [...productIds][0] : null;
+  };
 
   const lockedByProduct = new Map<string, number>();
   pendingRows.forEach((row) => {
@@ -2617,7 +2694,7 @@ async function getOverviewDashboardByProduct(
   const inTransitByProduct = new Map<string, number>();
   inTransitRows.forEach((row) => {
     const rawCode = String(row.productId || '').trim();
-    const productId = activeProductIdSet.has(rawCode) ? rawCode : skuCodeToProductId.get(rawCode);
+    const productId = activeProductIdSet.has(rawCode) ? rawCode : resolveUniqueProductIdBySkuCode(rawCode);
     if (!productId) return;
     const qty = Number(row._sum?.qty ?? 0);
     if (qty <= 0) return;
@@ -2627,7 +2704,7 @@ async function getOverviewDashboardByProduct(
   const arrangedProductionByProduct = new Map<string, number>();
   arrangedProductionRows.forEach((row) => {
     const rawCode = String(row.productId || '').trim();
-    const productId = activeProductIdSet.has(rawCode) ? rawCode : skuCodeToProductId.get(rawCode);
+    const productId = activeProductIdSet.has(rawCode) ? rawCode : resolveUniqueProductIdBySkuCode(rawCode);
     if (!productId) return;
     const qty = Number(row._sum?.qty ?? 0);
     if (qty <= 0) return;
@@ -2645,32 +2722,63 @@ async function getOverviewDashboardByProduct(
       return productIdOverride;
     }
     const skuCode = String(row.sku ?? '').trim();
-    return skuCodeToProductId.get(skuCode) ?? null;
+    return resolveUniqueProductIdBySkuCode(skuCode);
   };
-  const addDemandQty = (map: Map<string, number>, productId: string, qty: number) => {
-    if (!productId || qty <= 0 || !activeProductIdSet.has(productId)) return;
+  const addDemandQty = (map: Map<string, number>, productId: string, qty: number): boolean => {
+    if (!productId || qty <= 0 || !activeProductIdSet.has(productId)) return false;
     map.set(productId, (map.get(productId) ?? 0) + qty);
+    return true;
   };
-  const addSystemOrderDemandQty = (productId: string | null, qtyRaw: number | null, registeredAt: Date | null) => {
+  const addSystemOrderDemandQty = (
+    productId: string | null,
+    qtyRaw: number | null,
+    registeredAt: Date | null,
+  ): boolean => {
     const productIdText = String(productId ?? '').trim();
     const qty = Number(qtyRaw ?? 0);
-    if (!productIdText || !registeredAt || !Number.isFinite(qty) || qty <= 0) return;
+    if (!productIdText || !registeredAt || !Number.isFinite(qty) || qty <= 0) return false;
     if (registeredAt >= from90d) addDemandQty(outbound90ByProduct, productIdText, qty);
     if (registeredAt >= from30d) addDemandQty(outbound30ByProduct, productIdText, qty);
     if (registeredAt >= from14d) addDemandQty(outbound14ByProduct, productIdText, qty);
     if (registeredAt >= from7d) addDemandQty(outbound7ByProduct, productIdText, qty);
+    return true;
+  };
+
+  const unmatchedSystemOrders90d = {
+    rowCount: 0,
+    quantity: 0,
+    rakutenRowCount: 0,
+    amazonRowCount: 0,
+    manualRowCount: 0,
+  };
+  const recordUnmatchedSystemOrder = (
+    channel: 'rakuten' | 'amazon' | 'manual',
+    qtyRaw: number | null,
+    registeredAt: Date | null,
+  ) => {
+    const qty = Number(qtyRaw ?? 0);
+    if (!registeredAt || registeredAt < from90d || !Number.isFinite(qty) || qty <= 0) return;
+    unmatchedSystemOrders90d.rowCount += 1;
+    unmatchedSystemOrders90d.quantity += qty;
+    unmatchedSystemOrders90d[`${channel}RowCount`] += 1;
   };
 
   systemRakutenRows.forEach((row) => {
     const rawCode = String(row.setComponentSkuCode ?? '').trim() || String(row.skuCode ?? '').trim();
-    const productId = activeProductIdSet.has(rawCode) ? rawCode : (skuCodeToProductId.get(rawCode) ?? null);
-    addSystemOrderDemandQty(productId, row.orderQuantity, row.shipmentNoRegisteredAt);
+    const productId = activeProductIdSet.has(rawCode) ? rawCode : resolveUniqueProductIdBySkuCode(rawCode);
+    if (!addSystemOrderDemandQty(productId, row.orderQuantity, row.shipmentNoRegisteredAt)) {
+      recordUnmatchedSystemOrder('rakuten', row.orderQuantity, row.shipmentNoRegisteredAt);
+    }
   });
   systemAmazonRows.forEach((row) => {
-    addSystemOrderDemandQty(resolveAmazonLikeDemandProductId(row), row.quantityPurchased, row.shipmentNoRegisteredAt);
+    if (!addSystemOrderDemandQty(resolveAmazonLikeDemandProductId(row), row.quantityPurchased, row.shipmentNoRegisteredAt)) {
+      recordUnmatchedSystemOrder('amazon', row.quantityPurchased, row.shipmentNoRegisteredAt);
+    }
   });
-  (systemManualRows as Array<{ sku: string | null; rawPayload: Prisma.JsonValue | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).forEach((row) => {
-    addSystemOrderDemandQty(resolveAmazonLikeDemandProductId(row), row.quantityPurchased, row.shipmentNoRegisteredAt);
+  (systemManualRows as Array<{ id: bigint; orderId: string | null; sku: string | null; rawPayload: Prisma.JsonValue | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).forEach((row) => {
+    if (!addSystemOrderDemandQty(resolveAmazonLikeDemandProductId(row), row.quantityPurchased, row.shipmentNoRegisteredAt)) {
+      recordUnmatchedSystemOrder('manual', row.quantityPurchased, row.shipmentNoRegisteredAt);
+    }
   });
 
   const systemOrder90ByProduct = new Map(outbound90ByProduct);
@@ -2766,10 +2874,6 @@ async function getOverviewDashboardByProduct(
           inTransitStock: inTransit,
         });
       }
-    }
-
-    if (avgDailyOutbound90d < 0.1) {
-      return;
     }
 
     const targetDemandQty = Math.ceil(avgDailyOutbound90d * PRODUCTION_TARGET_DAYS);
@@ -2916,21 +3020,21 @@ async function getOverviewDashboardByProduct(
     };
   };
   const rakutenOrderStats30d = toOrderStats(
-    recentRakutenOrderRows.map((row) => ({
+    systemRakutenRows.filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= from30d).map((row) => ({
       id: row.id,
       orderId: row.orderId,
       qty: row.orderQuantity,
     })),
   );
   const amazonOrderStats30d = toOrderStats(
-    recentAmazonOrderRows.map((row) => ({
+    systemAmazonRows.filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= from30d).map((row) => ({
       id: row.id,
       orderId: row.orderId,
       qty: row.quantityPurchased,
     })),
   );
   const manualOrderStats30d = toOrderStats(
-    (recentManualOrderRows as Array<{ id: bigint; orderId: string | null; quantityPurchased: number | null }>).map(
+    (systemManualRows as Array<{ id: bigint; orderId: string | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= from30d).map(
       (row) => ({
         id: row.id,
         orderId: row.orderId,
@@ -2970,6 +3074,9 @@ async function getOverviewDashboardByProduct(
       outboundQty90d,
       systemOrderQty90d,
       fbaOrderedQty90d,
+      unmatchedSystemOrderRowCount90d: unmatchedSystemOrders90d.rowCount,
+      unmatchedSystemOrderQty90d: unmatchedSystemOrders90d.quantity,
+      unmatchedSystemOrders90d,
       avgDailyOutbound: avgDailyOutbound90d,
       avgDailyOutbound30d,
       avgDailyOutbound90d,
@@ -2999,6 +3106,8 @@ async function getOverviewDashboardByProduct(
             id: latestFbaSalesSnapshot.id.toString(),
             fileName: latestFbaSalesSnapshot.fileName,
             periodDays: latestFbaSalesSnapshot.periodDays,
+            periodStart: latestFbaSalesSnapshot.periodStart?.toISOString().slice(0, 10) ?? null,
+            periodEnd: latestFbaSalesSnapshot.periodEnd?.toISOString().slice(0, 10) ?? null,
             totalRows: latestFbaSalesSnapshot.totalRows,
             fbaRows: latestFbaSalesSnapshot.fbaRows,
             fbmRows: latestFbaSalesSnapshot.fbmRows,

@@ -1,6 +1,16 @@
-import { classifyFbaSalesRows, parseFbaSalesBusinessReport } from '../src/inventory/fba-sales-report';
+import {
+  classifyFbaSalesRows,
+  parseFbaSalesBusinessReport,
+  parseFbaSalesPeriod,
+} from '../src/inventory/fba-sales-report';
 
 describe('FBA sales Business Report', () => {
+  it('accepts exactly 90 inclusive calendar days and rejects other periods', () => {
+    expect(parseFbaSalesPeriod('2026-04-23', '2026-07-21')).toMatchObject({ periodDays: 90 });
+    expect(() => parseFbaSalesPeriod('2026-04-24', '2026-07-21')).toThrow('当前为89天');
+    expect(() => parseFbaSalesPeriod('2026-02-30', '2026-05-30')).toThrow('日期格式无效');
+  });
+
   it('parses seller SKU and ordered quantity from the Amazon CSV', () => {
     const csv = [
       '（父）ASIN,（子）ASIN,标题,SKU,已订购商品数量,已订购商品销售额,订单商品总数',

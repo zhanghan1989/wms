@@ -169,6 +169,24 @@ describe('Amazon dashboard CSV matching logic', () => {
     });
   });
 
+  it('keeps 181-270 day inventory as a warning instead of an automatic removal quantity', () => {
+    const row = logic.normalizeInventoryRow({
+      sku: 'sku-aged',
+      asin: 'B-AGED',
+      '库龄 181-270 天': '12',
+      '库龄 271-365 天': '3',
+      '库龄 365 天以上': '1',
+      建议移除数量: '2',
+    });
+
+    expect(row).toMatchObject({
+      age181To270: 12,
+      age270Plus: 4,
+      suggestedRemovalQty: 2,
+      removalSuggestedQty: 4,
+    });
+  });
+
   it('accepts the ASIN sales report and FBA inventory report only in their designated upload fields', () => {
     const result = logic.validateUploadReportColumns(
       [

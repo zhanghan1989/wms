@@ -556,6 +556,8 @@ model FbaSalesSnapshot {
   id                BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   fileName          String                 @map("file_name") @db.VarChar(255)
   periodDays        Int                    @default(90) @map("period_days")
+  periodStart       DateTime?              @map("period_start") @db.Date
+  periodEnd         DateTime?              @map("period_end") @db.Date
   totalRows         Int                    @map("total_rows")
   fbaRows           Int                    @map("fba_rows")
   fbmRows           Int                    @map("fbm_rows")

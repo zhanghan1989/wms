@@ -1046,7 +1046,7 @@ button.ghost {
 }
 
 .overview-fba-sales-upload-form {
-  grid-template-columns: minmax(320px, 620px) auto;
+  grid-template-columns: minmax(150px, 190px) minmax(150px, 190px) minmax(280px, 1fr) auto;
   align-items: end;
   margin-bottom: 8px;
 }

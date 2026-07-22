@@ -454,7 +454,7 @@
         <div class="panel-head">
           <h2>亚马逊海外仓补货</h2>
           <div class="panel-tools">
-            <button type="button" id="resetAmazonDashboardBtn" class="ghost">清空</button>
+            <button type="button" id="resetAmazonDashboardBtn" class="ghost">清空当前显示</button>
           </div>
         </div>
 
@@ -549,9 +549,9 @@
                     <th>日均销量</th>
                     <th>亚马逊可售</th>
                     <th>亚马逊入库</th>
-                    <th>海外仓库存</th>
+                    <th>产品海外仓库存</th>
                     <th>已有待处理补货</th>
-                    <th>海外仓可用库存</th>
+                    <th>本SKU分配前可用</th>
                     <th>FBA缺口</th>
                     <th>建议海外仓补货</th>
                     <th>优先级</th>
@@ -564,7 +564,7 @@
 
           <article class="card">
             <div class="card-head">
-              <h3>退仓建议</h3>
+              <h3>退仓与库龄风险</h3>
               <span id="amazonDashboardRemovalMeta" class="muted">-</span>
             </div>
             <div id="amazonDashboardRemovalCards" class="amazon-dashboard-metric-row"></div>
@@ -1594,7 +1594,7 @@
           </article>
 
           <article class="card">
-            <h3>订单统计(30天)</h3>
+            <h3>已出单统计（按面单登记时间，30天）</h3>
             <ul class="stats overview-key-stats">
               <li><span>订单数</span><strong id="overviewOrder30dCount">-</strong></li>
               <li><span>商品行数</span><strong id="overviewOrder30dItemRows">-</strong></li>
@@ -1611,8 +1611,10 @@
               <li><span>7天系统订单量</span><strong id="overviewOutboundQty7d">-</strong></li>
               <li><span>14天系统订单量</span><strong id="overviewOutboundQty14d">-</strong></li>
               <li><span>30天系统订单量</span><strong id="overviewOutboundQty30d">-</strong></li>
-              <li><span>90天全渠道订单量</span><strong id="overviewOutboundQty90d">-</strong></li>
-              <li><span>90天全渠道日均</span><strong id="overviewDemandAvgDailyOutbound">-</strong></li>
+              <li><span id="overviewOutboundQty90dLabel">90天系统订单量</span><strong id="overviewOutboundQty90d">-</strong></li>
+              <li><span id="overviewDemandAvgDailyOutboundLabel">90天系统日均</span><strong id="overviewDemandAvgDailyOutbound">-</strong></li>
+              <li><span>90天未匹配订单行</span><strong id="overviewUnmatchedOrderRows90d">-</strong></li>
+              <li><span>90天未匹配订单量</span><strong id="overviewUnmatchedOrderQty90d">-</strong></li>
             </ul>
             <div class="overview-table-wrap">
               <h4>Top 系统订单商品（30天，不含上传FBA汇总）</h4>
@@ -1655,6 +1657,14 @@
               </div>
             </div>
             <form id="overviewFbaSalesUploadForm" class="form-grid overview-fba-sales-upload-form">
+              <label>
+                报告开始日期
+                <input id="overviewFbaSalesPeriodStart" type="date" required />
+              </label>
+              <label>
+                报告结束日期
+                <input id="overviewFbaSalesPeriodEnd" type="date" required />
+              </label>
               <label>
                 90天销售报告（必须包含 SKU 列）CSV
                 <input id="overviewFbaSalesCsvFile" type="file" accept=".csv,text/csv" required />

@@ -24,6 +24,35 @@ export interface FbaSalesSystemSku {
   productId: string | null;
 }
 
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+export function parseFbaSalesPeriod(
+  periodStartRaw: unknown,
+  periodEndRaw: unknown,
+): { periodStart: Date; periodEnd: Date; periodDays: number } {
+  const periodStartText = String(periodStartRaw ?? '').trim();
+  const periodEndText = String(periodEndRaw ?? '').trim();
+  if (!ISO_DATE_PATTERN.test(periodStartText) || !ISO_DATE_PATTERN.test(periodEndText)) {
+    throw new Error('请选择销售报告的开始日期和结束日期');
+  }
+  const periodStart = new Date(`${periodStartText}T00:00:00.000Z`);
+  const periodEnd = new Date(`${periodEndText}T00:00:00.000Z`);
+  if (
+    Number.isNaN(periodStart.getTime()) ||
+    Number.isNaN(periodEnd.getTime()) ||
+    periodStart.toISOString().slice(0, 10) !== periodStartText ||
+    periodEnd.toISOString().slice(0, 10) !== periodEndText
+  ) {
+    throw new Error('销售报告日期格式无效');
+  }
+  const periodDays = Math.floor((periodEnd.getTime() - periodStart.getTime()) / DAY_IN_MS) + 1;
+  if (periodDays !== 90) {
+    throw new Error(`销售报告日期必须正好覆盖90天（包含首尾），当前为${periodDays}天`);
+  }
+  return { periodStart, periodEnd, periodDays };
+}
+
 function normalizeHeader(value: unknown): string {
   return String(value ?? '')
     .replace(/^\uFEFF/, '')

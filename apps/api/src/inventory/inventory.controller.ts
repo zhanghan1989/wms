@@ -186,6 +186,7 @@ export class InventoryController {
   @UseInterceptors(FileInterceptor('file'))
   async importFbaSalesReport(
     @UploadedFile() file: { buffer?: Buffer; originalname?: string; size?: number } | undefined,
+    @Body() body: { periodStart?: string; periodEnd?: string },
     @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
     if (!file?.buffer) {
@@ -194,7 +195,13 @@ export class InventoryController {
     if (file.size && file.size > 10 * 1024 * 1024) {
       throw new BadRequestException('CSV文件不能超过10MB');
     }
-    return this.inventoryService.importFbaSalesReport(file.buffer, file.originalname, user.id);
+    return this.inventoryService.importFbaSalesReport(
+      file.buffer,
+      file.originalname,
+      body.periodStart,
+      body.periodEnd,
+      user.id,
+    );
   }
 
   @Post('dashboard/amazon-replenishment-reports')
@@ -221,6 +228,11 @@ export class InventoryController {
   @Get('dashboard/amazon-replenishment-reports/latest')
   async getLatestAmazonReplenishmentReports(): Promise<unknown> {
     return this.inventoryService.getLatestAmazonReplenishmentReports();
+  }
+
+  @Get('dashboard/amazon-replenishment-support')
+  async getAmazonReplenishmentSupportData(): Promise<unknown> {
+    return this.inventoryService.getAmazonReplenishmentSupportData();
   }
 
   @Get('dashboard/production-recommendations-excel')
