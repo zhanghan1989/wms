@@ -11,21 +11,24 @@ import { ResponseInterceptor } from './common/interceptors/response.interceptor'
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  app.use((req: Record<string, unknown>, res: Record<string, unknown>, next: () => void) => {
+  app.use((
+    req: Record<string, unknown>,
+    res: Record<string, unknown> & { setHeader: (name: string, value: string) => void },
+    next: () => void,
+  ) => {
     const headers = req.headers as Record<string, unknown> | undefined;
-    const setHeader = res.setHeader as (name: string, value: string) => void;
-    setHeader('X-Content-Type-Options', 'nosniff');
-    setHeader('X-Frame-Options', 'DENY');
-    setHeader('Referrer-Policy', 'no-referrer');
-    setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
-    setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-    setHeader('Cross-Origin-Resource-Policy', 'same-origin');
-    setHeader(
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; form-action 'self'",
     );
     if (String(headers?.['x-forwarded-proto'] ?? '').toLowerCase() === 'https') {
-      setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     }
     next();
   });
@@ -43,13 +46,17 @@ async function bootstrap(): Promise<void> {
   });
 
   app.setGlobalPrefix('api');
-  app.use((req: Record<string, unknown>, res: Record<string, unknown>, next: () => void) => {
+  app.use((
+    req: Record<string, unknown>,
+    res: Record<string, unknown> & { setHeader: (name: string, value: string) => void },
+    next: () => void,
+  ) => {
     const requestIdHeader = req.headers as Record<string, unknown>;
     const requestId = typeof requestIdHeader['x-request-id'] === 'string'
       ? requestIdHeader['x-request-id']
       : randomUUID();
     req.requestId = requestId;
-    (res.setHeader as (name: string, value: string) => void)('x-request-id', requestId);
+    res.setHeader('x-request-id', requestId);
     next();
   });
 
