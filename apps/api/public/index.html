@@ -165,6 +165,7 @@
       <form id="loginGateForm" class="form-grid login-grid">
         <label>用户名<input id="gateUsername" autocomplete="username" placeholder="请输入用户名" /></label>
         <label>密码<input id="gatePassword" type="password" autocomplete="current-password" placeholder="请输入密码" /></label>
+        <label>MFA验证码<input id="gateMfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" placeholder="已启用MFA时填写6位验证码" /></label>
         <button type="submit">登录系统</button>
       </form>
       <div id="loginGateStatus" class="login-gate-status hidden" role="alert"></div>
@@ -2528,12 +2529,32 @@
       <form id="profileForm" class="form-grid modal-grid">
         <label>用户名<input id="profileUsername" readonly /></label>
         <label>角色<input id="profileRole" readonly /></label>
+        <label>MFA状态<input id="profileMfaStatus" readonly /></label>
         <label>当前密码<input id="profileCurrentPassword" type="password" required /></label>
-        <label>新密码<input id="profileNewPassword" type="password" minlength="6" required /></label>
+        <label>新密码<input id="profileNewPassword" type="password" minlength="12" maxlength="64" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])\S{12,64}" title="12到64位，须包含大小写字母、数字和特殊字符，不能包含空格" required /></label>
         <div class="modal-actions">
           <button type="submit">保存</button>
+          <button id="openMfaSetupBtn" type="button" class="ghost">设置MFA</button>
           <button type="button" class="ghost" data-action="closeProfileModal">取消</button>
         </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="mfaSetupModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>设置多因素认证（MFA）</h3>
+      </div>
+      <form id="mfaSetupForm" class="form-grid modal-grid">
+        <p class="muted">在 Microsoft Authenticator、Google Authenticator 或其他 TOTP 应用中添加账户，并手工输入以下密钥。</p>
+        <label>账户<input id="mfaSetupAccount" readonly /></label>
+        <label>设置密钥<input id="mfaSetupSecret" readonly /></label>
+        <label>6位验证码<input id="mfaSetupCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" required /></label>
+        <div class="modal-actions">
+          <button id="mfaSetupEnableBtn" type="submit">验证并启用MFA</button>
+        </div>
+        <p class="muted">启用后，每次登录都必须输入认证器生成的验证码。请勿共享或截图保存设置密钥。</p>
       </form>
     </div>
   </div>
@@ -2601,7 +2622,7 @@
         <input id="resetPasswordUserId" type="hidden" />
         <input id="resetPasswordMode" type="hidden" />
         <label>用户名<input id="resetPasswordUsername" readonly /></label>
-        <label>新密码<input id="resetPasswordNewPassword" type="text" minlength="6" maxlength="64" required /></label>
+        <label>新密码<input id="resetPasswordNewPassword" type="text" minlength="12" maxlength="64" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])\S{12,64}" title="12到64位，须包含大小写字母、数字和特殊字符，不能包含空格" required /></label>
         <div class="modal-actions">
           <button id="resetPasswordSubmitBtn" type="submit">确认</button>
           <button type="button" class="ghost" data-action="closeResetUserPasswordModal">取消</button>
@@ -2796,6 +2817,43 @@
             <button id="amazonSpApiSyncBtn" type="button" class="ghost hidden">立即同步</button>
           </div>
           <button type="button" class="ghost" data-action="closeAmazonSpApiConnectionModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="amazonAppstoreAuthorizationModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>关联 Amazon 店铺</h3>
+      </div>
+      <form id="amazonAppstoreAuthorizationForm">
+        <p class="muted">
+          Amazon 已确认当前 Seller Central 店铺。请选择它在本系统中对应的唯一店铺；不同法律主体必须分别登录各自的 Seller Central 主账户完成授权。
+        </p>
+        <div class="form-grid compact">
+          <label>Amazon Seller ID<input id="amazonAppstoreSellerId" readonly /></label>
+          <label>系统店铺
+            <select id="amazonAppstoreShopId" required></select>
+          </label>
+          <label>区域
+            <select id="amazonAppstoreRegion" required>
+              <option value="FE">FE（日本/远东）</option>
+              <option value="NA">NA（北美）</option>
+              <option value="EU">EU（欧洲）</option>
+            </select>
+          </label>
+          <label>Marketplace IDs<input id="amazonAppstoreMarketplaceIds" value="A1VC38T7YXB528" required /></label>
+        </div>
+        <div class="checkbox-row">
+          <label><input id="amazonAppstoreSyncFbm" type="checkbox" checked /> 自动同步FBM订单</label>
+          <label><input id="amazonAppstoreSyncFba" type="checkbox" checked /> 自动同步FBA订单</label>
+          <label><input id="amazonAppstoreSyncInventory" type="checkbox" checked /> 自动同步FBA库存</label>
+        </div>
+        <p class="muted">本系统不会取得 Seller Central 密码。授权令牌将加密保存，并严格绑定到所选系统店铺。</p>
+        <div class="modal-actions modal-actions-split">
+          <button id="amazonAppstoreContinueBtn" type="submit">确认店铺并继续</button>
+          <button id="amazonAppstoreCancelBtn" type="button" class="ghost">取消授权</button>
         </div>
       </form>
     </div>

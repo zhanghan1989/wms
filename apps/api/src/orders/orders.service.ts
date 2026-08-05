@@ -861,16 +861,17 @@ const AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH = 'manual:amazon-order';
 const XIYA_MANUAL_ORDER_SOURCE_FILE_NAME = 'xiya-manual-order';
 const XIYA_MANUAL_ORDER_SOURCE_FILE_PATH = 'external:xiya-manual-order';
 const MANUAL_ORDER_UPLOAD_TEMPLATE_FILE = '手动订单上传模板.xlsx';
-const XIYA_LOGISTICS_EXPORT_URL = 'http://103.236.55.93/api/external/logistics/rakuten';
-const XIYA_LOGISTICS_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
-const XIYA_COMPANY_NAME = 'XYJG';
+const XIYA_LOGISTICS_EXPORT_URL =
+  process.env.XIYA_LOGISTICS_EXPORT_URL || 'http://103.236.55.93/api/external/logistics/rakuten';
+const XIYA_LOGISTICS_API_KEY = process.env.XIYA_EXPORT_API_KEY || '';
+const XIYA_COMPANY_NAME = process.env.XIYA_COMPANY_NAME || 'XYJG';
 const XIYA_SUCCESS_CODES = new Set([0, 200]);
 const XIYA_LOGISTICS_SYNC_DAYS = 5;
 const XIYA_TRACKING_SYNC_CRON = '0 0 17 * * *';
 const UOF_TRACKING_API_URL =
   process.env.UOF_TRACKING_API_URL || 'http://oms.uofexp.com/webservice/PublicService.asmx/ServiceInterfaceUTF8';
-const UOF_TRACKING_DEFAULT_APP_TOKEN = '2af105038c7f8d8b5615477faeb2be5c';
-const UOF_TRACKING_DEFAULT_APP_KEY = '562d511e34bd13579fd1634a02fffabe562d511e34bd13579fd1634a02fffabe';
+const UOF_TRACKING_DEFAULT_APP_TOKEN = '';
+const UOF_TRACKING_DEFAULT_APP_KEY = '';
 const UOF_TRACKING_SERVICE_METHOD = 'gettrack';
 const UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT = '通関許可';
 const UOF_TRACKING_DELIVERED_TEXT = '配達完了';

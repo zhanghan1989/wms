@@ -169,6 +169,11 @@ model User {
   id                             BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
   username                       String                    @unique @db.VarChar(64)
   passwordHash                   String?                   @map("password_hash") @db.VarChar(255)
+  passwordChangedAt              DateTime?                 @map("password_changed_at")
+  mfaSecretEncrypted             String?                   @map("mfa_secret_encrypted") @db.Text
+  mfaSecretIv                    String?                   @map("mfa_secret_iv") @db.VarChar(64)
+  mfaSecretAuthTag               String?                   @map("mfa_secret_auth_tag") @db.VarChar(64)
+  mfaEnabledAt                   DateTime?                 @map("mfa_enabled_at")
   role                           Role
   department                     String                    @default("china_warehouse") @db.VarChar(64)
   status                         Int                       @default(1) @db.TinyInt
@@ -359,6 +364,7 @@ model AmazonSpApiOAuthState {
   syncFbaOrders    Boolean   @default(true) @map("sync_fba_orders")
   syncFbaInventory Boolean   @default(true) @map("sync_fba_inventory")
   returnPath       String    @default("/") @map("return_path") @db.VarChar(255)
+  expectedSellerId String?   @map("expected_seller_id") @db.VarChar(64)
   createdBy        BigInt    @map("created_by") @db.UnsignedBigInt
   expiresAt        DateTime  @map("expires_at")
   consumedAt       DateTime? @map("consumed_at")

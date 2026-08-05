@@ -6,6 +6,15 @@ CLIENT_DIR="$ROOT_DIR/apps/api/node_modules/@prisma/client"
 GENERATED_DIR="$ROOT_DIR/apps/api/node_modules/.prisma"
 CLIENT_LINK="$CLIENT_DIR/.prisma"
 
+# npm may hoist both packages to the workspace root. In that layout Node resolves
+# `.prisma/client` from the same root node_modules directory without a symlink.
+if [[ ! -d "$CLIENT_DIR" \
+  && -d "$ROOT_DIR/node_modules/@prisma/client" \
+  && -d "$ROOT_DIR/node_modules/.prisma/client" ]]; then
+  printf 'Prisma client is hoisted; no workspace link is required.\n'
+  exit 0
+fi
+
 if [[ ! -d "$CLIENT_DIR" ]]; then
   printf 'Error: Prisma client package is missing. Run npm install first.\n' >&2
   exit 1

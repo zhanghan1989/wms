@@ -6,11 +6,21 @@ services:
     container_name: wms_api
     environment:
       PORT: 3000
-      DATABASE_URL: mysql://root:root@db:3306/wms_v1
-      JWT_SECRET: wms-dev-secret
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-30d}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be configured in .env}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be configured in .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
+      AUTH_REQUIRE_MFA: ${AUTH_REQUIRE_MFA:-false}
+      AUTH_REQUIRE_PASSWORD_ROTATION: ${AUTH_REQUIRE_PASSWORD_ROTATION:-false}
+      AUTH_MFA_ENCRYPTION_KEY: ${AUTH_MFA_ENCRYPTION_KEY:?AUTH_MFA_ENCRYPTION_KEY must be configured in .env}
       DEPLOY_SESSION_VERSION: ${DEPLOY_SESSION_VERSION:-local-dev}
-      THIRD_PARTY_API_KEY: xiya-t4HHGJWBDGg29yp8W8TK3QRQ3m1A
+      THIRD_PARTY_API_KEY: ${THIRD_PARTY_API_KEY:?THIRD_PARTY_API_KEY must be configured in .env}
+      XIYA_EXPORT_URL: ${XIYA_EXPORT_URL:-http://103.236.55.93/api/external/products}
+      XIYA_LOGISTICS_EXPORT_URL: ${XIYA_LOGISTICS_EXPORT_URL:-http://103.236.55.93/api/external/logistics/rakuten}
+      XIYA_EXPORT_API_KEY: ${XIYA_EXPORT_API_KEY:?XIYA_EXPORT_API_KEY must be configured in .env}
+      XIYA_COMPANY_NAME: ${XIYA_COMPANY_NAME:-XYJG}
+      UOF_TRACKING_API_URL: ${UOF_TRACKING_API_URL:-http://oms.uofexp.com/webservice/PublicService.asmx/ServiceInterfaceUTF8}
+      UOF_TRACKING_APP_TOKEN: ${UOF_TRACKING_APP_TOKEN:?UOF_TRACKING_APP_TOKEN must be configured in .env}
+      UOF_TRACKING_APP_KEY: ${UOF_TRACKING_APP_KEY:?UOF_TRACKING_APP_KEY must be configured in .env}
       YAMATO_PRINT_MODE: ${YAMATO_PRINT_MODE:-agent}
       PRINT_AGENT_API_KEY: ${PRINT_AGENT_API_KEY:-}
       BACKUP_DIR: /app/storage/backups
@@ -40,7 +50,7 @@ services:
     container_name: wms_db
     command: --default-authentication-plugin=mysql_native_password
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be configured in .env}
       MYSQL_DATABASE: wms_v1
     ports:
       - "127.0.0.1:3306:3306"
