@@ -9,8 +9,8 @@
 | HTTPS 与安全响应头 | 生产域名 TLS、HSTS、CSP、Referrer Policy 已核验 | `curl -I` 与证书有效期输出 |
 | 最小权限与账号隔离 | 管理员/普通用户角色、Seller ID 一对一绑定；数据库 `wms_app` 仅限 `wms_v1` | `ACCESS_REVIEW_RECORD.md` 签字、脱敏数据库授权输出 |
 | MFA 与密码控制 | 代码和 UI 已实现 | 按 `MFA_ROLLOUT.md` 完成 18 个账号、强制开关和双角色登录截图 |
-| 凭证安全 | ECS `.env` 权限 600；JWT/MFA/Amazon/数据库密钥已随机化 | XIYA/UOF 轮换证明、旧密钥撤销证明、Git 历史扫描结果 |
-| 网络与主机安全 | `HOST_SECURITY_BASELINE.md` | 云安全中心、安全组、告警、补丁完成截图；主机/Web 扫描报告 |
+| 凭证安全 | ECS `.env` 权限 600；JWT/MFA/Amazon/数据库应用及 root 密钥已随机化；`PRODUCTION_SECURITY_CHANGE_RECORD_2026-08-05.md` | XIYA/UOF 轮换证明、旧密钥撤销证明、Git 历史扫描结果 |
+| 网络与主机安全 | `HOST_SECURITY_BASELINE.md`、`PRODUCTION_SECURITY_CHANGE_RECORD_2026-08-05.md` | 云安全中心、告警、补丁完成截图；主机/Web 扫描报告 |
 | 漏洞管理 | `npm run check:security`、月度 GitHub Actions、`VULNERABILITY_MANAGEMENT.md` | `xlsx` 替换/风险批准、年度第三方渗透测试合同与报告 |
 | 事件响应 | `INCIDENT_RESPONSE_PLAN.md`、`INCIDENT_RESPONSE_DRILL.md` | 首次演练签字、当前 Amazon DPP 报告渠道截图 |
 | 备份与恢复 | `BACKUP_RESTORE_TEST.md` | 阿里云快照/OSS 策略、加密与保留截图、首次恢复测试签字 |
