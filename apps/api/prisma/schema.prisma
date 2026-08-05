@@ -151,42 +151,57 @@ enum PrintJobStatus {
   canceled
 }
 
+enum AmazonSpApiSyncType {
+  fbm_orders
+  fba_orders
+  fba_inventory
+  full
+}
+
+enum AmazonSpApiSyncStatus {
+  running
+  success
+  partial
+  failed
+}
+
 model User {
-  id                         BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
-  username                   String                 @unique @db.VarChar(64)
-  passwordHash               String?                @map("password_hash") @db.VarChar(255)
-  role                       Role
-  department                 String                 @default("china_warehouse") @db.VarChar(64)
-  status                     Int                    @default(1) @db.TinyInt
-  createdAt                  DateTime               @default(now()) @map("created_at")
-  updatedAt                  DateTime               @updatedAt @map("updated_at")
-  inboundOrders              InboundOrder[]
-  outboundOrders             OutboundOrder[]
-  stocktakeTasks             StocktakeTask[]
-  createdStocktakePlannerTasks   StocktakePlannerTask[] @relation("stocktake_planner_created_by")
-  confirmedStocktakePlannerTasks StocktakePlannerTask[] @relation("stocktake_planner_confirmed_by")
-  adjustOrders               InventoryAdjustOrder[]
-  batchInboundOrders         BatchInboundOrder[]
-  createdFbaReplenishments   FbaReplenishment[]     @relation("fba_created_by")
-  confirmedFbaReplenishments FbaReplenishment[]     @relation("fba_confirmed_by")
-  outboundFbaReplenishments  FbaReplenishment[]     @relation("fba_outbound_by")
-  deletedFbaReplenishments   FbaReplenishment[]     @relation("fba_deleted_by")
-  productEditRequests        ProductEditRequest[]   @relation("product_edit_created_by")
-  stockMovements             StockMovement[]
-  auditLogs                  OperationAuditLog[]
-  masterProductSyncRecords   MasterProductSyncRecord[]
+  id                             BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
+  username                       String                    @unique @db.VarChar(64)
+  passwordHash                   String?                   @map("password_hash") @db.VarChar(255)
+  role                           Role
+  department                     String                    @default("china_warehouse") @db.VarChar(64)
+  status                         Int                       @default(1) @db.TinyInt
+  createdAt                      DateTime                  @default(now()) @map("created_at")
+  updatedAt                      DateTime                  @updatedAt @map("updated_at")
+  inboundOrders                  InboundOrder[]
+  outboundOrders                 OutboundOrder[]
+  stocktakeTasks                 StocktakeTask[]
+  createdStocktakePlannerTasks   StocktakePlannerTask[]    @relation("stocktake_planner_created_by")
+  confirmedStocktakePlannerTasks StocktakePlannerTask[]    @relation("stocktake_planner_confirmed_by")
+  adjustOrders                   InventoryAdjustOrder[]
+  batchInboundOrders             BatchInboundOrder[]
+  createdFbaReplenishments       FbaReplenishment[]        @relation("fba_created_by")
+  confirmedFbaReplenishments     FbaReplenishment[]        @relation("fba_confirmed_by")
+  outboundFbaReplenishments      FbaReplenishment[]        @relation("fba_outbound_by")
+  deletedFbaReplenishments       FbaReplenishment[]        @relation("fba_deleted_by")
+  productEditRequests            ProductEditRequest[]      @relation("product_edit_created_by")
+  stockMovements                 StockMovement[]
+  auditLogs                      OperationAuditLog[]
+  masterProductSyncRecords       MasterProductSyncRecord[]
+  amazonSpApiOAuthStates         AmazonSpApiOAuthState[]
 
   @@map("users")
 }
 
 model DepartmentOption {
-  id        BigInt     @id @default(autoincrement()) @db.UnsignedBigInt
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   code      String   @unique @db.VarChar(64)
-  name      String     @db.VarChar(64)
-  status    Int        @default(1) @db.TinyInt
-  sort      Int        @default(0)
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
+  name      String   @db.VarChar(64)
+  status    Int      @default(1) @db.TinyInt
+  sort      Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("department_options")
 }
@@ -243,18 +258,18 @@ model BatchInboundItem {
 }
 
 model Sku {
-  id                BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
-  productId         String?                    @map("product_id") @db.VarChar(128)
-  sku               String                     @db.VarChar(128)
-  rbSku            String?                    @db.VarChar(128)
-  asin              String?                    @db.VarChar(32)
-  fnsku             String?                    @db.VarChar(32)
-  fbmSku            String?                    @db.VarChar(128)
-  shop              String                     @default("") @db.VarChar(128)
-  remark            String?                    @db.VarChar(255)
-  status            Int                        @default(1) @db.TinyInt
-  createdAt         DateTime                   @default(now()) @map("created_at")
-  updatedAt         DateTime                   @updatedAt @map("updated_at")
+  id                  BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  productId           String?                    @map("product_id") @db.VarChar(128)
+  sku                 String                     @db.VarChar(128)
+  rbSku               String?                    @db.VarChar(128)
+  asin                String?                    @db.VarChar(32)
+  fnsku               String?                    @db.VarChar(32)
+  fbmSku              String?                    @db.VarChar(128)
+  shop                String                     @default("") @db.VarChar(128)
+  remark              String?                    @db.VarChar(255)
+  status              Int                        @default(1) @db.TinyInt
+  createdAt           DateTime                   @default(now()) @map("created_at")
+  updatedAt           DateTime                   @updatedAt @map("updated_at")
   itemCodes           ItemCode[]
   outboundItems       OutboundOrderItem[]
   stocktakeRecords    StocktakeRecord[]
@@ -290,44 +305,174 @@ model SkuType {
 }
 
 model Shop {
-  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  name      String   @unique @db.VarChar(128)
-  status    Int      @default(1) @db.TinyInt
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id                     BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  name                   String                  @unique @db.VarChar(128)
+  status                 Int                     @default(1) @db.TinyInt
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  amazonSpApiConnection  AmazonSpApiConnection?
+  amazonSpApiOAuthStates AmazonSpApiOAuthState[]
 
   @@map("shops")
 }
 
+model AmazonSpApiConnection {
+  id                     BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  shopId                 BigInt                   @unique @map("shop_id") @db.UnsignedBigInt
+  sellerId               String                   @map("seller_id") @db.VarChar(64)
+  region                 String                   @default("FE") @db.VarChar(8)
+  marketplaceIds         Json                     @map("marketplace_ids")
+  encryptedRefreshToken  String                   @map("encrypted_refresh_token") @db.Text
+  tokenIv                String                   @map("token_iv") @db.VarChar(64)
+  tokenAuthTag           String                   @map("token_auth_tag") @db.VarChar(64)
+  authorizationMode      String                   @default("oauth") @map("authorization_mode") @db.VarChar(16)
+  authorizedAt           DateTime?                @map("authorized_at")
+  authorizationExpiresAt DateTime?                @map("authorization_expires_at")
+  status                 Int                      @default(1) @db.TinyInt
+  syncFbmOrders          Boolean                  @default(true) @map("sync_fbm_orders")
+  syncFbaOrders          Boolean                  @default(true) @map("sync_fba_orders")
+  syncFbaInventory       Boolean                  @default(true) @map("sync_fba_inventory")
+  lastOrdersSyncedAt     DateTime?                @map("last_orders_synced_at")
+  lastInventorySyncedAt  DateTime?                @map("last_inventory_synced_at")
+  lastSuccessfulSyncAt   DateTime?                @map("last_successful_sync_at")
+  lastSyncError          String?                  @map("last_sync_error") @db.Text
+  createdAt              DateTime                 @default(now()) @map("created_at")
+  updatedAt              DateTime                 @updatedAt @map("updated_at")
+  shop                   Shop                     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  syncRuns               AmazonSpApiSyncRun[]
+  fbaOrderItems          AmazonFbaOrderItem[]
+  fbaInventoryItems      AmazonFbaInventoryItem[]
+  fbmOrderRecords        AmazonOrderRecord[]
+
+  @@index([status])
+  @@index([sellerId])
+  @@map("amazon_sp_api_connections")
+}
+
+model AmazonSpApiOAuthState {
+  id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  stateHash        String    @unique @map("state_hash") @db.Char(64)
+  shopId           BigInt    @map("shop_id") @db.UnsignedBigInt
+  region           String    @default("FE") @db.VarChar(8)
+  marketplaceIds   Json      @map("marketplace_ids")
+  syncFbmOrders    Boolean   @default(true) @map("sync_fbm_orders")
+  syncFbaOrders    Boolean   @default(true) @map("sync_fba_orders")
+  syncFbaInventory Boolean   @default(true) @map("sync_fba_inventory")
+  returnPath       String    @default("/") @map("return_path") @db.VarChar(255)
+  createdBy        BigInt    @map("created_by") @db.UnsignedBigInt
+  expiresAt        DateTime  @map("expires_at")
+  consumedAt       DateTime? @map("consumed_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  shop             Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  creator          User      @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([shopId, expiresAt])
+  @@index([expiresAt, consumedAt])
+  @@map("amazon_sp_api_oauth_states")
+}
+
+model AmazonSpApiSyncRun {
+  id           BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId BigInt                @map("connection_id") @db.UnsignedBigInt
+  syncType     AmazonSpApiSyncType   @map("sync_type")
+  status       AmazonSpApiSyncStatus @default(running)
+  startedAt    DateTime              @default(now()) @map("started_at")
+  finishedAt   DateTime?             @map("finished_at")
+  fetchedCount Int                   @default(0) @map("fetched_count")
+  createdCount Int                   @default(0) @map("created_count")
+  updatedCount Int                   @default(0) @map("updated_count")
+  errorMessage String?               @map("error_message") @db.Text
+  connection   AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, startedAt])
+  @@index([status, startedAt])
+  @@map("amazon_sp_api_sync_runs")
+}
+
+model AmazonFbaOrderItem {
+  id                BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId      BigInt                @map("connection_id") @db.UnsignedBigInt
+  amazonOrderId     String                @map("amazon_order_id") @db.VarChar(64)
+  amazonOrderItemId String                @map("amazon_order_item_id") @db.VarChar(64)
+  marketplaceId     String?               @map("marketplace_id") @db.VarChar(32)
+  sellerSku         String?               @map("seller_sku") @db.VarChar(128)
+  asin              String?               @db.VarChar(32)
+  productName       String?               @map("product_name") @db.Text
+  orderStatus       String?               @map("order_status") @db.VarChar(32)
+  quantityOrdered   Int                   @default(0) @map("quantity_ordered")
+  quantityShipped   Int                   @default(0) @map("quantity_shipped")
+  currency          String?               @db.VarChar(8)
+  itemAmount        Decimal               @default(0) @map("item_amount") @db.Decimal(16, 2)
+  purchaseDate      DateTime?             @map("purchase_date")
+  lastUpdateDate    DateTime?             @map("last_update_date")
+  rawPayload        Json?                 @map("raw_payload")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+  connection        AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, amazonOrderId, amazonOrderItemId], map: "uq_amazon_fba_order_item")
+  @@index([purchaseDate])
+  @@index([sellerSku])
+  @@index([orderStatus])
+  @@map("amazon_fba_order_items")
+}
+
+model AmazonFbaInventoryItem {
+  id                  BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId        BigInt                @map("connection_id") @db.UnsignedBigInt
+  marketplaceId       String                @map("marketplace_id") @db.VarChar(32)
+  sellerSku           String                @map("seller_sku") @db.VarChar(128)
+  fnSku               String?               @map("fn_sku") @db.VarChar(64)
+  asin                String?               @db.VarChar(32)
+  productName         String?               @map("product_name") @db.Text
+  fulfillableQty      Int                   @default(0) @map("fulfillable_qty")
+  inboundWorkingQty   Int                   @default(0) @map("inbound_working_qty")
+  inboundShippedQty   Int                   @default(0) @map("inbound_shipped_qty")
+  inboundReceivingQty Int                   @default(0) @map("inbound_receiving_qty")
+  reservedQty         Int                   @default(0) @map("reserved_qty")
+  unfulfillableQty    Int                   @default(0) @map("unfulfillable_qty")
+  totalQty            Int                   @default(0) @map("total_qty")
+  snapshotAt          DateTime              @map("snapshot_at")
+  rawPayload          Json?                 @map("raw_payload")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+  connection          AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, marketplaceId, sellerSku], map: "uq_amazon_fba_inventory_item")
+  @@index([sellerSku])
+  @@index([snapshotAt])
+  @@map("amazon_fba_inventory_items")
+}
+
 model Shelf {
-  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  shelfCode String   @unique @map("shelf_code") @db.VarChar(64)
-  name      String?  @db.VarChar(128)
-  status    Int      @default(1) @db.TinyInt
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  boxes     Box[]
+  id                    BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  shelfCode             String                 @unique @map("shelf_code") @db.VarChar(64)
+  name                  String?                @db.VarChar(128)
+  status                Int                    @default(1) @db.TinyInt
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  boxes                 Box[]
   stocktakePlannerTasks StocktakePlannerTask[]
 
   @@map("shelves")
 }
 
 model Box {
-  id                BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
-  boxCode           String                     @unique @map("box_code") @db.VarChar(128)
-  shelfId           BigInt                     @map("shelf_id") @db.UnsignedBigInt
-  status            Int                        @default(1) @db.TinyInt
-  createdAt         DateTime                   @default(now()) @map("created_at")
-  updatedAt         DateTime                   @updatedAt @map("updated_at")
-  shelf             Shelf                      @relation(fields: [shelfId], references: [id])
-  itemCodes         ItemCode[]
+  id                       BigInt                      @id @default(autoincrement()) @db.UnsignedBigInt
+  boxCode                  String                      @unique @map("box_code") @db.VarChar(128)
+  shelfId                  BigInt                      @map("shelf_id") @db.UnsignedBigInt
+  status                   Int                         @default(1) @db.TinyInt
+  createdAt                DateTime                    @default(now()) @map("created_at")
+  updatedAt                DateTime                    @updatedAt @map("updated_at")
+  shelf                    Shelf                       @relation(fields: [shelfId], references: [id])
+  itemCodes                ItemCode[]
   masterProductInventories MasterProductBoxInventory[]
-  inboundItems      InboundOrderItem[]
-  outboundItems     OutboundOrderItem[]
-  stocktakeRecords  StocktakeRecord[]
-  stockMovements    StockMovement[]
-  adjustItems       InventoryAdjustOrderItem[]
-  fbaReplenishments FbaReplenishment[]
+  inboundItems             InboundOrderItem[]
+  outboundItems            OutboundOrderItem[]
+  stocktakeRecords         StocktakeRecord[]
+  stockMovements           StockMovement[]
+  adjustItems              InventoryAdjustOrderItem[]
+  fbaReplenishments        FbaReplenishment[]
 
   @@map("boxes")
 }
@@ -377,15 +522,15 @@ model InboundOrder {
 }
 
 model InboundOrderItem {
-  id          BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
-  orderId     BigInt       @map("order_id") @db.UnsignedBigInt
-  boxId       BigInt       @map("box_id") @db.UnsignedBigInt
-  productId   String       @map("product_id") @db.VarChar(128)
+  id          BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  orderId     BigInt        @map("order_id") @db.UnsignedBigInt
+  boxId       BigInt        @map("box_id") @db.UnsignedBigInt
+  productId   String        @map("product_id") @db.VarChar(128)
   qty         Int
-  sourceRowNo Int?         @map("source_row_no")
-  createdAt   DateTime     @default(now()) @map("created_at")
-  order       InboundOrder @relation(fields: [orderId], references: [id])
-  box         Box          @relation(fields: [boxId], references: [id])
+  sourceRowNo Int?          @map("source_row_no")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  order       InboundOrder  @relation(fields: [orderId], references: [id])
+  box         Box           @relation(fields: [boxId], references: [id])
   product     MasterProduct @relation(fields: [productId], references: [productId])
 
   @@map("inbound_order_items")
@@ -470,20 +615,20 @@ model StocktakeRecord {
 }
 
 model StockMovement {
-  id           BigInt       @id @default(autoincrement()) @db.UnsignedBigInt
-  movementType MovementType @map("movement_type")
-  refType      String       @map("ref_type") @db.VarChar(32)
-  refId        BigInt       @map("ref_id") @db.UnsignedBigInt
-  boxId        BigInt       @map("box_id") @db.UnsignedBigInt
-  productId    String?      @map("product_id") @db.VarChar(128)
-  skuId        BigInt?      @map("sku_id") @db.UnsignedBigInt
-  qtyDelta     Int          @map("qty_delta")
-  operatorId   BigInt       @map("operator_id") @db.UnsignedBigInt
-  createdAt    DateTime     @default(now()) @map("created_at")
-  box          Box          @relation(fields: [boxId], references: [id])
+  id           BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
+  movementType MovementType   @map("movement_type")
+  refType      String         @map("ref_type") @db.VarChar(32)
+  refId        BigInt         @map("ref_id") @db.UnsignedBigInt
+  boxId        BigInt         @map("box_id") @db.UnsignedBigInt
+  productId    String?        @map("product_id") @db.VarChar(128)
+  skuId        BigInt?        @map("sku_id") @db.UnsignedBigInt
+  qtyDelta     Int            @map("qty_delta")
+  operatorId   BigInt         @map("operator_id") @db.UnsignedBigInt
+  createdAt    DateTime       @default(now()) @map("created_at")
+  box          Box            @relation(fields: [boxId], references: [id])
   product      MasterProduct? @relation(fields: [productId], references: [productId])
-  sku          Sku?         @relation(fields: [skuId], references: [id])
-  operator     User         @relation(fields: [operatorId], references: [id])
+  sku          Sku?           @relation(fields: [skuId], references: [id])
+  operator     User           @relation(fields: [operatorId], references: [id])
 
   @@index([productId, createdAt])
   @@index([skuId, createdAt])
@@ -553,38 +698,49 @@ model FbaReplenishment {
 }
 
 model FbaSalesSnapshot {
-  id                BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
-  fileName          String                 @map("file_name") @db.VarChar(255)
-  periodDays        Int                    @default(90) @map("period_days")
-  periodStart       DateTime?              @map("period_start") @db.Date
-  periodEnd         DateTime?              @map("period_end") @db.Date
-  totalRows         Int                    @map("total_rows")
-  fbaRows           Int                    @map("fba_rows")
-  fbmRows           Int                    @map("fbm_rows")
-  unmatchedRows     Int                    @map("unmatched_rows")
-  ambiguousRows     Int                    @map("ambiguous_rows")
-  fbaOrderedQty     Int                    @map("fba_ordered_qty")
-  importedBy        BigInt                 @map("imported_by") @db.UnsignedBigInt
-  createdAt         DateTime               @default(now()) @map("created_at")
-  items             FbaSalesSnapshotItem[]
+  id                    BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  fileName              String                 @map("file_name") @db.VarChar(255)
+  inventoryFileName     String?                @map("inventory_file_name") @db.VarChar(255)
+  inventorySnapshotDate DateTime?              @map("inventory_snapshot_date") @db.Date
+  inventoryRows         Int                    @default(0) @map("inventory_rows")
+  periodDays            Int                    @default(90) @map("period_days")
+  periodStart           DateTime?              @map("period_start") @db.Date
+  periodEnd             DateTime?              @map("period_end") @db.Date
+  totalRows             Int                    @map("total_rows")
+  fbaRows               Int                    @map("fba_rows")
+  fbmRows               Int                    @map("fbm_rows")
+  unmatchedRows         Int                    @map("unmatched_rows")
+  ambiguousRows         Int                    @map("ambiguous_rows")
+  fbaOrderedQty         Int                    @map("fba_ordered_qty")
+  fbaAvailableQty       Int                    @default(0) @map("fba_available_qty")
+  fbaInboundQty         Int                    @default(0) @map("fba_inbound_qty")
+  fbaReservedQty        Int                    @default(0) @map("fba_reserved_qty")
+  fbaUnfulfillableQty   Int                    @default(0) @map("fba_unfulfillable_qty")
+  importedBy            BigInt                 @map("imported_by") @db.UnsignedBigInt
+  createdAt             DateTime               @default(now()) @map("created_at")
+  items                 FbaSalesSnapshotItem[]
 
   @@index([createdAt])
   @@map("fba_sales_snapshots")
 }
 
 model FbaSalesSnapshotItem {
-  id             BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
-  snapshotId     BigInt           @map("snapshot_id") @db.UnsignedBigInt
-  sellerSku      String           @map("seller_sku") @db.VarChar(128)
-  asin           String?          @db.VarChar(32)
-  productName    String?          @map("product_name") @db.Text
-  productId      String?          @map("product_id") @db.VarChar(128)
-  channel        String           @db.VarChar(16)
-  matchedBy      String?          @map("matched_by") @db.VarChar(16)
-  orderedQty     Int              @map("ordered_qty")
-  orderItemQty   Int              @map("order_item_qty")
-  salesAmount    Decimal          @default(0) @map("sales_amount") @db.Decimal(16, 2)
-  snapshot       FbaSalesSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  id                  BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  snapshotId          BigInt           @map("snapshot_id") @db.UnsignedBigInt
+  sellerSku           String           @map("seller_sku") @db.VarChar(128)
+  asin                String?          @db.VarChar(32)
+  productName         String?          @map("product_name") @db.Text
+  productId           String?          @map("product_id") @db.VarChar(128)
+  channel             String           @db.VarChar(16)
+  matchedBy           String?          @map("matched_by") @db.VarChar(16)
+  orderedQty          Int              @map("ordered_qty")
+  orderItemQty        Int              @map("order_item_qty")
+  salesAmount         Decimal          @default(0) @map("sales_amount") @db.Decimal(16, 2)
+  fbaAvailableQty     Int              @default(0) @map("fba_available_qty")
+  fbaInboundQty       Int              @default(0) @map("fba_inbound_qty")
+  fbaReservedQty      Int              @default(0) @map("fba_reserved_qty")
+  fbaUnfulfillableQty Int              @default(0) @map("fba_unfulfillable_qty")
+  snapshot            FbaSalesSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
 
   @@unique([snapshotId, sellerSku], map: "uq_fba_sales_snapshot_item_sku")
   @@index([productId], map: "idx_fba_sales_snapshot_items_product_id")
@@ -592,17 +748,17 @@ model FbaSalesSnapshotItem {
 }
 
 model AmazonReplenishmentSnapshot {
-  id                    BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  businessFileName      String   @map("business_file_name") @db.VarChar(255)
-  inventoryFileName     String   @map("inventory_file_name") @db.VarChar(255)
-  businessRowCount      Int      @map("business_row_count")
-  inventoryRowCount     Int      @map("inventory_row_count")
-  businessRows          Json     @map("business_rows")
-  inventoryRows         Json     @map("inventory_rows")
-  store                  String?  @db.VarChar(128)
-  snapshotDate           String?  @map("snapshot_date") @db.VarChar(32)
-  importedBy             BigInt   @map("imported_by") @db.UnsignedBigInt
-  createdAt              DateTime @default(now()) @map("created_at")
+  id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  businessFileName  String   @map("business_file_name") @db.VarChar(255)
+  inventoryFileName String   @map("inventory_file_name") @db.VarChar(255)
+  businessRowCount  Int      @map("business_row_count")
+  inventoryRowCount Int      @map("inventory_row_count")
+  businessRows      Json     @map("business_rows")
+  inventoryRows     Json     @map("inventory_rows")
+  store             String?  @db.VarChar(128)
+  snapshotDate      String?  @map("snapshot_date") @db.VarChar(32)
+  importedBy        BigInt   @map("imported_by") @db.UnsignedBigInt
+  createdAt         DateTime @default(now()) @map("created_at")
 
   @@index([createdAt])
   @@index([store, createdAt])
@@ -629,14 +785,14 @@ model ProductEditRequest {
 }
 
 model BackupRecord {
-  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  fileName     String   @unique @map("file_name") @db.VarChar(255)
-  source       String   @default("schedule") @db.VarChar(32)
-  sizeBytes    BigInt   @default(0) @map("size_bytes") @db.UnsignedBigInt
-  hasFile      Boolean  @default(true) @map("has_file")
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  fileName      String    @unique @map("file_name") @db.VarChar(255)
+  source        String    @default("schedule") @db.VarChar(32)
+  sizeBytes     BigInt    @default(0) @map("size_bytes") @db.UnsignedBigInt
+  hasFile       Boolean   @default(true) @map("has_file")
   fileDeletedAt DateTime? @map("file_deleted_at")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
   @@index([createdAt])
   @@index([hasFile, createdAt])
@@ -644,51 +800,51 @@ model BackupRecord {
 }
 
 model RakutenOrderRecord {
-  id                  BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  rowHash             String   @unique @map("row_hash") @db.Char(40)
-  orderId             String?  @map("order_id") @db.VarChar(64)
-  itemDetailStatus    String?  @map("item_detail_status") @db.VarChar(64)
-  skuCode             String?  @map("sku_code") @db.VarChar(128)
-  isComboOrder        Boolean  @default(false) @map("is_combo_order")
-  comboOrderSku       String?  @map("combo_order_sku") @db.VarChar(128)
-  setComponentSkuCode String?  @map("set_component_sku_code") @db.VarChar(128)
-  orderQuantity       Int?     @map("order_quantity")
-  productName         String?  @map("product_name") @db.Text
-  mallName            String?  @map("mall_name") @db.VarChar(128)
-  shopName            String?  @map("shop_name") @db.VarChar(128)
-  mallOrderNo         String?  @map("mall_order_no") @db.VarChar(128)
-  orderStatusText     String?  @map("order_status_text") @db.VarChar(64)
-  orderImportedAtRaw  String?  @map("order_imported_at_raw") @db.VarChar(32)
-  orderRemark         String?  @map("order_remark") @db.Text
-  shippingName        String?  @map("shipping_name") @db.VarChar(128)
-  shippingPostalCode  String?  @map("shipping_postal_code") @db.VarChar(32)
-  shippingPrefecture  String?  @map("shipping_prefecture") @db.VarChar(64)
-  shippingCity        String?  @map("shipping_city") @db.VarChar(128)
-  shippingAddress     String?  @map("shipping_address") @db.Text
-  shippingPhone       String?  @map("shipping_phone") @db.VarChar(64)
-  shipmentCompany     String?  @map("shipment_company") @db.VarChar(128)
-  shipmentNo          String?  @map("shipment_no") @db.VarChar(128)
-  shipmentNoRegisteredAt DateTime? @map("shipment_no_registered_at")
-  trackingStatusLabel String?  @map("tracking_status_label") @db.VarChar(128)
-  trackingHasCustomsClearance Boolean @default(false) @map("tracking_has_customs_clearance")
-  trackingIsDelivered Boolean @default(false) @map("tracking_is_delivered")
-  trackingStatusOccurredAt DateTime? @map("tracking_status_occurred_at")
-  trackingCheckedAt   DateTime? @map("tracking_checked_at")
-  trackingError       String?  @map("tracking_error") @db.Text
-  dispatchMode        String?  @map("dispatch_mode") @db.VarChar(32)
-  xiyaExportedAt      DateTime? @map("xiya_exported_at")
-  sendStatus          OrderSendStatus @default(unsent) @map("send_status")
-  deliveryMethod      String?  @map("delivery_method") @db.VarChar(128)
-  deliveryDateRaw     String?  @map("delivery_date_raw") @db.VarChar(32)
-  deliveryTimeSlot    String?  @map("delivery_time_slot") @db.VarChar(64)
-  shipmentRequestNo   String?  @map("shipment_request_no") @db.VarChar(128)
-  productNameExtra    String?  @map("product_name_extra") @db.Text
-  sourceFileName      String?  @map("source_file_name") @db.VarChar(255)
-  sourceFilePath      String?  @map("source_file_path") @db.VarChar(512)
-  rawPayload          Json?    @map("raw_payload")
-  csvImportedAt       DateTime @default(now()) @map("csv_imported_at")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  id                          BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  rowHash                     String          @unique @map("row_hash") @db.Char(40)
+  orderId                     String?         @map("order_id") @db.VarChar(64)
+  itemDetailStatus            String?         @map("item_detail_status") @db.VarChar(64)
+  skuCode                     String?         @map("sku_code") @db.VarChar(128)
+  isComboOrder                Boolean         @default(false) @map("is_combo_order")
+  comboOrderSku               String?         @map("combo_order_sku") @db.VarChar(128)
+  setComponentSkuCode         String?         @map("set_component_sku_code") @db.VarChar(128)
+  orderQuantity               Int?            @map("order_quantity")
+  productName                 String?         @map("product_name") @db.Text
+  mallName                    String?         @map("mall_name") @db.VarChar(128)
+  shopName                    String?         @map("shop_name") @db.VarChar(128)
+  mallOrderNo                 String?         @map("mall_order_no") @db.VarChar(128)
+  orderStatusText             String?         @map("order_status_text") @db.VarChar(64)
+  orderImportedAtRaw          String?         @map("order_imported_at_raw") @db.VarChar(32)
+  orderRemark                 String?         @map("order_remark") @db.Text
+  shippingName                String?         @map("shipping_name") @db.VarChar(128)
+  shippingPostalCode          String?         @map("shipping_postal_code") @db.VarChar(32)
+  shippingPrefecture          String?         @map("shipping_prefecture") @db.VarChar(64)
+  shippingCity                String?         @map("shipping_city") @db.VarChar(128)
+  shippingAddress             String?         @map("shipping_address") @db.Text
+  shippingPhone               String?         @map("shipping_phone") @db.VarChar(64)
+  shipmentCompany             String?         @map("shipment_company") @db.VarChar(128)
+  shipmentNo                  String?         @map("shipment_no") @db.VarChar(128)
+  shipmentNoRegisteredAt      DateTime?       @map("shipment_no_registered_at")
+  trackingStatusLabel         String?         @map("tracking_status_label") @db.VarChar(128)
+  trackingHasCustomsClearance Boolean         @default(false) @map("tracking_has_customs_clearance")
+  trackingIsDelivered         Boolean         @default(false) @map("tracking_is_delivered")
+  trackingStatusOccurredAt    DateTime?       @map("tracking_status_occurred_at")
+  trackingCheckedAt           DateTime?       @map("tracking_checked_at")
+  trackingError               String?         @map("tracking_error") @db.Text
+  dispatchMode                String?         @map("dispatch_mode") @db.VarChar(32)
+  xiyaExportedAt              DateTime?       @map("xiya_exported_at")
+  sendStatus                  OrderSendStatus @default(unsent) @map("send_status")
+  deliveryMethod              String?         @map("delivery_method") @db.VarChar(128)
+  deliveryDateRaw             String?         @map("delivery_date_raw") @db.VarChar(32)
+  deliveryTimeSlot            String?         @map("delivery_time_slot") @db.VarChar(64)
+  shipmentRequestNo           String?         @map("shipment_request_no") @db.VarChar(128)
+  productNameExtra            String?         @map("product_name_extra") @db.Text
+  sourceFileName              String?         @map("source_file_name") @db.VarChar(255)
+  sourceFilePath              String?         @map("source_file_path") @db.VarChar(512)
+  rawPayload                  Json?           @map("raw_payload")
+  csvImportedAt               DateTime        @default(now()) @map("csv_imported_at")
+  createdAt                   DateTime        @default(now()) @map("created_at")
+  updatedAt                   DateTime        @updatedAt @map("updated_at")
 
   @@index([orderId])
   @@index([mallOrderNo])
@@ -703,53 +859,59 @@ model RakutenOrderRecord {
 }
 
 model AmazonOrderRecord {
-  id                    BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  rowHash               String   @unique @map("row_hash") @db.Char(40)
-  orderId               String?  @map("order_id") @db.VarChar(64)
-  orderItemId           String?  @map("order_item_id") @db.VarChar(64)
-  purchaseDateRaw       String?  @map("purchase_date_raw") @db.VarChar(64)
-  paymentsDateRaw       String?  @map("payments_date_raw") @db.VarChar(64)
-  reportingDateRaw      String?  @map("reporting_date_raw") @db.VarChar(64)
-  promiseDateRaw        String?  @map("promise_date_raw") @db.VarChar(64)
-  daysPastPromise       Int?     @map("days_past_promise")
-  buyerEmail            String?  @map("buyer_email") @db.VarChar(255)
-  buyerName             String?  @map("buyer_name") @db.VarChar(255)
-  buyerPhoneNumber      String?  @map("buyer_phone_number") @db.VarChar(64)
-  sku                   String?  @db.VarChar(128)
-  productName           String?  @map("product_name") @db.Text
-  quantityPurchased     Int?     @map("quantity_purchased")
-  quantityShipped       Int?     @map("quantity_shipped")
-  quantityToShip        Int?     @map("quantity_to_ship")
-  shipServiceLevel      String?  @map("ship_service_level") @db.VarChar(128)
-  recipientName         String?  @map("recipient_name") @db.VarChar(255)
-  shippingOrigin        String?  @map("shipping_origin") @db.VarChar(32)
-  shipAddress1          String?  @map("ship_address_1") @db.Text
-  shipAddress2          String?  @map("ship_address_2") @db.Text
-  shipAddress3          String?  @map("ship_address_3") @db.Text
-  shipCity              String?  @map("ship_city") @db.VarChar(255)
-  shipState             String?  @map("ship_state") @db.VarChar(255)
-  shipPostalCode        String?  @map("ship_postal_code") @db.VarChar(32)
-  shipCountry           String?  @map("ship_country") @db.VarChar(32)
-  customizedUrl         String?  @map("customized_url") @db.Text
-  customizedPage        String?  @map("customized_page") @db.Text
-  isBusinessOrder       Boolean? @map("is_business_order")
-  purchaseOrderNumber   String?  @map("purchase_order_number") @db.VarChar(128)
-  priceDesignation      String?  @map("price_designation") @db.VarChar(128)
-  vergeOfCancellation   Boolean? @map("verge_of_cancellation")
-  vergeOfLateShipment   Boolean? @map("verge_of_late_shipment")
-  mallName              String?  @map("mall_name") @db.VarChar(128)
-  shopName              String?  @map("shop_name") @db.VarChar(128)
-  shipmentCompany       String?  @map("shipment_company") @db.VarChar(128)
-  shipmentNo            String?  @map("shipment_no") @db.VarChar(128)
-  shipmentNoRegisteredAt DateTime? @map("shipment_no_registered_at")
-  dispatchMode          String?  @map("dispatch_mode") @db.VarChar(32)
-  xiyaExportedAt        DateTime? @map("xiya_exported_at")
-  sourceFileName        String?  @map("source_file_name") @db.VarChar(255)
-  sourceFilePath        String?  @map("source_file_path") @db.VarChar(512)
-  rawPayload            Json?    @map("raw_payload")
-  csvImportedAt         DateTime @default(now()) @map("csv_imported_at")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  id                     BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  rowHash                String                 @unique @map("row_hash") @db.Char(40)
+  orderId                String?                @map("order_id") @db.VarChar(64)
+  orderItemId            String?                @map("order_item_id") @db.VarChar(64)
+  purchaseDateRaw        String?                @map("purchase_date_raw") @db.VarChar(64)
+  paymentsDateRaw        String?                @map("payments_date_raw") @db.VarChar(64)
+  reportingDateRaw       String?                @map("reporting_date_raw") @db.VarChar(64)
+  promiseDateRaw         String?                @map("promise_date_raw") @db.VarChar(64)
+  daysPastPromise        Int?                   @map("days_past_promise")
+  buyerEmail             String?                @map("buyer_email") @db.VarChar(255)
+  buyerName              String?                @map("buyer_name") @db.VarChar(255)
+  buyerPhoneNumber       String?                @map("buyer_phone_number") @db.VarChar(64)
+  sku                    String?                @db.VarChar(128)
+  productName            String?                @map("product_name") @db.Text
+  quantityPurchased      Int?                   @map("quantity_purchased")
+  quantityShipped        Int?                   @map("quantity_shipped")
+  quantityToShip         Int?                   @map("quantity_to_ship")
+  shipServiceLevel       String?                @map("ship_service_level") @db.VarChar(128)
+  recipientName          String?                @map("recipient_name") @db.VarChar(255)
+  shippingOrigin         String?                @map("shipping_origin") @db.VarChar(32)
+  shipAddress1           String?                @map("ship_address_1") @db.Text
+  shipAddress2           String?                @map("ship_address_2") @db.Text
+  shipAddress3           String?                @map("ship_address_3") @db.Text
+  shipCity               String?                @map("ship_city") @db.VarChar(255)
+  shipState              String?                @map("ship_state") @db.VarChar(255)
+  shipPostalCode         String?                @map("ship_postal_code") @db.VarChar(32)
+  shipCountry            String?                @map("ship_country") @db.VarChar(32)
+  customizedUrl          String?                @map("customized_url") @db.Text
+  customizedPage         String?                @map("customized_page") @db.Text
+  isBusinessOrder        Boolean?               @map("is_business_order")
+  purchaseOrderNumber    String?                @map("purchase_order_number") @db.VarChar(128)
+  priceDesignation       String?                @map("price_designation") @db.VarChar(128)
+  vergeOfCancellation    Boolean?               @map("verge_of_cancellation")
+  vergeOfLateShipment    Boolean?               @map("verge_of_late_shipment")
+  mallName               String?                @map("mall_name") @db.VarChar(128)
+  shopName               String?                @map("shop_name") @db.VarChar(128)
+  shipmentCompany        String?                @map("shipment_company") @db.VarChar(128)
+  shipmentNo             String?                @map("shipment_no") @db.VarChar(128)
+  shipmentNoRegisteredAt DateTime?              @map("shipment_no_registered_at")
+  dispatchMode           String?                @map("dispatch_mode") @db.VarChar(32)
+  xiyaExportedAt         DateTime?              @map("xiya_exported_at")
+  sourceFileName         String?                @map("source_file_name") @db.VarChar(255)
+  sourceFilePath         String?                @map("source_file_path") @db.VarChar(512)
+  rawPayload             Json?                  @map("raw_payload")
+  csvImportedAt          DateTime               @default(now()) @map("csv_imported_at")
+  createdAt              DateTime               @default(now()) @map("created_at")
+  updatedAt              DateTime               @updatedAt @map("updated_at")
+  spApiConnectionId      BigInt?                @map("sp_api_connection_id") @db.UnsignedBigInt
+  orderStatus            String?                @map("order_status") @db.VarChar(32)
+  fulfillmentChannel     String?                @map("fulfillment_channel") @db.VarChar(16)
+  amazonLastUpdatedAt    DateTime?              @map("amazon_last_updated_at")
+  sourceKind             String                 @default("file") @map("source_kind") @db.VarChar(16)
+  spApiConnection        AmazonSpApiConnection? @relation(fields: [spApiConnectionId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
   @@index([orderItemId])
@@ -757,64 +919,65 @@ model AmazonOrderRecord {
   @@index([csvImportedAt])
   @@index([createdAt])
   @@index([xiyaExportedAt])
+  @@index([spApiConnectionId, amazonLastUpdatedAt])
   @@map("amazon_order_records")
 }
 
 model ManualOrderRecord {
-  id                    BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  rowHash               String   @unique @map("row_hash") @db.Char(40)
-  orderId               String?  @map("order_id") @db.VarChar(64)
-  orderItemId           String?  @map("order_item_id") @db.VarChar(64)
-  purchaseDateRaw       String?  @map("purchase_date_raw") @db.VarChar(64)
-  paymentsDateRaw       String?  @map("payments_date_raw") @db.VarChar(64)
-  reportingDateRaw      String?  @map("reporting_date_raw") @db.VarChar(64)
-  promiseDateRaw        String?  @map("promise_date_raw") @db.VarChar(64)
-  daysPastPromise       Int?     @map("days_past_promise")
-  buyerEmail            String?  @map("buyer_email") @db.VarChar(255)
-  buyerName             String?  @map("buyer_name") @db.VarChar(255)
-  buyerPhoneNumber      String?  @map("buyer_phone_number") @db.VarChar(64)
-  sku                   String?  @db.VarChar(128)
-  productName           String?  @map("product_name") @db.Text
-  quantityPurchased     Int?     @map("quantity_purchased")
-  quantityShipped       Int?     @map("quantity_shipped")
-  quantityToShip        Int?     @map("quantity_to_ship")
-  shipServiceLevel      String?  @map("ship_service_level") @db.VarChar(128)
-  recipientName         String?  @map("recipient_name") @db.VarChar(255)
-  shippingOrigin        String?  @map("shipping_origin") @db.VarChar(32)
-  shipAddress1          String?  @map("ship_address_1") @db.Text
-  shipAddress2          String?  @map("ship_address_2") @db.Text
-  shipAddress3          String?  @map("ship_address_3") @db.Text
-  shipCity              String?  @map("ship_city") @db.VarChar(255)
-  shipState             String?  @map("ship_state") @db.VarChar(255)
-  shipPostalCode        String?  @map("ship_postal_code") @db.VarChar(32)
-  shipCountry           String?  @map("ship_country") @db.VarChar(32)
-  customizedUrl         String?  @map("customized_url") @db.Text
-  customizedPage        String?  @map("customized_page") @db.Text
-  isBusinessOrder       Boolean? @map("is_business_order")
-  purchaseOrderNumber   String?  @map("purchase_order_number") @db.VarChar(128)
-  priceDesignation      String?  @map("price_designation") @db.VarChar(128)
-  vergeOfCancellation   Boolean? @map("verge_of_cancellation")
-  vergeOfLateShipment   Boolean? @map("verge_of_late_shipment")
-  mallName              String?  @map("mall_name") @db.VarChar(128)
-  shopName              String?  @map("shop_name") @db.VarChar(128)
-  bloggerCooperationId  String?  @map("blogger_cooperation_id") @db.VarChar(128)
-  shipmentCompany       String?  @map("shipment_company") @db.VarChar(128)
-  shipmentNo            String?  @map("shipment_no") @db.VarChar(128)
+  id                     BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  rowHash                String    @unique @map("row_hash") @db.Char(40)
+  orderId                String?   @map("order_id") @db.VarChar(64)
+  orderItemId            String?   @map("order_item_id") @db.VarChar(64)
+  purchaseDateRaw        String?   @map("purchase_date_raw") @db.VarChar(64)
+  paymentsDateRaw        String?   @map("payments_date_raw") @db.VarChar(64)
+  reportingDateRaw       String?   @map("reporting_date_raw") @db.VarChar(64)
+  promiseDateRaw         String?   @map("promise_date_raw") @db.VarChar(64)
+  daysPastPromise        Int?      @map("days_past_promise")
+  buyerEmail             String?   @map("buyer_email") @db.VarChar(255)
+  buyerName              String?   @map("buyer_name") @db.VarChar(255)
+  buyerPhoneNumber       String?   @map("buyer_phone_number") @db.VarChar(64)
+  sku                    String?   @db.VarChar(128)
+  productName            String?   @map("product_name") @db.Text
+  quantityPurchased      Int?      @map("quantity_purchased")
+  quantityShipped        Int?      @map("quantity_shipped")
+  quantityToShip         Int?      @map("quantity_to_ship")
+  shipServiceLevel       String?   @map("ship_service_level") @db.VarChar(128)
+  recipientName          String?   @map("recipient_name") @db.VarChar(255)
+  shippingOrigin         String?   @map("shipping_origin") @db.VarChar(32)
+  shipAddress1           String?   @map("ship_address_1") @db.Text
+  shipAddress2           String?   @map("ship_address_2") @db.Text
+  shipAddress3           String?   @map("ship_address_3") @db.Text
+  shipCity               String?   @map("ship_city") @db.VarChar(255)
+  shipState              String?   @map("ship_state") @db.VarChar(255)
+  shipPostalCode         String?   @map("ship_postal_code") @db.VarChar(32)
+  shipCountry            String?   @map("ship_country") @db.VarChar(32)
+  customizedUrl          String?   @map("customized_url") @db.Text
+  customizedPage         String?   @map("customized_page") @db.Text
+  isBusinessOrder        Boolean?  @map("is_business_order")
+  purchaseOrderNumber    String?   @map("purchase_order_number") @db.VarChar(128)
+  priceDesignation       String?   @map("price_designation") @db.VarChar(128)
+  vergeOfCancellation    Boolean?  @map("verge_of_cancellation")
+  vergeOfLateShipment    Boolean?  @map("verge_of_late_shipment")
+  mallName               String?   @map("mall_name") @db.VarChar(128)
+  shopName               String?   @map("shop_name") @db.VarChar(128)
+  bloggerCooperationId   String?   @map("blogger_cooperation_id") @db.VarChar(128)
+  shipmentCompany        String?   @map("shipment_company") @db.VarChar(128)
+  shipmentNo             String?   @map("shipment_no") @db.VarChar(128)
   shipmentNoRegisteredAt DateTime? @map("shipment_no_registered_at")
-  dispatchMode          String?  @map("dispatch_mode") @db.VarChar(32)
-  xiyaExportedAt        DateTime? @map("xiya_exported_at")
-  xyjgPushStatus        String?  @map("xyjg_push_status") @db.VarChar(32)
-  xyjgPushMode          String?  @map("xyjg_push_mode") @db.VarChar(32)
-  xyjgPushTrackingNo    String?  @map("xyjg_push_tracking_no") @db.VarChar(128)
-  xyjgPushedAt          DateTime? @map("xyjg_pushed_at")
-  xyjgPushError         String?  @map("xyjg_push_error") @db.Text
-  xyjgPushResponse      Json?    @map("xyjg_push_response")
-  sourceFileName        String?  @map("source_file_name") @db.VarChar(255)
-  sourceFilePath        String?  @map("source_file_path") @db.VarChar(512)
-  rawPayload            Json?    @map("raw_payload")
-  csvImportedAt         DateTime @default(now()) @map("csv_imported_at")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  dispatchMode           String?   @map("dispatch_mode") @db.VarChar(32)
+  xiyaExportedAt         DateTime? @map("xiya_exported_at")
+  xyjgPushStatus         String?   @map("xyjg_push_status") @db.VarChar(32)
+  xyjgPushMode           String?   @map("xyjg_push_mode") @db.VarChar(32)
+  xyjgPushTrackingNo     String?   @map("xyjg_push_tracking_no") @db.VarChar(128)
+  xyjgPushedAt           DateTime? @map("xyjg_pushed_at")
+  xyjgPushError          String?   @map("xyjg_push_error") @db.Text
+  xyjgPushResponse       Json?     @map("xyjg_push_response")
+  sourceFileName         String?   @map("source_file_name") @db.VarChar(255)
+  sourceFilePath         String?   @map("source_file_path") @db.VarChar(512)
+  rawPayload             Json?     @map("raw_payload")
+  csvImportedAt          DateTime  @default(now()) @map("csv_imported_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
   @@index([orderId])
   @@index([orderItemId])
@@ -828,18 +991,18 @@ model ManualOrderRecord {
 }
 
 model OverseasPickingBatch {
-  id          BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
-  batchNo     String                    @unique @map("batch_no") @db.VarChar(64)
-  status      String                    @default("created") @db.VarChar(32)
-  orderCount  Int                       @default(0) @map("order_count")
-  itemCount   Int                       @default(0) @map("item_count")
-  totalQty    Int                       @default(0) @map("total_qty")
-  createdBy   BigInt?                   @map("created_by") @db.UnsignedBigInt
-  confirmedBy BigInt?                   @map("confirmed_by") @db.UnsignedBigInt
-  confirmedAt DateTime?                 @map("confirmed_at")
-  remark      String?                   @db.VarChar(255)
-  createdAt   DateTime                  @default(now()) @map("created_at")
-  updatedAt   DateTime                  @updatedAt @map("updated_at")
+  id          BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
+  batchNo     String                     @unique @map("batch_no") @db.VarChar(64)
+  status      String                     @default("created") @db.VarChar(32)
+  orderCount  Int                        @default(0) @map("order_count")
+  itemCount   Int                        @default(0) @map("item_count")
+  totalQty    Int                        @default(0) @map("total_qty")
+  createdBy   BigInt?                    @map("created_by") @db.UnsignedBigInt
+  confirmedBy BigInt?                    @map("confirmed_by") @db.UnsignedBigInt
+  confirmedAt DateTime?                  @map("confirmed_at")
+  remark      String?                    @db.VarChar(255)
+  createdAt   DateTime                   @default(now()) @map("created_at")
+  updatedAt   DateTime                   @updatedAt @map("updated_at")
   items       OverseasPickingBatchItem[]
 
   @@index([status, createdAt])
@@ -848,25 +1011,25 @@ model OverseasPickingBatch {
 }
 
 model OverseasPickingBatchItem {
-  id                     BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
-  batchId                BigInt                @map("batch_id") @db.UnsignedBigInt
-  source                 String                @db.VarChar(16)
-  sourceRecordId         BigInt                @map("source_record_id") @db.UnsignedBigInt
-  orderId                String?               @map("order_id") @db.VarChar(64)
-  skuCode                String?               @map("sku_code") @db.VarChar(128)
-  productId              String                @map("product_id") @db.VarChar(128)
-  requestedQty           Int                   @map("requested_qty")
-  actualQty              Int?                  @map("actual_qty")
-  availableStockSnapshot Int                   @default(0) @map("available_stock_snapshot")
-  pickingPlanSnapshot    Json?                 @map("picking_plan_snapshot")
-  dispatchMode           String                @default("overseas") @map("dispatch_mode") @db.VarChar(32)
-  shopName               String?               @map("shop_name") @db.VarChar(128)
-  shippingName           String?               @map("shipping_name") @db.VarChar(255)
-  shipmentTrackingNo     String?               @map("shipment_tracking_no") @db.VarChar(128)
-  pickedAt               DateTime?             @map("picked_at")
-  createdAt              DateTime              @default(now()) @map("created_at")
-  updatedAt              DateTime              @updatedAt @map("updated_at")
-  batch                  OverseasPickingBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  id                     BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  batchId                BigInt               @map("batch_id") @db.UnsignedBigInt
+  source                 String               @db.VarChar(16)
+  sourceRecordId         BigInt               @map("source_record_id") @db.UnsignedBigInt
+  orderId                String?              @map("order_id") @db.VarChar(64)
+  skuCode                String?              @map("sku_code") @db.VarChar(128)
+  productId              String               @map("product_id") @db.VarChar(128)
+  requestedQty           Int                  @map("requested_qty")
+  actualQty              Int?                 @map("actual_qty")
+  availableStockSnapshot Int                  @default(0) @map("available_stock_snapshot")
+  pickingPlanSnapshot    Json?                @map("picking_plan_snapshot")
+  dispatchMode           String               @default("overseas") @map("dispatch_mode") @db.VarChar(32)
+  shopName               String?              @map("shop_name") @db.VarChar(128)
+  shippingName           String?              @map("shipping_name") @db.VarChar(255)
+  shipmentTrackingNo     String?              @map("shipment_tracking_no") @db.VarChar(128)
+  pickedAt               DateTime?            @map("picked_at")
+  createdAt              DateTime             @default(now()) @map("created_at")
+  updatedAt              DateTime             @updatedAt @map("updated_at")
+  batch                  OverseasPickingBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
   @@unique([batchId, source, sourceRecordId], map: "uq_overseas_picking_batch_items_batch_source_record")
   @@index([batchId, productId])
@@ -876,17 +1039,17 @@ model OverseasPickingBatchItem {
 }
 
 model YamatoShipmentBatch {
-  id              BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
-  pickingBatchId  BigInt?                   @unique @map("picking_batch_id") @db.UnsignedBigInt
-  exportedFileName String?                  @map("exported_file_name") @db.VarChar(255)
-  pdfFileName     String?                   @map("pdf_file_name") @db.VarChar(255)
-  pdfFilePath     String?                   @map("pdf_file_path") @db.VarChar(512)
-  pdfUploadedAt   DateTime?                 @map("pdf_uploaded_at")
-  status          String                    @default("excel_exported") @db.VarChar(32)
-  pageCount       Int                       @default(0) @map("page_count")
-  createdAt       DateTime                  @default(now()) @map("created_at")
-  updatedAt       DateTime                  @updatedAt @map("updated_at")
-  pages           YamatoShipmentBatchPage[]
+  id               BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
+  pickingBatchId   BigInt?                   @unique @map("picking_batch_id") @db.UnsignedBigInt
+  exportedFileName String?                   @map("exported_file_name") @db.VarChar(255)
+  pdfFileName      String?                   @map("pdf_file_name") @db.VarChar(255)
+  pdfFilePath      String?                   @map("pdf_file_path") @db.VarChar(512)
+  pdfUploadedAt    DateTime?                 @map("pdf_uploaded_at")
+  status           String                    @default("excel_exported") @db.VarChar(32)
+  pageCount        Int                       @default(0) @map("page_count")
+  createdAt        DateTime                  @default(now()) @map("created_at")
+  updatedAt        DateTime                  @updatedAt @map("updated_at")
+  pages            YamatoShipmentBatchPage[]
 
   @@index([status, createdAt])
   @@index([pdfUploadedAt])
@@ -920,34 +1083,34 @@ model YamatoShipmentBatchPage {
 }
 
 model MasterProduct {
-  id              BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  productId       String   @unique @map("product_id") @db.VarChar(128)
-  productName     String?  @map("product_name") @db.VarChar(255)
-  productType     String?  @map("product_type") @db.VarChar(128)
-  bagBrand        String?  @map("bag_brand") @db.VarChar(128)
-  color           String?  @db.VarChar(64)
-  bagName         String?  @map("bag_name") @db.VarChar(128)
-  bagType         String?  @map("bag_type") @db.VarChar(64)
-  zipperStyle     String?  @map("zipper_style") @db.VarChar(64)
-  style           String?  @db.VarChar(128)
-  pattern         String?  @db.VarChar(128)
-  buckleType      String?  @map("buckle_type") @db.VarChar(64)
-  matchingBagType String?  @map("matching_bag_type") @db.VarChar(64)
-  length          String?  @db.VarChar(64)
-  width           String?  @db.VarChar(64)
-  patternType     String?  @map("pattern_type") @db.VarChar(64)
-  size            String?  @db.VarChar(64)
-  yamatoPrinterName String? @map("yamato_printer_name") @db.VarChar(128)
-  stockQty        Int      @default(0) @map("stock_qty")
-  firstStockedAt  DateTime? @map("first_stocked_at")
-  status          Int      @default(1) @db.TinyInt
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-  skus            Sku[]
-  boxInventories  MasterProductBoxInventory[]
-  stockMovements  StockMovement[]
-  inboundItems    InboundOrderItem[]
-  syncRecords     MasterProductSyncRecord[]
+  id                BigInt                      @id @default(autoincrement()) @db.UnsignedBigInt
+  productId         String                      @unique @map("product_id") @db.VarChar(128)
+  productName       String?                     @map("product_name") @db.VarChar(255)
+  productType       String?                     @map("product_type") @db.VarChar(128)
+  bagBrand          String?                     @map("bag_brand") @db.VarChar(128)
+  color             String?                     @db.VarChar(64)
+  bagName           String?                     @map("bag_name") @db.VarChar(128)
+  bagType           String?                     @map("bag_type") @db.VarChar(64)
+  zipperStyle       String?                     @map("zipper_style") @db.VarChar(64)
+  style             String?                     @db.VarChar(128)
+  pattern           String?                     @db.VarChar(128)
+  buckleType        String?                     @map("buckle_type") @db.VarChar(64)
+  matchingBagType   String?                     @map("matching_bag_type") @db.VarChar(64)
+  length            String?                     @db.VarChar(64)
+  width             String?                     @db.VarChar(64)
+  patternType       String?                     @map("pattern_type") @db.VarChar(64)
+  size              String?                     @db.VarChar(64)
+  yamatoPrinterName String?                     @map("yamato_printer_name") @db.VarChar(128)
+  stockQty          Int                         @default(0) @map("stock_qty")
+  firstStockedAt    DateTime?                   @map("first_stocked_at")
+  status            Int                         @default(1) @db.TinyInt
+  createdAt         DateTime                    @default(now()) @map("created_at")
+  updatedAt         DateTime                    @updatedAt @map("updated_at")
+  skus              Sku[]
+  boxInventories    MasterProductBoxInventory[]
+  stockMovements    StockMovement[]
+  inboundItems      InboundOrderItem[]
+  syncRecords       MasterProductSyncRecord[]
   rakutenComboItems RakutenComboProductItem[]
 
   @@index([firstStockedAt], map: "idx_master_products_first_stocked_at")
@@ -1008,26 +1171,26 @@ model ReturnRecord {
 }
 
 model PrintJob {
-  id           BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
-  jobType      String                 @default("yamato_label") @map("job_type") @db.VarChar(32)
-  status       PrintJobStatus         @default(pending)
-  batchPageId  BigInt?                @map("batch_page_id") @db.UnsignedBigInt
-  orderId      String?                @map("order_id") @db.VarChar(128)
-  productId    String                 @map("product_id") @db.VarChar(128)
-  printerName  String?                @map("printer_name") @db.VarChar(128)
-  fileName     String                 @map("file_name") @db.VarChar(255)
-  filePath     String?                @map("file_path") @db.VarChar(512)
-  trackingNo   String?                @map("tracking_no") @db.VarChar(64)
-  agentName    String?                @map("agent_name") @db.VarChar(128)
-  claimToken   String?                @unique(map: "uq_print_jobs_claim_token") @map("claim_token") @db.VarChar(64)
-  systemJobId  String?                @map("system_job_id") @db.VarChar(128)
-  errorMessage String?                @map("error_message") @db.VarChar(255)
-  queuedAt     DateTime               @default(now()) @map("queued_at")
-  claimedAt    DateTime?              @map("claimed_at")
-  completedAt  DateTime?              @map("completed_at")
-  failedAt     DateTime?              @map("failed_at")
-  createdAt    DateTime               @default(now()) @map("created_at")
-  updatedAt    DateTime               @updatedAt @map("updated_at")
+  id           BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
+  jobType      String                   @default("yamato_label") @map("job_type") @db.VarChar(32)
+  status       PrintJobStatus           @default(pending)
+  batchPageId  BigInt?                  @map("batch_page_id") @db.UnsignedBigInt
+  orderId      String?                  @map("order_id") @db.VarChar(128)
+  productId    String                   @map("product_id") @db.VarChar(128)
+  printerName  String?                  @map("printer_name") @db.VarChar(128)
+  fileName     String                   @map("file_name") @db.VarChar(255)
+  filePath     String?                  @map("file_path") @db.VarChar(512)
+  trackingNo   String?                  @map("tracking_no") @db.VarChar(64)
+  agentName    String?                  @map("agent_name") @db.VarChar(128)
+  claimToken   String?                  @unique(map: "uq_print_jobs_claim_token") @map("claim_token") @db.VarChar(64)
+  systemJobId  String?                  @map("system_job_id") @db.VarChar(128)
+  errorMessage String?                  @map("error_message") @db.VarChar(255)
+  queuedAt     DateTime                 @default(now()) @map("queued_at")
+  claimedAt    DateTime?                @map("claimed_at")
+  completedAt  DateTime?                @map("completed_at")
+  failedAt     DateTime?                @map("failed_at")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
   batchPage    YamatoShipmentBatchPage? @relation(fields: [batchPageId], references: [id], onDelete: SetNull)
 
   @@index([status, queuedAt], map: "print_jobs_status_queued_at_idx")
@@ -1038,21 +1201,21 @@ model PrintJob {
 }
 
 model MasterProductSyncRecord {
-  id             BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
-  operationType  String        @map("operation_type") @db.VarChar(32)
-  productId      String?       @map("product_id") @db.VarChar(128)
-  sourceFileName String?       @map("source_file_name") @db.VarChar(255)
+  id             BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  operationType  String                  @map("operation_type") @db.VarChar(32)
+  productId      String?                 @map("product_id") @db.VarChar(128)
+  sourceFileName String?                 @map("source_file_name") @db.VarChar(255)
   status         MasterProductSyncStatus @default(running)
-  fetchedCount   Int           @default(0) @map("fetched_count")
-  createdCount   Int           @default(0) @map("created_count")
-  updatedCount   Int           @default(0) @map("updated_count")
-  executedBy     BigInt?       @map("executed_by") @db.UnsignedBigInt
-  operatorName   String?       @map("operator_name") @db.VarChar(64)
-  executedAt     DateTime      @default(now()) @map("executed_at")
-  finishedAt     DateTime?     @map("finished_at")
-  errorMessage   String?       @map("error_message") @db.VarChar(255)
-  operator       User?         @relation(fields: [executedBy], references: [id])
-  product        MasterProduct? @relation(fields: [productId], references: [productId])
+  fetchedCount   Int                     @default(0) @map("fetched_count")
+  createdCount   Int                     @default(0) @map("created_count")
+  updatedCount   Int                     @default(0) @map("updated_count")
+  executedBy     BigInt?                 @map("executed_by") @db.UnsignedBigInt
+  operatorName   String?                 @map("operator_name") @db.VarChar(64)
+  executedAt     DateTime                @default(now()) @map("executed_at")
+  finishedAt     DateTime?               @map("finished_at")
+  errorMessage   String?                 @map("error_message") @db.VarChar(255)
+  operator       User?                   @relation(fields: [executedBy], references: [id])
+  product        MasterProduct?          @relation(fields: [productId], references: [productId])
 
   @@index([operationType, executedAt], map: "idx_master_product_sync_records_operation_type_executed_at")
   @@index([status, executedAt], map: "idx_master_product_sync_records_status_executed_at")

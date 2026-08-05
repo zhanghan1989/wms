@@ -174,6 +174,7 @@ const state = {
   brands: [],
   skuTypes: [],
   shops: [],
+  amazonSpApiConnections: [],
   skuEditRequests: [],
   skuEditRequestsPage: 1,
   skuEditRequestsPageSize: 30,
@@ -1839,6 +1840,10 @@ function renderOverviewProductionRecommendations(production = state.overviewDash
         <td>${formatOverviewNumber(item.totalStock)}</td>
         <td>${formatOverviewNumber(item.availableStock)}</td>
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
+        <td>${formatOverviewNumber(item.fbaAvailableQty)}</td>
+        <td>${formatOverviewNumber(item.fbaInboundQty)}</td>
+        <td>${formatOverviewNumber(item.fbaReservedQty)}</td>
+        <td>${formatOverviewNumber(item.fbaUnfulfillableQty)}</td>
         <td>${formatOverviewNumber(item.arrangedProductionQty)}</td>
         <td>${formatOverviewNumber(item.securedStock)}</td>
         <td>${formatOverviewNumber(item.systemOrderQty90d)}</td>
@@ -1855,7 +1860,7 @@ function renderOverviewProductionRecommendations(production = state.overviewDash
     `;
     })
     .join("");
-  renderOverviewTable("overviewProductionBody", productionRows, 17);
+  renderOverviewTable("overviewProductionBody", productionRows, 21);
 }
 
 function loadMoreOverviewProductionIfNeeded() {
@@ -1908,13 +1913,14 @@ function clearOverviewDashboard() {
     "overviewTargetDays",
     "overviewEstimatedArrivalDays",
     "overviewNoSales90Count",
+    "overviewNoSales90StockQty",
   ].forEach((id) => setTextById(id, "-"));
   setTextById("overviewDemandAmazonBreakdown90d", "FBM - 件 + FBA - 件");
   renderOverviewTable("overviewTopDemandBody", "", 5);
   $("overviewFbaSalesSnapshotMeta").textContent =
-    "尚未上传本次计算所需的FBA销售报告。";
+    "尚未上传本次计算所需的FBA销售报告和库存报告。";
   setTextById("overviewDemandQualityHint", "未匹配订单不会进入产品需求和备货计算。");
-  renderOverviewTable("overviewProductionBody", "", 17);
+  renderOverviewTable("overviewProductionBody", "", 21);
   renderOverviewTable("overviewUnmatchedDemandBody", "", 6);
   renderOverviewTable("overviewNoSales90Body", "", 7);
   $("overviewUnmatchedDemandDetails")?.classList.add("hidden");
@@ -2055,6 +2061,10 @@ function renderOverviewDashboard(data) {
   );
   const noSales90Items = Array.isArray(obsolete.noSales90dSkus) ? obsolete.noSales90dSkus : [];
   setTextById("overviewNoSales90Count", formatOverviewNumber(noSales90Items.length));
+  setTextById(
+    "overviewNoSales90StockQty",
+    formatOverviewNumber(obsolete.noSales90dStockQty),
+  );
 
   const fbaSnapshot = production.fbaSalesSnapshot;
   $("overviewFbaSalesSnapshotMeta").textContent = fbaSnapshot
@@ -2068,8 +2078,12 @@ function renderOverviewDashboard(data) {
         fbaSnapshot.fbmRows,
       )} 行已排除 / 未匹配 ${formatOverviewNumber(
         Number(fbaSnapshot.unmatchedRows || 0) + Number(fbaSnapshot.ambiguousRows || 0),
-      )} 行 / 上传 ${formatDate(fbaSnapshot.importedAt)}`
-    : "尚未上传本次计算所需的FBA销售报告。";
+      )} 行 / FBA库存：可售 ${formatOverviewNumber(fbaSnapshot.fbaAvailableQty)} 件 + 入库中 ${formatOverviewNumber(
+        fbaSnapshot.fbaInboundQty,
+      )} 件 / 库存快照 ${fbaSnapshot.inventorySnapshotDate || "日期未知"} / 上传 ${formatDate(
+        fbaSnapshot.importedAt,
+      )}`
+    : "尚未上传本次计算所需的FBA销售报告和库存报告。";
 
   const topRows = (Array.isArray(demand.topSkus) ? demand.topSkus : [])
     .map(
@@ -2153,6 +2167,14 @@ function loadOverviewDashboard(options = {}) {
   return loadPromise;
 }
 
+async function loadOverviewDashboardWithAutomaticFba() {
+  const latest = await request('/amazon-sp-api/dashboard-snapshot/latest');
+  if (latest?.snapshotId) {
+    return loadOverviewDashboard({ includeFba: true, fbaSnapshotId: latest.snapshotId });
+  }
+  return loadOverviewDashboard({ includeFba: false, fbaSnapshotId: '' });
+}
+
 function formatDateInputValue(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -2183,11 +2205,13 @@ function validateOverviewFbaSalesPeriod(periodStart, periodEnd) {
   }
 }
 
-async function uploadOverviewFbaSalesReport(file, periodStart, periodEnd) {
-  if (!file) throw new Error("请选择最近90天、包含 SKU 列的亚马逊销售报告 CSV");
+async function uploadOverviewFbaSalesReport(salesFile, inventoryFile, periodStart, periodEnd) {
+  if (!salesFile) throw new Error("请选择最近90天、包含 SKU 列的亚马逊销售报告 CSV");
+  if (!inventoryFile) throw new Error("请选择亚马逊FBA库存报告 CSV");
   validateOverviewFbaSalesPeriod(periodStart, periodEnd);
   const formData = new FormData();
-  formData.append("file", file);
+  formData.append("salesFile", salesFile);
+  formData.append("inventoryFile", inventoryFile);
   formData.append("periodStart", periodStart);
   formData.append("periodEnd", periodEnd);
   return request("/inventory/dashboard/fba-sales-report", {
@@ -2566,13 +2590,13 @@ function renderAmazonDashboardAnalysis(analysis) {
   $("amazonDashboardFileMeta").textContent = rows.length
     ? `业务报告：${displayText(state.amazonDashboardBusinessFileName)} / FBA库存报告：${displayText(
         state.amazonDashboardInventoryFileName,
-      )} / 合并 ${formatMetricNumber(rows.length)} 个商品 / ASIN连接 ${formatMetricNumber(
-        analysis.source?.joinedAsinCount,
+      )} / 合并 ${formatMetricNumber(rows.length)} 个商品 / 销售SKU匹配 ${formatMetricNumber(
+        analysis.source?.matchedSalesSkuCount,
       )} 个 / 快照 ${displayText(analysis.snapshotDate)}${state.amazonDashboardImportedAt ? ` / 上传 ${formatDate(state.amazonDashboardImportedAt)}` : ""}`
     : "尚未上传两份 CSV";
 
   renderAmazonMetricCards("amazonDashboardSummary", [
-    { label: "业务ASIN", value: formatMetricNumber(totals.businessAsinCount) },
+    { label: "销售SKU", value: formatMetricNumber(totals.businessSkuCount) },
     { label: "FBA SKU", value: formatMetricNumber(totals.inventorySkuCount) },
     { label: "系统已匹配", value: formatMetricNumber(totals.matchedRows) },
     { label: "未匹配/冲突", value: formatMetricNumber(totals.unmatchedRows + totals.ambiguousRows) },
@@ -2582,7 +2606,10 @@ function renderAmazonDashboardAnalysis(analysis) {
   renderAmazonMetricCards("amazonDashboardSalesCards", [
     { label: "会话数", value: formatMetricNumber(totals.businessSessions) },
     { label: "页面浏览量", value: formatMetricNumber(totals.businessPageViews) },
-    { label: "订购量", value: formatMetricNumber(totals.businessOrderedUnits) },
+    { label: "FBA出单", value: formatMetricNumber(totals.businessFbaOrderedUnits) },
+    { label: "RB出单", value: formatMetricNumber(totals.businessRbOrderedUnits) },
+    { label: "FBM出单", value: formatMetricNumber(totals.businessFbmOrderedUnits) },
+    { label: "90天补货需求", value: formatMetricNumber(totals.replenishmentDemand90) },
     { label: "销售额", value: `¥${formatMetricNumber(totals.businessSalesAmount)}` },
     { label: "转化率", value: `${formatMetricNumber(totals.businessConversionPercent, 2)}%` },
     { label: "FBA近30天配送", value: formatMetricNumber(totals.sales30) },
@@ -2632,7 +2659,10 @@ function renderAmazonDashboardAnalysis(analysis) {
       (row) => escapeHtml(formatMetricNumber(row.businessSessions)),
       (row) => escapeHtml(formatMetricNumber(row.businessPageViews)),
       (row) => escapeHtml(`${formatMetricNumber(row.businessConversionPercent, 2)}%`),
-      (row) => escapeHtml(formatMetricNumber(row.businessOrderedUnits)),
+      (row) => escapeHtml(formatMetricNumber(row.businessFbaOrderedUnits)),
+      (row) => escapeHtml(formatMetricNumber(row.businessRbOrderedUnits)),
+      (row) => escapeHtml(formatMetricNumber(row.businessFbmOrderedUnits)),
+      (row) => escapeHtml(formatMetricNumber(row.replenishmentDemand90)),
       (row) => escapeHtml(`¥${formatMetricNumber(row.businessSalesAmount)}`),
       (row) => escapeHtml(formatMetricNumber(row.sales30)),
       (row) => escapeHtml(formatMetricNumber(row.available)),
@@ -2657,7 +2687,10 @@ function renderAmazonDashboardAnalysis(analysis) {
     analysis.replenishmentRows,
     [
       ...commonColumns,
-      (row) => escapeHtml(formatMetricNumber(row.sales90)),
+      (row) => escapeHtml(formatMetricNumber(row.businessFbaOrderedUnits)),
+      (row) => escapeHtml(formatMetricNumber(row.businessRbOrderedUnits)),
+      (row) => escapeHtml(formatMetricNumber(row.businessFbmOrderedUnits)),
+      (row) => escapeHtml(formatMetricNumber(row.replenishmentDemand90)),
       (row) => escapeHtml(formatMetricNumber(row.daily90, 2)),
       (row) => escapeHtml(formatMetricNumber(row.available)),
       (row) => escapeHtml(formatMetricNumber(row.inbound)),
@@ -2687,7 +2720,7 @@ function renderAmazonDashboardAnalysis(analysis) {
 }
 
 async function handleAmazonDashboardCsvUpload(businessFile, inventoryFile) {
-  if (!businessFile) throw new Error("请选择销售和流量报告（按子 ASIN）CSV");
+  if (!businessFile) throw new Error("请选择包含 SKU 列的90天销售和流量报告 CSV");
   if (!inventoryFile) throw new Error("请选择亚马逊FBA库存报告 CSV");
   const [businessText, inventoryText] = await Promise.all([businessFile.text(), inventoryFile.text()]);
   const businessRows = parseCsvText(businessText);
@@ -2697,7 +2730,7 @@ async function handleAmazonDashboardCsvUpload(businessFile, inventoryFile) {
   const reportValidation = globalThis.AmazonDashboardLogic.validateUploadReportColumns(inventoryRows, businessRows);
   if (reportValidation.businessMissing.length) {
     throw new Error(
-      `第一份文件不是“销售和流量报告（按子 ASIN）”，缺少字段：${reportValidation.businessMissing.join("、")}`,
+      `第一份文件不是“包含 SKU 的90天销售和流量报告”，缺少字段：${reportValidation.businessMissing.join("、")}`,
     );
   }
   if (reportValidation.inventoryMissing.length) {
@@ -2705,7 +2738,7 @@ async function handleAmazonDashboardCsvUpload(businessFile, inventoryFile) {
   }
   const preliminaryAnalysis = buildAmazonDashboardAnalysis(inventoryRows, businessRows);
   if (!preliminaryAnalysis.source?.inventoryRowCount) throw new Error("FBA库存报告未识别到库存数据");
-  if (!preliminaryAnalysis.source?.businessAsinCount) throw new Error("业务报告未识别到子 ASIN 或经营数据");
+  if (!preliminaryAnalysis.source?.businessSkuCount) throw new Error("业务报告未识别到销售 SKU 或经营数据");
   if (!preliminaryAnalysis.rows.length) throw new Error("两份 CSV 未识别到 SKU、ASIN 或商品名称");
   const formData = new FormData();
   formData.append("businessFile", businessFile);
@@ -2723,8 +2756,7 @@ async function handleAmazonDashboardCsvUpload(businessFile, inventoryFile) {
   } catch (error) {
     showToast(error.message, true);
   }
-  const analysis = preliminaryAnalysis;
-  globalThis.AmazonDashboardLogic.applySystemMatches(analysis.rows, state.amazonDashboardSkus);
+  let analysis = buildAmazonDashboardAnalysis(inventoryRows, businessRows);
   enrichAmazonDashboardRowsWithProducts(analysis);
   state.amazonDashboardRows = analysis.rows;
   state.amazonDashboardSummary = analysis;
@@ -2739,9 +2771,12 @@ async function handleAmazonDashboardCsvUpload(businessFile, inventoryFile) {
     loadAmazonDashboardSupportData()
       .then(() => {
         if (state.amazonDashboardSummary !== analysis) return;
-        globalThis.AmazonDashboardLogic.applySystemMatches(analysis.rows, state.amazonDashboardSkus);
-        enrichAmazonDashboardRowsWithProducts(analysis);
-        renderAmazonDashboardAnalysis(analysis);
+        const refreshedAnalysis = buildAmazonDashboardAnalysis(inventoryRows, businessRows);
+        enrichAmazonDashboardRowsWithProducts(refreshedAnalysis);
+        state.amazonDashboardRows = refreshedAnalysis.rows;
+        state.amazonDashboardSummary = refreshedAnalysis;
+        analysis = refreshedAnalysis;
+        renderAmazonDashboardAnalysis(refreshedAnalysis);
         showToast("海外仓库存和补货建议已更新");
       })
       .catch((error) => {
@@ -3042,7 +3077,7 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
     return;
   }
   if (targetId === "overview" && !state.overviewDashboard) {
-    loadOverviewDashboard().catch((error) => showToast(error.message, true));
+    loadOverviewDashboardWithAutomaticFba().catch((error) => showToast(error.message, true));
   }
 }
 
@@ -5260,6 +5295,20 @@ function clearPendingMasterProductDetailUrlState() {
   window.history.replaceState({}, "", url.toString());
 }
 
+function handleAmazonOAuthReturn() {
+  const url = new URL(window.location.href);
+  const status = String(url.searchParams.get('amazon_oauth') || '').trim();
+  if (!status) return;
+  url.searchParams.delete('amazon_oauth');
+  url.searchParams.delete('amazon_oauth_reason');
+  window.history.replaceState({}, '', url.toString());
+  if (status === 'success') {
+    showToast('Amazon店铺授权成功，可以开始测试连接和同步');
+  } else {
+    showToast('Amazon店铺授权未完成，请重新发起授权', true);
+  }
+}
+
 function bootstrapAuthTokenFromLocationHash() {
   const hash = String(window.location.hash || "").replace(/^#/, "").trim();
   if (!hash) return false;
@@ -6208,6 +6257,9 @@ function renderShopsTable() {
       .map((item) => {
         const itemId = String(item.id);
         const editing = state.shopEditingIds.has(itemId);
+        const amazonConnection = state.amazonSpApiConnections.find(
+          (connection) => String(connection?.shop?.id || "") === itemId,
+        );
         return `
       <tr>
         <td>
@@ -6220,13 +6272,83 @@ function renderShopsTable() {
           />
         </td>
         <td>
+          <button class="tiny-btn ghost" data-action="amazonSpApi" data-id="${escapeHtml(item.id)}">
+            ${amazonConnection ? (amazonConnection.renewalDue ? "待续期" : Number(amazonConnection.status) === 1 ? "已连接" : "已停用") : "未授权"}
+          </button>
+          ${amazonConnection?.lastSyncError ? '<span class="muted">同步异常</span>' : ''}
+        </td>
+        <td>
           <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
+}
+
+async function loadAmazonSpApiConnections() {
+  state.amazonSpApiConnections = (await request('/amazon-sp-api/connections')) || [];
+  renderShopsTable();
+  return state.amazonSpApiConnections;
+}
+
+function openAmazonSpApiConnectionModal(shopId) {
+  const shop = state.shops.find((item) => String(item.id) === String(shopId));
+  if (!shop) throw new Error('店铺不存在');
+  const connection = state.amazonSpApiConnections.find(
+    (item) => String(item?.shop?.id || '') === String(shopId),
+  );
+  $('amazonSpApiConnectionId').value = connection?.id || '';
+  $('amazonSpApiShopId').value = String(shopId);
+  $('amazonSpApiShopName').value = shop.name || '';
+  $('amazonSpApiSellerId').value = connection?.sellerId || '';
+  $('amazonSpApiRegion').value = connection?.region || 'FE';
+  $('amazonSpApiMarketplaceIds').value = Array.isArray(connection?.marketplaceIds)
+    ? connection.marketplaceIds.join(',')
+    : 'A1VC38T7YXB528';
+  $('amazonSpApiStatus').value = String(connection?.status ?? 1);
+  $('amazonSpApiSyncFbm').checked = connection?.syncFbmOrders !== false;
+  $('amazonSpApiSyncFba').checked = connection?.syncFbaOrders !== false;
+  $('amazonSpApiSyncInventory').checked = connection?.syncFbaInventory !== false;
+  $('amazonSpApiTestBtn').classList.toggle('hidden', !connection);
+  $('amazonSpApiSyncBtn').classList.toggle('hidden', !connection || Number(connection.status) !== 1);
+  $('amazonSpApiReauthorizeBtn').classList.toggle('hidden', !connection);
+  $('amazonSpApiSaveBtn').textContent = connection ? '保存设置' : '连接 Amazon';
+  $('amazonSpApiConnectionTitle').textContent = `${shop.name} / Amazon SP-API连接`;
+  $('amazonSpApiConnectionMeta').textContent = connection
+    ? `OAuth授权：${connection.authorizedAt ? formatDate(connection.authorizedAt) : '未知'} / 到期：${
+        connection.authorizationExpiresAt ? formatDate(connection.authorizationExpiresAt) : '未知'
+      } / 最后成功：${connection.lastSuccessfulSyncAt ? formatDate(connection.lastSuccessfulSyncAt) : '尚未同步'}${
+        connection.lastSyncError ? ` / 错误：${connection.lastSyncError}` : ''
+      }`
+    : '尚未授权。点击“连接 Amazon”后，请由该店铺主用户在Amazon官方页面确认授权。';
+  openModal('amazonSpApiConnectionModal');
+}
+
+function buildAmazonOAuthPayload() {
+  const marketplaceIds = String($('amazonSpApiMarketplaceIds').value || '')
+    .split(/[\s,，;；]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return {
+    shopId: String($('amazonSpApiShopId').value || ''),
+    region: $('amazonSpApiRegion').value,
+    marketplaceIds,
+    syncFbmOrders: $('amazonSpApiSyncFbm').checked,
+    syncFbaOrders: $('amazonSpApiSyncFba').checked,
+    syncFbaInventory: $('amazonSpApiSyncInventory').checked,
+  };
+}
+
+async function startAmazonOAuth() {
+  const result = await request('/amazon-sp-api/oauth/start', {
+    method: 'POST',
+    body: JSON.stringify(buildAmazonOAuthPayload()),
+  });
+  const authorizationUrl = String(result?.authorizationUrl || '').trim();
+  if (!authorizationUrl) throw new Error('后台未返回Amazon授权地址');
+  window.location.assign(authorizationUrl);
 }
 
 function getShelvesSortedForManage() {
@@ -14186,18 +14308,21 @@ function bindForms() {
   $("overviewFbaSalesUploadForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
-    const file = $("overviewFbaSalesCsvFile")?.files?.[0];
+    const salesFile = $("overviewFbaSalesCsvFile")?.files?.[0];
+    const inventoryFile = $("overviewFbaInventoryCsvFile")?.files?.[0];
     const periodStart = String($("overviewFbaSalesPeriodStart")?.value || "");
     const periodEnd = String($("overviewFbaSalesPeriodEnd")?.value || "");
     try {
       await withBusyButton(submitButton, "上传计算中...", async () => {
-        const result = await uploadOverviewFbaSalesReport(file, periodStart, periodEnd);
+        const result = await uploadOverviewFbaSalesReport(salesFile, inventoryFile, periodStart, periodEnd);
         await loadOverviewDashboard({ includeFba: true, fbaSnapshotId: result?.snapshotId });
         $("overviewFbaSalesUploadForm")?.reset();
         initializeOverviewFbaSalesPeriod();
         showToast(
           `FBA销售数据已更新：FBA ${formatOverviewNumber(result?.fbaRows)} 个SKU，${formatOverviewNumber(
             result?.fbaOrderedQty,
+          )} 件；FBA可售 ${formatOverviewNumber(result?.fbaAvailableQty)} 件，入库中 ${formatOverviewNumber(
+            result?.fbaInboundQty,
           )} 件；已排除FBM ${formatOverviewNumber(result?.fbmRows)} 行`,
         );
       });
@@ -14673,7 +14798,7 @@ function bindForms() {
   $("openShopManageModal").addEventListener("click", async () => {
     try {
       state.shopEditingIds = new Set();
-      await loadShops();
+      await Promise.all([loadShops(), loadAmazonSpApiConnections()]);
       openModal("shopManageModal");
     } catch (error) {
       showToast(error.message, true);
@@ -15713,7 +15838,9 @@ function bindDelegates() {
     const id = button.dataset.id;
     if (!id) return;
     try {
-      if (action === "editShop") {
+      if (action === "amazonSpApi") {
+        openAmazonSpApiConnectionModal(id);
+      } else if (action === "editShop") {
         const input = $(`shopName-${id}`);
         if (!input) return;
         const isEditing = state.shopEditingIds.has(String(id));
@@ -15754,6 +15881,71 @@ function bindDelegates() {
         showToast("店铺已删除");
         await Promise.all([loadShops(), loadInventory(), loadAudit()]);
       }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $('amazonSpApiConnectionForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const connectionId = String($('amazonSpApiConnectionId').value || '').trim();
+    const oauthPayload = buildAmazonOAuthPayload();
+    const payload = {
+      region: oauthPayload.region,
+      marketplaceIds: oauthPayload.marketplaceIds,
+      status: Number($('amazonSpApiStatus').value),
+      syncFbmOrders: oauthPayload.syncFbmOrders,
+      syncFbaOrders: oauthPayload.syncFbaOrders,
+      syncFbaInventory: oauthPayload.syncFbaInventory,
+    };
+    try {
+      if (!connectionId) {
+        await startAmazonOAuth();
+        return;
+      }
+      await request(`/amazon-sp-api/connections/${connectionId}`, { method: 'PUT', body: JSON.stringify(payload) });
+      await loadAmazonSpApiConnections();
+      closeModal('amazonSpApiConnectionModal');
+      showToast('Amazon同步设置已保存');
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $('amazonSpApiReauthorizeBtn')?.addEventListener('click', async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, '正在跳转...', () => startAmazonOAuth());
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $('amazonSpApiTestBtn')?.addEventListener('click', async (event) => {
+    const connectionId = String($('amazonSpApiConnectionId').value || '').trim();
+    if (!connectionId) return;
+    try {
+      await withBusyButton(event.currentTarget, '测试中...', () =>
+        request(`/amazon-sp-api/connections/${connectionId}/test`, { method: 'POST', body: '{}' }),
+      );
+      showToast('Amazon SP-API连接测试成功');
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $('amazonSpApiSyncBtn')?.addEventListener('click', async (event) => {
+    const connectionId = String($('amazonSpApiConnectionId').value || '').trim();
+    if (!connectionId) return;
+    try {
+      const result = await withBusyButton(event.currentTarget, '同步中...', () =>
+        request(`/amazon-sp-api/connections/${connectionId}/sync`, {
+          method: 'POST',
+          body: JSON.stringify({ syncType: 'full', initialLookbackDays: 90 }),
+        }),
+      );
+      await loadAmazonSpApiConnections();
+      openAmazonSpApiConnectionModal($('amazonSpApiShopId').value);
+      showToast(`同步完成：取得 ${formatOverviewNumber(result?.fetchedCount)} 行`);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -17065,6 +17257,11 @@ function bindDelegates() {
       closeModal("shopManageModal");
       return;
     }
+    const amazonSpApiClose = event.target.closest("button[data-action='closeAmazonSpApiConnectionModal']");
+    if (amazonSpApiClose) {
+      closeModal('amazonSpApiConnectionModal');
+      return;
+    }
     const shelfManageClose = event.target.closest("button[data-action='closeShelfManageModal']");
     if (shelfManageClose) {
       closeModal("shelfManageModal");
@@ -17686,6 +17883,7 @@ updateManualOrdersSelectAll();
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
 bootstrapAuthTokenFromLocationHash();
+handleAmazonOAuthReturn();
 switchPanel("inventory", { markAsUserNavigation: false });
 openStartupView()
   .catch((error) => showToast(error.message, true));

@@ -102,6 +102,9 @@ describe('inventory dashboard no-sales age classification', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 10n,
           fileName: 'fba.csv',
+          inventoryFileName: 'fba-inventory.csv',
+          inventorySnapshotDate: new Date('2026-07-22T00:00:00.000Z'),
+          inventoryRows: 3,
           periodDays: 90,
           periodStart: new Date('2026-04-24T00:00:00.000Z'),
           periodEnd: new Date('2026-07-22T00:00:00.000Z'),
@@ -111,11 +114,24 @@ describe('inventory dashboard no-sales age classification', () => {
           unmatchedRows: 1,
           ambiguousRows: 0,
           fbaOrderedQty: 10,
+          fbaAvailableQty: 4,
+          fbaInboundQty: 2,
+          fbaReservedQty: 1,
+          fbaUnfulfillableQty: 3,
           createdAt: registeredAt,
           items: [
-            { sellerSku: 'FBA-P1', productId: null, channel: 'unmatched', orderedQty: 10 },
-            { sellerSku: 'FBM-P2', productId: 'P2', channel: 'fbm', orderedQty: 99 },
-            { sellerSku: 'CHANNEL-CONFLICT', productId: 'P2', channel: 'fba', orderedQty: 77 },
+            {
+              sellerSku: 'FBA-P1', productId: null, channel: 'unmatched', orderedQty: 10,
+              fbaAvailableQty: 4, fbaInboundQty: 2, fbaReservedQty: 1, fbaUnfulfillableQty: 3,
+            },
+            {
+              sellerSku: 'FBM-P2', productId: 'P2', channel: 'fbm', orderedQty: 99,
+              fbaAvailableQty: 99, fbaInboundQty: 99, fbaReservedQty: 0, fbaUnfulfillableQty: 0,
+            },
+            {
+              sellerSku: 'CHANNEL-CONFLICT', productId: 'P2', channel: 'fba', orderedQty: 77,
+              fbaAvailableQty: 77, fbaInboundQty: 77, fbaReservedQty: 0, fbaUnfulfillableQty: 0,
+            },
           ],
         }),
       },
@@ -158,6 +174,12 @@ describe('inventory dashboard no-sales age classification', () => {
     expect(dashboardWithFba.obsolete.noSales90dCount).toBe(
       dashboardWithFba.obsolete.noSales90dSkus.length,
     );
+    expect(dashboardWithFba.obsolete.noSales90dStockQty).toBe(
+      dashboardWithFba.obsolete.noSales90dSkus.reduce(
+        (sum: number, item: { totalStock: number }) => sum + item.totalStock,
+        0,
+      ),
+    );
     expect(dashboardWithFba.production.recommendations).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -165,6 +187,11 @@ describe('inventory dashboard no-sales age classification', () => {
           systemOrderQty90d: 5,
           fbaOrderedQty90d: 10,
           totalOrderQty90d: 15,
+          fbaAvailableQty: 4,
+          fbaInboundQty: 2,
+          fbaReservedQty: 1,
+          fbaUnfulfillableQty: 3,
+          suggestedProductionQty: 4,
         }),
       ]),
     );

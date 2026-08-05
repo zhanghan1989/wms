@@ -183,21 +183,23 @@ export class InventoryController {
   }
 
   @Post('dashboard/fba-sales-report')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(AnyFilesInterceptor({ limits: { files: 2, fileSize: 10 * 1024 * 1024 } }))
   async importFbaSalesReport(
-    @UploadedFile() file: { buffer?: Buffer; originalname?: string; size?: number } | undefined,
+    @UploadedFiles()
+    files: Array<{ buffer?: Buffer; originalname?: string; fieldname?: string }> | undefined,
     @Body() body: { periodStart?: string; periodEnd?: string },
     @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
-    if (!file?.buffer) {
-      throw new BadRequestException('请上传最近90天、包含SKU列的亚马逊销售报告CSV');
-    }
-    if (file.size && file.size > 10 * 1024 * 1024) {
-      throw new BadRequestException('CSV文件不能超过10MB');
+    const salesFile = (files ?? []).find((file) => file.fieldname === 'salesFile');
+    const inventoryFile = (files ?? []).find((file) => file.fieldname === 'inventoryFile');
+    if (!salesFile?.buffer || !inventoryFile?.buffer) {
+      throw new BadRequestException('请同时上传最近90天FBA销售报告和FBA库存报告');
     }
     return this.inventoryService.importFbaSalesReport(
-      file.buffer,
-      file.originalname,
+      salesFile.buffer,
+      salesFile.originalname,
+      inventoryFile.buffer,
+      inventoryFile.originalname,
       body.periodStart,
       body.periodEnd,
       user.id,
@@ -214,7 +216,7 @@ export class InventoryController {
     const businessFile = (files ?? []).find((file) => file.fieldname === 'businessFile');
     const inventoryFile = (files ?? []).find((file) => file.fieldname === 'inventoryFile');
     if (!businessFile?.buffer || !inventoryFile?.buffer) {
-      throw new BadRequestException('请同时上传按子ASIN销售报告和FBA库存报告');
+      throw new BadRequestException('请同时上传包含SKU的90天销售报告和FBA库存报告');
     }
     return this.inventoryService.importAmazonReplenishmentReports(
       businessFile.buffer,

@@ -102,6 +102,7 @@
 
   function validateUploadReportColumns(inventoryRecords, businessRecords) {
     const businessRequirements = [
+      { label: "SKU", candidates: ["SKU", "sku"] },
       { label: "（子）ASIN", candidates: ["（子）ASIN", "(子)ASIN", "子ASIN", "Child ASIN"] },
       { label: "会话数 - 总计", candidates: ["会话数 - 总计", "会话数-总计", "Sessions - Total"] },
       {
@@ -236,6 +237,12 @@
       businessOrderItems: 0,
       businessSalesAmount: 0,
       businessConversionPercent: 0,
+      businessFbaOrderedUnits: 0,
+      businessRbOrderedUnits: 0,
+      businessFbmOrderedUnits: 0,
+      replenishmentDemand90: 0,
+      businessSellerSkus: [],
+      businessAsins: [],
       hasBusinessData: false,
       matchStatus: "unmatched",
       matchMode: "",
@@ -247,6 +254,7 @@
   function normalizeBusinessRow(record) {
     const asin = text(pickRecordValue(record, ["（子）ASIN", "(子)ASIN", "子ASIN", "Child ASIN"]));
     return {
+      sellerSku: text(pickRecordValue(record, ["SKU", "sku"])),
       asin,
       parentAsin: text(pickRecordValue(record, ["（父）ASIN", "(父)ASIN", "父ASIN", "Parent ASIN"])),
       productName: text(pickRecordValue(record, ["标题", "商品名称", "Title"])),
@@ -265,9 +273,10 @@
     for (const record of records || []) {
       const row = normalizeBusinessRow(record);
       const hasMetrics = row.sessions > 0 || row.pageViews > 0 || row.orderedUnits > 0 || row.salesAmount > 0;
-      if (!row.asin || (!row.productName && !hasMetrics)) continue;
-      const key = normalizeKey(row.asin);
+      if (!row.sellerSku || (!row.asin && !row.productName && !hasMetrics)) continue;
+      const key = normalizeKey(row.sellerSku);
       const current = map.get(key) || {
+        sellerSku: row.sellerSku,
         asin: row.asin,
         parentAsins: [],
         productName: "",
@@ -279,6 +288,7 @@
         sourceRowCount: 0,
       };
       if (row.parentAsin && !current.parentAsins.includes(row.parentAsin)) current.parentAsins.push(row.parentAsin);
+      if (!current.asin && row.asin) current.asin = row.asin;
       if (!current.productName && row.productName) current.productName = row.productName;
       current.sessions += row.sessions;
       current.pageViews += row.pageViews;
@@ -294,24 +304,32 @@
     }));
   }
 
-  function emptyInventoryRowFromBusiness(row) {
+  function emptyInventoryRowFromBusiness(row, targetSku = row.sellerSku) {
     return {
-      ...normalizeInventoryRow({ asin: row.asin, "商品名称": row.productName }),
+      ...normalizeInventoryRow({ sku: targetSku, asin: row.asin, "商品名称": row.productName }),
       hasInventoryData: false,
     };
   }
 
-  function attachBusinessData(row, business) {
+  function attachBusinessData(row, business, channel = "unmatched") {
     if (!business) return row;
     row.hasBusinessData = true;
-    row.businessSessions = business.sessions;
-    row.businessPageViews = business.pageViews;
-    row.businessOrderedUnits = business.orderedUnits;
-    row.businessOrderItems = business.orderItems;
-    row.businessSalesAmount = business.salesAmount;
-    row.businessConversionPercent = business.conversionPercent;
-    row.businessSourceRowCount = business.sourceRowCount;
-    row.parentAsins = business.parentAsins;
+    row.businessSessions += business.sessions;
+    row.businessPageViews += business.pageViews;
+    row.businessOrderedUnits += business.orderedUnits;
+    row.businessOrderItems += business.orderItems;
+    row.businessSalesAmount += business.salesAmount;
+    row.businessSourceRowCount = Number(row.businessSourceRowCount || 0) + business.sourceRowCount;
+    row.parentAsins = [...new Set([...(row.parentAsins || []), ...business.parentAsins])];
+    row.businessSellerSkus = [...new Set([...(row.businessSellerSkus || []), business.sellerSku].filter(Boolean))];
+    row.businessAsins = [...new Set([...(row.businessAsins || []), business.asin].filter(Boolean))];
+    if (channel === "fba") row.businessFbaOrderedUnits += business.orderedUnits;
+    if (channel === "rb") row.businessRbOrderedUnits += business.orderedUnits;
+    if (channel === "fbm") row.businessFbmOrderedUnits += business.orderedUnits;
+    row.replenishmentDemand90 =
+      row.businessFbaOrderedUnits + row.businessRbOrderedUnits + row.businessFbmOrderedUnits;
+    row.businessConversionPercent =
+      row.businessSessions > 0 ? (row.businessOrderedUnits / row.businessSessions) * 100 : 0;
     if (!row.productName) row.productName = business.productName;
     return row;
   }
@@ -327,6 +345,52 @@
       }
     }
     return indexes;
+  }
+
+  function buildBusinessSystemIndexes(systemSkus) {
+    const indexes = { sku: new Map(), rbSku: new Map(), fbmSku: new Map() };
+    for (const item of systemSkus || []) {
+      for (const field of Object.keys(indexes)) {
+        const key = normalizeKey(item?.[field]);
+        if (!key) continue;
+        if (!indexes[field].has(key)) indexes[field].set(key, []);
+        indexes[field].get(key).push(item);
+      }
+    }
+    return indexes;
+  }
+
+  function resolveBusinessSystemMatch(business, indexes) {
+    const key = normalizeKey(business?.sellerSku);
+    const modes = ["sku", "rbSku", "fbmSku"].filter((mode) => key && (indexes[mode].get(key) || []).length);
+    if (!modes.length) {
+      return { status: "unmatched", mode: "", channel: "unmatched", candidates: [] };
+    }
+    if (modes.length !== 1) {
+      return { status: "ambiguous", mode: "", channel: "ambiguous", candidates: [] };
+    }
+    const mode = modes[0];
+    const candidates = indexes[mode].get(key) || [];
+    const uniqueTargets = new Map();
+    candidates.forEach((item) => {
+      const productId = text(item?.productId);
+      const systemSku = text(item?.sku);
+      if (productId && systemSku) uniqueTargets.set(`${productId}\u0000${normalizeKey(systemSku)}`, item);
+    });
+    if (uniqueTargets.size !== 1) {
+      return { status: "ambiguous", mode, channel: "ambiguous", candidates };
+    }
+    const matched = [...uniqueTargets.values()][0];
+    return {
+      status: "matched",
+      mode,
+      channel: mode === "sku" ? "fba" : mode === "rbSku" ? "rb" : "fbm",
+      candidates,
+      productId: text(matched?.productId),
+      productName: text(matched?.productName),
+      systemSku: text(matched?.sku),
+      skuId: text(matched?.id),
+    };
   }
 
   function resolveSystemMatch(row, indexes) {
@@ -458,12 +522,21 @@
         restockSku: 0,
       },
     );
-    totals.businessAsinCount = businessRows.length;
+    totals.businessSkuCount = new Set(
+      businessRows.flatMap((row) => row.businessSellerSkus || []).map(normalizeKey).filter(Boolean),
+    ).size;
+    totals.businessAsinCount = new Set(
+      businessRows.flatMap((row) => row.businessAsins || []).map(normalizeKey).filter(Boolean),
+    ).size;
     totals.businessSessions = businessRows.reduce((sum, row) => sum + row.businessSessions, 0);
     totals.businessPageViews = businessRows.reduce((sum, row) => sum + row.businessPageViews, 0);
     totals.businessOrderedUnits = businessRows.reduce((sum, row) => sum + row.businessOrderedUnits, 0);
     totals.businessOrderItems = businessRows.reduce((sum, row) => sum + row.businessOrderItems, 0);
     totals.businessSalesAmount = businessRows.reduce((sum, row) => sum + row.businessSalesAmount, 0);
+    totals.businessFbaOrderedUnits = businessRows.reduce((sum, row) => sum + row.businessFbaOrderedUnits, 0);
+    totals.businessRbOrderedUnits = businessRows.reduce((sum, row) => sum + row.businessRbOrderedUnits, 0);
+    totals.businessFbmOrderedUnits = businessRows.reduce((sum, row) => sum + row.businessFbmOrderedUnits, 0);
+    totals.replenishmentDemand90 = businessRows.reduce((sum, row) => sum + row.replenishmentDemand90, 0);
     totals.businessConversionPercent =
       totals.businessSessions > 0 ? (totals.businessOrderedUnits / totals.businessSessions) * 100 : 0;
     totals.matchedRows = rows.filter((row) => row.matchStatus === "matched").length;
@@ -503,25 +576,70 @@
 
   function buildAnalysis(inventoryRecords, businessRecords, systemSkus) {
     const businessRows = aggregateBusinessRows(businessRecords);
-    const businessByAsin = new Map(businessRows.map((row) => [normalizeKey(row.asin), row]));
-    const usedBusinessAsins = new Set();
     const rows = (inventoryRecords || [])
       .map(normalizeInventoryRow)
-      .filter((row) => row.sku || row.asin || row.productName)
-      .map((row) => {
-        const key = normalizeKey(row.asin);
-        const business = key && !usedBusinessAsins.has(key) ? businessByAsin.get(key) : null;
-        if (business) usedBusinessAsins.add(key);
-        return attachBusinessData(row, business);
-      });
+      .filter((row) => row.sku || row.asin || row.productName);
+    applySystemMatches(rows, systemSkus);
+    const inventoryBySku = new Map();
+    rows.forEach((row) => {
+      const key = normalizeKey(row.sku);
+      if (key && !inventoryBySku.has(key)) inventoryBySku.set(key, row);
+    });
+    const businessIndexes = buildBusinessSystemIndexes(systemSkus);
+    const sourceCounts = { matched: 0, fba: 0, rb: 0, fbm: 0, unmatched: 0, ambiguous: 0 };
 
     for (const business of businessRows) {
-      const key = normalizeKey(business.asin);
-      if (usedBusinessAsins.has(key)) continue;
-      rows.push(attachBusinessData(emptyInventoryRowFromBusiness(business), business));
+      const match = resolveBusinessSystemMatch(business, businessIndexes);
+      sourceCounts[match.status === "matched" ? "matched" : match.status] += 1;
+      if (match.status === "matched") sourceCounts[match.channel] += 1;
+      let targetRow = null;
+      if (match.status === "matched") {
+        targetRow = inventoryBySku.get(normalizeKey(match.systemSku)) || null;
+        if (!targetRow) {
+          targetRow = emptyInventoryRowFromBusiness(business, match.systemSku);
+          rows.push(targetRow);
+          inventoryBySku.set(normalizeKey(match.systemSku), targetRow);
+        }
+        Object.assign(targetRow, {
+          matchStatus: "matched",
+          matchMode: match.mode,
+          matchCandidateCount: match.candidates.length,
+          matchedProductId: match.productId,
+          matchedProductName: match.productName,
+          matchedSkuId: match.skuId,
+        });
+      } else {
+        targetRow = inventoryBySku.get(normalizeKey(business.sellerSku)) || null;
+        if (!targetRow) {
+          targetRow = emptyInventoryRowFromBusiness(business, business.sellerSku);
+          Object.assign(targetRow, {
+            matchStatus: match.status,
+            matchMode: match.mode,
+            matchCandidateCount: match.candidates.length,
+          });
+          rows.push(targetRow);
+        }
+      }
+      targetRow.businessMatchStatus = match.status;
+      targetRow.businessMatchMode = match.mode;
+      attachBusinessData(targetRow, business, match.channel);
     }
 
-    applySystemMatches(rows, systemSkus);
+    rows.forEach((row) => {
+      if (row.replenishmentDemand90 <= 0) return;
+      row.daily90 = row.replenishmentDemand90 / 90;
+      row.daily30 = row.daily90;
+      row.coverageDays = row.daily90 > 0 ? row.available / row.daily90 : row.available > 0 ? 999 : 0;
+      row.restockScore =
+        row.suggestedShipQty > 0
+          ? 3
+          : row.coverageDays <= 14
+            ? 2
+            : row.coverageDays <= 30
+              ? 1
+              : 0;
+    });
+
     return recalculateAnalysis({
       rows,
       totals: {},
@@ -529,8 +647,14 @@
       source: {
         inventoryRowCount: (inventoryRecords || []).length,
         businessSourceRowCount: (businessRecords || []).length,
-        businessAsinCount: businessRows.length,
-        joinedAsinCount: usedBusinessAsins.size,
+        businessSkuCount: businessRows.length,
+        businessAsinCount: new Set(businessRows.map((row) => normalizeKey(row.asin)).filter(Boolean)).size,
+        matchedSalesSkuCount: sourceCounts.matched,
+        fbaSalesSkuCount: sourceCounts.fba,
+        rbSalesSkuCount: sourceCounts.rb,
+        fbmSalesSkuCount: sourceCounts.fbm,
+        unmatchedSalesSkuCount: sourceCounts.unmatched,
+        ambiguousSalesSkuCount: sourceCounts.ambiguous,
       },
     });
   }

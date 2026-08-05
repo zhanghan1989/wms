@@ -6,9 +6,9 @@ import {
 import { InventoryService } from '../src/inventory/inventory.service';
 
 describe('Amazon replenishment report snapshots', () => {
-  it('parses and validates the separate child-ASIN and FBA inventory reports', () => {
+  it('parses and validates the separate SKU sales and FBA inventory reports', () => {
     const businessRows = parseAmazonReplenishmentCsv(
-      Buffer.from('（子）ASIN,会话数 - 总计,页面浏览量 - 总计,已订购商品数量\nB001,10,12,2\n'),
+      Buffer.from('SKU,（子）ASIN,会话数 - 总计,页面浏览量 - 总计,已订购商品数量\nsku-1,B001,10,12,2\n'),
     );
     const inventoryRows = parseAmazonReplenishmentCsv(
       Buffer.from(
@@ -25,7 +25,7 @@ describe('Amazon replenishment report snapshots', () => {
 
   it('rejects a SKU sales report in place of the FBA inventory report', () => {
     const businessRows = parseAmazonReplenishmentCsv(
-      Buffer.from('（子）ASIN,会话数 - 总计,页面浏览量 - 总计,已订购商品数量\nB001,10,12,2\n'),
+      Buffer.from('SKU,（子）ASIN,会话数 - 总计,页面浏览量 - 总计,已订购商品数量\nsku-1,B001,10,12,2\n'),
     );
     const wrongInventoryRows = parseAmazonReplenishmentCsv(
       Buffer.from('SKU,（子）ASIN,已订购商品数量\nsku-1,B001,2\n'),
@@ -76,8 +76,11 @@ describe('Amazon replenishment report snapshots', () => {
             {
               id: 2n,
               sku: 'sku-1',
+              fbmSku: 'fbm-sku-1',
+              rbSku: 'rb-sku-1',
               fnsku: 'fn-1',
               asin: 'B001',
+              shop: 'Amazon JP',
               productId: 'P-1',
               masterProduct: { productName: '商品一' },
             },
@@ -101,8 +104,11 @@ describe('Amazon replenishment report snapshots', () => {
         {
           id: '2',
           sku: 'sku-1',
+          fbmSku: 'fbm-sku-1',
+          rbSku: 'rb-sku-1',
           fnsku: 'fn-1',
           asin: 'B001',
+          shop: 'Amazon JP',
           productId: 'P-1',
           productName: '商品一',
         },

@@ -28,7 +28,9 @@ WMS 项目第一个正式版（`v1.0.0`）代码仓库。
 4. 启动服务  
 `npm run start:api`
 5. 访问系统  
-`http://<server-ip>:3000/`
+生产环境入口：`https://wms.fulangke.cn/`
+
+服务器上的 API 仅监听本机 `127.0.0.1:3000`，由 Nginx 提供 HTTPS 访问；旧的公网 IP `:3000` 入口由 Nginx 永久跳转至生产域名。
 
 ## 推荐开发命令
 - 同步 `main` 到 `develop`：`npm run branch:sync-develop`

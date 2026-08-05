@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AuditModule } from './audit/audit.module';
+import { AmazonSpApiModule } from './amazon-sp-api/amazon-sp-api.module';
 import { AuthModule } from './auth/auth.module';
 import { BackupsModule } from './backups/backups.module';
 import { BatchInboundModule } from './batch-inbound/batch-inbound.module';
@@ -31,6 +32,7 @@ import { UsersModule } from './users/users.module';
     }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    AmazonSpApiModule,
     AuthModule,
     BackupsModule,
     UserOptionsModule,

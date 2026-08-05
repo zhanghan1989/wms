@@ -51,11 +51,12 @@ describe('Amazon dashboard CSV matching logic', () => {
     expect(row.fbaSupplyQty).toBe(9);
   });
 
-  it('joins business data to inventory by child ASIN and keeps business-only ASINs', () => {
+  it('classifies FBA and RB sales SKUs and rolls both into their target FBA SKUs', () => {
     const analysis = logic.buildAnalysis(
       [{ sku: 'sku-1', FNSKU: 'fn-1', asin: 'B001', available: '3', 商品名称: '库存商品' }],
       [
         {
+          SKU: 'sku-1',
           '（父）ASIN': 'P001',
           '（子）ASIN': 'B001',
           标题: '业务商品一',
@@ -64,6 +65,7 @@ describe('Amazon dashboard CSV matching logic', () => {
           已订购商品销售额: 'JP¥5,000',
         },
         {
+          SKU: 'rb-sku-2',
           '（父）ASIN': 'P002',
           '（子）ASIN': 'B002',
           标题: '业务商品二',
@@ -73,20 +75,34 @@ describe('Amazon dashboard CSV matching logic', () => {
         },
       ],
       [
-        { sku: 'sku-1', fnsku: 'fn-1', asin: 'B001', productId: 'P-100', productName: '系统商品一' },
-        { sku: 'other-sku', fnsku: 'fn-2', asin: 'B002', productId: 'P-200', productName: '系统商品二' },
+        { id: '1', sku: 'sku-1', fnsku: 'fn-1', asin: 'B001', productId: 'P-100', productName: '系统商品一' },
+        {
+          id: '2',
+          sku: 'fba-sku-2',
+          rbSku: 'rb-sku-2',
+          fnsku: 'fn-2',
+          asin: 'B002',
+          productId: 'P-200',
+          productName: '系统商品二',
+        },
       ],
     );
 
-    expect(analysis.source.joinedAsinCount).toBe(1);
+    expect(analysis.source.matchedSalesSkuCount).toBe(2);
+    expect(analysis.source.fbaSalesSkuCount).toBe(1);
+    expect(analysis.source.rbSalesSkuCount).toBe(1);
     expect(analysis.rows).toHaveLength(2);
     expect(analysis.totals.businessOrderedUnits).toBe(7);
     expect(analysis.totals.businessSalesAmount).toBe(7000);
+    expect(analysis.totals.businessFbaOrderedUnits).toBe(5);
+    expect(analysis.totals.businessRbOrderedUnits).toBe(2);
+    expect(analysis.totals.replenishmentDemand90).toBe(7);
     expect(analysis.totals.matchedRows).toBe(2);
-    expect(analysis.rows.find((row) => row.asin === 'B002')).toMatchObject({
-      sku: 'other-sku',
+    expect(analysis.rows.find((row) => row.sku === 'fba-sku-2')).toMatchObject({
       matchedProductId: 'P-200',
-      matchMode: 'asin',
+      matchMode: 'rbSku',
+      businessRbOrderedUnits: 2,
+      replenishmentDemand90: 2,
       hasInventoryData: false,
     });
   });
@@ -94,7 +110,7 @@ describe('Amazon dashboard CSV matching logic', () => {
   it('marks a non-unique system key as ambiguous instead of selecting a product', () => {
     const analysis = logic.buildAnalysis(
       [{ sku: 'same-sku', asin: 'B001' }],
-      [{ '（子）ASIN': 'B001', 标题: '商品', 已订购商品数量: '1' }],
+      [{ SKU: 'same-sku', '（子）ASIN': 'B001', 标题: '商品', 已订购商品数量: '1' }],
       [
         { sku: 'same-sku', asin: 'B001', productId: 'P-1', shop: 'Amazon-A' },
         { sku: 'same-sku', asin: 'B001', productId: 'P-2', shop: 'Amazon-B' },
@@ -103,6 +119,42 @@ describe('Amazon dashboard CSV matching logic', () => {
 
     expect(analysis.rows[0]).toMatchObject({ matchStatus: 'ambiguous', matchMode: 'sku', matchedProductId: '' });
     expect(analysis.totals.ambiguousRows).toBe(1);
+  });
+
+  it('rolls FBM sales into the related FBA SKU even when that SKU has no FBA inventory row', () => {
+    const analysis = logic.buildAnalysis(
+      [],
+      [
+        {
+          SKU: 'fbm-sku-1',
+          '（子）ASIN': 'B001',
+          标题: 'FBM商品',
+          '会话数 - 总计': '30',
+          已订购商品数量: '9',
+        },
+      ],
+      [
+        {
+          id: '1',
+          sku: 'fba-sku-1',
+          fbmSku: 'fbm-sku-1',
+          asin: 'B001',
+          productId: 'P-1',
+          productName: '系统商品',
+        },
+      ],
+    );
+
+    expect(analysis.source.fbmSalesSkuCount).toBe(1);
+    expect(analysis.rows).toHaveLength(1);
+    expect(analysis.rows[0]).toMatchObject({
+      sku: 'fba-sku-1',
+      matchedProductId: 'P-1',
+      businessFbmOrderedUnits: 9,
+      replenishmentDemand90: 9,
+      daily90: 0.1,
+      hasInventoryData: false,
+    });
   });
 
   it('limits FBA replenishment to overseas warehouse stock and exposes the remaining shortage', () => {
@@ -187,7 +239,7 @@ describe('Amazon dashboard CSV matching logic', () => {
     });
   });
 
-  it('accepts the ASIN sales report and FBA inventory report only in their designated upload fields', () => {
+  it('accepts the SKU sales report and FBA inventory report only in their designated upload fields', () => {
     const result = logic.validateUploadReportColumns(
       [
         {
@@ -200,6 +252,7 @@ describe('Amazon dashboard CSV matching logic', () => {
       ],
       [
         {
+          SKU: 'sku-1',
           '（子）ASIN': 'B001',
           '会话数 - 总计': '100',
           '页面浏览量 - 总计 ': '120',

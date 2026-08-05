@@ -8,6 +8,7 @@ type ColumnRequirement = {
 };
 
 const BUSINESS_REQUIREMENTS: ColumnRequirement[] = [
+  { label: 'SKU', candidates: ['SKU', 'sku'] },
   { label: '（子）ASIN', candidates: ['（子）ASIN', '(子)ASIN', '子ASIN', 'Child ASIN'] },
   { label: '会话数 - 总计', candidates: ['会话数 - 总计', '会话数-总计', 'Sessions - Total'] },
   {
@@ -83,7 +84,7 @@ export function validateAmazonReplenishmentReports(
 ): void {
   const businessMissing = findMissingColumns(businessRows, BUSINESS_REQUIREMENTS);
   if (businessMissing.length) {
-    throw new Error(`第一份文件不是“销售和流量报告（按子 ASIN）”，缺少字段：${businessMissing.join('、')}`);
+    throw new Error(`第一份文件不是“包含SKU的90天销售和流量报告”，缺少字段：${businessMissing.join('、')}`);
   }
   const inventoryMissing = findMissingColumns(inventoryRows, INVENTORY_REQUIREMENTS);
   if (inventoryMissing.length) {

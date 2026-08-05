@@ -16,11 +16,21 @@ services:
       BACKUP_DIR: /app/storage/backups
       BACKUP_ZIP_COMPRESSION_LEVEL: ${BACKUP_ZIP_COMPRESSION_LEVEL:-1}
       BACKUP_SQL_ROW_BATCH_SIZE: ${BACKUP_SQL_ROW_BATCH_SIZE:-200}
+      AMAZON_SP_API_LWA_CLIENT_ID: ${AMAZON_SP_API_LWA_CLIENT_ID:-}
+      AMAZON_SP_API_LWA_CLIENT_SECRET: ${AMAZON_SP_API_LWA_CLIENT_SECRET:-}
+      AMAZON_SP_API_APPLICATION_ID: ${AMAZON_SP_API_APPLICATION_ID:-}
+      AMAZON_SP_API_OAUTH_REDIRECT_URI: ${AMAZON_SP_API_OAUTH_REDIRECT_URI:-}
+      AMAZON_SP_API_OAUTH_RETURN_URL: ${AMAZON_SP_API_OAUTH_RETURN_URL:-/}
+      AMAZON_SP_API_OAUTH_DRAFT: ${AMAZON_SP_API_OAUTH_DRAFT:-true}
+      AMAZON_SP_API_SELLER_CENTRAL_URL: ${AMAZON_SP_API_SELLER_CENTRAL_URL:-https://sellercentral.amazon.co.jp}
+      AMAZON_SP_API_ENCRYPTION_KEY: ${AMAZON_SP_API_ENCRYPTION_KEY:-}
+      AMAZON_SP_API_SYNC_CRON: "${AMAZON_SP_API_SYNC_CRON:-0 */15 * * * *}"
+      AMAZON_SP_API_INCLUDE_RECIPIENT: ${AMAZON_SP_API_INCLUDE_RECIPIENT:-false}
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - backup_data:/app/storage/backups
     restart: unless-stopped
@@ -33,7 +43,7 @@ services:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: wms_v1
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     healthcheck:
@@ -47,7 +57,7 @@ services:
     image: redis:7-alpine
     container_name: wms_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     restart: unless-stopped
 
 volumes:

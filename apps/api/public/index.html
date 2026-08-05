@@ -461,7 +461,7 @@
         <article class="card amazon-dashboard-upload-card">
           <form id="amazonDashboardUploadForm" class="form-grid amazon-dashboard-upload-form">
             <label>
-              销售和流量报告（按子 ASIN）CSV
+              90天销售和流量报告（必须包含 SKU 列）CSV
               <input id="amazonDashboardBusinessCsvFile" type="file" accept=".csv,text/csv" required />
             </label>
             <label>
@@ -470,7 +470,7 @@
             </label>
             <button type="submit">上传分析</button>
           </form>
-          <div class="muted">第一份请选择不含 SKU 列的“详情页面销售和流量（按子商品）”报告；第二份请选择 FBA 库存报告。</div>
+          <div class="muted">第一份请选择包含 SKU 列、日期正好覆盖90天的“详情页面销售和流量（按子商品）”报告；第二份请选择 FBA 库存报告。</div>
           <div id="amazonDashboardFileMeta" class="amazon-dashboard-file-meta muted">尚未上传两份 CSV</div>
         </article>
 
@@ -494,7 +494,10 @@
                     <th>会话数</th>
                     <th>浏览量</th>
                     <th>转化率</th>
-                    <th>订购量</th>
+                    <th>FBA出单</th>
+                    <th>RB出单</th>
+                    <th>FBM出单</th>
+                    <th>补货需求合计</th>
                     <th>销售额</th>
                     <th>FBA近30天配送</th>
                     <th>FBA可售</th>
@@ -545,7 +548,10 @@
                     <th>ASIN</th>
                     <th>产品ID</th>
                     <th>产品名称</th>
-                    <th>90天销量</th>
+                    <th>FBA出单</th>
+                    <th>RB出单</th>
+                    <th>FBM出单</th>
+                    <th>90天补货需求</th>
                     <th>日均销量</th>
                     <th>亚马逊可售</th>
                     <th>亚马逊入库</th>
@@ -1605,7 +1611,7 @@
 
           <article id="overviewFbaUploadCard" class="card overview-fba-upload-card">
             <h3>计算全渠道需求和工厂备货建议</h3>
-            <p class="muted">请先上传最近90天的亚马逊FBA销售报告。上传成功前不显示订单需求趋势、工厂备货建议和废弃建议。</p>
+            <p class="muted">请同时上传最近90天的亚马逊FBA销售报告和当前FBA库存报告。上传成功前不显示订单需求趋势、工厂备货建议和废弃建议。</p>
             <form id="overviewFbaSalesUploadForm" class="form-grid overview-fba-sales-upload-form">
               <label>
                 报告开始日期
@@ -1619,10 +1625,14 @@
                 90天销售报告（必须包含 SKU 列）CSV
                 <input id="overviewFbaSalesCsvFile" type="file" accept=".csv,text/csv" required />
               </label>
+              <label>
+                FBA库存报告 CSV
+                <input id="overviewFbaInventoryCsvFile" type="file" accept=".csv,text/csv" required />
+              </label>
               <button type="submit">上传并计算</button>
             </form>
             <div id="overviewFbaSalesSnapshotMeta" class="muted overview-fba-sales-meta">
-              尚未上传本次计算所需的FBA销售报告。
+              尚未上传本次计算所需的FBA销售报告和库存报告。
             </div>
           </article>
 
@@ -1757,6 +1767,10 @@
                     <th>总库存</th>
                     <th>可用库存</th>
                     <th>在途库存</th>
+                    <th>FBA可售库存</th>
+                    <th>FBA入库中</th>
+                    <th>FBA预留库存</th>
+                    <th>FBA不可售库存</th>
                     <th>已安排生产</th>
                     <th>总保障库存</th>
                     <th>90天系统订单</th>
@@ -1782,7 +1796,10 @@
             <div class="overview-table-wrap">
               <div class="overview-table-title-row">
                 <h4 id="overviewNoSales90Heading">90天系统无出单产品</h4>
-                <span class="overview-table-total">合计 <strong id="overviewNoSales90Count">-</strong> 个</span>
+                <span class="overview-table-total">
+                  产品合计：<strong id="overviewNoSales90Count">-</strong>个，
+                  产品库存合计：<strong id="overviewNoSales90StockQty">-</strong>个
+                </span>
               </div>
               <table>
                 <thead>
@@ -2025,6 +2042,13 @@
       </section>
     </section>
   </main>
+
+  <footer class="site-compliance-footer">
+    <span>© 2026 乳山市弗朗克贸易有限公司</span>
+    <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
+      鲁ICP备2026043725号-1
+    </a>
+  </footer>
 
   <div id="rakutenOrderImportModal" class="modal hidden">
     <div class="modal-card">
@@ -2724,10 +2748,56 @@
       </form>
       <div class="manage-table-scroll">
         <table>
-          <thead><tr><th>店铺</th><th>操作</th></tr></thead>
+          <thead><tr><th>店铺</th><th>Amazon连接</th><th>操作</th></tr></thead>
           <tbody id="shopsBody"></tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <div id="amazonSpApiConnectionModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3 id="amazonSpApiConnectionTitle">Amazon SP-API连接</h3>
+        <button type="button" class="ghost" data-action="closeAmazonSpApiConnectionModal">关闭</button>
+      </div>
+      <form id="amazonSpApiConnectionForm">
+        <input id="amazonSpApiConnectionId" type="hidden" />
+        <input id="amazonSpApiShopId" type="hidden" />
+        <div class="form-grid compact">
+          <label>店铺<input id="amazonSpApiShopName" readonly /></label>
+          <label>Seller ID<input id="amazonSpApiSellerId" maxlength="64" readonly placeholder="授权成功后由Amazon返回" /></label>
+          <label>区域
+            <select id="amazonSpApiRegion" required>
+              <option value="FE">FE（日本/远东）</option>
+              <option value="NA">NA（北美）</option>
+              <option value="EU">EU（欧洲）</option>
+            </select>
+          </label>
+          <label>Marketplace IDs<input id="amazonSpApiMarketplaceIds" placeholder="日本站：A1VC38T7YXB528" required /></label>
+          <label>连接状态
+            <select id="amazonSpApiStatus">
+              <option value="1">启用</option>
+              <option value="0">停用</option>
+            </select>
+          </label>
+        </div>
+        <div class="checkbox-row">
+          <label><input id="amazonSpApiSyncFbm" type="checkbox" checked /> 自动同步FBM订单</label>
+          <label><input id="amazonSpApiSyncFba" type="checkbox" checked /> 自动同步FBA订单</label>
+          <label><input id="amazonSpApiSyncInventory" type="checkbox" checked /> 自动同步FBA库存</label>
+        </div>
+        <p id="amazonSpApiConnectionMeta" class="muted">尚未授权。请由该店铺主用户通过Amazon官方页面授权，系统不会接触Seller Central密码。</p>
+        <div class="modal-actions modal-actions-split">
+          <div>
+            <button id="amazonSpApiSaveBtn" type="submit">连接 Amazon</button>
+            <button id="amazonSpApiReauthorizeBtn" type="button" class="ghost hidden">重新授权</button>
+            <button id="amazonSpApiTestBtn" type="button" class="ghost hidden">测试连接</button>
+            <button id="amazonSpApiSyncBtn" type="button" class="ghost hidden">立即同步</button>
+          </div>
+          <button type="button" class="ghost" data-action="closeAmazonSpApiConnectionModal">取消</button>
+        </div>
+      </form>
     </div>
   </div>
 

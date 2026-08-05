@@ -56,10 +56,33 @@ body {
 }
 
 .login-gate {
-  min-height: 100vh;
+  min-height: calc(100vh - 58px);
   display: grid;
   place-items: center;
   padding: 24px;
+}
+
+.site-compliance-footer {
+  min-height: 58px;
+  padding: 16px 24px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.site-compliance-footer a {
+  color: var(--accent-2);
+  text-decoration: none;
+}
+
+.site-compliance-footer a:hover,
+.site-compliance-footer a:focus-visible {
+  text-decoration: underline;
 }
 
 .login-card {
@@ -1053,7 +1076,7 @@ button.ghost {
 }
 
 .overview-fba-sales-upload-form {
-  grid-template-columns: minmax(150px, 190px) minmax(150px, 190px) minmax(280px, 1fr) auto;
+  grid-template-columns: minmax(150px, 190px) minmax(150px, 190px) minmax(240px, 1fr) minmax(240px, 1fr) auto;
   align-items: end;
   margin-bottom: 8px;
 }

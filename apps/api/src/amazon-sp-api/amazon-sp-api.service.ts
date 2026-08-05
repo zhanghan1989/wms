@@ -1,0 +1,1009 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import {
+  AmazonSpApiConnection,
+  AmazonSpApiSyncStatus,
+  AmazonSpApiSyncType,
+  Prisma,
+} from '@prisma/client';
+import { createHash, randomBytes } from 'crypto';
+import { parseId } from '../common/utils';
+import { PrismaService } from '../prisma/prisma.service';
+import { AmazonSpApiClient } from './amazon-sp-api.client';
+import { AmazonSpApiCryptoService } from './amazon-sp-api-crypto.service';
+import { AmazonOrderItemPayload, AmazonOrderPayload, AmazonSpApiRegion } from './amazon-sp-api.types';
+import { StartAmazonOAuthDto } from './dto/start-amazon-oauth.dto';
+import { SyncAmazonConnectionDto } from './dto/sync-amazon-connection.dto';
+import { UpdateAmazonConnectionDto } from './dto/update-amazon-connection.dto';
+
+const AMAZON_SYNC_CRON = process.env.AMAZON_SP_API_SYNC_CRON || '0 */15 * * * *';
+const APP_TIMEZONE = process.env.TZ || 'Asia/Tokyo';
+const DEFAULT_LOOKBACK_DAYS = 90;
+const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
+const DISPATCH_OVERSEAS = 'overseas';
+const DISPATCH_CHINA_NO_STOCK = 'china_no_stock';
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const OAUTH_AUTHORIZATION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+
+interface SyncCounters {
+  fetched: number;
+  created: number;
+  updated: number;
+}
+
+interface AmazonSyncResult {
+  runId: string;
+  status: AmazonSpApiSyncStatus;
+  syncType: AmazonSpApiSyncType;
+  fetchedCount: number;
+  createdCount: number;
+  updatedCount: number;
+  errors: string[];
+}
+
+@Injectable()
+export class AmazonSpApiService {
+  private readonly logger = new Logger(AmazonSpApiService.name);
+  private readonly runningConnections = new Set<string>();
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly client: AmazonSpApiClient,
+    private readonly cryptoService: AmazonSpApiCryptoService,
+  ) {}
+
+  async listConnections(): Promise<unknown[]> {
+    const rows = await this.prisma.amazonSpApiConnection.findMany({
+      include: { shop: { select: { id: true, name: true, status: true } } },
+      orderBy: [{ status: 'desc' }, { id: 'asc' }],
+    });
+    return rows.map((row) => this.serializeConnection(row));
+  }
+
+  async startOAuth(payload: StartAmazonOAuthDto, createdBy: bigint): Promise<{
+    authorizationUrl: string;
+    expiresAt: string;
+  }> {
+    const shopId = parseId(payload.shopId, 'shopId');
+    const shop = await this.prisma.shop.findUnique({ where: { id: shopId } });
+    if (!shop) throw new NotFoundException('店铺不存在');
+    const rawState = randomBytes(32).toString('base64url');
+    const stateHash = createHash('sha256').update(rawState).digest('hex');
+    const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS);
+    await this.prisma.amazonSpApiOAuthState.create({
+      data: {
+        shopId,
+        stateHash,
+        region: payload.region,
+        marketplaceIds: this.normalizeMarketplaceIds(payload.marketplaceIds),
+        syncFbmOrders: payload.syncFbmOrders ?? true,
+        syncFbaOrders: payload.syncFbaOrders ?? true,
+        syncFbaInventory: payload.syncFbaInventory ?? true,
+        createdBy,
+        expiresAt,
+      },
+    });
+    await this.prisma.amazonSpApiOAuthState.deleteMany({
+      where: { expiresAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+    });
+    return {
+      authorizationUrl: this.buildAuthorizationUrl(rawState),
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  async completeOAuth(input: {
+    state?: string;
+    authorizationCode?: string;
+    sellingPartnerId?: string;
+  }): Promise<void> {
+    const state = String(input.state ?? '').trim();
+    const authorizationCode = String(input.authorizationCode ?? '').trim();
+    const sellingPartnerId = String(input.sellingPartnerId ?? '').trim();
+    if (!state || !authorizationCode || !sellingPartnerId) {
+      throw new BadRequestException('Amazon OAuth回调参数不完整');
+    }
+    const stateHash = createHash('sha256').update(state).digest('hex');
+    const pending = await this.prisma.amazonSpApiOAuthState.findUnique({ where: { stateHash } });
+    if (!pending || pending.consumedAt || pending.expiresAt <= new Date()) {
+      throw new BadRequestException('Amazon OAuth state无效或已过期，请重新发起授权');
+    }
+    const existing = await this.prisma.amazonSpApiConnection.findUnique({
+      where: { shopId: pending.shopId },
+    });
+    if (existing && existing.sellerId !== sellingPartnerId) {
+      throw new ConflictException('回调Seller ID与该系统店铺原授权不一致');
+    }
+    const redirectUri = this.getOAuthRedirectUri();
+    const token = await this.client.exchangeAuthorizationCode(authorizationCode, redirectUri);
+    const credential = this.cryptoService.encrypt(token.refreshToken);
+    const authorizedAt = new Date();
+    const authorizationExpiresAt = new Date(authorizedAt.getTime() + OAUTH_AUTHORIZATION_TTL_MS);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.amazonSpApiConnection.upsert({
+        where: { shopId: pending.shopId },
+        create: {
+          shopId: pending.shopId,
+          sellerId: sellingPartnerId,
+          region: pending.region,
+          marketplaceIds: pending.marketplaceIds as Prisma.InputJsonValue,
+          encryptedRefreshToken: credential.encryptedValue,
+          tokenIv: credential.iv,
+          tokenAuthTag: credential.authTag,
+          authorizationMode: 'oauth',
+          authorizedAt,
+          authorizationExpiresAt,
+          syncFbmOrders: pending.syncFbmOrders,
+          syncFbaOrders: pending.syncFbaOrders,
+          syncFbaInventory: pending.syncFbaInventory,
+        },
+        update: {
+          region: pending.region,
+          marketplaceIds: pending.marketplaceIds as Prisma.InputJsonValue,
+          encryptedRefreshToken: credential.encryptedValue,
+          tokenIv: credential.iv,
+          tokenAuthTag: credential.authTag,
+          authorizationMode: 'oauth',
+          authorizedAt,
+          authorizationExpiresAt,
+          status: 1,
+          syncFbmOrders: pending.syncFbmOrders,
+          syncFbaOrders: pending.syncFbaOrders,
+          syncFbaInventory: pending.syncFbaInventory,
+          lastSyncError: null,
+        },
+      });
+      await tx.amazonSpApiOAuthState.update({
+        where: { id: pending.id },
+        data: { consumedAt: authorizedAt },
+      });
+    });
+  }
+
+  async updateConnection(idRaw: string, payload: UpdateAmazonConnectionDto): Promise<unknown> {
+    const id = parseId(idRaw, 'connectionId');
+    const existing = await this.prisma.amazonSpApiConnection.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('Amazon SP-API连接不存在');
+
+    const updated = await this.prisma.amazonSpApiConnection.update({
+      where: { id },
+      data: {
+        ...(payload.region === undefined ? {} : { region: payload.region }),
+        ...(payload.marketplaceIds === undefined
+          ? {}
+          : { marketplaceIds: this.normalizeMarketplaceIds(payload.marketplaceIds) }),
+        ...(payload.status === undefined ? {} : { status: payload.status }),
+        ...(payload.syncFbmOrders === undefined ? {} : { syncFbmOrders: payload.syncFbmOrders }),
+        ...(payload.syncFbaOrders === undefined ? {} : { syncFbaOrders: payload.syncFbaOrders }),
+        ...(payload.syncFbaInventory === undefined ? {} : { syncFbaInventory: payload.syncFbaInventory }),
+      },
+      include: { shop: { select: { id: true, name: true, status: true } } },
+    });
+    return this.serializeConnection(updated);
+  }
+
+  async testConnection(idRaw: string): Promise<{ success: true; marketplaces: unknown }> {
+    const connection = await this.getConnection(idRaw);
+    const accessToken = await this.getAccessToken(connection);
+    const marketplaces = await this.client.testConnection(
+      accessToken,
+      this.normalizeRegion(connection.region),
+    );
+    return { success: true, marketplaces };
+  }
+
+  async syncConnection(idRaw: string, payload: SyncAmazonConnectionDto = {}): Promise<unknown> {
+    const connection = await this.getConnection(idRaw);
+    const key = connection.id.toString();
+    if (this.runningConnections.has(key)) {
+      throw new ConflictException('该店铺的Amazon同步任务正在运行');
+    }
+    this.runningConnections.add(key);
+    try {
+      const result = await this.runSync(
+        connection,
+        (payload.syncType ?? 'full') as AmazonSpApiSyncType,
+        payload.initialLookbackDays ?? DEFAULT_LOOKBACK_DAYS,
+      );
+      if ((payload.syncType ?? 'full') === 'full' && result.status === AmazonSpApiSyncStatus.success) {
+        await this.materializeDashboardSnapshotIfComplete();
+      }
+      return result;
+    } finally {
+      this.runningConnections.delete(key);
+    }
+  }
+
+  async listSyncRuns(connectionIdRaw?: string, limitRaw?: string): Promise<unknown[]> {
+    const connectionId = connectionIdRaw ? parseId(connectionIdRaw, 'connectionId') : undefined;
+    const limit = Math.min(Math.max(Number(limitRaw) || 50, 1), 200);
+    const rows = await this.prisma.amazonSpApiSyncRun.findMany({
+      where: connectionId ? { connectionId } : undefined,
+      include: { connection: { include: { shop: { select: { name: true } } } } },
+      orderBy: { id: 'desc' },
+      take: limit,
+    });
+    return rows.map((row) => ({
+      id: row.id.toString(),
+      connectionId: row.connectionId.toString(),
+      shopName: row.connection.shop.name,
+      syncType: row.syncType,
+      status: row.status,
+      startedAt: row.startedAt.toISOString(),
+      finishedAt: row.finishedAt?.toISOString() ?? null,
+      fetchedCount: row.fetchedCount,
+      createdCount: row.createdCount,
+      updatedCount: row.updatedCount,
+      errorMessage: row.errorMessage,
+    }));
+  }
+
+  async getCoverage(): Promise<unknown> {
+    const rows = await this.prisma.amazonSpApiConnection.findMany({
+      where: { status: 1 },
+      include: { shop: { select: { name: true } } },
+      orderBy: { id: 'asc' },
+    });
+    const staleBefore = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    const shops = rows.map((row) => {
+      const stale = !row.lastSuccessfulSyncAt || row.lastSuccessfulSyncAt < staleBefore;
+      return {
+        connectionId: row.id.toString(),
+        shopName: row.shop.name,
+        complete: !stale && !row.lastSyncError,
+        stale,
+        lastSuccessfulSyncAt: row.lastSuccessfulSyncAt?.toISOString() ?? null,
+        lastSyncError: row.lastSyncError,
+      };
+    });
+    return {
+      complete: shops.length > 0 && shops.every((row) => row.complete),
+      activeShopCount: shops.length,
+      healthyShopCount: shops.filter((row) => row.complete).length,
+      shops,
+    };
+  }
+
+  async getLatestDashboardSnapshot(): Promise<unknown> {
+    const row = await this.prisma.fbaSalesSnapshot.findFirst({
+      where: { fileName: { startsWith: 'Amazon SP-API' } },
+      orderBy: { id: 'desc' },
+      select: {
+        id: true,
+        fileName: true,
+        periodStart: true,
+        periodEnd: true,
+        fbaRows: true,
+        fbaOrderedQty: true,
+        createdAt: true,
+      },
+    });
+    return row
+      ? {
+          snapshotId: row.id.toString(),
+          fileName: row.fileName,
+          periodStart: row.periodStart?.toISOString().slice(0, 10) ?? null,
+          periodEnd: row.periodEnd?.toISOString().slice(0, 10) ?? null,
+          fbaRows: row.fbaRows,
+          fbaOrderedQty: row.fbaOrderedQty,
+          createdAt: row.createdAt.toISOString(),
+        }
+      : null;
+  }
+
+  @Cron(AMAZON_SYNC_CRON, { name: 'amazon-sp-api-sync', timeZone: APP_TIMEZONE })
+  async runScheduledSync(): Promise<void> {
+    const connections = await this.prisma.amazonSpApiConnection.findMany({
+      where: { status: 1 },
+      orderBy: { id: 'asc' },
+    });
+    for (const connection of connections) {
+      const key = connection.id.toString();
+      if (this.runningConnections.has(key)) continue;
+      this.runningConnections.add(key);
+      try {
+        await this.runSync(connection, AmazonSpApiSyncType.full, DEFAULT_LOOKBACK_DAYS);
+      } catch (error) {
+        this.logger.error(
+          `Amazon scheduled sync failed for connection ${key}: ${this.errorMessage(error)}`,
+        );
+      } finally {
+        this.runningConnections.delete(key);
+      }
+    }
+    try {
+      await this.materializeDashboardSnapshotIfComplete();
+    } catch (error) {
+      this.logger.error(`Amazon dashboard snapshot failed: ${this.errorMessage(error)}`);
+    }
+  }
+
+  private async materializeDashboardSnapshotIfComplete(): Promise<void> {
+    const activeConnections = await this.prisma.amazonSpApiConnection.findMany({
+      where: { status: 1 },
+      include: { shop: { select: { name: true } } },
+      orderBy: { id: 'asc' },
+    });
+    if (!activeConnections.length) return;
+    const staleBefore = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    if (activeConnections.some((row) => row.lastSyncError || !row.lastSuccessfulSyncAt || row.lastSuccessfulSyncAt < staleBefore)) {
+      return;
+    }
+
+    const now = new Date();
+    const periodStart = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const connectionIds = activeConnections.map((row) => row.id);
+    const [orders, inventories, skus] = await Promise.all([
+      this.prisma.amazonFbaOrderItem.findMany({
+        where: {
+          connectionId: { in: connectionIds },
+          purchaseDate: { gte: periodStart },
+          orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
+        },
+        include: { connection: { include: { shop: { select: { name: true } } } } },
+      }),
+      this.prisma.amazonFbaInventoryItem.findMany({
+        where: { connectionId: { in: connectionIds } },
+        include: { connection: { include: { shop: { select: { name: true } } } } },
+      }),
+      this.prisma.sku.findMany({
+        where: { status: 1, productId: { not: null } },
+        select: { shop: true, sku: true, productId: true },
+      }),
+    ]);
+
+    const productByShopSku = new Map<string, string>();
+    for (const sku of skus) {
+      const productId = String(sku.productId ?? '').trim();
+      if (productId) productByShopSku.set(this.shopSkuKey(sku.shop, sku.sku), productId);
+    }
+    type SnapshotRow = {
+      sellerSku: string;
+      asin: string | null;
+      productName: string | null;
+      productId: string | null;
+      channel: 'fba' | 'unmatched';
+      orderedQty: number;
+      orderItemQty: number;
+      salesAmount: number;
+      fbaAvailableQty: number;
+      fbaInboundQty: number;
+      fbaReservedQty: number;
+      fbaUnfulfillableQty: number;
+    };
+    const grouped = new Map<string, SnapshotRow>();
+    const resolveGroup = (
+      connectionId: bigint,
+      shopName: string,
+      sellerSkuRaw: string | null,
+      asin: string | null,
+      productName: string | null,
+    ): SnapshotRow | null => {
+      const sellerSku = String(sellerSkuRaw ?? '').trim();
+      if (!sellerSku) return null;
+      const productId = productByShopSku.get(this.shopSkuKey(shopName, sellerSku)) ?? null;
+      const groupKey = productId ? `product:${productId}` : `unmatched:${connectionId.toString()}:${sellerSku}`;
+      let row = grouped.get(groupKey);
+      if (!row) {
+        row = {
+          sellerSku: `SP:${createHash('sha1').update(groupKey).digest('hex')}`,
+          asin,
+          productName,
+          productId,
+          channel: productId ? 'fba' : 'unmatched',
+          orderedQty: 0,
+          orderItemQty: 0,
+          salesAmount: 0,
+          fbaAvailableQty: 0,
+          fbaInboundQty: 0,
+          fbaReservedQty: 0,
+          fbaUnfulfillableQty: 0,
+        };
+        grouped.set(groupKey, row);
+      }
+      if (!row.asin && asin) row.asin = asin;
+      if (!row.productName && productName) row.productName = productName;
+      return row;
+    };
+
+    for (const order of orders) {
+      const row = resolveGroup(
+        order.connectionId,
+        order.connection.shop.name,
+        order.sellerSku,
+        order.asin,
+        order.productName,
+      );
+      if (!row) continue;
+      row.orderedQty += Math.max(0, order.quantityShipped);
+      row.orderItemQty += 1;
+      row.salesAmount += Number(order.itemAmount ?? 0);
+    }
+    for (const inventory of inventories) {
+      const row = resolveGroup(
+        inventory.connectionId,
+        inventory.connection.shop.name,
+        inventory.sellerSku,
+        inventory.asin,
+        inventory.productName,
+      );
+      if (!row) continue;
+      row.fbaAvailableQty += inventory.fulfillableQty;
+      row.fbaInboundQty += inventory.inboundWorkingQty + inventory.inboundShippedQty + inventory.inboundReceivingQty;
+      row.fbaReservedQty += inventory.reservedQty;
+      row.fbaUnfulfillableQty += inventory.unfulfillableQty;
+    }
+
+    const rows = Array.from(grouped.values());
+    const fbaRows = rows.filter((row) => row.channel === 'fba');
+    const unmatchedRows = rows.filter((row) => row.channel === 'unmatched');
+    const fbaOrderedQty = fbaRows.reduce((sum, row) => sum + row.orderedQty, 0);
+    const fbaAvailableQty = fbaRows.reduce((sum, row) => sum + row.fbaAvailableQty, 0);
+    const fbaInboundQty = fbaRows.reduce((sum, row) => sum + row.fbaInboundQty, 0);
+    const fbaReservedQty = fbaRows.reduce((sum, row) => sum + row.fbaReservedQty, 0);
+    const fbaUnfulfillableQty = fbaRows.reduce((sum, row) => sum + row.fbaUnfulfillableQty, 0);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.fbaSalesSnapshot.create({
+        data: {
+          fileName: 'Amazon SP-API 自动同步',
+          inventoryFileName: 'Amazon SP-API FBA Inventory API',
+          inventorySnapshotDate: now,
+          inventoryRows: inventories.length,
+          periodDays: 90,
+          periodStart,
+          periodEnd: now,
+          totalRows: rows.length,
+          fbaRows: fbaRows.length,
+          fbmRows: 0,
+          unmatchedRows: unmatchedRows.length,
+          ambiguousRows: 0,
+          fbaOrderedQty,
+          fbaAvailableQty,
+          fbaInboundQty,
+          fbaReservedQty,
+          fbaUnfulfillableQty,
+          importedBy: BigInt(0),
+          items: { create: rows },
+        },
+      });
+      const expired = await tx.fbaSalesSnapshot.findMany({
+        where: { fileName: { startsWith: 'Amazon SP-API' } },
+        orderBy: { id: 'desc' },
+        skip: 30,
+        select: { id: true },
+      });
+      if (expired.length) {
+        await tx.fbaSalesSnapshot.deleteMany({ where: { id: { in: expired.map((row) => row.id) } } });
+      }
+    });
+  }
+
+  private async runSync(
+    connection: AmazonSpApiConnection,
+    syncType: AmazonSpApiSyncType,
+    lookbackDays: number,
+  ): Promise<AmazonSyncResult> {
+    const run = await this.prisma.amazonSpApiSyncRun.create({
+      data: { connectionId: connection.id, syncType },
+    });
+    const counters: SyncCounters = { fetched: 0, created: 0, updated: 0 };
+    const errors: string[] = [];
+    const now = new Date();
+    try {
+      const accessToken = await this.getAccessToken(connection);
+      const marketplaceIds = this.readMarketplaceIds(connection.marketplaceIds);
+      const region = this.normalizeRegion(connection.region);
+      const orderWatermark = connection.lastOrdersSyncedAt
+        ? new Date(connection.lastOrdersSyncedAt.getTime() - ORDER_SYNC_OVERLAP_MS)
+        : new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
+      let attemptedOrderSync = false;
+      let orderSyncSuccessful = true;
+
+      if ((syncType === AmazonSpApiSyncType.full || syncType === AmazonSpApiSyncType.fbm_orders)
+          && connection.syncFbmOrders) {
+        attemptedOrderSync = true;
+        try {
+          this.addCounters(counters, await this.syncFbmOrders(connection, accessToken, region, marketplaceIds, orderWatermark));
+        } catch (error) {
+          orderSyncSuccessful = false;
+          errors.push(`FBM订单：${this.errorMessage(error)}`);
+        }
+      }
+      if ((syncType === AmazonSpApiSyncType.full || syncType === AmazonSpApiSyncType.fba_orders)
+          && connection.syncFbaOrders) {
+        attemptedOrderSync = true;
+        try {
+          this.addCounters(counters, await this.syncFbaOrders(connection, accessToken, region, marketplaceIds, orderWatermark));
+        } catch (error) {
+          orderSyncSuccessful = false;
+          errors.push(`FBA订单：${this.errorMessage(error)}`);
+        }
+      }
+
+      let attemptedInventorySync = false;
+      let inventorySyncSuccessful = true;
+      if ((syncType === AmazonSpApiSyncType.full || syncType === AmazonSpApiSyncType.fba_inventory)
+          && connection.syncFbaInventory) {
+        attemptedInventorySync = true;
+        try {
+          this.addCounters(counters, await this.syncFbaInventory(connection, accessToken, region, marketplaceIds, now));
+        } catch (error) {
+          inventorySyncSuccessful = false;
+          errors.push(`FBA库存：${this.errorMessage(error)}`);
+        }
+      }
+
+      const status = errors.length === 0
+        ? AmazonSpApiSyncStatus.success
+        : counters.fetched > 0
+          ? AmazonSpApiSyncStatus.partial
+          : AmazonSpApiSyncStatus.failed;
+      const finishedAt = new Date();
+      await this.prisma.$transaction([
+        this.prisma.amazonSpApiSyncRun.update({
+          where: { id: run.id },
+          data: {
+            status,
+            finishedAt,
+            fetchedCount: counters.fetched,
+            createdCount: counters.created,
+            updatedCount: counters.updated,
+            errorMessage: errors.length ? errors.join('\n').slice(0, 10000) : null,
+          },
+        }),
+        this.prisma.amazonSpApiConnection.update({
+          where: { id: connection.id },
+          data: {
+            ...(attemptedOrderSync && orderSyncSuccessful ? { lastOrdersSyncedAt: now } : {}),
+            ...(attemptedInventorySync && inventorySyncSuccessful ? { lastInventorySyncedAt: now } : {}),
+            ...(status === AmazonSpApiSyncStatus.success ? { lastSuccessfulSyncAt: finishedAt } : {}),
+            lastSyncError: errors.length ? errors.join('\n').slice(0, 10000) : null,
+          },
+        }),
+      ]);
+      return {
+        runId: run.id.toString(),
+        status,
+        syncType,
+        fetchedCount: counters.fetched,
+        createdCount: counters.created,
+        updatedCount: counters.updated,
+        errors,
+      };
+    } catch (error) {
+      const message = this.errorMessage(error);
+      await this.prisma.$transaction([
+        this.prisma.amazonSpApiSyncRun.update({
+          where: { id: run.id },
+          data: {
+            status: AmazonSpApiSyncStatus.failed,
+            finishedAt: new Date(),
+            fetchedCount: counters.fetched,
+            createdCount: counters.created,
+            updatedCount: counters.updated,
+            errorMessage: message.slice(0, 10000),
+          },
+        }),
+        this.prisma.amazonSpApiConnection.update({
+          where: { id: connection.id },
+          data: { lastSyncError: message.slice(0, 10000) },
+        }),
+      ]);
+      throw error;
+    }
+  }
+
+  private async syncFbmOrders(
+    connection: AmazonSpApiConnection,
+    accessToken: string,
+    region: AmazonSpApiRegion,
+    marketplaceIds: string[],
+    lastUpdatedAfter: Date,
+  ): Promise<SyncCounters> {
+    const includeRecipient = String(process.env.AMAZON_SP_API_INCLUDE_RECIPIENT ?? 'false').toLowerCase() === 'true';
+    const orders = await this.client.searchOrders({
+      accessToken,
+      region,
+      marketplaceIds,
+      fulfilledBy: 'MERCHANT',
+      lastUpdatedAfter,
+      includeRecipient,
+    });
+    const counters: SyncCounters = { fetched: 0, created: 0, updated: 0 };
+    const shop = await this.prisma.shop.findUnique({ where: { id: connection.shopId }, select: { name: true } });
+    const shopSkus = await this.prisma.sku.findMany({
+      where: { status: 1, shop: shop?.name ?? '', productId: { not: null } },
+      select: {
+        sku: true,
+        fbmSku: true,
+        rbSku: true,
+        masterProduct: { select: { stockQty: true } },
+      },
+    });
+    const availableStockBySku = new Map<string, number>();
+    for (const sku of shopSkus) {
+      for (const candidate of [sku.sku, sku.fbmSku, sku.rbSku]) {
+        const key = this.normalizeSku(candidate);
+        if (key && !availableStockBySku.has(key)) {
+          availableStockBySku.set(key, Number(sku.masterProduct?.stockQty ?? 0));
+        }
+      }
+    }
+    for (const order of orders) {
+      const dispatchMode = (order.orderItems ?? []).some((item) => {
+        const stockQty = availableStockBySku.get(this.normalizeSku(item.product?.sellerSku));
+        return stockQty === undefined || stockQty <= 0;
+      })
+        ? DISPATCH_CHINA_NO_STOCK
+        : DISPATCH_OVERSEAS;
+      for (const item of order.orderItems ?? []) {
+        counters.fetched += 1;
+        const result = await this.upsertFbmOrderItem(
+          connection,
+          shop?.name ?? null,
+          order,
+          item,
+          dispatchMode,
+        );
+        if (result) counters[result] += 1;
+      }
+    }
+    return counters;
+  }
+
+  private async upsertFbmOrderItem(
+    connection: AmazonSpApiConnection,
+    shopName: string | null,
+    order: AmazonOrderPayload,
+    item: AmazonOrderItemPayload,
+    dispatchMode: string,
+  ): Promise<'created' | 'updated' | null> {
+    const address = order.recipient?.deliveryAddress;
+    const fulfillment = order.fulfillment;
+    const itemFulfillment = item.fulfillment;
+    const existing = await this.prisma.amazonOrderRecord.findFirst({
+      where: {
+        orderId: order.orderId,
+        orderItemId: item.orderItemId,
+        OR: [
+          { spApiConnectionId: connection.id },
+          { spApiConnectionId: null, shopName: shopName ?? undefined },
+        ],
+      },
+      orderBy: { id: 'asc' },
+    });
+    const orderStatus = String(fulfillment?.fulfillmentStatus ?? '').trim();
+    if (!existing && !['UNSHIPPED', 'PARTIALLY_SHIPPED'].includes(orderStatus)) {
+      return null;
+    }
+    const quantityOrdered = this.nonNegativeInt(item.quantityOrdered);
+    const quantityShipped = this.nonNegativeInt(itemFulfillment?.quantityFulfilled);
+    const quantityToShip = ['SHIPPED', 'CANCELLED', 'UNFULFILLABLE'].includes(orderStatus)
+      ? 0
+      : itemFulfillment?.quantityUnfulfilled === undefined
+        ? Math.max(0, quantityOrdered - quantityShipped)
+        : this.nonNegativeInt(itemFulfillment.quantityUnfulfilled);
+    const lastUpdatedAt = this.parseOptionalDate(order.lastUpdatedTime);
+    const data = {
+      spApiConnectionId: connection.id,
+      orderId: order.orderId,
+      orderItemId: item.orderItemId,
+      purchaseDateRaw: order.createdTime ?? null,
+      buyerEmail: order.buyer?.buyerEmail ?? null,
+      buyerName: order.buyer?.buyerName ?? null,
+      buyerPhoneNumber: address?.phone ?? null,
+      sku: item.product?.sellerSku ?? null,
+      productName: item.product?.title ?? null,
+      customizedUrl: item.product?.customization?.customizedUrl ?? null,
+      quantityPurchased: quantityOrdered,
+      quantityShipped,
+      quantityToShip,
+      shipServiceLevel: fulfillment?.fulfillmentServiceLevel ?? null,
+      recipientName: address?.name ?? null,
+      shipAddress1: address?.addressLine1 ?? null,
+      shipAddress2: address?.addressLine2 ?? null,
+      shipAddress3: address?.addressLine3 ?? null,
+      shipCity: address?.city ?? null,
+      shipState: address?.stateOrRegion ?? null,
+      shipPostalCode: address?.postalCode ?? null,
+      shipCountry: address?.countryCode ?? null,
+      isBusinessOrder: order.programs?.includes('AMAZON_BUSINESS') ?? false,
+      purchaseOrderNumber: order.buyer?.buyerPurchaseOrderNumber ?? null,
+      priceDesignation: item.product?.price?.priceDesignation ?? null,
+      vergeOfCancellation: Boolean(item.cancellation?.cancellationRequest),
+      mallName: order.salesChannel?.marketplaceName ?? order.salesChannel?.marketplaceId ?? null,
+      shopName,
+      ...(!existing?.dispatchMode ? {
+        dispatchMode,
+        shippingOrigin: dispatchMode === DISPATCH_OVERSEAS ? '日本発' : '中国発',
+      } : {}),
+      orderStatus: orderStatus || null,
+      fulfillmentChannel: 'MFN',
+      amazonLastUpdatedAt: lastUpdatedAt,
+      sourceKind: 'sp_api',
+      sourceFileName: 'Amazon SP-API Orders v2026-01-01',
+      sourceFilePath: `sp-api:${connection.id.toString()}`,
+      rawPayload: JSON.parse(JSON.stringify({ order, item })) as Prisma.InputJsonValue,
+      csvImportedAt: new Date(),
+    } satisfies Prisma.AmazonOrderRecordUncheckedUpdateInput;
+
+    if (existing) {
+      await this.prisma.amazonOrderRecord.update({ where: { id: existing.id }, data });
+      return 'updated';
+    }
+    await this.prisma.amazonOrderRecord.create({
+      data: {
+        ...data,
+        rowHash: createHash('sha1')
+          .update(`${connection.id.toString()}|${order.orderId}|${item.orderItemId}`)
+          .digest('hex'),
+      },
+    });
+    return 'created';
+  }
+
+  private async syncFbaOrders(
+    connection: AmazonSpApiConnection,
+    accessToken: string,
+    region: AmazonSpApiRegion,
+    marketplaceIds: string[],
+    lastUpdatedAfter: Date,
+  ): Promise<SyncCounters> {
+    const orders = await this.client.searchOrders({
+      accessToken,
+      region,
+      marketplaceIds,
+      fulfilledBy: 'AMAZON',
+      lastUpdatedAfter,
+      includeRecipient: false,
+    });
+    const counters: SyncCounters = { fetched: 0, created: 0, updated: 0 };
+    for (const order of orders) {
+      for (const item of order.orderItems ?? []) {
+        counters.fetched += 1;
+        const key = {
+          connectionId: connection.id,
+          amazonOrderId: order.orderId,
+          amazonOrderItemId: item.orderItemId,
+        };
+        const existing = await this.prisma.amazonFbaOrderItem.findUnique({
+          where: { connectionId_amazonOrderId_amazonOrderItemId: key },
+          select: { id: true },
+        });
+        const proceeds = item.proceeds?.proceedsTotal;
+        const itemSubtotal = item.proceeds?.breakdowns?.find((row) => row.type === 'ITEM')?.subtotal;
+        const money = proceeds ?? itemSubtotal ?? item.product?.price?.unitPrice ?? item.product?.price?.listingPrice;
+        const rawAmount = this.decimalNumber(money?.amount);
+        const itemAmount = proceeds || itemSubtotal
+          ? rawAmount
+          : rawAmount * this.nonNegativeInt(item.quantityOrdered);
+        await this.prisma.amazonFbaOrderItem.upsert({
+          where: { connectionId_amazonOrderId_amazonOrderItemId: key },
+          create: {
+            ...key,
+            marketplaceId: order.salesChannel?.marketplaceId ?? null,
+            sellerSku: item.product?.sellerSku ?? null,
+            asin: item.product?.asin ?? null,
+            productName: item.product?.title ?? null,
+            orderStatus: order.fulfillment?.fulfillmentStatus ?? null,
+            quantityOrdered: this.nonNegativeInt(item.quantityOrdered),
+            quantityShipped: this.nonNegativeInt(item.fulfillment?.quantityFulfilled),
+            currency: money?.currencyCode ?? null,
+            itemAmount: new Prisma.Decimal(itemAmount),
+            purchaseDate: this.parseOptionalDate(order.createdTime),
+            lastUpdateDate: this.parseOptionalDate(order.lastUpdatedTime),
+            rawPayload: JSON.parse(JSON.stringify({ order, item })) as Prisma.InputJsonValue,
+          },
+          update: {
+            marketplaceId: order.salesChannel?.marketplaceId ?? null,
+            sellerSku: item.product?.sellerSku ?? null,
+            asin: item.product?.asin ?? null,
+            productName: item.product?.title ?? null,
+            orderStatus: order.fulfillment?.fulfillmentStatus ?? null,
+            quantityOrdered: this.nonNegativeInt(item.quantityOrdered),
+            quantityShipped: this.nonNegativeInt(item.fulfillment?.quantityFulfilled),
+            currency: money?.currencyCode ?? null,
+            itemAmount: new Prisma.Decimal(itemAmount),
+            purchaseDate: this.parseOptionalDate(order.createdTime),
+            lastUpdateDate: this.parseOptionalDate(order.lastUpdatedTime),
+            rawPayload: JSON.parse(JSON.stringify({ order, item })) as Prisma.InputJsonValue,
+          },
+        });
+        counters[existing ? 'updated' : 'created'] += 1;
+      }
+    }
+    return counters;
+  }
+
+  private async syncFbaInventory(
+    connection: AmazonSpApiConnection,
+    accessToken: string,
+    region: AmazonSpApiRegion,
+    marketplaceIds: string[],
+    snapshotAt: Date,
+  ): Promise<SyncCounters> {
+    const counters: SyncCounters = { fetched: 0, created: 0, updated: 0 };
+    for (const marketplaceId of marketplaceIds) {
+      const rows = await this.client.getInventorySummaries({ accessToken, region, marketplaceId });
+      const currentSellerSkus: string[] = [];
+      for (const row of rows) {
+        const sellerSku = String(row.sellerSku ?? '').trim();
+        if (!sellerSku) continue;
+        currentSellerSkus.push(sellerSku);
+        counters.fetched += 1;
+        const key = { connectionId: connection.id, marketplaceId, sellerSku };
+        const existing = await this.prisma.amazonFbaInventoryItem.findUnique({
+          where: { connectionId_marketplaceId_sellerSku: key },
+          select: { id: true },
+        });
+        const inventory = row.inventoryDetails;
+        const values = {
+          fnSku: row.fnSku ?? null,
+          asin: row.asin ?? null,
+          productName: row.productName ?? null,
+          fulfillableQty: this.nonNegativeInt(inventory?.fulfillableQuantity),
+          inboundWorkingQty: this.nonNegativeInt(inventory?.inboundWorkingQuantity),
+          inboundShippedQty: this.nonNegativeInt(inventory?.inboundShippedQuantity),
+          inboundReceivingQty: this.nonNegativeInt(inventory?.inboundReceivingQuantity),
+          reservedQty: this.nonNegativeInt(inventory?.reservedQuantity?.totalReservedQuantity),
+          unfulfillableQty: this.nonNegativeInt(inventory?.unfulfillableQuantity?.totalUnfulfillableQuantity),
+          totalQty: this.nonNegativeInt(row.totalQuantity),
+          snapshotAt,
+          rawPayload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue,
+        };
+        await this.prisma.amazonFbaInventoryItem.upsert({
+          where: { connectionId_marketplaceId_sellerSku: key },
+          create: { ...key, ...values },
+          update: values,
+        });
+        counters[existing ? 'updated' : 'created'] += 1;
+      }
+      await this.prisma.amazonFbaInventoryItem.deleteMany({
+        where: {
+          connectionId: connection.id,
+          marketplaceId,
+          ...(currentSellerSkus.length ? { sellerSku: { notIn: currentSellerSkus } } : {}),
+        },
+      });
+    }
+    return counters;
+  }
+
+  private async getConnection(idRaw: string): Promise<AmazonSpApiConnection> {
+    const id = parseId(idRaw, 'connectionId');
+    const connection = await this.prisma.amazonSpApiConnection.findUnique({ where: { id } });
+    if (!connection) throw new NotFoundException('Amazon SP-API连接不存在');
+    if (connection.status !== 1) throw new BadRequestException('Amazon SP-API连接已停用');
+    return connection;
+  }
+
+  private async getAccessToken(connection: AmazonSpApiConnection): Promise<string> {
+    if (connection.authorizationExpiresAt && connection.authorizationExpiresAt <= new Date()) {
+      throw new BadRequestException('Amazon授权已到期，请由该店铺主用户重新授权');
+    }
+    const refreshToken = this.cryptoService.decrypt(
+      connection.encryptedRefreshToken,
+      connection.tokenIv,
+      connection.tokenAuthTag,
+    );
+    return this.client.exchangeRefreshToken(refreshToken);
+  }
+
+  private serializeConnection(row: AmazonSpApiConnection & { shop: { id: bigint; name: string; status: number } }): unknown {
+    return {
+      id: row.id.toString(),
+      shop: { id: row.shop.id.toString(), name: row.shop.name, status: row.shop.status },
+      sellerId: row.sellerId,
+      region: row.region,
+      marketplaceIds: this.readMarketplaceIds(row.marketplaceIds),
+      status: row.status,
+      syncFbmOrders: row.syncFbmOrders,
+      syncFbaOrders: row.syncFbaOrders,
+      syncFbaInventory: row.syncFbaInventory,
+      lastOrdersSyncedAt: row.lastOrdersSyncedAt?.toISOString() ?? null,
+      lastInventorySyncedAt: row.lastInventorySyncedAt?.toISOString() ?? null,
+      lastSuccessfulSyncAt: row.lastSuccessfulSyncAt?.toISOString() ?? null,
+      lastSyncError: row.lastSyncError,
+      hasRefreshToken: Boolean(row.encryptedRefreshToken),
+      authorizationMode: row.authorizationMode,
+      authorizedAt: row.authorizedAt?.toISOString() ?? null,
+      authorizationExpiresAt: row.authorizationExpiresAt?.toISOString() ?? null,
+      renewalDue: Boolean(
+        row.authorizationExpiresAt
+          && row.authorizationExpiresAt.getTime() <= Date.now() + 30 * 24 * 60 * 60 * 1000,
+      ),
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private normalizeMarketplaceIds(values: string[]): Prisma.InputJsonValue {
+    const normalized = Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+    if (!normalized.length) throw new BadRequestException('请至少配置一个Marketplace ID');
+    return normalized;
+  }
+
+  private shopSkuKey(shop: unknown, sku: unknown): string {
+    return `${String(shop ?? '').trim()}\u0000${String(sku ?? '').trim()}`;
+  }
+
+  private normalizeSku(value: unknown): string {
+    return String(value ?? '').trim().toUpperCase();
+  }
+
+  private readMarketplaceIds(value: Prisma.JsonValue): string[] {
+    if (!Array.isArray(value)) throw new BadRequestException('Amazon Marketplace配置格式无效');
+    const values = value.map((item) => String(item ?? '').trim()).filter(Boolean);
+    if (!values.length) throw new BadRequestException('Amazon Marketplace配置为空');
+    return values;
+  }
+
+  private normalizeRegion(value: string): AmazonSpApiRegion {
+    if (value === 'NA' || value === 'EU' || value === 'FE') return value;
+    throw new BadRequestException(`不支持的Amazon SP-API区域：${value}`);
+  }
+
+  private buildAuthorizationUrl(state: string): string {
+    const applicationId = String(process.env.AMAZON_SP_API_APPLICATION_ID ?? '').trim();
+    if (!applicationId) {
+      throw new BadRequestException('请配置 AMAZON_SP_API_APPLICATION_ID');
+    }
+    const sellerCentralUrl = String(
+      process.env.AMAZON_SP_API_SELLER_CENTRAL_URL ?? 'https://sellercentral.amazon.co.jp',
+    ).trim().replace(/\/$/, '');
+    const url = new URL(`${sellerCentralUrl}/apps/authorize/consent`);
+    url.searchParams.set('application_id', applicationId);
+    url.searchParams.set('state', state);
+    if (String(process.env.AMAZON_SP_API_OAUTH_DRAFT ?? 'true').toLowerCase() === 'true') {
+      url.searchParams.set('version', 'beta');
+    }
+    return url.toString();
+  }
+
+  private getOAuthRedirectUri(): string {
+    const redirectUri = String(process.env.AMAZON_SP_API_OAUTH_REDIRECT_URI ?? '').trim();
+    if (!redirectUri || !redirectUri.startsWith('https://')) {
+      throw new BadRequestException('请配置HTTPS的 AMAZON_SP_API_OAUTH_REDIRECT_URI');
+    }
+    return redirectUri;
+  }
+
+  getOAuthReturnUrl(status: 'success' | 'error', reason?: string): string {
+    const configured = String(process.env.AMAZON_SP_API_OAUTH_RETURN_URL ?? '/').trim() || '/';
+    const separator = configured.includes('?') ? '&' : '?';
+    return `${configured}${separator}amazon_oauth=${encodeURIComponent(status)}${
+      reason ? `&amazon_oauth_reason=${encodeURIComponent(reason)}` : ''
+    }`;
+  }
+
+  private addCounters(target: SyncCounters, value: SyncCounters): void {
+    target.fetched += value.fetched;
+    target.created += value.created;
+    target.updated += value.updated;
+  }
+
+  private nonNegativeInt(value: unknown): number {
+    const number = Number(value ?? 0);
+    return Number.isFinite(number) ? Math.max(0, Math.round(number)) : 0;
+  }
+
+  private decimalNumber(value: unknown): number {
+    const number = Number(value ?? 0);
+    return Number.isFinite(number) ? number : 0;
+  }
+
+  private parseOptionalDate(value: unknown): Date | null {
+    const date = new Date(String(value ?? ''));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
