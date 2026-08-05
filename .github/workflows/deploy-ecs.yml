@@ -217,8 +217,8 @@ jobs:
             timed "smoke_head_root" curl -fI http://127.0.0.1:3000/
             timed "smoke_head_app_js" curl -fI http://127.0.0.1:3000/app.js
             if [ -e /etc/nginx/sites-enabled/www.fulangke.cn ]; then
-              timed "smoke_company_site" sh -c "curl -fsS -H 'Host: www.fulangke.cn' http://127.0.0.1/ | grep -q 'Fulangke WMS'"
-              timed "smoke_privacy_policy" sh -c "curl -fsS -H 'Host: www.fulangke.cn' http://127.0.0.1/privacy/ | grep -q '隐私政策与数据处理说明'"
+              timed "smoke_company_site" sh -c "curl -fsS --resolve 'www.fulangke.cn:443:127.0.0.1' https://www.fulangke.cn/ | grep -q 'Fulangke WMS'"
+              timed "smoke_privacy_policy" sh -c "curl -fsS --resolve 'www.fulangke.cn:443:127.0.0.1' https://www.fulangke.cn/privacy/ | grep -q '隐私政策与数据处理说明'"
             fi
             timed "smoke_download_app_js" curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
             timed "smoke_grep_marker" grep -q "normalizeErrorMessage" /tmp/wms_app.js
