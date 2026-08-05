@@ -18,6 +18,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AmazonSpApiClient } from './amazon-sp-api.client';
 import { AmazonSpApiCryptoService } from './amazon-sp-api-crypto.service';
 import { AmazonOrderItemPayload, AmazonOrderPayload, AmazonSpApiRegion } from './amazon-sp-api.types';
+import { ContinueAmazonAppstoreOAuthDto } from './dto/continue-amazon-appstore-oauth.dto';
 import { StartAmazonOAuthDto } from './dto/start-amazon-oauth.dto';
 import { SyncAmazonConnectionDto } from './dto/sync-amazon-connection.dto';
 import { UpdateAmazonConnectionDto } from './dto/update-amazon-connection.dto';
@@ -30,6 +31,30 @@ const DISPATCH_OVERSEAS = 'overseas';
 const DISPATCH_CHINA_NO_STOCK = 'china_no_stock';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_AUTHORIZATION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
+const AMAZON_CALLBACK_PATH_PREFIX = '/apps/authorize/confirm/';
+const AMAZON_DOMAIN_SUFFIXES = [
+  'amazon.com',
+  'amazon.ca',
+  'amazon.com.mx',
+  'amazon.com.br',
+  'amazon.co.uk',
+  'amazon.de',
+  'amazon.fr',
+  'amazon.it',
+  'amazon.es',
+  'amazon.nl',
+  'amazon.se',
+  'amazon.pl',
+  'amazon.com.be',
+  'amazon.co.jp',
+  'amazon.com.au',
+  'amazon.in',
+  'amazon.sg',
+  'amazon.ae',
+  'amazon.sa',
+  'amazon.com.tr',
+  'amazon.eg',
+];
 
 interface SyncCounters {
   fetched: number;
@@ -70,30 +95,50 @@ export class AmazonSpApiService {
     authorizationUrl: string;
     expiresAt: string;
   }> {
-    const shopId = parseId(payload.shopId, 'shopId');
-    const shop = await this.prisma.shop.findUnique({ where: { id: shopId } });
-    if (!shop) throw new NotFoundException('店铺不存在');
-    const rawState = randomBytes(32).toString('base64url');
-    const stateHash = createHash('sha256').update(rawState).digest('hex');
-    const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS);
-    await this.prisma.amazonSpApiOAuthState.create({
-      data: {
-        shopId,
-        stateHash,
-        region: payload.region,
-        marketplaceIds: this.normalizeMarketplaceIds(payload.marketplaceIds),
-        syncFbmOrders: payload.syncFbmOrders ?? true,
-        syncFbaOrders: payload.syncFbaOrders ?? true,
-        syncFbaInventory: payload.syncFbaInventory ?? true,
-        createdBy,
-        expiresAt,
-      },
-    });
-    await this.prisma.amazonSpApiOAuthState.deleteMany({
-      where: { expiresAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
-    });
+    const { rawState, expiresAt } = await this.createOAuthState(payload, createdBy);
     return {
       authorizationUrl: this.buildAuthorizationUrl(rawState),
+      expiresAt: expiresAt.toISOString(),
+    };
+  }
+
+  async continueAppstoreOAuth(
+    payload: ContinueAmazonAppstoreOAuthDto,
+    createdBy: bigint,
+  ): Promise<{ amazonConfirmationUrl: string; expiresAt: string }> {
+    const callbackUrl = this.validateAmazonCallbackUri(payload.amazonCallbackUri);
+    const amazonState = String(payload.amazonState ?? '').trim();
+    const expectedSellerId = String(payload.sellingPartnerId ?? '').trim();
+    if (!amazonState || !expectedSellerId) {
+      throw new BadRequestException('Amazon应用商店授权参数不完整');
+    }
+
+    const shopId = parseId(payload.shopId, 'shopId');
+    const existingForShop = await this.prisma.amazonSpApiConnection.findUnique({ where: { shopId } });
+    if (existingForShop && existingForShop.sellerId !== expectedSellerId) {
+      throw new ConflictException('所选系统店铺已关联另一个Amazon Seller ID');
+    }
+    const existingForSeller = await this.prisma.amazonSpApiConnection.findFirst({
+      where: { sellerId: expectedSellerId, NOT: { shopId } },
+    });
+    if (existingForSeller) {
+      throw new ConflictException('该Amazon店铺已关联其他系统店铺，不能重复绑定');
+    }
+
+    const { rawState, expiresAt } = await this.createOAuthState(
+      payload,
+      createdBy,
+      expectedSellerId,
+    );
+    callbackUrl.searchParams.set('amazon_state', amazonState);
+    callbackUrl.searchParams.set('state', rawState);
+    callbackUrl.searchParams.set('redirect_uri', this.getOAuthRedirectUri());
+    if (payload.version === 'beta' || this.isDraftApplication()) {
+      callbackUrl.searchParams.set('version', 'beta');
+    }
+
+    return {
+      amazonConfirmationUrl: callbackUrl.toString(),
       expiresAt: expiresAt.toISOString(),
     };
   }
@@ -114,11 +159,28 @@ export class AmazonSpApiService {
     if (!pending || pending.consumedAt || pending.expiresAt <= new Date()) {
       throw new BadRequestException('Amazon OAuth state无效或已过期，请重新发起授权');
     }
+    if (pending.expectedSellerId && pending.expectedSellerId !== sellingPartnerId) {
+      throw new BadRequestException('Amazon OAuth回调Seller ID与授权请求不一致');
+    }
     const existing = await this.prisma.amazonSpApiConnection.findUnique({
       where: { shopId: pending.shopId },
     });
     if (existing && existing.sellerId !== sellingPartnerId) {
       throw new ConflictException('回调Seller ID与该系统店铺原授权不一致');
+    }
+    const duplicate = await this.prisma.amazonSpApiConnection.findFirst({
+      where: { sellerId: sellingPartnerId, NOT: { shopId: pending.shopId } },
+    });
+    if (duplicate) {
+      throw new ConflictException('该Amazon店铺已关联其他系统店铺，不能重复绑定');
+    }
+    const claimedAt = new Date();
+    const claimed = await this.prisma.amazonSpApiOAuthState.updateMany({
+      where: { id: pending.id, consumedAt: null, expiresAt: { gt: claimedAt } },
+      data: { consumedAt: claimedAt },
+    });
+    if (claimed.count !== 1) {
+      throw new BadRequestException('Amazon OAuth state已被使用，请重新发起授权');
     }
     const redirectUri = this.getOAuthRedirectUri();
     const token = await this.client.exchangeAuthorizationCode(authorizationCode, redirectUri);
@@ -158,10 +220,6 @@ export class AmazonSpApiService {
           syncFbaInventory: pending.syncFbaInventory,
           lastSyncError: null,
         },
-      });
-      await tx.amazonSpApiOAuthState.update({
-        where: { id: pending.id },
-        data: { consumedAt: authorizedAt },
       });
     });
   }
@@ -949,6 +1007,67 @@ export class AmazonSpApiService {
     throw new BadRequestException(`不支持的Amazon SP-API区域：${value}`);
   }
 
+  private async createOAuthState(
+    payload: StartAmazonOAuthDto,
+    createdBy: bigint,
+    expectedSellerId?: string,
+  ): Promise<{ rawState: string; expiresAt: Date }> {
+    const shopId = parseId(payload.shopId, 'shopId');
+    const shop = await this.prisma.shop.findUnique({ where: { id: shopId } });
+    if (!shop) throw new NotFoundException('店铺不存在');
+
+    const rawState = randomBytes(32).toString('base64url');
+    const stateHash = createHash('sha256').update(rawState).digest('hex');
+    const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MS);
+    await this.prisma.amazonSpApiOAuthState.create({
+      data: {
+        shopId,
+        stateHash,
+        region: payload.region,
+        marketplaceIds: this.normalizeMarketplaceIds(payload.marketplaceIds),
+        syncFbmOrders: payload.syncFbmOrders ?? true,
+        syncFbaOrders: payload.syncFbaOrders ?? true,
+        syncFbaInventory: payload.syncFbaInventory ?? true,
+        expectedSellerId: expectedSellerId || null,
+        createdBy,
+        expiresAt,
+      },
+    });
+    await this.prisma.amazonSpApiOAuthState.deleteMany({
+      where: { expiresAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+    });
+    return { rawState, expiresAt };
+  }
+
+  private validateAmazonCallbackUri(value: string): URL {
+    let url: URL;
+    try {
+      url = new URL(String(value ?? '').trim());
+    } catch {
+      throw new BadRequestException('Amazon callback URI格式无效');
+    }
+    const hostname = url.hostname.toLowerCase();
+    const isAmazonHostname = AMAZON_DOMAIN_SUFFIXES.some(
+      (suffix) => hostname === suffix || hostname.endsWith(`.${suffix}`),
+    );
+    if (
+      url.protocol !== 'https:'
+      || (url.port && url.port !== '443')
+      || url.username
+      || url.password
+      || url.hash
+      || !isAmazonHostname
+      || !url.pathname.startsWith(AMAZON_CALLBACK_PATH_PREFIX)
+    ) {
+      throw new BadRequestException('Amazon callback URI未通过安全校验');
+    }
+    return url;
+  }
+
+  private isDraftApplication(): boolean {
+    return String(process.env.AMAZON_SP_API_OAUTH_DRAFT ?? 'true').toLowerCase() === 'true';
+  }
+
   private buildAuthorizationUrl(state: string): string {
     const applicationId = String(process.env.AMAZON_SP_API_APPLICATION_ID ?? '').trim();
     if (!applicationId) {
@@ -960,7 +1079,7 @@ export class AmazonSpApiService {
     const url = new URL(`${sellerCentralUrl}/apps/authorize/consent`);
     url.searchParams.set('application_id', applicationId);
     url.searchParams.set('state', state);
-    if (String(process.env.AMAZON_SP_API_OAUTH_DRAFT ?? 'true').toLowerCase() === 'true') {
+    if (this.isDraftApplication()) {
       url.searchParams.set('version', 'beta');
     }
     return url.toString();

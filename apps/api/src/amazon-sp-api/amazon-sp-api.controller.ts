@@ -6,6 +6,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { AmazonSpApiService } from './amazon-sp-api.service';
+import { ContinueAmazonAppstoreOAuthDto } from './dto/continue-amazon-appstore-oauth.dto';
 import { StartAmazonOAuthDto } from './dto/start-amazon-oauth.dto';
 import { SyncAmazonConnectionDto } from './dto/sync-amazon-connection.dto';
 import { UpdateAmazonConnectionDto } from './dto/update-amazon-connection.dto';
@@ -28,6 +29,15 @@ export class AmazonSpApiController {
     @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
     return this.service.startOAuth(payload, user.id);
+  }
+
+  @Post('oauth/appstore/continue')
+  @Roles(Role.admin)
+  async continueAppstoreOAuth(
+    @Body() payload: ContinueAmazonAppstoreOAuthDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    return this.service.continueAppstoreOAuth(payload, user.id);
   }
 
   @Put('connections/:id')

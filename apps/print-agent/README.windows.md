@@ -18,7 +18,7 @@ Make sure the Windows printer names include:
 Copy `.env.example` to `.env`, then edit:
 
 ```env
-WMS_BASE_URL=https://your-wms-domain
+WMS_BASE_URL=https://wms.fulangke.cn
 PRINT_AGENT_API_KEY=replace-with-the-same-key-as-server
 PRINT_AGENT_NAME=warehouse-win-01
 PRINT_AGENT_PRINTERS=yamato,nekoposu
@@ -26,6 +26,9 @@ PRINT_AGENT_WINDOWS_PRINT_TIMEOUT_SEC=20
 # Recommended for stable silent PDF printing on Windows:
 # PRINT_AGENT_WINDOWS_PDF_TOOL_PATH=SumatraPDF.exe
 ```
+
+Do not keep the legacy `http://8.134.176.116:3000` address in `.env`. After changing
+`WMS_BASE_URL`, restart the print agent or its scheduled task.
 
 The server must use the same `PRINT_AGENT_API_KEY` and must run with:
 

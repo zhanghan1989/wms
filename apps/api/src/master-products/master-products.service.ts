@@ -120,9 +120,9 @@ type MasterProductExportFilterKey =
 const CREATE_CHUNK_SIZE = 1000;
 const UPDATE_CHUNK_SIZE = 200;
 const MASTER_PRODUCT_TEMPLATE_FILE = '产品列表.xlsx';
-const XIYA_EXPORT_URL = 'http://103.236.55.93/api/external/products';
-const XIYA_EXPORT_API_KEY = 'xiya-export-4HHGJWBDGg29yp8W8TK3QRQ3m1A';
-const XIYA_COMPANY_NAME = 'XYJG';
+const XIYA_EXPORT_URL = process.env.XIYA_EXPORT_URL || 'http://103.236.55.93/api/external/products';
+const XIYA_EXPORT_API_KEY = process.env.XIYA_EXPORT_API_KEY || '';
+const XIYA_COMPANY_NAME = process.env.XIYA_COMPANY_NAME || 'XYJG';
 const XIYA_SUCCESS_CODES = new Set([0, 200]);
 const MASTER_PRODUCT_SYNC_CRON = '0 0 0 * * 1';
 

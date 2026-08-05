@@ -6,6 +6,7 @@ const AUTH_DEPLOY_VERSION_COOKIE_KEY = "wms_auth_deploy_version";
 const AUTH_DEPLOY_VERSION_SESSION_STORAGE_KEY = "wms_auth_deploy_version_session";
 const AUTH_DEPLOY_VERSION_HASH_PARAM = "wmsDeployVersion";
 const DEPLOY_RELOGIN_MESSAGE = "系统已更新，请重新登录后继续操作。";
+const AMAZON_APPSTORE_AUTH_STORAGE_KEY = "amazon_appstore_authorization_request";
 
 function readCookieValue(name) {
   const target = `${String(name || "").trim()}=`;
@@ -3004,7 +3005,9 @@ async function openInventoryHomeDefault({ markAsUserNavigation = false } = {}) {
 
 async function openInventoryStartupView() {
   if (!state.token) return;
+  if (state.me?.mfaEnrollmentRequired) return;
   if (hasUserNavigatedSinceBootstrap) return;
+  if (await openPendingAmazonAppstoreAuthorization()) return;
   if (await openPendingMasterProductDetailFromUrl()) return;
   if (hasUserNavigatedSinceBootstrap) return;
   await openInventoryHomeDefault();
@@ -5309,6 +5312,80 @@ function handleAmazonOAuthReturn() {
   }
 }
 
+function captureAmazonAppstoreAuthorizationRequest() {
+  const url = new URL(window.location.href);
+  const parameterNames = ['amazon_callback_uri', 'amazon_state', 'selling_partner_id', 'version'];
+  if (!parameterNames.some((name) => url.searchParams.has(name))) return;
+
+  const request = {
+    amazonCallbackUri: String(url.searchParams.get('amazon_callback_uri') || '').trim(),
+    amazonState: String(url.searchParams.get('amazon_state') || '').trim(),
+    sellingPartnerId: String(url.searchParams.get('selling_partner_id') || '').trim(),
+    version: String(url.searchParams.get('version') || '').trim(),
+  };
+  try {
+    window.sessionStorage.setItem(AMAZON_APPSTORE_AUTH_STORAGE_KEY, JSON.stringify(request));
+  } catch {}
+  parameterNames.forEach((name) => url.searchParams.delete(name));
+  window.history.replaceState({}, '', url.toString());
+}
+
+function readAmazonAppstoreAuthorizationRequest() {
+  try {
+    const raw = String(window.sessionStorage.getItem(AMAZON_APPSTORE_AUTH_STORAGE_KEY) || '').trim();
+    if (!raw) return null;
+    const value = JSON.parse(raw);
+    return value && typeof value === 'object' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearAmazonAppstoreAuthorizationRequest() {
+  try {
+    window.sessionStorage.removeItem(AMAZON_APPSTORE_AUTH_STORAGE_KEY);
+  } catch {}
+}
+
+async function openPendingAmazonAppstoreAuthorization() {
+  const pending = readAmazonAppstoreAuthorizationRequest();
+  if (!pending || !state.token) return false;
+  if (!pending.amazonCallbackUri || !pending.amazonState || !pending.sellingPartnerId) {
+    clearAmazonAppstoreAuthorizationRequest();
+    showToast('Amazon授权请求参数不完整，请从Seller Central重新发起', true);
+    return true;
+  }
+  if (state.me?.role !== 'admin') {
+    showToast('只有系统管理员可以关联Amazon店铺，请使用管理员账号登录', true);
+    return true;
+  }
+
+  await Promise.all([loadShops(), loadAmazonSpApiConnections()]);
+  const shopSelect = $('amazonAppstoreShopId');
+  const activeShops = [...state.shops]
+    .filter((shop) => Number(shop.status ?? 1) === 1)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN', { numeric: true }));
+  shopSelect.innerHTML = activeShops
+    .map((shop) => `<option value="${escapeHtml(shop.id)}">${escapeHtml(shop.name)}</option>`)
+    .join('');
+  if (!activeShops.length) {
+    showToast('系统中没有可关联的店铺，请先新增店铺', true);
+    return true;
+  }
+
+  const existingMatch = state.amazonSpApiConnections.find(
+    (connection) => connection?.sellerId === pending.sellingPartnerId,
+  );
+  if (existingMatch?.shop?.id) {
+    shopSelect.value = String(existingMatch.shop.id);
+  }
+  $('amazonAppstoreSellerId').value = pending.sellingPartnerId;
+  $('amazonAppstoreRegion').value = 'FE';
+  $('amazonAppstoreMarketplaceIds').value = 'A1VC38T7YXB528';
+  openModal('amazonAppstoreAuthorizationModal');
+  return true;
+}
+
 function bootstrapAuthTokenFromLocationHash() {
   const hash = String(window.location.hash || "").replace(/^#/, "").trim();
   if (!hash) return false;
@@ -6349,6 +6426,37 @@ async function startAmazonOAuth() {
   const authorizationUrl = String(result?.authorizationUrl || '').trim();
   if (!authorizationUrl) throw new Error('后台未返回Amazon授权地址');
   window.location.assign(authorizationUrl);
+}
+
+async function openMfaSetupModal() {
+  if (state.me?.mfaEnabled) {
+    showToast('当前账号已经启用MFA');
+    return;
+  }
+  const result = await request('/auth/me/mfa/setup', { method: 'POST', body: '{}' });
+  $('mfaSetupAccount').value = `Fulangke WMS / ${state.me?.username || ''}`;
+  $('mfaSetupSecret').value = String(result?.secret || '');
+  $('mfaSetupCode').value = '';
+  openModal('mfaSetupModal');
+}
+
+function buildAmazonAppstoreOAuthPayload(pending) {
+  const marketplaceIds = String($('amazonAppstoreMarketplaceIds').value || '')
+    .split(/[\s,，;；]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return {
+    shopId: String($('amazonAppstoreShopId').value || ''),
+    region: $('amazonAppstoreRegion').value,
+    marketplaceIds,
+    syncFbmOrders: $('amazonAppstoreSyncFbm').checked,
+    syncFbaOrders: $('amazonAppstoreSyncFba').checked,
+    syncFbaInventory: $('amazonAppstoreSyncInventory').checked,
+    amazonCallbackUri: pending.amazonCallbackUri,
+    amazonState: pending.amazonState,
+    sellingPartnerId: pending.sellingPartnerId,
+    ...(pending.version === 'beta' ? { version: 'beta' } : {}),
+  };
 }
 
 function getShelvesSortedForManage() {
@@ -12926,6 +13034,11 @@ async function reloadAll() {
     return;
   }
 
+  if (state.me?.mfaEnrollmentRequired) {
+    await openMfaSetupModal();
+    return;
+  }
+
   const isAdmin = hasAdminAccess(state.me?.role);
   const tasks = [
     loadInventory(),
@@ -12975,6 +13088,7 @@ function bindForms() {
           body: JSON.stringify({
             username: $("gateUsername").value.trim(),
             password: $("gatePassword").value,
+            ...($("gateMfaCode").value.trim() ? { mfaCode: $("gateMfaCode").value.trim() } : {}),
           }),
         });
         hasUserNavigatedSinceBootstrap = false;
@@ -13617,8 +13731,8 @@ function bindForms() {
         }
         const mode = String($("resetPasswordMode").value || "reset");
         const password = String($("resetPasswordNewPassword").value || "").trim();
-        if (password.length < 6 || password.length > 64) {
-          throw new Error("密码长度需为6到64位");
+        if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])\S{12,64}$/.test(password)) {
+          throw new Error("密码必须为12到64位，并同时包含大写字母、小写字母、数字和特殊字符，且不能包含空格");
         }
 
         await request(`/users/${encodeURIComponent(userId)}/reset-password`, {
@@ -15467,9 +15581,42 @@ function bindForms() {
   $("openProfileModal").addEventListener("click", () => {
     $("profileUsername").value = state.me?.username || "";
     $("profileRole").value = state.me?.role || "";
+    $("profileMfaStatus").value = state.me?.mfaEnabled ? "已启用" : "未启用";
+    $("openMfaSetupBtn").classList.toggle("hidden", Boolean(state.me?.mfaEnabled));
     $("profileCurrentPassword").value = "";
     $("profileNewPassword").value = "";
     openModal("profileModal");
+  });
+
+  $("openMfaSetupBtn")?.addEventListener("click", async () => {
+    try {
+      closeModal("profileModal");
+      await openMfaSetupModal();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("mfaSetupForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const code = String($("mfaSetupCode").value || "").trim();
+    try {
+      await withBusyButton($("mfaSetupEnableBtn"), "验证中...", async () => {
+        const result = await request("/auth/me/mfa/enable", {
+          method: "POST",
+          body: JSON.stringify({ code }),
+        });
+        state.token = persistAuthToken(result.accessToken);
+        state.authDeployVersion = persistAuthDeployVersion(result.deployVersion);
+        state.currentDeployVersion = String(result.deployVersion || "").trim();
+        closeModal("mfaSetupModal");
+        await reloadAll();
+        await openInventoryStartupView();
+        showToast("MFA已启用");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   $("profileForm").addEventListener("submit", async (event) => {
@@ -15910,6 +16057,35 @@ function bindDelegates() {
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $('amazonAppstoreAuthorizationForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const pending = readAmazonAppstoreAuthorizationRequest();
+    if (!pending) {
+      showToast('Amazon授权请求已失效，请从Seller Central重新发起', true);
+      return;
+    }
+    try {
+      await withBusyButton($('amazonAppstoreContinueBtn'), '正在返回 Amazon...', async () => {
+        const result = await request('/amazon-sp-api/oauth/appstore/continue', {
+          method: 'POST',
+          body: JSON.stringify(buildAmazonAppstoreOAuthPayload(pending)),
+        });
+        const confirmationUrl = String(result?.amazonConfirmationUrl || '').trim();
+        if (!confirmationUrl) throw new Error('后台未返回Amazon确认地址');
+        clearAmazonAppstoreAuthorizationRequest();
+        window.location.assign(confirmationUrl);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $('amazonAppstoreCancelBtn')?.addEventListener('click', () => {
+    clearAmazonAppstoreAuthorizationRequest();
+    closeModal('amazonAppstoreAuthorizationModal');
+    showToast('已取消本次Amazon店铺授权');
   });
 
   $('amazonSpApiReauthorizeBtn')?.addEventListener('click', async (event) => {
@@ -17883,6 +18059,7 @@ updateManualOrdersSelectAll();
 updateFbaOutboundButtonState();
 updateFbaSelectAll();
 bootstrapAuthTokenFromLocationHash();
+captureAmazonAppstoreAuthorizationRequest();
 handleAmazonOAuthReturn();
 switchPanel("inventory", { markAsUserNavigation: false });
 openStartupView()

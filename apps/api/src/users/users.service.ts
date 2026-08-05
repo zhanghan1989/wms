@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../constants/audit-event-type';
 import { parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
+import { isStrongPassword, STRONG_PASSWORD_MESSAGE } from '../auth/password-policy';
 import { UserOptionsService } from '../user-options/user-options.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -314,8 +315,8 @@ export class UsersService {
     }
 
     const nextPassword = String(password || '').trim();
-    if (!nextPassword || nextPassword.length < 6 || nextPassword.length > 64) {
-      throw new BadRequestException('密码长度需为6到64位');
+    if (!isStrongPassword(nextPassword)) {
+      throw new BadRequestException(STRONG_PASSWORD_MESSAGE);
     }
 
     const passwordHash = await hash(nextPassword, 10);
@@ -325,6 +326,7 @@ export class UsersService {
         where: { id },
         data: {
           passwordHash,
+          passwordChangedAt: new Date(),
           status: 1,
         },
       });
