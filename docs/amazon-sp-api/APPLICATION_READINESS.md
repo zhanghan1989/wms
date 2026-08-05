@@ -23,7 +23,7 @@
 | P0 | 启用密码轮换 | 设置 `AUTH_REQUIRE_PASSWORD_ROTATION=true`，旧密码用户按系统提示更新 | 生产配置核验、一次成功改密记录 |
 | P0 | 轮换 MySQL root 密码 | 健康检查配置部署后生成随机密码、执行 `ALTER USER`、更新 ECS `.env` 并验证容器健康 | 脱敏变更记录、容器健康输出 |
 | P0 | 轮换外部业务凭证 | XIYA 与 UOF 签发新密钥，旧密钥撤销并验证接口 | 对方确认、轮换日期、接口成功记录 |
-| P0 | 阿里云主机和网络保护 | 主机只读基线已完成；云安全中心高级能力未启用，安全组/UFW 和 64 个待更新软件包仍需整改 | `HOST_SECURITY_BASELINE.md`、控制台截图 |
+| P0 | 阿里云主机和网络保护 | 主机只读基线已完成，公网 RDP/8888 已删除；云安全中心高级能力、全网 SSH、UFW 和 64 个待更新软件包仍需整改 | `HOST_SECURITY_BASELINE.md`、控制台截图 |
 | P0 | 首次事件响应演练 | 按计划完成桌面演练，核验 Amazon 当前报告渠道和 24 小时要求 | `INCIDENT_RESPONSE_DRILL.md` 签字记录 |
 | P0 | 首次备份恢复测试 | 当前 0 个快照/策略；先开通独立备份，再恢复到隔离环境并记录 RPO/RTO | `BACKUP_RESTORE_TEST.md`、快照策略截图 |
 | P0 | 漏洞管理基线 | 依赖扫描和发布门禁已完成；继续完成主机、Web 扫描及年度渗透测试安排 | `VULNERABILITY_MANAGEMENT.md` |
