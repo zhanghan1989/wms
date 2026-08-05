@@ -165,6 +165,11 @@ jobs:
             export DEPLOY_SESSION_VERSION
             echo "Using DEPLOY_SESSION_VERSION=${DEPLOY_SESSION_VERSION}"
             timed "git_show_head" git show -s --format="%H %s" HEAD
+            timed "publish_company_site" sh -c "install -d -m 0755 /var/www/fulangke && find /var/www/fulangke -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && cp -a apps/company-site/. /var/www/fulangke/ && chmod -R a+rX /var/www/fulangke"
+            if command -v nginx >/dev/null 2>&1 && [ -e /etc/nginx/sites-enabled/www.fulangke.cn ]; then
+              timed "nginx_config_test" nginx -t
+              timed "nginx_reload" systemctl reload nginx
+            fi
             IMAGE_TAR="/tmp/wms-api-${DEPLOY_REF}.tar.gz"
             IMAGE_TAG="wms-api:${DEPLOY_REF}"
             if [ ! -s "${IMAGE_TAR}" ]; then
@@ -211,6 +216,10 @@ jobs:
             echo "<<< [done] smoke_wait_ready ($((SMOKE_END_TS - SMOKE_START_TS))s)"
             timed "smoke_head_root" curl -fI http://127.0.0.1:3000/
             timed "smoke_head_app_js" curl -fI http://127.0.0.1:3000/app.js
+            if [ -e /etc/nginx/sites-enabled/www.fulangke.cn ]; then
+              timed "smoke_company_site" sh -c "curl -fsS -H 'Host: www.fulangke.cn' http://127.0.0.1/ | grep -q 'Fulangke WMS'"
+              timed "smoke_privacy_policy" sh -c "curl -fsS -H 'Host: www.fulangke.cn' http://127.0.0.1/privacy/ | grep -q '隐私政策与数据处理说明'"
+            fi
             timed "smoke_download_app_js" curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
             timed "smoke_grep_marker" grep -q "normalizeErrorMessage" /tmp/wms_app.js
             timed "cleanup_image_tar" rm -f "${IMAGE_TAR}"
