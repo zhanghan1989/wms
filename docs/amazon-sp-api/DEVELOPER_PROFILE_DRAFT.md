@@ -62,8 +62,8 @@
 | 是否加密传输中的 Amazon 信息？ | **是** | 官网、WMS、OAuth 均为 HTTPS；提交前保存 TLS/响应头检查证据。 |
 | 是否有明确职责、6 个月审查和 24 小时通知的事件响应计划？ | **待负责人批准后选是** | 采用 `INCIDENT_RESPONSE_PLAN.md`，完成首次桌面演练并签字。 |
 | 是否在 24 小时内按 Amazon 指定渠道报告？ | **待负责人批准后选是** | 表单若仍显示 `security@amazon.com`，同时遵循表单要求；提交前依据当前 DPP/官方公告核验有效事件报告渠道，不能只依赖已宣布停用的历史邮箱。 |
-| 是否强制 12 位复杂密码、MFA、365 天到期和年度轮换？ | **暂选否** | WMS 实现并启用 MFA、密码复杂度及轮换后才能选“是”。 |
-| 凭证是否安全存储，不在公共仓库共享或硬编码？ | **暂选否** | 本地代码已移除硬编码；ECS 完成全部旧密钥轮换并验证仓库历史无有效密钥后改为“是”。 |
+| 是否强制 12 位复杂密码、MFA、365 天到期和年度轮换？ | **暂选否** | WMS 已实现密码复杂度、MFA 注册和 365 天轮换，但生产环境尚未对全部账号强制；全部账号完成 MFA 注册并启用强制开关后改为“是”。 |
+| 凭证是否安全存储，不在公共仓库共享或硬编码？ | **暂选否** | 生产密钥已改为仅由 ECS `.env` 注入，JWT、MFA、Amazon 数据加密密钥和数据库应用凭证已随机生成；MySQL root 和曾暴露的 XIYA/UOF 密钥完成轮换、Git 历史风险处置完成后改为“是”。 |
 
 不要为通过审核而把“暂选否”改成“是”。先完成控制和证据，再提交表单。
 
@@ -90,16 +90,16 @@
 
 ## 10. 提交前检查
 
-- [ ] ECS 已配置新的随机数据库、JWT、XIYA、UOF、Amazon LWA 和 Amazon 加密密钥；旧密钥全部撤销；
-- [ ] 使用非 root 数据库应用账号并完成最小权限验证；
-- [ ] MFA、密码复杂度和密码轮换已上线并对所有账号强制；
+- [ ] ECS 已配置新的随机数据库、JWT、XIYA、UOF、Amazon LWA 和 Amazon 加密密钥；旧密钥全部撤销（数据库应用账号、JWT、MFA、Amazon 数据加密密钥已完成；MySQL root、XIYA/UOF 待办）；
+- [x] 使用非 root 数据库应用账号并完成最小权限验证（生产 API 已切换为仅限 `wms_v1` 的 `wms_app`）；
+- [ ] MFA、密码复杂度和密码轮换已上线并对所有账号强制（功能已上线，待全部账号注册 MFA 后启用生产强制开关）；
 - [ ] 阿里云安全中心、恶意软件防护、安全组和告警有截图证据；
 - [ ] 首次权限复审、备份恢复演练和事件响应演练已完成；
 - [ ] XIYA/UOF 数据处理范围和安全义务已确认；
 - [ ] OAuth Login URI 的 Seller Central → WMS 登录 → 选择店铺 → Amazon 确认 → Redirect URI 全流程通过；
 - [ ] 一个 Seller ID 无法绑定两个系统店铺，不同店铺 Token 无法互用；
-- [ ] 线上 `Referrer-Policy: no-referrer`、CSP、HSTS 和 TLS 检查通过；
-- [ ] 官网主体、隐私政策、安全说明、服务条款和支持邮箱可公开访问；
+- [x] 线上 `Referrer-Policy: no-referrer`、CSP、HSTS 和 TLS 检查通过；
+- [x] 官网主体、应用说明、价格方式、隐私政策、安全说明、服务条款和支持邮箱可公开访问；
 - [ ] Developer Profile 所填内容与实际控制及证据一致。
 - [ ] 完成旧版 `xlsx` 依赖替换或形成负责人批准的限权、限大小和迁移期限风险处置记录。
 
@@ -112,3 +112,4 @@
 - https://developer-docs.amazon.com/sp-api/docs/role-mappings
 - https://developer-docs.amazon.com/sp-api/changelog/application-authorization-limits-and-listing-restrictions
 - https://developer-docs.amazon.com/sp-api/changelog/new-processes-for-reporting-security-incidents-and-informing-amazon-of-organizational-changes
+- https://developer-docs.amazon.com/sp-api/docs/vulnerability-management
