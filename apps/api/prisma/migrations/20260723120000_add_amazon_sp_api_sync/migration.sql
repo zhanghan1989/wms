@@ -101,7 +101,7 @@ ALTER TABLE `amazon_order_records`
   ADD COLUMN `amazon_last_updated_at` DATETIME(3) NULL,
   ADD COLUMN `source_kind` VARCHAR(16) NOT NULL DEFAULT 'file';
 
-CREATE INDEX `amazon_order_records_sp_api_connection_id_amazon_last_updated_at_idx`
+CREATE INDEX `idx_amz_orders_conn_updated`
   ON `amazon_order_records`(`sp_api_connection_id`, `amazon_last_updated_at`);
 
 ALTER TABLE `amazon_sp_api_connections`

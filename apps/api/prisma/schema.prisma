@@ -919,7 +919,7 @@ model AmazonOrderRecord {
   @@index([csvImportedAt])
   @@index([createdAt])
   @@index([xiyaExportedAt])
-  @@index([spApiConnectionId, amazonLastUpdatedAt])
+  @@index([spApiConnectionId, amazonLastUpdatedAt], map: "idx_amz_orders_conn_updated")
   @@map("amazon_order_records")
 }
 
