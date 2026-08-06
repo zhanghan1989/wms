@@ -27,6 +27,8 @@ import { UpdateAmazonConnectionDto } from './dto/update-amazon-connection.dto';
 
 const AMAZON_SYNC_CRON = process.env.AMAZON_SP_API_SYNC_CRON || '0 0 11 * * *';
 const AMAZON_SYNC_TIMEZONE = process.env.AMAZON_SP_API_SYNC_TIMEZONE || 'Asia/Shanghai';
+const AMAZON_SCHEDULED_SYNC_ENABLED =
+  String(process.env.AMAZON_SP_API_SCHEDULED_SYNC_ENABLED ?? 'false').toLowerCase() === 'true';
 const DEFAULT_LOOKBACK_DAYS = 90;
 const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
 const DISPATCH_OVERSEAS = 'overseas';
@@ -678,6 +680,7 @@ export class AmazonSpApiService {
 
   @Cron(AMAZON_SYNC_CRON, { name: 'amazon-sp-api-sync', timeZone: AMAZON_SYNC_TIMEZONE })
   async runScheduledSync(): Promise<void> {
+    if (!AMAZON_SCHEDULED_SYNC_ENABLED) return;
     try {
       const result = await this.syncAllConnections(true);
       for (const row of result.results) {
