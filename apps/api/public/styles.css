@@ -552,6 +552,114 @@ button.ghost {
   max-width: 1240px;
 }
 
+.amazon-store-dashboard-toolbar-card {
+  max-width: 1240px;
+}
+
+.amazon-store-dashboard-toolbar {
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 220px) auto;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.amazon-store-dashboard-issue {
+  margin-top: 12px;
+  padding: 11px 13px;
+  border: 1px solid #d8bd6d;
+  border-radius: 10px;
+  background: #fff8df;
+  color: #715500;
+  line-height: 1.55;
+}
+
+.amazon-store-dashboard-comparison {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.amazon-store-dashboard-change {
+  display: inline-flex;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #f7f9f7;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.amazon-store-dashboard-change.positive {
+  border-color: #9bcaaa;
+  background: #eef8f1;
+  color: #176738;
+}
+
+.amazon-store-dashboard-change.negative {
+  border-color: #e1abab;
+  background: #fff1f1;
+  color: #9d2e2e;
+}
+
+.amazon-store-dashboard-trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  min-height: 220px;
+  padding: 20px 10px 4px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(to bottom, #fbfdfb, #f4f8f5);
+}
+
+.amazon-store-dashboard-day {
+  display: grid;
+  grid-template-rows: 18px 150px 22px;
+  align-items: end;
+  justify-items: center;
+  min-width: 34px;
+  height: 190px;
+}
+
+.amazon-store-dashboard-bar-value,
+.amazon-store-dashboard-day-label {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.amazon-store-dashboard-bar {
+  display: block;
+  width: 24px;
+  min-height: 4px;
+  max-height: 150px;
+  border-radius: 6px 6px 2px 2px;
+  background: linear-gradient(180deg, #2f9b68, #176542);
+}
+
+.amazon-store-dashboard-product-table {
+  min-width: 1260px !important;
+}
+
+.amazon-store-dashboard-manual {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fafcfa;
+}
+
+.amazon-store-dashboard-manual > summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.amazon-store-dashboard-manual[open] > summary {
+  margin-bottom: 10px;
+}
+
 .amazon-dashboard-upload-form {
   grid-template-columns: repeat(2, minmax(260px, 1fr)) auto;
   align-items: end;
@@ -2494,6 +2602,7 @@ button.danger-solid {
   .form-grid,
   .form-grid.compact,
   .amazon-dashboard-upload-form,
+  .amazon-store-dashboard-toolbar,
   .inventory-search-form,
   .manage-inline-form,
   .modal-grid,
@@ -3332,4 +3441,8 @@ button.danger-solid {
     width: 100%;
   }
 
+}
+.amazon-state-warning {
+  color: #b42318;
+  font-weight: 700;
 }

@@ -929,6 +929,42 @@ model AmazonOrderRecord {
   @@map("amazon_order_records")
 }
 
+model AmazonOrderSyncExclusion {
+  id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  spApiConnectionId BigInt?  @map("sp_api_connection_id") @db.UnsignedBigInt
+  orderId           String   @map("order_id") @db.VarChar(64)
+  orderItemId       String?  @map("order_item_id") @db.VarChar(64)
+  reason            String   @default("user_delete") @db.VarChar(64)
+  isActive          Boolean  @default(true) @map("is_active")
+  createdBy         BigInt?  @map("created_by") @db.UnsignedBigInt
+  createdAt         DateTime @default(now()) @map("created_at")
+  restoredBy        BigInt?  @map("restored_by") @db.UnsignedBigInt
+  restoredAt        DateTime? @map("restored_at")
+
+  @@index([isActive, spApiConnectionId, orderId, orderItemId], map: "idx_amz_order_exclusion_lookup")
+  @@map("amazon_order_sync_exclusions")
+}
+
+model AmazonOrderSyncObservation {
+  id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  spApiConnectionId BigInt   @map("sp_api_connection_id") @db.UnsignedBigInt
+  orderId           String   @map("order_id") @db.VarChar(64)
+  orderItemId       String   @map("order_item_id") @db.VarChar(64)
+  orderStatus       String?  @map("order_status") @db.VarChar(32)
+  quantityOrdered   Int?     @map("quantity_ordered")
+  quantityShipped   Int?     @map("quantity_shipped")
+  quantityToShip    Int?     @map("quantity_to_ship")
+  freezeReason      String?  @map("freeze_reason") @db.VarChar(64)
+  rawPayload        Json?    @map("raw_payload")
+  observedAt        DateTime @default(now()) @map("observed_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@unique([spApiConnectionId, orderId, orderItemId], map: "uq_amz_order_observation")
+  @@index([orderId, orderItemId, observedAt], map: "idx_amz_order_observation_order")
+  @@map("amazon_order_sync_observations")
+}
+
 model ManualOrderRecord {
   id                     BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
   rowHash                String    @unique @map("row_hash") @db.Char(40)

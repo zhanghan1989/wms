@@ -15,8 +15,10 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { AnyFilesInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { OrdersService } from './orders.service';
@@ -524,8 +526,26 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async deleteAmazonBatch(
     @Body() payload: { ids?: Array<string | number> },
+    @CurrentUser() user: AuthUser,
   ): Promise<{ deletedCount: number }> {
-    return this.ordersService.deleteAmazonBatch(payload);
+    return this.ordersService.deleteAmazonBatch(payload, user.id);
+  }
+
+  @Get('amazon/sync-exclusions')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  async listAmazonSyncExclusions(): Promise<unknown[]> {
+    return this.ordersService.listAmazonSyncExclusions();
+  }
+
+  @Post('amazon/sync-exclusions/restore')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  async restoreAmazonSyncExclusions(
+    @Body() payload: { ids?: Array<string | number> },
+    @CurrentUser() user: AuthUser,
+  ): Promise<{ restoredCount: number }> {
+    return this.ordersService.restoreAmazonSyncExclusions(payload, user.id);
   }
 
   @Post('manual/delete-batch')

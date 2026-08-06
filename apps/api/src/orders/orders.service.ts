@@ -326,6 +326,11 @@ interface AmazonOrderListItem extends AmazonOrderRecord {
   resolvedProductId: string | null;
   resolvedProductName: string | null;
   resolvedShopName: string | null;
+  amazonObservedOrderStatus?: string | null;
+  amazonObservedQuantityToShip?: number | null;
+  amazonObservedAt?: Date | null;
+  amazonFreezeReason?: string | null;
+  amazonStateMismatch?: boolean;
 }
 type ManualOrderRecordLike = AmazonOrderRecord & ManualOrderXyjgFields;
 type ManualOrderListItem = AmazonOrderListItem & ManualOrderXyjgFields;
@@ -3130,6 +3135,24 @@ export class OrdersService {
         shipmentNo,
         shipmentNoRegisteredAt,
         rawPayload: this.mergeRawPayload(current.rawPayload, {
+          _wmsManualOverrideFields: [
+            'orderItemId',
+            'sku',
+            'quantityPurchased',
+            'productName',
+            'mallName',
+            'shopName',
+            'recipientName',
+            'buyerPhoneNumber',
+            'shipPostalCode',
+            'shipState',
+            'shipAddress1',
+            'shipAddress2',
+            'shipAddress3',
+            'dispatchMode',
+            'shippingOrigin',
+          ].join(','),
+          _wmsManualOverrideUpdatedAt: new Date().toISOString(),
           'order-id': orderId,
           'order-item-id': orderItemId,
           sku,
@@ -4334,7 +4357,7 @@ export class OrdersService {
 
   async deleteAmazonBatch(payload: {
     ids?: Array<string | number>;
-  }): Promise<{ deletedCount: number }> {
+  }, createdBy?: bigint): Promise<{ deletedCount: number }> {
     const rawIds = Array.isArray(payload?.ids) ? payload.ids : [];
     const ids = Array.from(
       new Set(
@@ -4353,12 +4376,88 @@ export class OrdersService {
 
     await this.assertOrderRecordsHaveNoShipmentNo('amazon', ids);
     await this.assertOrderRecordsNotInOverseasPickingBatch('amazon', ids);
-
-    const result = await this.prisma.amazonOrderRecord.deleteMany({
+    const selectedRows = await this.prisma.amazonOrderRecord.findMany({
       where: { id: { in: ids } },
     });
+    const orderIds = Array.from(
+      new Set(selectedRows.map((row) => String(row.orderId ?? '').trim()).filter(Boolean)),
+    );
+    const allRows = orderIds.length
+      ? await this.prisma.amazonOrderRecord.findMany({ where: { orderId: { in: orderIds } } })
+      : [];
+    const selectedIdSet = new Set(selectedRows.map((row) => row.id.toString()));
+    const exclusions: Array<{
+      spApiConnectionId: bigint | null;
+      orderId: string;
+      orderItemId: string | null;
+    }> = [];
 
-    return { deletedCount: result.count };
+    for (const orderId of orderIds) {
+      const orderRows = allRows.filter((row) => row.orderId === orderId);
+      const selectedOrderRows = orderRows.filter((row) => selectedIdSet.has(row.id.toString()));
+      const remainingOrderRows = orderRows.filter((row) => !selectedIdSet.has(row.id.toString()));
+      if (selectedOrderRows.length === orderRows.length) {
+        const scopes = new Set(selectedOrderRows.map((row) => row.spApiConnectionId?.toString() ?? 'global'));
+        for (const scope of scopes) {
+          exclusions.push({
+            spApiConnectionId: scope === 'global' ? null : BigInt(scope),
+            orderId,
+            orderItemId: null,
+          });
+        }
+        continue;
+      }
+      for (const row of selectedOrderRows) {
+        const orderItemId = this.resolveOriginalAmazonOrderItemId(row.rawPayload, row.orderItemId);
+        if (!orderItemId) continue;
+        const sameLogicalItemRemains = remainingOrderRows.some(
+          (remaining) => this.resolveOriginalAmazonOrderItemId(remaining.rawPayload, remaining.orderItemId) === orderItemId,
+        );
+        if (!sameLogicalItemRemains) {
+          exclusions.push({ spApiConnectionId: row.spApiConnectionId, orderId, orderItemId });
+        }
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      for (const exclusion of exclusions) {
+        await tx.amazonOrderSyncExclusion.create({
+          data: { ...exclusion, reason: 'user_delete', createdBy: createdBy ?? null },
+        });
+      }
+      const result = await tx.amazonOrderRecord.deleteMany({ where: { id: { in: ids } } });
+      return { deletedCount: result.count };
+    });
+  }
+
+  async listAmazonSyncExclusions(): Promise<unknown[]> {
+    const rows = await this.prisma.amazonOrderSyncExclusion.findMany({
+      where: { isActive: true },
+      orderBy: { id: 'desc' },
+      take: 500,
+    });
+    return rows.map((row) => ({
+      id: row.id.toString(),
+      connectionId: row.spApiConnectionId?.toString() ?? null,
+      orderId: row.orderId,
+      orderItemId: row.orderItemId,
+      reason: row.reason,
+      createdBy: row.createdBy?.toString() ?? null,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
+  async restoreAmazonSyncExclusions(
+    payload: { ids?: Array<string | number> },
+    restoredBy?: bigint,
+  ): Promise<{ restoredCount: number }> {
+    const ids = Array.from(new Set((payload.ids ?? []).map((id, index) => parseId(String(id), `ids[${index}]`))));
+    if (!ids.length) throw new BadRequestException('请至少选择一条已删除订单记录');
+    const result = await this.prisma.amazonOrderSyncExclusion.updateMany({
+      where: { id: { in: ids }, isActive: true },
+      data: { isActive: false, restoredBy: restoredBy ?? null, restoredAt: new Date() },
+    });
+    return { restoredCount: result.count };
   }
 
   async deleteManualBatch(payload: {
@@ -8137,6 +8236,13 @@ export class OrdersService {
     }
 
     const relatedRows = options.includeRelatedRows === false ? rows : await this.loadRelatedAmazonOrderRows(rows);
+    const observationOrderIds = this.extractNonEmptyOrderIds(relatedRows);
+    const observations = observationOrderIds.length
+      ? await this.prisma.amazonOrderSyncObservation.findMany({
+          where: { orderId: { in: observationOrderIds } },
+          orderBy: { observedAt: 'desc' },
+        })
+      : [];
     const productIdOverrideByRowId = new Map(
       relatedRows.map((row) => [row.id.toString(), this.getJsonObjectString(row.rawPayload, '产品ID')] as const),
     );
@@ -8238,6 +8344,18 @@ export class OrdersService {
       const isChinaFulfillment =
         this.isChinaDispatchMode(effectiveDispatchMode) ||
         (orderId ? chinaFulfillmentOrderIds.has(orderId) : availableStock <= 0);
+      const originalItemId = this.resolveOriginalAmazonOrderItemId(row.rawPayload, row.orderItemId);
+      const observation = observations.find((item) =>
+        item.orderId === orderId &&
+        item.orderItemId === originalItemId &&
+        (!row.spApiConnectionId || item.spApiConnectionId === row.spApiConnectionId),
+      );
+      const observedStatus = observation?.orderStatus ?? null;
+      const amazonStateMismatch = Boolean(
+        observation?.freezeReason &&
+        ((observedStatus && observedStatus !== String(row.orderStatus ?? '').trim()) ||
+          (observation.quantityToShip !== null && observation.quantityToShip !== row.quantityToShip)),
+      );
 
       return {
         ...row,
@@ -8247,6 +8365,11 @@ export class OrdersService {
         resolvedShopName: skuMeta?.shopName ?? null,
         availableStock,
         fulfillmentMode: isChinaFulfillment ? 'xiya_api' : 'overseas_warehouse',
+        amazonObservedOrderStatus: observedStatus,
+        amazonObservedQuantityToShip: observation?.quantityToShip ?? null,
+        amazonObservedAt: observation?.observedAt ?? null,
+        amazonFreezeReason: observation?.freezeReason ?? null,
+        amazonStateMismatch,
       };
     });
   }
@@ -9494,6 +9617,20 @@ export class OrdersService {
       base[key] = value;
     }
     return base as Prisma.InputJsonObject;
+  }
+
+  private resolveOriginalAmazonOrderItemId(
+    rawPayload: Prisma.JsonValue | null,
+    fallback: string | null,
+  ): string {
+    if (rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)) {
+      const item = (rawPayload as Prisma.JsonObject).item;
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        const original = String((item as Prisma.JsonObject).orderItemId ?? '').trim();
+        if (original) return original;
+      }
+    }
+    return String(fallback ?? '').trim();
   }
 
   private getJsonObjectString(rawPayload: Prisma.JsonValue | null, key: string): string {

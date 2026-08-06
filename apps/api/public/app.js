@@ -204,6 +204,8 @@ const state = {
   amazonDashboardMasterProducts: [],
   amazonDashboardMasterProductsLoaded: false,
   amazonDashboardSkipAutoLoad: false,
+  amazonStoreDashboard: null,
+  amazonStoreDashboardLoading: false,
   rakutenComboProducts: [],
   rakutenComboProductsPage: 1,
   rakutenComboProductsPageSize: 30,
@@ -2546,6 +2548,159 @@ function renderAmazonMetricCards(containerId, items) {
     .join("");
 }
 
+function formatAmazonStoreCurrency(value, currency = "JPY") {
+  const number = Number(value || 0);
+  const code = String(currency || "JPY").trim() || "JPY";
+  try {
+    return new Intl.NumberFormat("ja-JP", {
+      style: "currency",
+      currency: code,
+      maximumFractionDigits: code === "JPY" ? 0 : 2,
+    }).format(number);
+  } catch {
+    return `¥${formatMetricNumber(number)}`;
+  }
+}
+
+function formatAmazonStoreComparison(value) {
+  if (value === null || value === undefined) return "无可比同期";
+  const number = Number(value || 0);
+  return `${number > 0 ? "+" : ""}${formatMetricNumber(number, 1)}%`;
+}
+
+function renderAmazonStoreDashboard(payload) {
+  state.amazonStoreDashboard = payload || null;
+  const shops = Array.isArray(payload?.shops) ? payload.shops : [];
+  const selectedShop = payload?.selectedShop || null;
+  const dashboard = payload?.dashboard || null;
+  const shopSelect = $("amazonStoreDashboardShop");
+  const currentConnectionId = String(selectedShop?.connectionId || shopSelect?.value || "");
+  if (shopSelect) {
+    shopSelect.innerHTML = shops.length
+      ? shops.map((shop) => `<option value="${escapeHtml(shop.connectionId)}">${escapeHtml(shop.shopName)}${shop.hasSyncError ? "（同步异常）" : ""}</option>`).join("")
+      : '<option value="">暂无已授权店铺</option>';
+    shopSelect.value = currentConnectionId;
+  }
+
+  $("amazonStoreDashboardEmpty")?.classList.toggle("hidden", shops.length > 0);
+  $("amazonStoreDashboardResult")?.classList.toggle("hidden", !dashboard || !selectedShop);
+  if (!dashboard || !selectedShop) {
+    $("amazonStoreDashboardMeta").textContent = "尚无已启用的 Amazon 店铺连接";
+    $("amazonStoreDashboardIssue")?.classList.add("hidden");
+    return;
+  }
+
+  const period = dashboard.period || {};
+  const summary = dashboard.summary || {};
+  const comparison = dashboard.comparison || {};
+  const inventory = dashboard.inventory || {};
+  const topProducts = Array.isArray(dashboard.topProducts) ? dashboard.topProducts : [];
+  const daily = Array.isArray(dashboard.daily) ? dashboard.daily : [];
+  const currency = period.currency || "JPY";
+  const generatedAt = payload.generatedAt ? formatDate(payload.generatedAt) : "-";
+  const lastOrdersSync = selectedShop.lastOrdersSyncedAt ? formatDate(selectedShop.lastOrdersSyncedAt) : "尚未同步";
+  $("amazonStoreDashboardMeta").textContent = `${selectedShop.shopName} / 近${period.days || payload.days || 30}天 / 订单同步 ${lastOrdersSync} / 看板生成 ${generatedAt}`;
+
+  const issue = selectedShop.syncIssue;
+  const issueBox = $("amazonStoreDashboardIssue");
+  if (issueBox) {
+    issueBox.classList.toggle("hidden", !issue);
+    issueBox.textContent = issue?.message || "";
+  }
+
+  renderAmazonMetricCards("amazonStoreDashboardSummary", [
+    { label: "总订单（FBA+FBM）", value: formatMetricNumber(summary.orderCount) },
+    { label: "总销量（FBA+FBM）", value: `${formatMetricNumber(summary.unitCount)} 件` },
+    { label: "FBA商品销售额", value: formatAmazonStoreCurrency(summary.fbaSalesAmount, currency) },
+    { label: "FBA订单", value: `${formatMetricNumber(summary.fbaOrderCount)} 单` },
+    { label: "FBA销量", value: `${formatMetricNumber(summary.fbaUnitCount)} 件` },
+    { label: "FBM待发货", value: `${formatMetricNumber(summary.fbmPendingUnitCount)} 件` },
+  ]);
+
+  const comparisonBox = $("amazonStoreDashboardComparison");
+  if (comparisonBox) {
+    comparisonBox.innerHTML = [
+      ["订单", comparison.orderCountChangePct],
+      ["销量", comparison.unitCountChangePct],
+      ["FBA销售额", comparison.fbaSalesAmountChangePct],
+    ].map(([label, value]) => {
+      const number = Number(value || 0);
+      const tone = value === null || value === undefined ? "" : number > 0 ? "positive" : number < 0 ? "negative" : "";
+      return `<span class="amazon-store-dashboard-change ${tone}">${escapeHtml(label)} ${escapeHtml(formatAmazonStoreComparison(value))}</span>`;
+    }).join("");
+  }
+
+  const trend = $("amazonStoreDashboardTrend");
+  if (trend) {
+    const visibleDaily = daily.slice(-30);
+    const maxSales = Math.max(...visibleDaily.map((row) => Number(row.fbaSalesAmount || 0)), 1);
+    trend.innerHTML = visibleDaily.length
+      ? visibleDaily.map((row) => {
+          const height = Math.max(4, Math.round((Number(row.fbaSalesAmount || 0) / maxSales) * 100));
+          return `<div class="amazon-store-dashboard-day" title="${escapeHtml(row.date)} / ${formatMetricNumber(row.orderCount)}单 / ${formatMetricNumber(row.unitCount)}件 / ${escapeHtml(formatAmazonStoreCurrency(row.fbaSalesAmount, currency))}">
+            <span class="amazon-store-dashboard-bar-value">${escapeHtml(formatMetricNumber(row.unitCount))}</span>
+            <span class="amazon-store-dashboard-bar" style="height:${height}%"></span>
+            <span class="amazon-store-dashboard-day-label">${escapeHtml(String(row.date || "").slice(5))}</span>
+          </div>`;
+        }).join("")
+      : '<p class="muted">所选周期暂无已配送销售数据</p>';
+  }
+  $("amazonStoreDashboardTrendMeta").textContent = `按日本时间显示最近 ${Math.min(daily.length, 30)} 个有销量的日期；柱高为FBA商品销售额，数字为销量`;
+
+  const matchCoverage = dashboard.matchCoverage || {};
+  $("amazonStoreDashboardProductMeta").textContent = `按FBA商品销售额排序 / 系统SKU已匹配 ${formatMetricNumber(matchCoverage.matchedCount)} / 未匹配 ${formatMetricNumber(matchCoverage.unmatchedCount)}`;
+  renderAmazonDashboardTable(
+    "amazonStoreDashboardProductBody",
+    topProducts.slice(0, 30),
+    [
+      (_row, index) => escapeHtml(String(index + 1)),
+      (row) => `<strong>${escapeHtml(displayText(row.sellerSku))}</strong><br><span class="muted">${escapeHtml(displayText(row.asin))}</span>`,
+      (row) => `${row.productId ? renderMasterProductDetailLink(row.productId) : '<span class="amazon-dashboard-chip warning">未匹配</span>'}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
+      (row) => escapeHtml(formatMetricNumber(row.fbaOrderCount)),
+      (row) => escapeHtml(formatMetricNumber(row.fbaUnitCount)),
+      (row) => escapeHtml(formatMetricNumber(row.fbmUnitCount)),
+      (row) => escapeHtml(formatAmazonStoreCurrency(row.fbaSalesAmount, currency)),
+      (row) => row.availableQty === null ? '<span class="muted">权限未开通</span>' : escapeHtml(formatMetricNumber(row.availableQty)),
+      (row) => row.inboundQty === null ? '<span class="muted">-</span>' : escapeHtml(formatMetricNumber(row.inboundQty)),
+      (row) => row.daysOfCover === null ? '<span class="muted">-</span>' : escapeHtml(`${formatMetricNumber(row.daysOfCover, 1)}天`),
+    ],
+    "所选周期暂无SKU销售数据",
+  );
+
+  renderAmazonMetricCards("amazonStoreDashboardInventory", [
+    { label: "FBA库存SKU", value: inventory.available ? formatMetricNumber(inventory.skuCount) : "待开通权限" },
+    { label: "可售", value: inventory.available ? formatMetricNumber(inventory.fulfillableQty) : "-" },
+    { label: "入库中", value: inventory.available ? formatMetricNumber(inventory.inboundQty) : "-" },
+    { label: "预留", value: inventory.available ? formatMetricNumber(inventory.reservedQty) : "-" },
+    { label: "不可售", value: inventory.available ? formatMetricNumber(inventory.unfulfillableQty) : "-" },
+  ]);
+  const latestRun = payload.latestSyncRun;
+  $("amazonStoreDashboardSyncStatus").textContent = latestRun
+    ? `最近任务：${displayText(latestRun.status)} / 读取 ${formatMetricNumber(latestRun.fetchedCount)} 条`
+    : "尚无同步任务";
+  $("amazonStoreDashboardStatusMeta").textContent = inventory.available
+    ? `库存快照：${inventory.snapshotAt ? formatDate(inventory.snapshotAt) : "-"}`
+    : "当前销售分析来自 SP-API 订单数据；库存字段不会以 0 冒充真实库存。补充 Amazon Fulfillment 或 Product Listing 权限并重新授权后可自动显示。";
+  hydrateResponsiveTableLabels($("amazonDashboard"));
+}
+
+async function loadAmazonStoreDashboard(options = {}) {
+  if (!state.token || state.amazonStoreDashboardLoading) return;
+  state.amazonStoreDashboardLoading = true;
+  const shopSelect = $("amazonStoreDashboardShop");
+  const daysSelect = $("amazonStoreDashboardDays");
+  const connectionId = String(options.connectionId || shopSelect?.value || state.amazonStoreDashboard?.selectedShop?.connectionId || "").trim();
+  const days = String(options.days || daysSelect?.value || state.amazonStoreDashboard?.days || "30").trim();
+  try {
+    const query = new URLSearchParams({ days });
+    if (connectionId) query.set("connectionId", connectionId);
+    const payload = await request(`/amazon-sp-api/store-dashboard?${query.toString()}`);
+    renderAmazonStoreDashboard(payload);
+  } finally {
+    state.amazonStoreDashboardLoading = false;
+  }
+}
+
 function renderAmazonDashboardTable(bodyId, rows, columns, emptyText) {
   const body = $(bodyId);
   if (!body) return;
@@ -2555,9 +2710,9 @@ function renderAmazonDashboardTable(bodyId, rows, columns, emptyText) {
   }
   body.innerHTML = rows
     .map(
-      (row) => `
+      (row, rowIndex) => `
         <tr>
-          ${columns.map((column) => `<td>${column(row)}</td>`).join("")}
+          ${columns.map((column) => `<td>${column(row, rowIndex)}</td>`).join("")}
         </tr>
       `,
     )
@@ -2939,6 +3094,9 @@ function applyRoleView() {
   }
   document.querySelectorAll(".admin-order-edit-only").forEach((node) => {
     node.classList.toggle("hidden", !canEditOrders);
+  });
+  document.querySelectorAll(".admin-access-only").forEach((node) => {
+    node.classList.toggle("hidden", !hasAdminAccess(state.me?.role));
   });
   if (!canEditOrders) {
     document
@@ -9248,6 +9406,11 @@ function buildAmazonOrderDetailFields(item) {
     ["邮编", postalCode],
     ["地址1", address1],
     ["地址2", address2],
+    ["系统订单状态", item?.orderStatus || "-"],
+    ["Amazon最新状态", item?.amazonObservedOrderStatus || "-"],
+    ["Amazon待发数量", item?.amazonObservedQuantityToShip ?? "-"],
+    ["状态检查时间", item?.amazonObservedAt ? formatDate(item.amazonObservedAt) : "-"],
+    ["状态差异", item?.amazonStateMismatch ? "有差异，请人工确认" : "-"],
     ["お届け日指定", "-"],
     ["お届け時間帯", "-"],
   ];
@@ -10156,7 +10319,7 @@ function renderAmazonOrdersTable() {
   const list = state.amazonOrders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="${canEdit ? 15 : 14}" class="muted">暂无亚马逊订单数据</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${canEdit ? 16 : 15}" class="muted">暂无亚马逊订单数据</td></tr>`;
     updateAmazonOrdersSelectAll();
     updateAmazonBatchDeleteButtonState();
     return;
@@ -10183,6 +10346,13 @@ function renderAmazonOrdersTable() {
         <td>${escapeHtml(displayText(normalizeOrderDispatchModeForDisplay(item, item.fulfillmentMode || formatAmazonShippingOriginAsMode(item.shippingOrigin))))}</td>
         <td>${escapeHtml(displayText(item.resolvedShopName || item.shopName))}</td>
         <td>${escapeHtml(displayText(item.recipientName))}</td>
+        <td>${
+          item.amazonObservedOrderStatus
+            ? `<span class="${item.amazonStateMismatch ? "amazon-state-warning" : ""}" title="${escapeHtml(
+                item.amazonStateMismatch ? "Amazon状态与冻结的系统订单不一致，请人工确认" : "Amazon最近同步状态",
+              )}">${escapeHtml(item.amazonObservedOrderStatus)}${item.amazonStateMismatch ? " ⚠" : ""}</span>`
+            : "-"
+        }</td>
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
@@ -12004,6 +12174,46 @@ async function deleteAmazonOrders(ids) {
   });
 }
 
+async function loadAmazonDeletedOrders() {
+  const rows = await request("/orders/amazon/sync-exclusions");
+  const tbody = $("amazonDeletedOrdersBody");
+  if (!tbody) return;
+  const list = Array.isArray(rows) ? rows : [];
+  tbody.innerHTML = list.length
+    ? list.map((item) => `<tr>
+        <td>${escapeHtml(formatDate(item.createdAt))}</td>
+        <td>${escapeHtml(displayText(item.orderId))}</td>
+        <td>${escapeHtml(displayText(item.orderItemId))}</td>
+        <td>${item.orderItemId ? "单条明细" : "整个订单"}</td>
+        <td><button type="button" class="ghost compact-btn" data-action="restoreAmazonDeletedOrder" data-id="${escapeHtml(item.id)}">恢复</button></td>
+      </tr>`).join("")
+    : '<tr><td colspan="5" class="muted">暂无已删除的同步排除记录</td></tr>';
+}
+
+async function restoreAmazonDeletedOrder(id) {
+  return request("/orders/amazon/sync-exclusions/restore", {
+    method: "POST",
+    body: JSON.stringify({ ids: [id] }),
+  });
+}
+
+function startAmazonPullCooldown(button, seconds = 60) {
+  if (!button) return;
+  let remaining = seconds;
+  button.disabled = true;
+  button.textContent = `请等待 ${remaining} 秒`;
+  const timer = window.setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      window.clearInterval(timer);
+      button.disabled = false;
+      button.textContent = "订单拉取";
+      return;
+    }
+    button.textContent = `请等待 ${remaining} 秒`;
+  }, 1000);
+}
+
 async function deleteManualOrders(ids) {
   return request("/orders/manual/delete-batch", {
     method: "POST",
@@ -12873,6 +13083,8 @@ async function reloadAll() {
     state.amazonDashboardMasterProducts = [];
     state.amazonDashboardMasterProductsLoaded = false;
     amazonDashboardSupportLoadPromise = null;
+    state.amazonStoreDashboard = null;
+    state.amazonStoreDashboardLoading = false;
     resetAmazonDashboard({ suppressAutoLoad: false });
     clearStats();
     clearOverviewDashboard();
@@ -13150,6 +13362,36 @@ function bindForms() {
 
   $("resetAmazonDashboardBtn")?.addEventListener("click", () => {
     resetAmazonDashboard();
+  });
+
+  const refreshAmazonStoreDashboard = async (button) => {
+    try {
+      await withBusyButton(button, "读取中...", async () => {
+        await loadAmazonStoreDashboard();
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+  $("refreshAmazonStoreDashboardBtn")?.addEventListener("click", (event) => {
+    refreshAmazonStoreDashboard(event.currentTarget);
+  });
+  $("reloadAmazonStoreDashboardBtn")?.addEventListener("click", (event) => {
+    refreshAmazonStoreDashboard(event.currentTarget);
+  });
+  $("amazonStoreDashboardShop")?.addEventListener("change", async (event) => {
+    try {
+      await loadAmazonStoreDashboard({ connectionId: event.currentTarget.value });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("amazonStoreDashboardDays")?.addEventListener("change", async (event) => {
+    try {
+      await loadAmazonStoreDashboard({ days: event.currentTarget.value });
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   const submitOrderSearch = async (button = $("orderSearchSubmitBtn")) => {
@@ -14574,18 +14816,9 @@ function bindForms() {
   $("openAmazonDashboardPanel")?.addEventListener("click", async () => {
     switchPanel("amazonDashboard");
     try {
-      await loadAmazonDashboardSupportData({ force: true });
-      if (state.amazonDashboardSummary) {
-        globalThis.AmazonDashboardLogic.applySystemMatches(
-          state.amazonDashboardSummary.rows,
-          state.amazonDashboardSkus,
-        );
-        enrichAmazonDashboardRowsWithProducts(state.amazonDashboardSummary);
-        renderAmazonDashboardAnalysis(state.amazonDashboardSummary);
-      }
-      await loadLatestAmazonDashboardSnapshot();
+      await loadAmazonStoreDashboard();
     } catch (error) {
-      $("amazonDashboardFileMeta").textContent = `最近快照读取失败：${error.message}；仍可重新上传两份CSV。`;
+      $("amazonStoreDashboardMeta").textContent = `店铺看板读取失败：${error.message}`;
     }
   });
 
@@ -14887,6 +15120,34 @@ function bindForms() {
 
   $("openAmazonOrderImportModal").addEventListener("click", () => {
     openModal("amazonOrderImportModal");
+  });
+
+  $("pullAmazonOrdersBtn")?.addEventListener("click", async (event) => {
+    try {
+      const result = await withBusyButton(event.currentTarget, "拉取中…", () =>
+        request("/amazon-sp-api/sync-all", { method: "POST", body: "{}" }),
+      );
+      startAmazonPullCooldown(event.currentTarget);
+      await loadAmazonOrders();
+      const failedCount = Number(result?.failedCount || 0);
+      const partialCount = Number(result?.partialCount || 0);
+      const skippedCount = Number(result?.skippedCount || 0);
+      const frozenCount = Number(result?.frozenCount || 0);
+      const excludedCount = Number(result?.excludedCount || 0);
+      const message = `订单拉取完成：${formatOverviewNumber(result?.completedCount)} 家店铺，读取 ${formatOverviewNumber(result?.fetchedCount)} 条，人工冻结 ${formatOverviewNumber(frozenCount)} 条，删除排除 ${formatOverviewNumber(excludedCount)} 条${partialCount ? `，部分成功 ${formatOverviewNumber(partialCount)} 家` : ""}${failedCount ? `，失败 ${formatOverviewNumber(failedCount)} 家` : ""}${skippedCount ? `，任务跳过 ${formatOverviewNumber(skippedCount)} 家` : ""}`;
+      showToast(message, failedCount > 0 || partialCount > 0);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openAmazonDeletedOrdersBtn")?.addEventListener("click", async () => {
+    try {
+      await loadAmazonDeletedOrders();
+      openModal("amazonDeletedOrdersModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   $("openAmazonManualOrderModal")?.addEventListener("click", () => {
@@ -17293,7 +17554,7 @@ function bindDelegates() {
   $("inventorySearchResults")?.addEventListener("click", openInventoryEditByAction);
   $("skuManagementBody")?.addEventListener("click", openInventoryEditByAction);
 
-  document.addEventListener("click", (event) => {
+  document.addEventListener("click", async (event) => {
     const runDataBackupBtn = event.target.closest("#runDataBackupBtn");
     if (runDataBackupBtn) {
       runDataBackupNow(runDataBackupBtn).catch((error) => showToast(error.message, true));
@@ -17489,6 +17750,24 @@ function bindDelegates() {
     const amazonOrderDetailClose = event.target.closest("button[data-action='closeAmazonOrderDetailModal']");
     if (amazonOrderDetailClose) {
       closeModal("amazonOrderDetailModal");
+      return;
+    }
+    const amazonDeletedOrdersClose = event.target.closest("button[data-action='closeAmazonDeletedOrdersModal']");
+    if (amazonDeletedOrdersClose) {
+      closeModal("amazonDeletedOrdersModal");
+      return;
+    }
+    const restoreAmazonDeletedOrderButton = event.target.closest("button[data-action='restoreAmazonDeletedOrder']");
+    if (restoreAmazonDeletedOrderButton) {
+      try {
+        await withBusyButton(restoreAmazonDeletedOrderButton, "恢复中…", () =>
+          restoreAmazonDeletedOrder(restoreAmazonDeletedOrderButton.dataset.id),
+        );
+        await loadAmazonDeletedOrders();
+        showToast("已恢复；下次订单拉取将重新允许该订单进入系统");
+      } catch (error) {
+        showToast(error.message, true);
+      }
       return;
     }
     const amazonManualOrderClose = event.target.closest("button[data-action='closeAmazonManualOrderModal']");

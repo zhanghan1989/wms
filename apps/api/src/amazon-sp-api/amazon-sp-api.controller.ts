@@ -64,6 +64,11 @@ export class AmazonSpApiController {
     return this.service.syncConnection(id, payload);
   }
 
+  @Post('sync-all')
+  async syncAllConnections(): Promise<unknown> {
+    return this.service.syncAllConnections();
+  }
+
   @Get('sync-runs')
   @Roles(Role.admin)
   async listSyncRuns(
@@ -82,5 +87,13 @@ export class AmazonSpApiController {
   @Get('dashboard-snapshot/latest')
   async getLatestDashboardSnapshot(): Promise<unknown> {
     return this.service.getLatestDashboardSnapshot();
+  }
+
+  @Get('store-dashboard')
+  async getStoreDashboard(
+    @Query('connectionId') connectionId?: string,
+    @Query('days') days?: string,
+  ): Promise<unknown> {
+    return this.service.getStoreDashboard(connectionId, days);
   }
 }

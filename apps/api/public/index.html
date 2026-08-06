@@ -195,7 +195,7 @@
           产品管理
           <span id="productEditPendingBadge" class="quick-badge hidden">0</span>
         </button>
-        <button type="button" id="openAmazonDashboardPanel">亚马逊海外仓补货</button>
+        <button type="button" id="openAmazonDashboardPanel">亚马逊店铺看板</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -453,12 +453,91 @@
 
       <section class="panel" id="amazonDashboard">
         <div class="panel-head">
-          <h2>亚马逊海外仓补货</h2>
+          <h2>亚马逊店铺看板</h2>
           <div class="panel-tools">
-            <button type="button" id="resetAmazonDashboardBtn" class="ghost">清空当前显示</button>
+            <button type="button" id="refreshAmazonStoreDashboardBtn" class="ghost">刷新看板</button>
           </div>
         </div>
 
+        <article class="card amazon-store-dashboard-toolbar-card">
+          <div class="form-grid amazon-store-dashboard-toolbar">
+            <label>
+              Amazon店铺
+              <select id="amazonStoreDashboardShop"></select>
+            </label>
+            <label>
+              统计周期
+              <select id="amazonStoreDashboardDays">
+                <option value="7">近7天</option>
+                <option value="30" selected>近30天</option>
+                <option value="90">近90天</option>
+              </select>
+            </label>
+            <button type="button" id="reloadAmazonStoreDashboardBtn">读取最新数据</button>
+          </div>
+          <div id="amazonStoreDashboardMeta" class="amazon-dashboard-file-meta muted">正在读取已授权店铺…</div>
+          <div id="amazonStoreDashboardIssue" class="amazon-store-dashboard-issue hidden" role="status"></div>
+        </article>
+
+        <div id="amazonStoreDashboardEmpty" class="card hidden">
+          尚无已启用的 Amazon 店铺连接。请先在“SKU管理 → 店铺管理”中完成授权。
+        </div>
+
+        <div id="amazonStoreDashboardResult" class="hidden">
+          <div id="amazonStoreDashboardSummary" class="amazon-dashboard-summary-grid"></div>
+
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h3>销售趋势</h3>
+                <p id="amazonStoreDashboardTrendMeta" class="muted">按日本时间统计</p>
+              </div>
+              <div id="amazonStoreDashboardComparison" class="amazon-store-dashboard-comparison"></div>
+            </div>
+            <div id="amazonStoreDashboardTrend" class="amazon-store-dashboard-trend"></div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h3>SKU销售排行</h3>
+                <p id="amazonStoreDashboardProductMeta" class="muted">按FBA商品销售额排序</p>
+              </div>
+            </div>
+            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
+              <table class="amazon-store-dashboard-product-table">
+                <thead>
+                  <tr>
+                    <th>排名</th>
+                    <th>SKU / ASIN</th>
+                    <th>产品</th>
+                    <th>FBA订单</th>
+                    <th>FBA件数</th>
+                    <th>FBM件数</th>
+                    <th>FBA商品销售额</th>
+                    <th>FBA可售</th>
+                    <th>入库中</th>
+                    <th>预计可售天数</th>
+                  </tr>
+                </thead>
+                <tbody id="amazonStoreDashboardProductBody"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h3>同步与库存状态</h3>
+              <span id="amazonStoreDashboardSyncStatus" class="muted">-</span>
+            </div>
+            <div id="amazonStoreDashboardInventory" class="amazon-dashboard-metric-row"></div>
+            <p id="amazonStoreDashboardStatusMeta" class="muted"></p>
+          </article>
+        </div>
+
+        <details class="amazon-store-dashboard-manual">
+          <summary>手动报告补充分析（可选）</summary>
+          <p class="muted">用于补充流量、转化率及库龄等 SP-API 当前未同步的报告字段；日常销售看板无需上传文件。</p>
         <article class="card amazon-dashboard-upload-card">
           <form id="amazonDashboardUploadForm" class="form-grid amazon-dashboard-upload-form">
             <label>
@@ -595,6 +674,7 @@
             </div>
           </article>
         </div>
+        </details>
       </section>
 
       <section class="panel" id="skuManagement">
@@ -1319,6 +1399,7 @@
                   <th>发货模式</th>
                   <th>店铺</th>
                   <th>收件人</th>
+                  <th>Amazon最新状态</th>
                   <th>发货公司</th>
                   <th>发货单号</th>
                   <th>快递最新状态</th>
@@ -1347,6 +1428,8 @@
               <h3>亚马逊订单列表一览</h3>
               <div class="action-row">
                 <button id="openAmazonOrderImportModal">订单导入</button>
+                <button id="pullAmazonOrdersBtn" type="button">订单拉取</button>
+                <button id="openAmazonDeletedOrdersBtn" type="button" class="ghost admin-access-only hidden">已删除记录</button>
                 <button id="amazonBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
               </div>
             </div>
@@ -2458,6 +2541,22 @@
         <button type="button" class="ghost" data-action="closeAmazonOrderDetailModal">关闭</button>
       </div>
       <div id="amazonOrderDetailMeta" class="master-product-summary-grid rakuten-order-detail-grid"></div>
+    </div>
+  </div>
+
+  <div id="amazonDeletedOrdersModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>亚马逊已删除记录</h3>
+        <button type="button" class="ghost" data-action="closeAmazonDeletedOrdersModal">关闭</button>
+      </div>
+      <p class="muted">恢复后，下次订单拉取会允许该订单或明细重新进入系统。</p>
+      <div class="master-product-table-wrap">
+        <table>
+          <thead><tr><th>删除时间</th><th>订单号</th><th>明细号</th><th>范围</th><th>操作</th></tr></thead>
+          <tbody id="amazonDeletedOrdersBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
