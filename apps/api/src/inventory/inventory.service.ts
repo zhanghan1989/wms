@@ -2643,6 +2643,7 @@ async function getOverviewDashboardByProduct(
   const from7d = new Date(now.getTime() - 7 * dayMs);
   const from14d = new Date(now.getTime() - 14 * dayMs);
   const from30d = new Date(now.getTime() - 30 * dayMs);
+  const from90d = new Date(now.getTime() - 90 * dayMs);
   const requestedDays = Number(options.days ?? 30);
   const periodDays = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
   const fromPeriod = new Date(now.getTime() - periodDays * dayMs);
@@ -2671,6 +2672,25 @@ async function getOverviewDashboardByProduct(
       { OR: [{ fulfillmentChannel: null }, { fulfillmentChannel: { not: 'AFN' } }] },
     ],
   };
+  const rakutenNoSalesFilter: Prisma.RakutenOrderRecordWhereInput = {
+    AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
+    shipmentNoRegisteredAt: { gte: from90d },
+  };
+  const amazonNoSalesFilter: Prisma.AmazonOrderRecordWhereInput = {
+    AND: [
+      {
+        OR: [
+          { sourceKind: 'sp_api', amazonLastUpdatedAt: { gte: from90d } },
+          {
+            sourceKind: { not: 'sp_api' },
+            AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
+            shipmentNoRegisteredAt: { gte: from90d },
+          },
+        ],
+      },
+      { OR: [{ fulfillmentChannel: null }, { fulfillmentChannel: { not: 'AFN' } }] },
+    ],
+  };
   const [
     activeUserCount,
     shelfCount,
@@ -2684,9 +2704,12 @@ async function getOverviewDashboardByProduct(
     arrangedProductionRows,
     latestFbaSalesSnapshot,
     fbaApiOrderGroups,
+    noSalesFbaApiOrderGroups,
     fbaApiConnections,
     systemRakutenRows,
+    noSalesRakutenRows,
     rawSystemAmazonRows,
+    noSalesAmazonRows,
     systemManualRows,
   ] = await Promise.all([
     service.prisma.user.count({
@@ -2813,6 +2836,18 @@ async function getOverviewDashboardByProduct(
         quantityShipped: true,
       },
     }),
+    periodDays === 90
+      ? Promise.resolve([])
+      : service.prisma.amazonFbaOrderItem.groupBy({
+          by: ['connectionId', 'sellerSku'],
+          where: {
+            purchaseDate: { gte: from90d },
+            orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
+          },
+          _sum: {
+            quantityShipped: true,
+          },
+        }),
     service.prisma.amazonSpApiConnection.findMany({
       select: {
         id: true,
@@ -2833,6 +2868,18 @@ async function getOverviewDashboardByProduct(
         shipmentNoRegisteredAt: true,
       },
     }),
+    periodDays === 90
+      ? Promise.resolve([])
+      : service.prisma.rakutenOrderRecord.findMany({
+          where: rakutenNoSalesFilter,
+          distinct: ['skuCode', 'isComboOrder', 'comboOrderSku', 'setComponentSkuCode'],
+          select: {
+            skuCode: true,
+            isComboOrder: true,
+            comboOrderSku: true,
+            setComponentSkuCode: true,
+          },
+        }),
     service.prisma.amazonOrderRecord.findMany({
       where: amazonShipmentOrderFilter,
       orderBy: { shipmentNoRegisteredAt: 'desc' },
@@ -2850,6 +2897,16 @@ async function getOverviewDashboardByProduct(
         sourceKind: true,
       },
     }),
+    periodDays === 90
+      ? Promise.resolve([])
+      : service.prisma.amazonOrderRecord.findMany({
+          where: amazonNoSalesFilter,
+          distinct: ['sku', 'orderStatus'],
+          select: {
+            sku: true,
+            orderStatus: true,
+          },
+        }),
     Promise.resolve([] as Array<{
       id: bigint;
       orderId: string | null;
@@ -3094,7 +3151,7 @@ async function getOverviewDashboardByProduct(
   const normalizeComboSku = (value: unknown): string => String(value ?? '').trim().toLowerCase();
   const referencedComboSkus = Array.from(
     new Set(
-      systemRakutenRows
+      [...systemRakutenRows, ...noSalesRakutenRows]
         .flatMap((row) => [
           row.comboOrderSku,
           row.setComponentSkuCode,
@@ -3122,6 +3179,39 @@ async function getOverviewDashboardByProduct(
       combo.items.map((item) => String(item.productId ?? '').trim()).filter(Boolean),
     ]),
   );
+  const productsWithSales90d = new Set<string>();
+  const addRakutenProductsWithSales90d = (row: {
+    skuCode: string | null;
+    isComboOrder: boolean;
+    comboOrderSku: string | null;
+    setComponentSkuCode: string | null;
+  }): void => {
+    const skuCode = String(row.skuCode ?? '').trim();
+    const directProductId = activeProductIdSet.has(skuCode)
+      ? skuCode
+      : resolveUniqueProductIdBySkuCode(skuCode);
+    if (row.isComboOrder) {
+      if (directProductId) productsWithSales90d.add(directProductId);
+      return;
+    }
+    const comboSku = [row.comboOrderSku, row.setComponentSkuCode, row.skuCode]
+      .map((value) => String(value ?? '').trim())
+      .find((value) => Boolean(value && comboProductIdsBySku.has(normalizeComboSku(value))));
+    if (comboSku) {
+      (comboProductIdsBySku.get(normalizeComboSku(comboSku)) ?? []).forEach((productId) => {
+        if (activeProductIdSet.has(productId)) productsWithSales90d.add(productId);
+      });
+      return;
+    }
+    if (directProductId) productsWithSales90d.add(directProductId);
+  };
+  (periodDays === 90 ? systemRakutenRows : noSalesRakutenRows).forEach(addRakutenProductsWithSales90d);
+  noSalesAmazonRows.forEach((row) => {
+    const orderStatus = String(row.orderStatus ?? '').trim().toUpperCase();
+    if (orderStatus === 'CANCELLED' || orderStatus === 'UNFULFILLABLE') return;
+    const productId = resolveUniqueProductIdBySkuCode(row.sku);
+    if (productId) productsWithSales90d.add(productId);
+  });
 
   systemRakutenRows.forEach((row) => {
     const skuCode = String(row.skuCode ?? '').trim();
@@ -3285,6 +3375,17 @@ async function getOverviewDashboardByProduct(
     addDemandQty(outbound90ByProduct, productId, qty);
     matchedFbaApiSkus.add(`${shopName}\u0000${sellerSku}`);
   });
+  const fbaGroupsForNoSales = periodDays === 90 ? fbaApiOrderGroups : noSalesFbaApiOrderGroups;
+  fbaGroupsForNoSales.forEach((row) => {
+    const sellerSku = String(row.sellerSku ?? '').trim();
+    const shopName = fbaShopNameByConnectionId.get(row.connectionId.toString()) ?? '';
+    const productId = resolveUniqueProductIdByShopPrimarySku(shopName, sellerSku)
+      ?? resolveUniqueProductIdByPrimarySku(sellerSku);
+    if (productId && Number(row._sum.quantityShipped ?? 0) > 0) {
+      productsWithSales90d.add(productId);
+    }
+  });
+  outbound90ByProduct.forEach((_qty, productId) => productsWithSales90d.add(productId));
 
   let totalStock = 0;
   let availableStock = 0;
@@ -3372,9 +3473,9 @@ async function getOverviewDashboardByProduct(
 
     if (!latestFbaSalesSnapshot) return;
 
-    if (stock > 0 && !(outbound90ByProduct.get(productId) ?? 0)) {
+    if (stock > 0 && !productsWithSales90d.has(productId)) {
       const stockAge = classifyNoSalesInventoryAge(rawProduct.firstStockedAt, now);
-      if (stockAge.observedDays != null && stockAge.observedDays >= periodDays) {
+      if (stockAge.observedDays != null && stockAge.observedDays >= 90) {
         noSales90dSkus.push({
           productId,
           productName: rawProduct.productName ?? null,

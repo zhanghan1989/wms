@@ -1949,8 +1949,8 @@ function renderOverviewDashboard(data) {
   setTextById(
     "overviewNoSales90Heading",
     includesFba
-      ? `${periodDays}天全渠道无出单产品`
-      : `${periodDays}天系统无出单产品`,
+      ? "90天全渠道无出单产品"
+      : "90天系统无出单产品",
   );
 
   setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
