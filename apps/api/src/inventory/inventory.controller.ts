@@ -176,11 +176,13 @@ export class InventoryController {
     @Query('includeFba') includeFba?: string,
     @Query('fbaSnapshotId') fbaSnapshotId?: string,
     @Query('days') days?: string,
+    @Query('refresh') refresh?: string,
   ): Promise<unknown> {
     return this.inventoryService.getOverviewDashboard({
       includeFba: includeFba === 'true',
       fbaSnapshotId,
       days: Number(days),
+      forceRefresh: refresh === 'true',
     });
   }
 

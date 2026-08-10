@@ -181,6 +181,11 @@ const PRODUCTION_TARGET_DAYS = 90;
 const ESTIMATED_PRODUCTION_ARRIVAL_DAYS = 45;
 const ANOMALY_MIN_DELTA_QTY = 10;
 const DASHBOARD_SNAPSHOT_RETENTION_LIMIT = 10;
+const OVERVIEW_DASHBOARD_CACHE_TTL_MS = 60 * 1000;
+const overviewDashboardCache = new Map<
+  string,
+  { expiresAt: number; value: Promise<unknown> }
+>();
 
 function getJsonObjectString(value: Prisma.JsonValue | null | undefined, key: string): string {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -1256,9 +1261,39 @@ export class InventoryService {
   }
 
   async getOverviewDashboard(
-    options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number } = {},
+    options: {
+      includeFba?: boolean;
+      fbaSnapshotId?: string;
+      days?: number;
+      forceRefresh?: boolean;
+    } = {},
   ): Promise<unknown> {
-    return getOverviewDashboardByProduct.call(this, options);
+    const requestedDays = Number(options.days ?? 30);
+    const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
+    const cacheKey = [
+      days,
+      options.includeFba === true ? 'fba' : 'base',
+      String(options.fbaSnapshotId || '').trim(),
+    ].join(':');
+    const now = Date.now();
+    const cached = overviewDashboardCache.get(cacheKey);
+    if (!options.forceRefresh && cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    const value = getOverviewDashboardByProduct.call(this, { ...options, days });
+    overviewDashboardCache.set(cacheKey, {
+      expiresAt: now + OVERVIEW_DASHBOARD_CACHE_TTL_MS,
+      value,
+    });
+    try {
+      return await value;
+    } catch (error) {
+      if (overviewDashboardCache.get(cacheKey)?.value === value) {
+        overviewDashboardCache.delete(cacheKey);
+      }
+      throw error;
+    }
   }
 
   async buildProductionRecommendationsExcel(
@@ -2608,8 +2643,8 @@ async function getOverviewDashboardByProduct(
   const from7d = new Date(now.getTime() - 7 * dayMs);
   const from14d = new Date(now.getTime() - 14 * dayMs);
   const from30d = new Date(now.getTime() - 30 * dayMs);
-  const requestedDays = Number(options.days ?? 90);
-  const periodDays = [30, 60, 90].includes(requestedDays) ? requestedDays : 90;
+  const requestedDays = Number(options.days ?? 30);
+  const periodDays = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
   const fromPeriod = new Date(now.getTime() - periodDays * dayMs);
   const fbaSnapshotIdText = String(options.fbaSnapshotId || '').trim();
   if (fbaSnapshotIdText && !/^\d+$/.test(fbaSnapshotIdText)) {
@@ -2648,7 +2683,8 @@ async function getOverviewDashboardByProduct(
     inTransitRows,
     arrangedProductionRows,
     latestFbaSalesSnapshot,
-    fbaApiOrderRows,
+    fbaApiOrderGroups,
+    fbaApiConnections,
     systemRakutenRows,
     rawSystemAmazonRows,
     systemManualRows,
@@ -2767,15 +2803,20 @@ async function getOverviewDashboardByProduct(
             },
           },
         }),
-    service.prisma.amazonFbaOrderItem.findMany({
+    service.prisma.amazonFbaOrderItem.groupBy({
+      by: ['connectionId', 'sellerSku'],
       where: {
         purchaseDate: { gte: fromPeriod },
         orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
       },
-      select: {
-        sellerSku: true,
+      _sum: {
         quantityShipped: true,
-        connection: { select: { shop: { select: { name: true } } } },
+      },
+    }),
+    service.prisma.amazonSpApiConnection.findMany({
+      select: {
+        id: true,
+        shop: { select: { name: true } },
       },
     }),
     service.prisma.rakutenOrderRecord.findMany({
@@ -3221,12 +3262,18 @@ async function getOverviewDashboardByProduct(
   const matchedFbaApiSkus = new Set<string>();
   let unmatchedFbaApiRowCount = 0;
   let unmatchedFbaApiQty = 0;
-  fbaApiOrderRows.forEach((row) => {
+  const fbaShopNameByConnectionId = new Map(
+    fbaApiConnections.map((connection) => [
+      connection.id.toString(),
+      String(connection.shop?.name ?? '').trim(),
+    ]),
+  );
+  fbaApiOrderGroups.forEach((row) => {
     const sellerSku = String(row.sellerSku ?? '').trim();
-    const shopName = String(row.connection?.shop?.name ?? '').trim();
+    const shopName = fbaShopNameByConnectionId.get(row.connectionId.toString()) ?? '';
     const productId = resolveUniqueProductIdByShopPrimarySku(shopName, sellerSku)
       ?? resolveUniqueProductIdByPrimarySku(sellerSku);
-    const qty = Number(row.quantityShipped ?? 0);
+    const qty = Number(row._sum.quantityShipped ?? 0);
     if (!productId || !Number.isFinite(qty) || qty <= 0) {
       if (Number.isFinite(qty) && qty > 0) {
         unmatchedFbaApiRowCount += 1;

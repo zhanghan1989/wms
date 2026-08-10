@@ -309,7 +309,8 @@ const state = {
   overviewDashboard: null,
   overviewIncludesFba: false,
   overviewFbaSnapshotId: "",
-  overviewDashboardDays: 90,
+  overviewDashboardDays: 30,
+  overviewDashboardCache: new Map(),
   overviewProductionVisibleCount: 30,
   dataBackups: [],
   dataBackupsVisibleCount: 0,
@@ -1939,7 +1940,7 @@ function renderOverviewDashboard(data) {
   const production = data?.production || {};
   const obsolete = data?.obsolete || {};
   const dataSources = data?.dataSources || {};
-  const periodDays = [30, 60, 90].includes(Number(data?.period?.days)) ? Number(data.period.days) : 90;
+  const periodDays = [30, 60, 90].includes(Number(data?.period?.days)) ? Number(data.period.days) : 30;
   state.overviewDashboardDays = periodDays;
   if ($("overviewDashboardDays")) $("overviewDashboardDays").value = String(periodDays);
   const includesFba = production.includesFba === true;
@@ -2151,13 +2152,21 @@ function loadOverviewDashboard(options = {}) {
           : state.overviewFbaSnapshotId || "",
       ).trim()
     : "";
-  const requestedDays = Number(options.days ?? state.overviewDashboardDays ?? 90);
-  const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 90;
+  const requestedDays = Number(options.days ?? state.overviewDashboardDays ?? 30);
+  const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
   const loadKey = `${includeFba ? "fba" : "base"}:${fbaSnapshotId}:${days}`;
+  const forceRefresh = options.forceRefresh === true;
 
   state.overviewIncludesFba = includeFba;
   state.overviewFbaSnapshotId = fbaSnapshotId;
   state.overviewDashboardDays = days;
+
+  const cached = state.overviewDashboardCache.get(loadKey);
+  if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
+    state.overviewDashboard = cached.data;
+    renderOverviewDashboard(cached.data);
+    return Promise.resolve(cached.data);
+  }
 
   if (overviewDashboardLoadPromise && overviewDashboardLoadKey === loadKey) {
     return overviewDashboardLoadPromise;
@@ -2167,8 +2176,13 @@ function loadOverviewDashboard(options = {}) {
   if (includeFba) query.set("includeFba", "true");
   if (fbaSnapshotId) query.set("fbaSnapshotId", fbaSnapshotId);
   query.set("days", String(days));
+  if (forceRefresh) query.set("refresh", "true");
   const endpoint = `/inventory/dashboard${query.toString() ? `?${query.toString()}` : ""}`;
   const loadPromise = request(endpoint).then((data) => {
+    state.overviewDashboardCache.set(loadKey, {
+      data: data || null,
+      expiresAt: Date.now() + 60 * 1000,
+    });
     const currentKey = `${state.overviewIncludesFba ? "fba" : "base"}:${state.overviewFbaSnapshotId || ""}:${state.overviewDashboardDays}`;
     if (currentKey === loadKey) {
       state.overviewDashboard = data || null;
@@ -2194,7 +2208,7 @@ async function loadOverviewDashboardWithAutomaticFba() {
 
 async function downloadProductionRecommendationExcel() {
   const endpoint = `/inventory/dashboard/production-recommendations-excel?days=${encodeURIComponent(
-    String(state.overviewDashboardDays || 90),
+    String(state.overviewDashboardDays || 30),
   )}`;
   const fileName = await downloadAuthorizedFile(
     endpoint,
@@ -2785,8 +2799,15 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
     Promise.all([loadOverseasPickingBatches(), loadYamatoShipmentBatches()]).catch((error) => showToast(error.message, true));
     return;
   }
-  if (targetId === "overview" && !state.overviewDashboard) {
-    loadOverviewDashboardWithAutomaticFba().catch((error) => showToast(error.message, true));
+  if (targetId === "overview") {
+    if (!state.overviewDashboard) {
+      loadOverviewDashboardWithAutomaticFba().catch((error) => showToast(error.message, true));
+      return;
+    }
+    const generatedAt = new Date(state.overviewDashboard.generatedAt || 0).getTime();
+    if (!Number.isFinite(generatedAt) || Date.now() - generatedAt > 60 * 1000) {
+      loadOverviewDashboard().catch((error) => showToast(error.message, true));
+    }
   }
 }
 
@@ -12751,6 +12772,8 @@ async function reloadAll() {
     state.overviewDashboard = null;
     state.overviewIncludesFba = false;
     state.overviewFbaSnapshotId = "";
+    state.overviewDashboardDays = 30;
+    state.overviewDashboardCache.clear();
     renderUserSelectOptions();
     renderUserOptionsTable();
     renderFbaPendingBadge();
@@ -14160,9 +14183,6 @@ function bindForms() {
   });
 
   $("openSystemDashboardPanel").addEventListener("click", () => {
-    state.overviewDashboard = null;
-    state.overviewIncludesFba = false;
-    state.overviewFbaSnapshotId = "";
     switchPanel("overview");
   });
 
@@ -15247,7 +15267,7 @@ function bindForms() {
         showToast(
           `上传完成：共${result.totalRows}行，调整SKU${result.changedSkuCount}个，库存变更明细${result.changedItemCount}条`,
         );
-        await Promise.all([loadInventory(), loadAudit(), loadOverviewDashboard()]);
+        await Promise.all([loadInventory(), loadAudit(), loadOverviewDashboard({ forceRefresh: true })]);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -17728,12 +17748,12 @@ function bindScrollLoad() {
 
 function bindRefresh() {
   $("overviewDashboardDays")?.addEventListener("change", (event) => {
-    const days = Number(event.currentTarget.value || 90);
-    state.overviewDashboardDays = [30, 60, 90].includes(days) ? days : 90;
+    const days = Number(event.currentTarget.value || 30);
+    state.overviewDashboardDays = [30, 60, 90].includes(days) ? days : 30;
     loadOverviewDashboard({ days: state.overviewDashboardDays }).catch((error) => showToast(error.message, true));
   });
   $("refreshOverviewDashboard").addEventListener("click", () =>
-    loadOverviewDashboard().catch((error) => showToast(error.message, true)),
+    loadOverviewDashboard({ forceRefresh: true }).catch((error) => showToast(error.message, true)),
   );
   $("downloadInventorySkuSummaryBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
