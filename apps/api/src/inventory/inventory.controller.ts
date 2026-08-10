@@ -175,10 +175,12 @@ export class InventoryController {
   async getOverviewDashboard(
     @Query('includeFba') includeFba?: string,
     @Query('fbaSnapshotId') fbaSnapshotId?: string,
+    @Query('days') days?: string,
   ): Promise<unknown> {
     return this.inventoryService.getOverviewDashboard({
       includeFba: includeFba === 'true',
       fbaSnapshotId,
+      days: Number(days),
     });
   }
 
@@ -242,10 +244,12 @@ export class InventoryController {
     @Res() res: Response,
     @Query('includeFba') includeFba?: string,
     @Query('fbaSnapshotId') fbaSnapshotId?: string,
+    @Query('days') days?: string,
   ): Promise<void> {
     const file = await this.inventoryService.buildProductionRecommendationsExcel({
       includeFba: includeFba === 'true',
       fbaSnapshotId,
+      days: Number(days),
     });
     res.setHeader(
       'Content-Type',
