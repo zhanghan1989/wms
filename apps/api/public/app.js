@@ -1839,7 +1839,8 @@ function renderOverviewProductionRecommendations(production = state.overviewDash
         <td>${formatOverviewNumber(item.fbaUnfulfillableQty)}</td>
         <td>${formatOverviewNumber(item.arrangedProductionQty)}</td>
         <td>${formatOverviewNumber(item.securedStock)}</td>
-        <td>${formatOverviewNumber(item.systemOrderQty90d)}</td>
+        <td>${formatOverviewNumber(item.fbmOrderQty90d)}</td>
+        <td>${formatOverviewNumber(item.rakutenOrderQty90d)}</td>
         <td>${formatOverviewNumber(item.fbaOrderedQty90d)}</td>
         <td>${formatOverviewNumber(item.totalOrderQty90d)}</td>
         <td>${formatOverviewNumber(item.avgDailyOutbound90d ?? item.avgDailyOutbound, 1)}</td>
@@ -1853,7 +1854,7 @@ function renderOverviewProductionRecommendations(production = state.overviewDash
     `;
     })
     .join("");
-  renderOverviewTable("overviewProductionBody", productionRows, 21);
+  renderOverviewTable("overviewProductionBody", productionRows, 22);
 }
 
 function loadMoreOverviewProductionIfNeeded() {
@@ -1919,7 +1920,7 @@ function clearOverviewDashboard() {
   $("overviewFbaSalesSnapshotMeta").textContent =
     "正在读取Amazon SP-API同步状态。";
   setTextById("overviewDemandQualityHint", "未匹配订单不会进入产品需求和备货计算。");
-  renderOverviewTable("overviewProductionBody", "", 21);
+  renderOverviewTable("overviewProductionBody", "", 22);
   renderOverviewTable("overviewUnmatchedDemandBody", "", 6);
   renderOverviewTable("overviewNoSales90Body", "", 7);
   $("overviewUnmatchedDemandDetails")?.classList.add("hidden");
@@ -1985,10 +1986,11 @@ function renderOverviewDashboard(data) {
   );
   setTextById("overviewMonthlyAverageHint", `按${periodDays}天数据折算为30天月均`);
   setTextById("overviewTopDemandHeading", `出单商品件数最高的产品（最近${periodDays}天）`);
-  setTextById("overviewProductionSystemDemandHeading", `${periodDays}天FBM+乐天订单`);
-  setTextById("overviewProductionFbaDemandHeading", `${periodDays}天FBA订单`);
-  setTextById("overviewProductionTotalDemandHeading", `${periodDays}天全渠道订单`);
-  setTextById("overviewProductionDailyDemandHeading", `${periodDays}天日均消耗`);
+  setTextById("overviewProductionFbmDemandHeading", "90天FBM订单");
+  setTextById("overviewProductionRakutenDemandHeading", "90天乐天订单");
+  setTextById("overviewProductionFbaDemandHeading", "90天FBA订单");
+  setTextById("overviewProductionTotalDemandHeading", "90天全渠道订单");
+  setTextById("overviewProductionDailyDemandHeading", "90天日均消耗");
   setTextById("overviewFbaSourceStatus", dataSources.fba?.available ? "API已同步" : "待同步");
   setTextById(
     "overviewFbmSourceStatus",
