@@ -63,12 +63,17 @@ describe('inventory dashboard no-sales age classification', () => {
       },
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
       amazonFbaOrderItem: {
-        findMany: jest.fn().mockResolvedValue([
+        groupBy: jest.fn().mockResolvedValue([
           {
+            connectionId: 1n,
             sellerSku: 'FBA-P1',
-            quantityShipped: 10,
-            connection: { shop: { name: '' } },
+            _sum: { quantityShipped: 10 },
           },
+        ]),
+      },
+      amazonSpApiConnection: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 1n, shop: { name: '' } },
         ]),
       },
       batchInboundItem: { groupBy: jest.fn().mockResolvedValue([]) },
@@ -188,6 +193,12 @@ describe('inventory dashboard no-sales age classification', () => {
     const service = new InventoryService(prisma as never, {} as never);
 
     const dashboard = (await service.getOverviewDashboard()) as any;
+    expect(dashboard.period.days).toBe(30);
+    const groupedQueryCount = prisma.amazonFbaOrderItem.groupBy.mock.calls.length;
+    await service.getOverviewDashboard();
+    expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledTimes(groupedQueryCount);
+    await service.getOverviewDashboard({ forceRefresh: true });
+    expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledTimes(groupedQueryCount + 1);
 
     expect(prisma.sku.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -216,6 +227,7 @@ describe('inventory dashboard no-sales age classification', () => {
     const dashboardWithFba = (await service.getOverviewDashboard({
       includeFba: true,
       fbaSnapshotId: '10',
+      days: 90,
     })) as any;
     expect(dashboardWithFba.demand.fbaOrderedQty90d).toBe(10);
     expect(dashboardWithFba.demand.outboundQty30dCalculated).toBeCloseTo(
@@ -254,11 +266,13 @@ describe('inventory dashboard no-sales age classification', () => {
     expect(dashboard30d.demand.avgDailyOutbound90d).toBeCloseTo(
       dashboard30d.demand.outboundQty90d / 30,
     );
-    expect(prisma.amazonFbaOrderItem.findMany).toHaveBeenCalledWith(
+    expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
+        by: ['connectionId', 'sellerSku'],
         where: expect.objectContaining({
           orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
         }),
+        _sum: { quantityShipped: true },
       }),
     );
   });

@@ -420,6 +420,7 @@ model AmazonFbaOrderItem {
   @@index([purchaseDate])
   @@index([sellerSku])
   @@index([orderStatus])
+  @@index([orderStatus, purchaseDate], map: "idx_fba_orders_status_purchase")
   @@map("amazon_fba_order_items")
 }
 
@@ -861,6 +862,7 @@ model RakutenOrderRecord {
   @@index([trackingStatusLabel])
   @@index([trackingIsDelivered])
   @@index([trackingCheckedAt])
+  @@index([shipmentNoRegisteredAt], map: "idx_rakuten_orders_shipment_registered")
   @@map("rakuten_order_records")
 }
 
@@ -926,6 +928,8 @@ model AmazonOrderRecord {
   @@index([createdAt])
   @@index([xiyaExportedAt])
   @@index([spApiConnectionId, amazonLastUpdatedAt], map: "idx_amz_orders_conn_updated")
+  @@index([sourceKind, amazonLastUpdatedAt], map: "idx_amz_orders_source_updated")
+  @@index([sourceKind, shipmentNoRegisteredAt], map: "idx_amz_orders_source_shipment")
   @@map("amazon_order_records")
 }
 
