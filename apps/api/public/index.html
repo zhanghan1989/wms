@@ -90,19 +90,10 @@
         document.head.appendChild(script);
       }
 
-      function appendScript(src, onload) {
-        var script = document.createElement("script");
-        script.src = src;
-        script.onload = onload;
-        document.head.appendChild(script);
-      }
-
       function appendVersionedAssets(version) {
         var assetVersion = String(version || "").trim() || String(Date.now());
         appendStylesheet("/styles.css?v=" + encodeURIComponent(assetVersion));
-        appendScript("/amazon-dashboard-logic.js?v=" + encodeURIComponent(assetVersion), function () {
-          appendModuleScript("/app.js?v=" + encodeURIComponent(assetVersion));
-        });
+        appendModuleScript("/app.js?v=" + encodeURIComponent(assetVersion));
       }
 
       async function fetchDeployVersion() {
@@ -535,146 +526,6 @@
           </article>
         </div>
 
-        <details class="amazon-store-dashboard-manual">
-          <summary>手动报告补充分析（可选）</summary>
-          <p class="muted">用于补充流量、转化率及库龄等 SP-API 当前未同步的报告字段；日常销售看板无需上传文件。</p>
-        <article class="card amazon-dashboard-upload-card">
-          <form id="amazonDashboardUploadForm" class="form-grid amazon-dashboard-upload-form">
-            <label>
-              90天销售和流量报告（必须包含 SKU 列）CSV
-              <input id="amazonDashboardBusinessCsvFile" type="file" accept=".csv,text/csv" required />
-            </label>
-            <label>
-              亚马逊FBA库存报告 CSV
-              <input id="amazonDashboardInventoryCsvFile" type="file" accept=".csv,text/csv" required />
-            </label>
-            <button type="submit">上传分析</button>
-          </form>
-          <div class="muted">第一份请选择包含 SKU 列、日期正好覆盖90天的“详情页面销售和流量（按子商品）”报告；第二份请选择 FBA 库存报告。</div>
-          <div id="amazonDashboardFileMeta" class="amazon-dashboard-file-meta muted">尚未上传两份 CSV</div>
-        </article>
-
-        <div id="amazonDashboardResult" class="hidden">
-          <div id="amazonDashboardSummary" class="amazon-dashboard-summary-grid"></div>
-
-          <article class="card">
-            <div class="card-head">
-              <h3>销售分析</h3>
-              <span id="amazonDashboardSalesMeta" class="muted">-</span>
-            </div>
-            <div id="amazonDashboardSalesCards" class="amazon-dashboard-metric-row"></div>
-            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>ASIN</th>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>会话数</th>
-                    <th>浏览量</th>
-                    <th>转化率</th>
-                    <th>FBA出单</th>
-                    <th>RB出单</th>
-                    <th>FBM出单</th>
-                    <th>补货需求合计</th>
-                    <th>销售额</th>
-                    <th>FBA近30天配送</th>
-                    <th>FBA可售</th>
-                  </tr>
-                </thead>
-                <tbody id="amazonDashboardSalesBody"></tbody>
-              </table>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="card-head">
-              <h3>在库分析</h3>
-              <span id="amazonDashboardInventoryMeta" class="muted">-</span>
-            </div>
-            <div id="amazonDashboardInventoryCards" class="amazon-dashboard-metric-row"></div>
-            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>ASIN</th>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>可售</th>
-                    <th>入库</th>
-                    <th>预留</th>
-                    <th>不可售</th>
-                    <th>库龄365+</th>
-                  </tr>
-                </thead>
-                <tbody id="amazonDashboardInventoryBody"></tbody>
-              </table>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="card-head">
-              <h3>海外仓补货建议</h3>
-              <span id="amazonDashboardReplenishmentMeta" class="muted">-</span>
-            </div>
-            <div id="amazonDashboardReplenishmentCards" class="amazon-dashboard-metric-row"></div>
-            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>ASIN</th>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>FBA出单</th>
-                    <th>RB出单</th>
-                    <th>FBM出单</th>
-                    <th>90天补货需求</th>
-                    <th>日均销量</th>
-                    <th>亚马逊可售</th>
-                    <th>亚马逊入库</th>
-                    <th>产品海外仓库存</th>
-                    <th>已有待处理补货</th>
-                    <th>本SKU分配前可用</th>
-                    <th>FBA缺口</th>
-                    <th>建议海外仓补货</th>
-                    <th>优先级</th>
-                  </tr>
-                </thead>
-                <tbody id="amazonDashboardReplenishmentBody"></tbody>
-              </table>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="card-head">
-              <h3>退仓与库龄风险</h3>
-              <span id="amazonDashboardRemovalMeta" class="muted">-</span>
-            </div>
-            <div id="amazonDashboardRemovalCards" class="amazon-dashboard-metric-row"></div>
-            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>SKU</th>
-                    <th>ASIN</th>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>181-270天</th>
-                    <th>271天以上</th>
-                    <th>365天以上</th>
-                    <th>建议退仓</th>
-                    <th>风险</th>
-                  </tr>
-                </thead>
-                <tbody id="amazonDashboardRemovalBody"></tbody>
-              </table>
-            </div>
-          </article>
-        </div>
-        </details>
       </section>
 
       <section class="panel" id="skuManagement">
@@ -1681,42 +1532,28 @@
           </article>
 
           <article class="card">
-            <h3>已出单统计</h3>
-            <p class="muted overview-card-description">按面单登记时间统计最近30天，渠道指标均为订单数。</p>
+            <h3>全渠道订单概览</h3>
+            <p class="muted overview-card-description">FBA取自Amazon SP-API；FBM以API为主并兼容历史手动导入；乐天取自手动导入。</p>
             <ul class="stats overview-key-stats">
-              <li><span>总订单数</span><strong id="overviewOrder30dCount">-</strong></li>
-              <li><span>商品明细行</span><strong id="overviewOrder30dItemRows">-</strong></li>
-              <li><span>商品件数</span><strong id="overviewOrder30dQuantity">-</strong></li>
-              <li><span>乐天订单数</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
-              <li><span>亚马逊FBM订单数</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
-              <li><span>手动订单数</span><strong id="overviewOrder30dManualCount">-</strong></li>
+              <li><span>90天FBA商品件数</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
+              <li><span>90天FBM商品件数</span><strong id="overviewOrder30dManualCount">-</strong></li>
+              <li><span>90天乐天商品件数</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
+              <li><span>90天合计商品件数</span><strong id="overviewOrder30dQuantity">-</strong></li>
+              <li><span>30天FBM订单数</span><strong id="overviewOrder30dCount">-</strong></li>
+              <li><span>30天FBM商品明细行</span><strong id="overviewOrder30dItemRows">-</strong></li>
             </ul>
           </article>
 
           <article id="overviewFbaUploadCard" class="card overview-fba-upload-card">
-            <h3>计算全渠道需求和工厂备货建议</h3>
-            <p class="muted">请同时上传最近90天的亚马逊FBA销售报告和当前FBA库存报告。上传成功前不显示订单需求趋势、工厂备货建议和废弃建议。</p>
-            <form id="overviewFbaSalesUploadForm" class="form-grid overview-fba-sales-upload-form">
-              <label>
-                报告开始日期
-                <input id="overviewFbaSalesPeriodStart" type="date" required />
-              </label>
-              <label>
-                报告结束日期
-                <input id="overviewFbaSalesPeriodEnd" type="date" required />
-              </label>
-              <label>
-                90天销售报告（必须包含 SKU 列）CSV
-                <input id="overviewFbaSalesCsvFile" type="file" accept=".csv,text/csv" required />
-              </label>
-              <label>
-                FBA库存报告 CSV
-                <input id="overviewFbaInventoryCsvFile" type="file" accept=".csv,text/csv" required />
-              </label>
-              <button type="submit">上传并计算</button>
-            </form>
+            <h3>数据口径</h3>
+            <p class="muted">看板自动合并FBA、FBM和乐天订单，不再要求上传FBA销售报告。FBM按订单明细去重，同时存在API与人工记录时保留人工维护的仓库字段。</p>
+            <ul class="stats overview-key-stats">
+              <li><span>FBA数据源</span><strong id="overviewFbaSourceStatus">-</strong></li>
+              <li><span>FBM数据源</span><strong id="overviewFbmSourceStatus">-</strong></li>
+              <li><span>乐天数据源</span><strong id="overviewRakutenSourceStatus">-</strong></li>
+            </ul>
             <div id="overviewFbaSalesSnapshotMeta" class="muted overview-fba-sales-meta">
-              尚未上传本次计算所需的FBA销售报告和库存报告。
+              正在读取Amazon SP-API同步状态。
             </div>
           </article>
 
@@ -1724,7 +1561,7 @@
             <div class="overview-demand-head">
               <div>
                 <h3>全渠道出单商品分析</h3>
-                <p class="muted">统一按最近90天统计商品件数：系统已出单商品 + 上传的亚马逊FBA销量。</p>
+                <p class="muted">统一按最近90天统计商品件数：API FBA + API为主的FBM + 手动导入的乐天订单。</p>
               </div>
               <span class="overview-demand-period">统计周期 90 天</span>
             </div>
@@ -1749,28 +1586,19 @@
               <section class="overview-demand-panel">
                 <h4>渠道构成</h4>
                 <div class="overview-demand-channel-row">
-                  <div>
-                    <span>乐天</span>
-                    <small>包含组合订单拆分后的具体产品</small>
-                  </div>
+                  <div><span>Amazon FBA</span><small>Amazon SP-API自动同步</small></div>
+                  <strong id="overviewDemandFbaQty90d">-</strong>
+                  <em id="overviewDemandFbaShare90d">-</em>
+                </div>
+                <div class="overview-demand-channel-row">
+                  <div><span>Amazon FBM</span><small>SP-API为主，历史手动导入兼容去重</small></div>
+                  <strong id="overviewDemandFbmQty90d">-</strong>
+                  <em id="overviewDemandFbmShare90d">-</em>
+                </div>
+                <div class="overview-demand-channel-row">
+                  <div><span>乐天</span><small>系统手动导入订单，组合订单按产品拆分</small></div>
                   <strong id="overviewDemandRakutenQty90d">-</strong>
                   <em id="overviewDemandRakutenShare90d">-</em>
-                </div>
-                <div class="overview-demand-channel-row">
-                  <div>
-                    <span>亚马逊（FBM + FBA）</span>
-                    <small id="overviewDemandAmazonBreakdown90d">FBM - 件 + FBA - 件</small>
-                  </div>
-                  <strong id="overviewDemandAmazonQty90d">-</strong>
-                  <em id="overviewDemandAmazonShare90d">-</em>
-                </div>
-                <div class="overview-demand-channel-row">
-                  <div>
-                    <span>手动订单</span>
-                    <small>系统中登记的手动出单商品</small>
-                  </div>
-                  <strong id="overviewDemandManualQty90d">-</strong>
-                  <em id="overviewDemandManualShare90d">-</em>
                 </div>
               </section>
               <section class="overview-demand-panel overview-demand-quality-panel">
@@ -1814,7 +1642,7 @@
                   <tr>
                     <th>产品ID</th>
                     <th>产品名称</th>
-                    <th>系统出单件数</th>
+                    <th>FBM+乐天出单件数</th>
                     <th>FBA出单件数</th>
                     <th>全渠道出单件数</th>
                     <th>日均出单件数</th>
@@ -1857,7 +1685,7 @@
                     <th>FBA不可售库存</th>
                     <th>已安排生产</th>
                     <th>总保障库存</th>
-                    <th>90天系统订单</th>
+                    <th>90天FBM+乐天订单</th>
                     <th>90天FBA订单</th>
                     <th>90天全渠道订单</th>
                     <th>90天日均消耗</th>

@@ -33,13 +33,10 @@ describe('inventory dashboard no-sales age classification', () => {
     });
   });
 
-  it('does not export factory recommendations before an FBA report is selected', async () => {
+  it('rejects an invalid explicit FBA snapshot id before loading dashboard data', async () => {
     const service = new InventoryService({} as never, {} as never);
-    await expect(service.buildProductionRecommendationsExcel()).rejects.toThrow(
-      '请先上传最近90天FBA销售报告',
-    );
-    await expect(service.getOverviewDashboard({ includeFba: true })).rejects.toThrow(
-      '请先上传最近90天FBA销售报告',
+    await expect(service.getOverviewDashboard({ fbaSnapshotId: 'invalid' })).rejects.toThrow(
+      'FBA销量快照编号无效',
     );
   });
 
@@ -90,7 +87,49 @@ describe('inventory dashboard no-sales age classification', () => {
           },
         ]),
       },
-      amazonOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
+      amazonOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 10n,
+            orderId: 'fbm-1',
+            orderItemId: 'item-1',
+            sku: 'FBM-P2',
+            rawPayload: { item: { orderItemId: 'item-1' } },
+            quantityPurchased: 2,
+            shipmentNoRegisteredAt: null,
+            purchaseDateRaw: registeredAt.toISOString(),
+            amazonLastUpdatedAt: registeredAt,
+            orderStatus: 'SHIPPED',
+            sourceKind: 'sp_api',
+          },
+          {
+            id: 11n,
+            orderId: 'fbm-1',
+            orderItemId: 'manual-item-1',
+            sku: 'FBM-P2',
+            rawPayload: { item: { orderItemId: 'item-1' } },
+            quantityPurchased: 3,
+            shipmentNoRegisteredAt: registeredAt,
+            purchaseDateRaw: registeredAt.toISOString(),
+            amazonLastUpdatedAt: null,
+            orderStatus: null,
+            sourceKind: 'file',
+          },
+          {
+            id: 12n,
+            orderId: 'fbm-2',
+            orderItemId: 'item-2',
+            sku: 'FBM-P2',
+            rawPayload: { item: { orderItemId: 'item-2' } },
+            quantityPurchased: 4,
+            shipmentNoRegisteredAt: null,
+            purchaseDateRaw: registeredAt.toISOString(),
+            amazonLastUpdatedAt: registeredAt,
+            orderStatus: 'SHIPPED',
+            sourceKind: 'sp_api',
+          },
+        ]),
+      },
       manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
       rakutenComboProduct: {
         findMany: jest.fn().mockResolvedValue([
@@ -99,6 +138,7 @@ describe('inventory dashboard no-sales age classification', () => {
         ]),
       },
       fbaSalesSnapshot: {
+        findFirst: jest.fn().mockResolvedValue(null),
         findUnique: jest.fn().mockResolvedValue({
           id: 10n,
           fileName: 'fba.csv',
@@ -150,18 +190,19 @@ describe('inventory dashboard no-sales age classification', () => {
       }),
     );
 
-    expect(dashboard.demand.systemOrderQty90d).toBe(7);
+    expect(dashboard.demand.systemOrderQty90d).toBe(14);
     expect(dashboard.demand.rakutenOrderedQty90d).toBe(7);
-    expect(dashboard.demand.amazonFbmOrderedQty90d).toBe(0);
+    expect(dashboard.demand.amazonFbmOrderedQty90d).toBe(7);
     expect(dashboard.demand.manualOrderedQty90d).toBe(0);
     expect(dashboard.demand.outboundProductCount90d).toBe(2);
     expect(dashboard.demand.unmatchedSystemOrderRowCount90d).toBe(0);
     expect(dashboard.demand.topSkus).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ productId: 'P1', systemOrderQty90d: 5 }),
-        expect.objectContaining({ productId: 'P2', systemOrderQty90d: 2 }),
+        expect.objectContaining({ productId: 'P2', systemOrderQty90d: 9 }),
       ]),
     );
+    expect(dashboard.dataSources.fbm).toEqual(expect.objectContaining({ apiRows90d: 1, manualRows90d: 1 }));
 
     const dashboardWithFba = (await service.getOverviewDashboard({
       includeFba: true,
