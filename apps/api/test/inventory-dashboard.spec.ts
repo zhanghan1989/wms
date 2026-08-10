@@ -43,22 +43,28 @@ describe('inventory dashboard no-sales age classification', () => {
   it('splits legacy Rakuten combo rows without expanding already-split rows again', async () => {
     const registeredAt = new Date();
     registeredAt.setDate(registeredAt.getDate() - 1);
+    const registeredAt60d = new Date();
+    registeredAt60d.setDate(registeredAt60d.getDate() - 60);
+    const firstStockedAt100d = new Date();
+    firstStockedAt100d.setDate(firstStockedAt100d.getDate() - 100);
     const prisma = {
       user: { count: jest.fn().mockResolvedValue(0) },
       shelf: { count: jest.fn().mockResolvedValue(0) },
       box: { count: jest.fn().mockResolvedValue(0) },
       batchInboundOrder: { count: jest.fn().mockResolvedValue(0) },
       masterProduct: {
-        count: jest.fn().mockResolvedValue(2),
+        count: jest.fn().mockResolvedValue(3),
         findMany: jest.fn().mockResolvedValue([
           { productId: 'P1', productName: '产品1', stockQty: 10, firstStockedAt: null },
           { productId: 'P2', productName: '产品2', stockQty: 10, firstStockedAt: null },
+          { productId: 'P3', productName: '产品3', stockQty: 10, firstStockedAt: firstStockedAt100d },
         ]),
       },
       sku: {
         findMany: jest.fn().mockResolvedValue([
           { id: 1n, sku: 'FBA-P1', fbmSku: 'CHANNEL-CONFLICT', rbSku: null, productId: 'P1' },
           { id: 2n, sku: 'CHANNEL-CONFLICT', fbmSku: 'FBM-P2', rbSku: null, productId: 'P2' },
+          { id: 3n, sku: 'FBA-P3', fbmSku: 'FBM-P3', rbSku: null, productId: 'P3' },
         ]),
       },
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
@@ -142,6 +148,19 @@ describe('inventory dashboard no-sales age classification', () => {
             orderStatus: 'SHIPPED',
             sourceKind: 'sp_api',
           },
+          {
+            id: 13n,
+            orderId: 'fbm-60d',
+            orderItemId: 'item-60d',
+            sku: 'FBM-P3',
+            rawPayload: { item: { orderItemId: 'item-60d' } },
+            quantityPurchased: 1,
+            shipmentNoRegisteredAt: null,
+            purchaseDateRaw: registeredAt60d.toISOString(),
+            amazonLastUpdatedAt: registeredAt60d,
+            orderStatus: 'SHIPPED',
+            sourceKind: 'sp_api',
+          },
         ]),
       },
       manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
@@ -198,7 +217,7 @@ describe('inventory dashboard no-sales age classification', () => {
     await service.getOverviewDashboard();
     expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledTimes(groupedQueryCount);
     await service.getOverviewDashboard({ forceRefresh: true });
-    expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledTimes(groupedQueryCount + 1);
+    expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledTimes(groupedQueryCount + 2);
 
     expect(prisma.sku.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -265,6 +284,9 @@ describe('inventory dashboard no-sales age classification', () => {
     expect(dashboard30d.period.days).toBe(30);
     expect(dashboard30d.demand.avgDailyOutbound90d).toBeCloseTo(
       dashboard30d.demand.outboundQty90d / 30,
+    );
+    expect(dashboard30d.obsolete.noSales90dSkus).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ productId: 'P3' })]),
     );
     expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
