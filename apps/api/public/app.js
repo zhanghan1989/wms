@@ -309,6 +309,7 @@ const state = {
   overviewDashboard: null,
   overviewIncludesFba: false,
   overviewFbaSnapshotId: "",
+  overviewDashboardDays: 90,
   overviewProductionVisibleCount: 30,
   dataBackups: [],
   dataBackupsVisibleCount: 0,
@@ -1938,14 +1939,17 @@ function renderOverviewDashboard(data) {
   const production = data?.production || {};
   const obsolete = data?.obsolete || {};
   const dataSources = data?.dataSources || {};
+  const periodDays = [30, 60, 90].includes(Number(data?.period?.days)) ? Number(data.period.days) : 90;
+  state.overviewDashboardDays = periodDays;
+  if ($("overviewDashboardDays")) $("overviewDashboardDays").value = String(periodDays);
   const includesFba = production.includesFba === true;
   setOverviewFbaDependentVisibility(includesFba);
 
   setTextById(
     "overviewNoSales90Heading",
     includesFba
-      ? "90天全渠道无出单产品"
-      : "90天系统无出单产品",
+      ? `${periodDays}天全渠道无出单产品`
+      : `${periodDays}天系统无出单产品`,
   );
 
   setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
@@ -1967,6 +1971,23 @@ function renderOverviewDashboard(data) {
   setTextById("overviewOrder30dAmazonCount", formatOverviewNumber(demand.fbaOrderedQty90d));
   setTextById("overviewOrder30dManualCount", formatOverviewNumber(demand.amazonFbmOrderedQty90d));
   setTextById("overviewOrder30dRakutenCount", formatOverviewNumber(demand.rakutenOrderedQty90d));
+  setTextById("overviewFbaQtyLabel", `${periodDays}天FBA商品件数`);
+  setTextById("overviewFbmQtyLabel", `${periodDays}天FBM商品件数`);
+  setTextById("overviewRakutenQtyLabel", `${periodDays}天乐天商品件数`);
+  setTextById("overviewTotalQtyLabel", `${periodDays}天合计商品件数`);
+  setTextById("overviewFbmOrderCountLabel", `${periodDays}天FBM订单数`);
+  setTextById("overviewFbmItemRowsLabel", `${periodDays}天FBM商品明细行`);
+  setTextById("overviewDemandPeriod", `统计周期 ${periodDays} 天`);
+  setTextById(
+    "overviewDemandDescription",
+    `统一按最近${periodDays}天统计商品件数：API FBA + API为主的FBM + 手动导入的乐天订单。`,
+  );
+  setTextById("overviewMonthlyAverageHint", `按${periodDays}天数据折算为30天月均`);
+  setTextById("overviewTopDemandHeading", `出单商品件数最高的产品（最近${periodDays}天）`);
+  setTextById("overviewProductionSystemDemandHeading", `${periodDays}天FBM+乐天订单`);
+  setTextById("overviewProductionFbaDemandHeading", `${periodDays}天FBA订单`);
+  setTextById("overviewProductionTotalDemandHeading", `${periodDays}天全渠道订单`);
+  setTextById("overviewProductionDailyDemandHeading", `${periodDays}天日均消耗`);
   setTextById("overviewFbaSourceStatus", dataSources.fba?.available ? "API已同步" : "待同步");
   setTextById(
     "overviewFbmSourceStatus",
@@ -2130,10 +2151,13 @@ function loadOverviewDashboard(options = {}) {
           : state.overviewFbaSnapshotId || "",
       ).trim()
     : "";
-  const loadKey = `${includeFba ? "fba" : "base"}:${fbaSnapshotId}`;
+  const requestedDays = Number(options.days ?? state.overviewDashboardDays ?? 90);
+  const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 90;
+  const loadKey = `${includeFba ? "fba" : "base"}:${fbaSnapshotId}:${days}`;
 
   state.overviewIncludesFba = includeFba;
   state.overviewFbaSnapshotId = fbaSnapshotId;
+  state.overviewDashboardDays = days;
 
   if (overviewDashboardLoadPromise && overviewDashboardLoadKey === loadKey) {
     return overviewDashboardLoadPromise;
@@ -2142,9 +2166,10 @@ function loadOverviewDashboard(options = {}) {
   const query = new URLSearchParams();
   if (includeFba) query.set("includeFba", "true");
   if (fbaSnapshotId) query.set("fbaSnapshotId", fbaSnapshotId);
+  query.set("days", String(days));
   const endpoint = `/inventory/dashboard${query.toString() ? `?${query.toString()}` : ""}`;
   const loadPromise = request(endpoint).then((data) => {
-    const currentKey = `${state.overviewIncludesFba ? "fba" : "base"}:${state.overviewFbaSnapshotId || ""}`;
+    const currentKey = `${state.overviewIncludesFba ? "fba" : "base"}:${state.overviewFbaSnapshotId || ""}:${state.overviewDashboardDays}`;
     if (currentKey === loadKey) {
       state.overviewDashboard = data || null;
       renderOverviewDashboard(state.overviewDashboard);
@@ -2168,7 +2193,9 @@ async function loadOverviewDashboardWithAutomaticFba() {
 }
 
 async function downloadProductionRecommendationExcel() {
-  const endpoint = "/inventory/dashboard/production-recommendations-excel";
+  const endpoint = `/inventory/dashboard/production-recommendations-excel?days=${encodeURIComponent(
+    String(state.overviewDashboardDays || 90),
+  )}`;
   const fileName = await downloadAuthorizedFile(
     endpoint,
     {},
@@ -7976,9 +8003,7 @@ function renderBatchInboundUploadOptions() {
   const waitingUploadOrders = state.batchInboundOrders.filter(
     (order) =>
       order.status === "waiting_upload" &&
-      !order.uploadedFileName &&
-      !order.domesticOrderNo &&
-      !order.seaOrderNo,
+      !order.uploadedFileName,
   );
   const options = waitingUploadOrders
     .map(
@@ -7986,7 +8011,9 @@ function renderBatchInboundUploadOptions() {
         `<option value="${escapeHtml(order.id)}">${escapeHtml(order.orderNo)}</option>`,
     )
     .join("");
-  select.innerHTML = `<option value="">请选择入库单</option>${options}`;
+  select.innerHTML = waitingUploadOrders.length
+    ? `<option value="">请选择入库单</option>${options}`
+    : '<option value="">暂无待上传入库单</option>';
   if (waitingUploadOrders.some((order) => String(order.id) === String(prev))) {
     select.value = prev;
   }
@@ -17700,6 +17727,11 @@ function bindScrollLoad() {
 }
 
 function bindRefresh() {
+  $("overviewDashboardDays")?.addEventListener("change", (event) => {
+    const days = Number(event.currentTarget.value || 90);
+    state.overviewDashboardDays = [30, 60, 90].includes(days) ? days : 90;
+    loadOverviewDashboard({ days: state.overviewDashboardDays }).catch((error) => showToast(error.message, true));
+  });
   $("refreshOverviewDashboard").addEventListener("click", () =>
     loadOverviewDashboard().catch((error) => showToast(error.message, true)),
   );

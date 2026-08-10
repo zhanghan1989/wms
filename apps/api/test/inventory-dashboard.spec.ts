@@ -62,6 +62,15 @@ describe('inventory dashboard no-sales age classification', () => {
         ]),
       },
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
+      amazonFbaOrderItem: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            sellerSku: 'FBA-P1',
+            quantityShipped: 10,
+            connection: { shop: { name: '' } },
+          },
+        ]),
+      },
       batchInboundItem: { groupBy: jest.fn().mockResolvedValue([]) },
       rakutenOrderRecord: {
         findMany: jest.fn().mockResolvedValue([
@@ -235,6 +244,22 @@ describe('inventory dashboard no-sales age classification', () => {
           suggestedProductionQty: 4,
         }),
       ]),
+    );
+
+    const dashboard30d = (await service.getOverviewDashboard({
+      days: 30,
+      fbaSnapshotId: '10',
+    })) as any;
+    expect(dashboard30d.period.days).toBe(30);
+    expect(dashboard30d.demand.avgDailyOutbound90d).toBeCloseTo(
+      dashboard30d.demand.outboundQty90d / 30,
+    );
+    expect(prisma.amazonFbaOrderItem.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
+        }),
+      }),
     );
   });
 });

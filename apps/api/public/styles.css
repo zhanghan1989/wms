@@ -291,6 +291,18 @@ body {
   gap: 8px;
 }
 
+.overview-period-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.overview-period-control select {
+  min-width: 108px;
+}
+
 h2 {
   margin: 2px 0 14px;
   font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;

@@ -1255,12 +1255,14 @@ export class InventoryService {
     return result;
   }
 
-  async getOverviewDashboard(options: { includeFba?: boolean; fbaSnapshotId?: string } = {}): Promise<unknown> {
+  async getOverviewDashboard(
+    options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number } = {},
+  ): Promise<unknown> {
     return getOverviewDashboardByProduct.call(this, options);
   }
 
   async buildProductionRecommendationsExcel(
-    options: { includeFba?: boolean; fbaSnapshotId?: string } = {},
+    options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number } = {},
   ): Promise<{ fileName: string; content: Buffer }> {
     const dashboard = (await getOverviewDashboardByProduct.call(this, options)) as {
       production?: {
@@ -2598,7 +2600,7 @@ function parseBulkInventoryUpdateRowsByProduct(
 
 async function getOverviewDashboardByProduct(
   this: InventoryService,
-  options: { includeFba?: boolean; fbaSnapshotId?: string } = {},
+  options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number } = {},
 ): Promise<unknown> {
   const service = this;
   const now = new Date();
@@ -2606,7 +2608,9 @@ async function getOverviewDashboardByProduct(
   const from7d = new Date(now.getTime() - 7 * dayMs);
   const from14d = new Date(now.getTime() - 14 * dayMs);
   const from30d = new Date(now.getTime() - 30 * dayMs);
-  const from90d = new Date(now.getTime() - 90 * dayMs);
+  const requestedDays = Number(options.days ?? 90);
+  const periodDays = [30, 60, 90].includes(requestedDays) ? requestedDays : 90;
+  const fromPeriod = new Date(now.getTime() - periodDays * dayMs);
   const fbaSnapshotIdText = String(options.fbaSnapshotId || '').trim();
   if (fbaSnapshotIdText && !/^\d+$/.test(fbaSnapshotIdText)) {
     throw new BadRequestException('FBA销量快照编号无效');
@@ -2615,17 +2619,17 @@ async function getOverviewDashboardByProduct(
 
   const rakutenShipmentOrderFilter: Prisma.RakutenOrderRecordWhereInput = {
     AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-    shipmentNoRegisteredAt: { gte: from90d },
+    shipmentNoRegisteredAt: { gte: fromPeriod },
   };
   const amazonShipmentOrderFilter: Prisma.AmazonOrderRecordWhereInput = {
     AND: [
       {
         OR: [
-          { sourceKind: 'sp_api', amazonLastUpdatedAt: { gte: from90d } },
+          { sourceKind: 'sp_api', amazonLastUpdatedAt: { gte: fromPeriod } },
           {
             sourceKind: { not: 'sp_api' },
             AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-            shipmentNoRegisteredAt: { gte: from90d },
+            shipmentNoRegisteredAt: { gte: fromPeriod },
           },
         ],
       },
@@ -2644,6 +2648,7 @@ async function getOverviewDashboardByProduct(
     inTransitRows,
     arrangedProductionRows,
     latestFbaSalesSnapshot,
+    fbaApiOrderRows,
     systemRakutenRows,
     rawSystemAmazonRows,
     systemManualRows,
@@ -2687,6 +2692,7 @@ async function getOverviewDashboardByProduct(
         sku: true,
         rbSku: true,
         fbmSku: true,
+        shop: true,
         productId: true,
       },
     }),
@@ -2761,6 +2767,17 @@ async function getOverviewDashboardByProduct(
             },
           },
         }),
+    service.prisma.amazonFbaOrderItem.findMany({
+      where: {
+        purchaseDate: { gte: fromPeriod },
+        orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
+      },
+      select: {
+        sellerSku: true,
+        quantityShipped: true,
+        connection: { select: { shop: { select: { name: true } } } },
+      },
+    }),
     service.prisma.rakutenOrderRecord.findMany({
       where: rakutenShipmentOrderFilter,
       orderBy: { shipmentNoRegisteredAt: 'desc' },
@@ -2836,7 +2853,7 @@ async function getOverviewDashboardByProduct(
     const demandDate = purchaseDate && !Number.isNaN(purchaseDate.getTime())
       ? purchaseDate
       : row.shipmentNoRegisteredAt;
-    return demandDate && demandDate >= from90d ? [{ row, demandDate }] : [];
+    return demandDate && demandDate >= fromPeriod ? [{ row, demandDate }] : [];
   });
 
   const productById = new Map<
@@ -2859,6 +2876,7 @@ async function getOverviewDashboardByProduct(
 
   const skuCodeToProductIds = new Map<string, Set<string>>();
   const primarySkuToProductIds = new Map<string, Set<string>>();
+  const primarySkuByShopToProductIds = new Map<string, Set<string>>();
   const fbmOrRbSkuToProductIds = new Map<string, Set<string>>();
   activeSkus.forEach((item) => {
     const productId = String(item.productId || '').trim();
@@ -2867,6 +2885,9 @@ async function getOverviewDashboardByProduct(
     if (primarySku) {
       if (!primarySkuToProductIds.has(primarySku)) primarySkuToProductIds.set(primarySku, new Set());
       primarySkuToProductIds.get(primarySku)!.add(productId);
+      const shopSkuKey = `${String(item.shop || '').trim().toLowerCase()}\u0000${primarySku.toLowerCase()}`;
+      if (!primarySkuByShopToProductIds.has(shopSkuKey)) primarySkuByShopToProductIds.set(shopSkuKey, new Set());
+      primarySkuByShopToProductIds.get(shopSkuKey)!.add(productId);
     }
     [item.fbmSku, item.rbSku].forEach((candidate) => {
       const skuCode = String(candidate || '').trim();
@@ -2889,6 +2910,11 @@ async function getOverviewDashboardByProduct(
   const resolveUniqueProductIdByPrimarySku = (skuCodeRaw: unknown): string | null => {
     const skuCode = String(skuCodeRaw ?? '').trim();
     const productIds = skuCode ? primarySkuToProductIds.get(skuCode) : undefined;
+    return productIds?.size === 1 ? [...productIds][0] : null;
+  };
+  const resolveUniqueProductIdByShopPrimarySku = (shopRaw: unknown, skuCodeRaw: unknown): string | null => {
+    const key = `${String(shopRaw ?? '').trim().toLowerCase()}\u0000${String(skuCodeRaw ?? '').trim().toLowerCase()}`;
+    const productIds = primarySkuByShopToProductIds.get(key);
     return productIds?.size === 1 ? [...productIds][0] : null;
   };
 
@@ -2959,7 +2985,7 @@ async function getOverviewDashboardByProduct(
     ) {
       return false;
     }
-    if (registeredAt >= from90d && addDemandQty(outbound90ByProduct, productIdText, qty)) {
+    if (registeredAt >= fromPeriod && addDemandQty(outbound90ByProduct, productIdText, qty)) {
       systemDemandQty90dByChannel[channel] += qty;
     }
     if (registeredAt >= from30d) addDemandQty(outbound30ByProduct, productIdText, qty);
@@ -3010,7 +3036,7 @@ async function getOverviewDashboardByProduct(
     },
   ) => {
     const qty = Number(item.qtyRaw ?? 0);
-    if (!item.registeredAt || item.registeredAt < from90d || !Number.isFinite(qty) || qty <= 0) return;
+    if (!item.registeredAt || item.registeredAt < fromPeriod || !Number.isFinite(qty) || qty <= 0) return;
     unmatchedSystemOrders90d.rowCount += 1;
     unmatchedSystemOrders90d.quantity += qty;
     unmatchedSystemOrders90d[`${item.channel}RowCount`] += 1;
@@ -3187,12 +3213,30 @@ async function getOverviewDashboardByProduct(
       if (!Number.isFinite(qty) || qty <= 0) return;
       addDemandQty(map, productId, qty);
     };
-    addPositiveQty(fbaSales90ByProduct, row.orderedQty);
-    addPositiveQty(outbound90ByProduct, row.orderedQty);
     addPositiveQty(fbaAvailableByProduct, row.fbaAvailableQty);
     addPositiveQty(fbaInboundByProduct, row.fbaInboundQty);
     addPositiveQty(fbaReservedByProduct, row.fbaReservedQty);
     addPositiveQty(fbaUnfulfillableByProduct, row.fbaUnfulfillableQty);
+  });
+  const matchedFbaApiSkus = new Set<string>();
+  let unmatchedFbaApiRowCount = 0;
+  let unmatchedFbaApiQty = 0;
+  fbaApiOrderRows.forEach((row) => {
+    const sellerSku = String(row.sellerSku ?? '').trim();
+    const shopName = String(row.connection?.shop?.name ?? '').trim();
+    const productId = resolveUniqueProductIdByShopPrimarySku(shopName, sellerSku)
+      ?? resolveUniqueProductIdByPrimarySku(sellerSku);
+    const qty = Number(row.quantityShipped ?? 0);
+    if (!productId || !Number.isFinite(qty) || qty <= 0) {
+      if (Number.isFinite(qty) && qty > 0) {
+        unmatchedFbaApiRowCount += 1;
+        unmatchedFbaApiQty += qty;
+      }
+      return;
+    }
+    addDemandQty(fbaSales90ByProduct, productId, qty);
+    addDemandQty(outbound90ByProduct, productId, qty);
+    matchedFbaApiSkus.add(`${shopName}\u0000${sellerSku}`);
   });
 
   let totalStock = 0;
@@ -3260,9 +3304,9 @@ async function getOverviewDashboardByProduct(
     const outbound90 = outbound90ByProduct.get(productId) ?? 0;
     const systemOrderQty90d = systemOrder90ByProduct.get(productId) ?? 0;
     const fbaOrderedQty90d = fbaSales90ByProduct.get(productId) ?? 0;
-    const avgDailyOutbound90d = outbound90 / 90;
-    const systemAvgDailyOutbound90d = systemOrderQty90d / 90;
-    const fbaAvgDailyOutbound90d = fbaOrderedQty90d / 90;
+    const avgDailyOutbound90d = outbound90 / periodDays;
+    const systemAvgDailyOutbound90d = systemOrderQty90d / periodDays;
+    const fbaAvgDailyOutbound90d = fbaOrderedQty90d / periodDays;
     const systemStockCoverageDays = systemAvgDailyOutbound90d > 0
       ? Math.max(0, available) / systemAvgDailyOutbound90d
       : Number.POSITIVE_INFINITY;
@@ -3283,7 +3327,7 @@ async function getOverviewDashboardByProduct(
 
     if (stock > 0 && !(outbound90ByProduct.get(productId) ?? 0)) {
       const stockAge = classifyNoSalesInventoryAge(rawProduct.firstStockedAt, now);
-      if (stockAge.status === 'obsolete') {
+      if (stockAge.observedDays != null && stockAge.observedDays >= periodDays) {
         noSales90dSkus.push({
           productId,
           productName: rawProduct.productName ?? null,
@@ -3306,8 +3350,8 @@ async function getOverviewDashboardByProduct(
       }
     }
 
-    const systemTargetDemandQty = Math.ceil((systemOrderQty90d / 90) * PRODUCTION_TARGET_DAYS);
-    const fbaTargetDemandQty = Math.ceil((fbaOrderedQty90d / 90) * PRODUCTION_TARGET_DAYS);
+    const systemTargetDemandQty = Math.ceil((systemOrderQty90d / periodDays) * PRODUCTION_TARGET_DAYS);
+    const fbaTargetDemandQty = Math.ceil((fbaOrderedQty90d / periodDays) * PRODUCTION_TARGET_DAYS);
     const targetDemandQty = systemTargetDemandQty + fbaTargetDemandQty;
     const systemShortageQty = Math.max(0, systemTargetDemandQty - systemSecuredStock);
     const fbaShortageQty = Math.max(0, fbaTargetDemandQty - fbaSecuredStock);
@@ -3404,7 +3448,7 @@ async function getOverviewDashboardByProduct(
       const systemOrderQty90d = systemOrder90ByProduct.get(productId) ?? 0;
       const fbaOrderedQty90d = fbaSales90ByProduct.get(productId) ?? 0;
       const totalStock = Number(product?.stockQty ?? 0);
-      const avgDailyOutbound = totalOrderQty90d / 90;
+      const avgDailyOutbound = totalOrderQty90d / periodDays;
       return {
         productId,
         productName: product?.productName ?? null,
@@ -3446,12 +3490,12 @@ async function getOverviewDashboardByProduct(
   const outboundQty14d = Array.from(outbound14ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty7d = Array.from(outbound7ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty90d = Array.from(outbound90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
-  const outboundQty30dCalculated = outboundQty90d / 3;
+  const outboundQty30dCalculated = (outboundQty90d / periodDays) * 30;
   const outboundProductCount90d = outbound90ByProduct.size;
   const systemOrderQty90d = Array.from(systemOrder90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const fbaOrderedQty90d = Array.from(fbaSales90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const avgDailyOutbound30d = outboundQty30d / 30;
-  const avgDailyOutbound90d = outboundQty90d / 90;
+  const avgDailyOutbound90d = outboundQty90d / periodDays;
   const securedStock = Math.max(0, availableStock) + inTransitStock + arrangedProductionStock;
 
   const urgentCount = recommendations.filter((item) => item.priority === '紧急').length;
@@ -3477,7 +3521,7 @@ async function getOverviewDashboardByProduct(
     };
   };
   const rakutenOrderStats30d = toOrderStats(
-    systemRakutenRows.filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= from30d).map((row) => ({
+    systemRakutenRows.filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= fromPeriod).map((row) => ({
       id: row.id,
       orderId: row.orderId,
       qty: row.orderQuantity,
@@ -3485,13 +3529,13 @@ async function getOverviewDashboardByProduct(
   );
   const amazonOrderStats30d = toOrderStats(
     amazonDemandRows.flatMap(({ row, demandDate }) => {
-      return demandDate && demandDate >= from30d
+      return demandDate && demandDate >= fromPeriod
         ? [{ id: row.id, orderId: row.orderId, qty: row.quantityPurchased }]
         : [];
     }),
   );
   const manualOrderStats30d = toOrderStats(
-    (systemManualRows as Array<{ id: bigint; orderId: string | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= from30d).map(
+    (systemManualRows as Array<{ id: bigint; orderId: string | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= fromPeriod).map(
       (row) => ({
         id: row.id,
         orderId: row.orderId,
@@ -3502,6 +3546,11 @@ async function getOverviewDashboardByProduct(
 
   return {
     generatedAt: now.toISOString(),
+    period: {
+      days: periodDays,
+      start: fromPeriod.toISOString(),
+      end: now.toISOString(),
+    },
     dataSources: {
       fba: latestFbaSalesSnapshot
         ? {
@@ -3509,8 +3558,8 @@ async function getOverviewDashboardByProduct(
             label: 'Amazon SP-API FBA订单',
             available: true,
             syncedAt: latestFbaSalesSnapshot.createdAt.toISOString(),
-            periodStart: latestFbaSalesSnapshot.periodStart?.toISOString().slice(0, 10) ?? null,
-            periodEnd: latestFbaSalesSnapshot.periodEnd?.toISOString().slice(0, 10) ?? null,
+            periodStart: fromPeriod.toISOString().slice(0, 10),
+            periodEnd: now.toISOString().slice(0, 10),
           }
         : {
             mode: 'sp_api',
@@ -3600,15 +3649,16 @@ async function getOverviewDashboardByProduct(
             inventorySnapshotDate:
               latestFbaSalesSnapshot.inventorySnapshotDate?.toISOString().slice(0, 10) ?? null,
             inventoryRows: latestFbaSalesSnapshot.inventoryRows,
-            periodDays: latestFbaSalesSnapshot.periodDays,
-            periodStart: latestFbaSalesSnapshot.periodStart?.toISOString().slice(0, 10) ?? null,
-            periodEnd: latestFbaSalesSnapshot.periodEnd?.toISOString().slice(0, 10) ?? null,
+            periodDays,
+            periodStart: fromPeriod.toISOString().slice(0, 10),
+            periodEnd: now.toISOString().slice(0, 10),
             totalRows: latestFbaSalesSnapshot.totalRows,
-            fbaRows: latestFbaSalesSnapshot.fbaRows,
+            fbaRows: matchedFbaApiSkus.size,
             fbmRows: latestFbaSalesSnapshot.fbmRows,
-            unmatchedRows: latestFbaSalesSnapshot.unmatchedRows,
+            unmatchedRows: unmatchedFbaApiRowCount,
             ambiguousRows: latestFbaSalesSnapshot.ambiguousRows,
-            fbaOrderedQty: latestFbaSalesSnapshot.fbaOrderedQty,
+            fbaOrderedQty: fbaOrderedQty90d,
+            unmatchedOrderedQty: unmatchedFbaApiQty,
             fbaAvailableQty: latestFbaSalesSnapshot.fbaAvailableQty,
             fbaInboundQty: latestFbaSalesSnapshot.fbaInboundQty,
             fbaReservedQty: latestFbaSalesSnapshot.fbaReservedQty,

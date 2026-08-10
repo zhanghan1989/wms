@@ -1500,6 +1500,14 @@
         <div class="panel-head">
           <h2>系统看板</h2>
           <div class="panel-tools">
+            <label class="overview-period-control">
+              统计周期
+              <select id="overviewDashboardDays">
+                <option value="30">近30天</option>
+                <option value="60">近60天</option>
+                <option value="90" selected>近90天</option>
+              </select>
+            </label>
             <button type="button" id="refreshOverviewDashboard" class="ghost">刷新看板</button>
             <button type="button" id="logoutBtn" class="ghost hidden">退出登录</button>
           </div>
@@ -1535,12 +1543,12 @@
             <h3>全渠道订单概览</h3>
             <p class="muted overview-card-description">FBA取自Amazon SP-API；FBM以API为主并兼容历史手动导入；乐天取自手动导入。</p>
             <ul class="stats overview-key-stats">
-              <li><span>90天FBA商品件数</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
-              <li><span>90天FBM商品件数</span><strong id="overviewOrder30dManualCount">-</strong></li>
-              <li><span>90天乐天商品件数</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
-              <li><span>90天合计商品件数</span><strong id="overviewOrder30dQuantity">-</strong></li>
-              <li><span>30天FBM订单数</span><strong id="overviewOrder30dCount">-</strong></li>
-              <li><span>30天FBM商品明细行</span><strong id="overviewOrder30dItemRows">-</strong></li>
+              <li><span id="overviewFbaQtyLabel">90天FBA商品件数</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
+              <li><span id="overviewFbmQtyLabel">90天FBM商品件数</span><strong id="overviewOrder30dManualCount">-</strong></li>
+              <li><span id="overviewRakutenQtyLabel">90天乐天商品件数</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
+              <li><span id="overviewTotalQtyLabel">90天合计商品件数</span><strong id="overviewOrder30dQuantity">-</strong></li>
+              <li><span id="overviewFbmOrderCountLabel">90天FBM订单数</span><strong id="overviewOrder30dCount">-</strong></li>
+              <li><span id="overviewFbmItemRowsLabel">90天FBM商品明细行</span><strong id="overviewOrder30dItemRows">-</strong></li>
             </ul>
           </article>
 
@@ -1561,9 +1569,9 @@
             <div class="overview-demand-head">
               <div>
                 <h3>全渠道出单商品分析</h3>
-                <p class="muted">统一按最近90天统计商品件数：API FBA + API为主的FBM + 手动导入的乐天订单。</p>
+                <p id="overviewDemandDescription" class="muted">统一按最近90天统计商品件数：API FBA + API为主的FBM + 手动导入的乐天订单。</p>
               </div>
-              <span class="overview-demand-period">统计周期 90 天</span>
+              <span id="overviewDemandPeriod" class="overview-demand-period">统计周期 90 天</span>
             </div>
             <div class="overview-demand-summary">
               <div class="overview-demand-primary-metric">
@@ -1572,9 +1580,9 @@
                 <small>系统与FBA出单商品件数合计</small>
               </div>
               <div class="overview-demand-primary-metric">
-                <span>全渠道出单商品件数（30天）</span>
+                <span>30天月均出单商品件数</span>
                 <strong id="overviewOutboundQty30dCalculated">-</strong>
-                <small>90天全渠道出单商品件数 ÷ 3</small>
+                <small id="overviewMonthlyAverageHint">按所选周期折算</small>
               </div>
               <div class="overview-demand-primary-metric">
                 <span>日均出单商品件数</span>
@@ -1636,7 +1644,7 @@
               </table>
             </div>
             <div class="overview-table-wrap">
-              <h4>出单商品件数最高的产品（最近90天）</h4>
+              <h4 id="overviewTopDemandHeading">出单商品件数最高的产品（最近90天）</h4>
               <table>
                 <thead>
                   <tr>
@@ -1685,10 +1693,10 @@
                     <th>FBA不可售库存</th>
                     <th>已安排生产</th>
                     <th>总保障库存</th>
-                    <th>90天FBM+乐天订单</th>
-                    <th>90天FBA订单</th>
-                    <th>90天全渠道订单</th>
-                    <th>90天日均消耗</th>
+                    <th id="overviewProductionSystemDemandHeading">90天FBM+乐天订单</th>
+                    <th id="overviewProductionFbaDemandHeading">90天FBA订单</th>
+                    <th id="overviewProductionTotalDemandHeading">90天全渠道订单</th>
+                    <th id="overviewProductionDailyDemandHeading">90天日均消耗</th>
                     <th>在库覆盖天数</th>
                     <th>总覆盖天数</th>
                     <th>目标需求</th>
