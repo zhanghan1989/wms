@@ -180,6 +180,7 @@ const MEDIUM_TOTAL_COVERAGE_DAYS = 90;
 const PRODUCTION_TARGET_DAYS = 90;
 const ESTIMATED_PRODUCTION_ARRIVAL_DAYS = 45;
 const ANOMALY_MIN_DELTA_QTY = 10;
+const PRODUCTION_MIN_90D_DEMAND_EXCLUSIVE = 10;
 const DASHBOARD_SNAPSHOT_RETENTION_LIMIT = 10;
 const OVERVIEW_DASHBOARD_CACHE_TTL_MS = 60 * 1000;
 const overviewDashboardCache = new Map<
@@ -1316,6 +1317,8 @@ export class InventoryService {
           arrangedProductionQty?: number | null;
           securedStock?: number | null;
           outbound30d?: number | null;
+          fbmOrderQty90d?: number | null;
+          rakutenOrderQty90d?: number | null;
           systemOrderQty90d?: number | null;
           fbaOrderedQty90d?: number | null;
           totalOrderQty90d?: number | null;
@@ -1352,7 +1355,8 @@ export class InventoryService {
       '已安排生产': Number(row.arrangedProductionQty ?? 0),
       '总保障库存': Number(row.securedStock ?? 0),
       '30天系统订单量': Number(row.outbound30d ?? 0),
-      '90天系统订单量': Number(row.systemOrderQty90d ?? 0),
+      '90天FBM订单量': Number(row.fbmOrderQty90d ?? 0),
+      '90天乐天订单量': Number(row.rakutenOrderQty90d ?? 0),
       '90天FBA订单量': Number(row.fbaOrderedQty90d ?? 0),
       '90天全渠道订单量': Number(row.totalOrderQty90d ?? 0),
       '90天日均消耗': Number(row.avgDailyOutbound90d ?? 0),
@@ -2655,28 +2659,9 @@ async function getOverviewDashboardByProduct(
 
   const rakutenShipmentOrderFilter: Prisma.RakutenOrderRecordWhereInput = {
     AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-    shipmentNoRegisteredAt: { gte: fromPeriod },
-  };
-  const amazonShipmentOrderFilter: Prisma.AmazonOrderRecordWhereInput = {
-    AND: [
-      {
-        OR: [
-          { sourceKind: 'sp_api', amazonLastUpdatedAt: { gte: fromPeriod } },
-          {
-            sourceKind: { not: 'sp_api' },
-            AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-            shipmentNoRegisteredAt: { gte: fromPeriod },
-          },
-        ],
-      },
-      { OR: [{ fulfillmentChannel: null }, { fulfillmentChannel: { not: 'AFN' } }] },
-    ],
-  };
-  const rakutenNoSalesFilter: Prisma.RakutenOrderRecordWhereInput = {
-    AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
     shipmentNoRegisteredAt: { gte: from90d },
   };
-  const amazonNoSalesFilter: Prisma.AmazonOrderRecordWhereInput = {
+  const amazonShipmentOrderFilter: Prisma.AmazonOrderRecordWhereInput = {
     AND: [
       {
         OR: [
@@ -2704,12 +2689,10 @@ async function getOverviewDashboardByProduct(
     arrangedProductionRows,
     latestFbaSalesSnapshot,
     fbaApiOrderGroups,
-    noSalesFbaApiOrderGroups,
+    productionFbaApiOrderGroups,
     fbaApiConnections,
     systemRakutenRows,
-    noSalesRakutenRows,
     rawSystemAmazonRows,
-    noSalesAmazonRows,
     systemManualRows,
   ] = await Promise.all([
     service.prisma.user.count({
@@ -2868,18 +2851,6 @@ async function getOverviewDashboardByProduct(
         shipmentNoRegisteredAt: true,
       },
     }),
-    periodDays === 90
-      ? Promise.resolve([])
-      : service.prisma.rakutenOrderRecord.findMany({
-          where: rakutenNoSalesFilter,
-          distinct: ['skuCode', 'isComboOrder', 'comboOrderSku', 'setComponentSkuCode'],
-          select: {
-            skuCode: true,
-            isComboOrder: true,
-            comboOrderSku: true,
-            setComponentSkuCode: true,
-          },
-        }),
     service.prisma.amazonOrderRecord.findMany({
       where: amazonShipmentOrderFilter,
       orderBy: { shipmentNoRegisteredAt: 'desc' },
@@ -2897,16 +2868,6 @@ async function getOverviewDashboardByProduct(
         sourceKind: true,
       },
     }),
-    periodDays === 90
-      ? Promise.resolve([])
-      : service.prisma.amazonOrderRecord.findMany({
-          where: amazonNoSalesFilter,
-          distinct: ['sku', 'orderStatus'],
-          select: {
-            sku: true,
-            orderStatus: true,
-          },
-        }),
     Promise.resolve([] as Array<{
       id: bigint;
       orderId: string | null;
@@ -2944,15 +2905,16 @@ async function getOverviewDashboardByProduct(
     }
   });
   const systemAmazonRows = Array.from(amazonRowsByItem.values());
-  const amazonDemandRows = systemAmazonRows.flatMap((row) => {
+  const amazonDemandRows90d = systemAmazonRows.flatMap((row) => {
     const orderStatus = String(row.orderStatus ?? '').trim().toUpperCase();
     if (orderStatus === 'CANCELLED' || orderStatus === 'UNFULFILLABLE') return [];
     const purchaseDate = row.purchaseDateRaw ? new Date(row.purchaseDateRaw) : null;
     const demandDate = purchaseDate && !Number.isNaN(purchaseDate.getTime())
       ? purchaseDate
       : row.shipmentNoRegisteredAt;
-    return demandDate && demandDate >= fromPeriod ? [{ row, demandDate }] : [];
+    return demandDate && demandDate >= from90d ? [{ row, demandDate }] : [];
   });
+  const amazonDemandRows = amazonDemandRows90d.filter(({ demandDate }) => demandDate >= fromPeriod);
 
   const productById = new Map<
     string,
@@ -3051,6 +3013,9 @@ async function getOverviewDashboardByProduct(
   const outbound14ByProduct = new Map<string, number>();
   const outbound7ByProduct = new Map<string, number>();
   const outbound90ByProduct = new Map<string, number>();
+  const productionSystemOrder90ByProduct = new Map<string, number>();
+  const productionFbmOrder90ByProduct = new Map<string, number>();
+  const productionRakutenOrder90ByProduct = new Map<string, number>();
   const systemDemandQty90dByChannel = { rakuten: 0, amazon: 0, manual: 0 };
 
   const resolveAmazonLikeDemandProductId = (row: { sku: string | null; rawPayload: Prisma.JsonValue | null }): string | null => {
@@ -3082,6 +3047,14 @@ async function getOverviewDashboardByProduct(
       qty <= 0
     ) {
       return false;
+    }
+    if (registeredAt >= from90d) {
+      addDemandQty(productionSystemOrder90ByProduct, productIdText, qty);
+      addDemandQty(
+        channel === 'rakuten' ? productionRakutenOrder90ByProduct : productionFbmOrder90ByProduct,
+        productIdText,
+        qty,
+      );
     }
     if (registeredAt >= fromPeriod && addDemandQty(outbound90ByProduct, productIdText, qty)) {
       systemDemandQty90dByChannel[channel] += qty;
@@ -3151,7 +3124,7 @@ async function getOverviewDashboardByProduct(
   const normalizeComboSku = (value: unknown): string => String(value ?? '').trim().toLowerCase();
   const referencedComboSkus = Array.from(
     new Set(
-      [...systemRakutenRows, ...noSalesRakutenRows]
+      systemRakutenRows
         .flatMap((row) => [
           row.comboOrderSku,
           row.setComponentSkuCode,
@@ -3179,40 +3152,6 @@ async function getOverviewDashboardByProduct(
       combo.items.map((item) => String(item.productId ?? '').trim()).filter(Boolean),
     ]),
   );
-  const productsWithSales90d = new Set<string>();
-  const addRakutenProductsWithSales90d = (row: {
-    skuCode: string | null;
-    isComboOrder: boolean;
-    comboOrderSku: string | null;
-    setComponentSkuCode: string | null;
-  }): void => {
-    const skuCode = String(row.skuCode ?? '').trim();
-    const directProductId = activeProductIdSet.has(skuCode)
-      ? skuCode
-      : resolveUniqueProductIdBySkuCode(skuCode);
-    if (row.isComboOrder) {
-      if (directProductId) productsWithSales90d.add(directProductId);
-      return;
-    }
-    const comboSku = [row.comboOrderSku, row.setComponentSkuCode, row.skuCode]
-      .map((value) => String(value ?? '').trim())
-      .find((value) => Boolean(value && comboProductIdsBySku.has(normalizeComboSku(value))));
-    if (comboSku) {
-      (comboProductIdsBySku.get(normalizeComboSku(comboSku)) ?? []).forEach((productId) => {
-        if (activeProductIdSet.has(productId)) productsWithSales90d.add(productId);
-      });
-      return;
-    }
-    if (directProductId) productsWithSales90d.add(directProductId);
-  };
-  (periodDays === 90 ? systemRakutenRows : noSalesRakutenRows).forEach(addRakutenProductsWithSales90d);
-  noSalesAmazonRows.forEach((row) => {
-    const orderStatus = String(row.orderStatus ?? '').trim().toUpperCase();
-    if (orderStatus === 'CANCELLED' || orderStatus === 'UNFULFILLABLE') return;
-    const productId = resolveUniqueProductIdBySkuCode(row.sku);
-    if (productId) productsWithSales90d.add(productId);
-  });
-
   systemRakutenRows.forEach((row) => {
     const skuCode = String(row.skuCode ?? '').trim();
     const directProductId = activeProductIdSet.has(skuCode)
@@ -3279,7 +3218,7 @@ async function getOverviewDashboardByProduct(
       });
     });
   });
-  amazonDemandRows.forEach(({ row, demandDate }) => {
+  amazonDemandRows90d.forEach(({ row, demandDate }) => {
     const productId = resolveAmazonLikeDemandProductId(row);
     if (!addSystemOrderDemandQty('amazon', productId, row.quantityPurchased, demandDate)) {
       const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
@@ -3312,8 +3251,9 @@ async function getOverviewDashboardByProduct(
   );
   unmatchedSystemOrders90d.details.splice(200);
 
-  const systemOrder90ByProduct = new Map(outbound90ByProduct);
+  const selectedSystemOrderByProduct = new Map(outbound90ByProduct);
   const fbaSales90ByProduct = new Map<string, number>();
+  const productionFbaSales90ByProduct = new Map<string, number>();
   const fbaAvailableByProduct = new Map<string, number>();
   const fbaInboundByProduct = new Map<string, number>();
   const fbaReservedByProduct = new Map<string, number>();
@@ -3349,9 +3289,6 @@ async function getOverviewDashboardByProduct(
     addPositiveQty(fbaReservedByProduct, row.fbaReservedQty);
     addPositiveQty(fbaUnfulfillableByProduct, row.fbaUnfulfillableQty);
   });
-  const matchedFbaApiSkus = new Set<string>();
-  let unmatchedFbaApiRowCount = 0;
-  let unmatchedFbaApiQty = 0;
   const fbaShopNameByConnectionId = new Map(
     fbaApiConnections.map((connection) => [
       connection.id.toString(),
@@ -3364,28 +3301,33 @@ async function getOverviewDashboardByProduct(
     const productId = resolveUniqueProductIdByShopPrimarySku(shopName, sellerSku)
       ?? resolveUniqueProductIdByPrimarySku(sellerSku);
     const qty = Number(row._sum.quantityShipped ?? 0);
-    if (!productId || !Number.isFinite(qty) || qty <= 0) {
-      if (Number.isFinite(qty) && qty > 0) {
-        unmatchedFbaApiRowCount += 1;
-        unmatchedFbaApiQty += qty;
-      }
-      return;
-    }
+    if (!productId || !Number.isFinite(qty) || qty <= 0) return;
     addDemandQty(fbaSales90ByProduct, productId, qty);
     addDemandQty(outbound90ByProduct, productId, qty);
-    matchedFbaApiSkus.add(`${shopName}\u0000${sellerSku}`);
   });
-  const fbaGroupsForNoSales = periodDays === 90 ? fbaApiOrderGroups : noSalesFbaApiOrderGroups;
-  fbaGroupsForNoSales.forEach((row) => {
+  const fbaGroupsForProduction = periodDays === 90 ? fbaApiOrderGroups : productionFbaApiOrderGroups;
+  const matchedProductionFbaSkus = new Set<string>();
+  let unmatchedProductionFbaRowCount = 0;
+  let unmatchedProductionFbaQty = 0;
+  fbaGroupsForProduction.forEach((row) => {
     const sellerSku = String(row.sellerSku ?? '').trim();
     const shopName = fbaShopNameByConnectionId.get(row.connectionId.toString()) ?? '';
     const productId = resolveUniqueProductIdByShopPrimarySku(shopName, sellerSku)
       ?? resolveUniqueProductIdByPrimarySku(sellerSku);
-    if (productId && Number(row._sum.quantityShipped ?? 0) > 0) {
-      productsWithSales90d.add(productId);
+    const qty = Number(row._sum.quantityShipped ?? 0);
+    if (productId && Number.isFinite(qty) && qty > 0) {
+      addDemandQty(productionFbaSales90ByProduct, productId, qty);
+      matchedProductionFbaSkus.add(`${shopName}\u0000${sellerSku}`);
+    } else if (Number.isFinite(qty) && qty > 0) {
+      unmatchedProductionFbaRowCount += 1;
+      unmatchedProductionFbaQty += qty;
     }
   });
-  outbound90ByProduct.forEach((_qty, productId) => productsWithSales90d.add(productId));
+  const productionOutbound90ByProduct = new Map(productionSystemOrder90ByProduct);
+  productionFbaSales90ByProduct.forEach((qty, productId) => {
+    addDemandQty(productionOutbound90ByProduct, productId, qty);
+  });
+  const productsWithSales90d = new Set(productionOutbound90ByProduct.keys());
 
   let totalStock = 0;
   let availableStock = 0;
@@ -3408,6 +3350,8 @@ async function getOverviewDashboardByProduct(
     fbaUnfulfillableQty: number;
     fbaSecuredStock: number;
     outbound30d: number;
+    fbmOrderQty90d: number;
+    rakutenOrderQty90d: number;
     systemOrderQty90d: number;
     fbaOrderedQty90d: number;
     totalOrderQty90d: number;
@@ -3449,12 +3393,14 @@ async function getOverviewDashboardByProduct(
     const fbaSecuredStock = fbaAvailableQty + fbaInboundQty;
     const securedStock = systemSecuredStock + fbaSecuredStock + arrangedProductionQty;
     const outbound30 = outbound30ByProduct.get(productId) ?? 0;
-    const outbound90 = outbound90ByProduct.get(productId) ?? 0;
-    const systemOrderQty90d = systemOrder90ByProduct.get(productId) ?? 0;
-    const fbaOrderedQty90d = fbaSales90ByProduct.get(productId) ?? 0;
-    const avgDailyOutbound90d = outbound90 / periodDays;
-    const systemAvgDailyOutbound90d = systemOrderQty90d / periodDays;
-    const fbaAvgDailyOutbound90d = fbaOrderedQty90d / periodDays;
+    const outbound90 = productionOutbound90ByProduct.get(productId) ?? 0;
+    const fbmOrderQty90d = productionFbmOrder90ByProduct.get(productId) ?? 0;
+    const rakutenOrderQty90d = productionRakutenOrder90ByProduct.get(productId) ?? 0;
+    const systemOrderQty90d = productionSystemOrder90ByProduct.get(productId) ?? 0;
+    const fbaOrderedQty90d = productionFbaSales90ByProduct.get(productId) ?? 0;
+    const avgDailyOutbound90d = outbound90 / 90;
+    const systemAvgDailyOutbound90d = systemOrderQty90d / 90;
+    const fbaAvgDailyOutbound90d = fbaOrderedQty90d / 90;
     const systemStockCoverageDays = systemAvgDailyOutbound90d > 0
       ? Math.max(0, available) / systemAvgDailyOutbound90d
       : Number.POSITIVE_INFINITY;
@@ -3498,8 +3444,10 @@ async function getOverviewDashboardByProduct(
       }
     }
 
-    const systemTargetDemandQty = Math.ceil((systemOrderQty90d / periodDays) * PRODUCTION_TARGET_DAYS);
-    const fbaTargetDemandQty = Math.ceil((fbaOrderedQty90d / periodDays) * PRODUCTION_TARGET_DAYS);
+    if (outbound90 <= PRODUCTION_MIN_90D_DEMAND_EXCLUSIVE) return;
+
+    const systemTargetDemandQty = Math.ceil((systemOrderQty90d / 90) * PRODUCTION_TARGET_DAYS);
+    const fbaTargetDemandQty = Math.ceil((fbaOrderedQty90d / 90) * PRODUCTION_TARGET_DAYS);
     const targetDemandQty = systemTargetDemandQty + fbaTargetDemandQty;
     const systemShortageQty = Math.max(0, systemTargetDemandQty - systemSecuredStock);
     const fbaShortageQty = Math.max(0, fbaTargetDemandQty - fbaSecuredStock);
@@ -3550,6 +3498,8 @@ async function getOverviewDashboardByProduct(
       fbaUnfulfillableQty,
       fbaSecuredStock,
       outbound30d: outbound30,
+      fbmOrderQty90d,
+      rakutenOrderQty90d,
       systemOrderQty90d,
       fbaOrderedQty90d,
       totalOrderQty90d: outbound90,
@@ -3593,7 +3543,7 @@ async function getOverviewDashboardByProduct(
   const topSkus = Array.from(outbound90ByProduct.entries())
     .map(([productId, totalOrderQty90d]) => {
       const product = productById.get(productId);
-      const systemOrderQty90d = systemOrder90ByProduct.get(productId) ?? 0;
+      const systemOrderQty90d = selectedSystemOrderByProduct.get(productId) ?? 0;
       const fbaOrderedQty90d = fbaSales90ByProduct.get(productId) ?? 0;
       const totalStock = Number(product?.stockQty ?? 0);
       const avgDailyOutbound = totalOrderQty90d / periodDays;
@@ -3640,8 +3590,12 @@ async function getOverviewDashboardByProduct(
   const outboundQty90d = Array.from(outbound90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const outboundQty30dCalculated = (outboundQty90d / periodDays) * 30;
   const outboundProductCount90d = outbound90ByProduct.size;
-  const systemOrderQty90d = Array.from(systemOrder90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
+  const systemOrderQty90d = Array.from(selectedSystemOrderByProduct.values()).reduce((sum, qty) => sum + qty, 0);
   const fbaOrderedQty90d = Array.from(fbaSales90ByProduct.values()).reduce((sum, qty) => sum + qty, 0);
+  const productionFbaOrderedQty90d = Array.from(productionFbaSales90ByProduct.values()).reduce(
+    (sum, qty) => sum + qty,
+    0,
+  );
   const avgDailyOutbound30d = outboundQty30d / 30;
   const avgDailyOutbound90d = outboundQty90d / periodDays;
   const securedStock = Math.max(0, availableStock) + inTransitStock + arrangedProductionStock;
@@ -3727,7 +3681,9 @@ async function getOverviewDashboardByProduct(
       rakuten: {
         mode: 'manual_import',
         label: '乐天手动导入订单',
-        orderRows90d: systemRakutenRows.length,
+        orderRows90d: systemRakutenRows.filter(
+          (row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= fromPeriod,
+        ).length,
       },
     },
     summary: {
@@ -3783,6 +3739,10 @@ async function getOverviewDashboardByProduct(
     production: {
       includesFba: Boolean(latestFbaSalesSnapshot),
       requiresFbaUpload: !latestFbaSalesSnapshot,
+      periodDays: 90,
+      periodStart: from90d.toISOString().slice(0, 10),
+      periodEnd: now.toISOString().slice(0, 10),
+      minimumTotalOrderQty90dExclusive: PRODUCTION_MIN_90D_DEMAND_EXCLUSIVE,
       targetDays: PRODUCTION_TARGET_DAYS,
       estimatedArrivalDays: ESTIMATED_PRODUCTION_ARRIVAL_DAYS,
       recommendationCount: recommendations.length,
@@ -3797,16 +3757,16 @@ async function getOverviewDashboardByProduct(
             inventorySnapshotDate:
               latestFbaSalesSnapshot.inventorySnapshotDate?.toISOString().slice(0, 10) ?? null,
             inventoryRows: latestFbaSalesSnapshot.inventoryRows,
-            periodDays,
-            periodStart: fromPeriod.toISOString().slice(0, 10),
+            periodDays: 90,
+            periodStart: from90d.toISOString().slice(0, 10),
             periodEnd: now.toISOString().slice(0, 10),
             totalRows: latestFbaSalesSnapshot.totalRows,
-            fbaRows: matchedFbaApiSkus.size,
+            fbaRows: matchedProductionFbaSkus.size,
             fbmRows: latestFbaSalesSnapshot.fbmRows,
-            unmatchedRows: unmatchedFbaApiRowCount,
+            unmatchedRows: unmatchedProductionFbaRowCount,
             ambiguousRows: latestFbaSalesSnapshot.ambiguousRows,
-            fbaOrderedQty: fbaOrderedQty90d,
-            unmatchedOrderedQty: unmatchedFbaApiQty,
+            fbaOrderedQty: productionFbaOrderedQty90d,
+            unmatchedOrderedQty: unmatchedProductionFbaQty,
             fbaAvailableQty: latestFbaSalesSnapshot.fbaAvailableQty,
             fbaInboundQty: latestFbaSalesSnapshot.fbaInboundQty,
             fbaReservedQty: latestFbaSalesSnapshot.fbaReservedQty,
