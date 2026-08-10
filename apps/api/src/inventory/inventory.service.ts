@@ -1262,11 +1262,9 @@ export class InventoryService {
   async buildProductionRecommendationsExcel(
     options: { includeFba?: boolean; fbaSnapshotId?: string } = {},
   ): Promise<{ fileName: string; content: Buffer }> {
-    if (!options.includeFba || !String(options.fbaSnapshotId || '').trim()) {
-      throw new BadRequestException('请先上传最近90天FBA销售报告和FBA库存报告，再下载工厂备货建议');
-    }
     const dashboard = (await getOverviewDashboardByProduct.call(this, options)) as {
       production?: {
+        includesFba?: boolean;
         recommendations?: Array<{
           productId?: string | null;
           productName?: string | null;
@@ -1297,6 +1295,9 @@ export class InventoryService {
         }>;
       };
     };
+    if (!dashboard.production?.includesFba) {
+      throw new BadRequestException('尚无可用的Amazon SP-API FBA订单和库存快照，请先完成同步');
+    }
     const recommendations = Array.isArray(dashboard.production?.recommendations)
       ? dashboard.production.recommendations
       : [];
@@ -2606,13 +2607,9 @@ async function getOverviewDashboardByProduct(
   const from14d = new Date(now.getTime() - 14 * dayMs);
   const from30d = new Date(now.getTime() - 30 * dayMs);
   const from90d = new Date(now.getTime() - 90 * dayMs);
-  const includeFba = options.includeFba === true;
   const fbaSnapshotIdText = String(options.fbaSnapshotId || '').trim();
-  if (includeFba && !fbaSnapshotIdText) {
-    throw new BadRequestException('请先上传最近90天FBA销售报告和FBA库存报告，再计算全渠道需求');
-  }
   if (fbaSnapshotIdText && !/^\d+$/.test(fbaSnapshotIdText)) {
-    throw new BadRequestException('FBA销量快照编号无效，请重新上传90天CSV');
+    throw new BadRequestException('FBA销量快照编号无效');
   }
   const fbaSnapshotId = /^\d+$/.test(fbaSnapshotIdText) ? BigInt(fbaSnapshotIdText) : null;
 
@@ -2621,14 +2618,20 @@ async function getOverviewDashboardByProduct(
     shipmentNoRegisteredAt: { gte: from90d },
   };
   const amazonShipmentOrderFilter: Prisma.AmazonOrderRecordWhereInput = {
-    AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-    shipmentNoRegisteredAt: { gte: from90d },
+    AND: [
+      {
+        OR: [
+          { sourceKind: 'sp_api', amazonLastUpdatedAt: { gte: from90d } },
+          {
+            sourceKind: { not: 'sp_api' },
+            AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
+            shipmentNoRegisteredAt: { gte: from90d },
+          },
+        ],
+      },
+      { OR: [{ fulfillmentChannel: null }, { fulfillmentChannel: { not: 'AFN' } }] },
+    ],
   };
-  const manualShipmentOrderFilter: Prisma.ManualOrderRecordWhereInput = {
-    AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-    shipmentNoRegisteredAt: { gte: from90d },
-  };
-
   const [
     activeUserCount,
     shelfCount,
@@ -2642,7 +2645,7 @@ async function getOverviewDashboardByProduct(
     arrangedProductionRows,
     latestFbaSalesSnapshot,
     systemRakutenRows,
-    systemAmazonRows,
+    rawSystemAmazonRows,
     systemManualRows,
   ] = await Promise.all([
     service.prisma.user.count({
@@ -2722,7 +2725,7 @@ async function getOverviewDashboardByProduct(
       },
       _sum: { qty: true },
     }),
-    includeFba && fbaSnapshotId
+    fbaSnapshotId
       ? service.prisma.fbaSalesSnapshot.findUnique({
           where: { id: fbaSnapshotId },
           include: {
@@ -2740,7 +2743,24 @@ async function getOverviewDashboardByProduct(
             },
           },
         })
-      : Promise.resolve(null),
+      : service.prisma.fbaSalesSnapshot.findFirst({
+          where: { fileName: { startsWith: 'Amazon SP-API' } },
+          orderBy: { id: 'desc' },
+          include: {
+            items: {
+              select: {
+                sellerSku: true,
+                productId: true,
+                channel: true,
+                orderedQty: true,
+                fbaAvailableQty: true,
+                fbaInboundQty: true,
+                fbaReservedQty: true,
+                fbaUnfulfillableQty: true,
+              },
+            },
+          },
+        }),
     service.prisma.rakutenOrderRecord.findMany({
       where: rakutenShipmentOrderFilter,
       orderBy: { shipmentNoRegisteredAt: 'desc' },
@@ -2761,32 +2781,63 @@ async function getOverviewDashboardByProduct(
       select: {
         id: true,
         orderId: true,
+        orderItemId: true,
         sku: true,
         rawPayload: true,
         quantityPurchased: true,
         shipmentNoRegisteredAt: true,
+        purchaseDateRaw: true,
+        amazonLastUpdatedAt: true,
+        orderStatus: true,
+        sourceKind: true,
       },
     }),
-    (service.prisma as any).manualOrderRecord.findMany({
-      where: manualShipmentOrderFilter,
-      orderBy: { shipmentNoRegisteredAt: 'desc' },
-      select: {
-        id: true,
-        orderId: true,
-        sku: true,
-        rawPayload: true,
-        quantityPurchased: true,
-        shipmentNoRegisteredAt: true,
-      },
-    }),
+    Promise.resolve([] as Array<{
+      id: bigint;
+      orderId: string | null;
+      sku: string | null;
+      rawPayload: Prisma.JsonValue | null;
+      quantityPurchased: number | null;
+      shipmentNoRegisteredAt: Date | null;
+    }>),
   ]);
 
-  if (includeFba && !latestFbaSalesSnapshot) {
-    throw new BadRequestException('指定的FBA销量快照不存在，请重新上传90天CSV');
+  if (fbaSnapshotId && !latestFbaSalesSnapshot) {
+    throw new BadRequestException('指定的FBA销量快照不存在');
   }
-  if (includeFba && latestFbaSalesSnapshot && !latestFbaSalesSnapshot.inventoryFileName) {
-    throw new BadRequestException('当前快照没有FBA库存报告，请重新同时上传销售报告和库存报告');
+  if (latestFbaSalesSnapshot && !latestFbaSalesSnapshot.inventoryFileName) {
+    throw new BadRequestException('当前FBA API快照没有库存数据');
   }
+
+  const getOriginalAmazonItemId = (rawPayload: Prisma.JsonValue | null): string => {
+    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return '';
+    const item = (rawPayload as Prisma.JsonObject).item;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
+    return String((item as Prisma.JsonObject).orderItemId ?? '').trim();
+  };
+  const amazonRowsByItem = new Map<string, (typeof rawSystemAmazonRows)[number]>();
+  rawSystemAmazonRows.forEach((row) => {
+    const orderId = String(row.orderId ?? '').trim() || `row:${row.id.toString()}`;
+    const itemId = getOriginalAmazonItemId(row.rawPayload)
+      || String(row.orderItemId ?? '').trim()
+      || String(row.sku ?? '').trim()
+      || row.id.toString();
+    const key = `${orderId}|${itemId}`;
+    const current = amazonRowsByItem.get(key);
+    if (!current || (row.sourceKind !== 'sp_api' && current.sourceKind === 'sp_api')) {
+      amazonRowsByItem.set(key, row);
+    }
+  });
+  const systemAmazonRows = Array.from(amazonRowsByItem.values());
+  const amazonDemandRows = systemAmazonRows.flatMap((row) => {
+    const orderStatus = String(row.orderStatus ?? '').trim().toUpperCase();
+    if (orderStatus === 'CANCELLED' || orderStatus === 'UNFULFILLABLE') return [];
+    const purchaseDate = row.purchaseDateRaw ? new Date(row.purchaseDateRaw) : null;
+    const demandDate = purchaseDate && !Number.isNaN(purchaseDate.getTime())
+      ? purchaseDate
+      : row.shipmentNoRegisteredAt;
+    return demandDate && demandDate >= from90d ? [{ row, demandDate }] : [];
+  });
 
   const productById = new Map<
     string,
@@ -3071,16 +3122,16 @@ async function getOverviewDashboardByProduct(
       });
     });
   });
-  systemAmazonRows.forEach((row) => {
+  amazonDemandRows.forEach(({ row, demandDate }) => {
     const productId = resolveAmazonLikeDemandProductId(row);
-    if (!addSystemOrderDemandQty('amazon', productId, row.quantityPurchased, row.shipmentNoRegisteredAt)) {
+    if (!addSystemOrderDemandQty('amazon', productId, row.quantityPurchased, demandDate)) {
       const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
       recordUnmatchedSystemOrder({
         channel: 'amazon',
         orderId: row.orderId,
         skuCode: String(row.sku ?? '').trim() || null,
         qtyRaw: row.quantityPurchased,
-        registeredAt: row.shipmentNoRegisteredAt,
+        registeredAt: demandDate,
         reason: describeDemandMatchFailure(row.sku, productIdOverride),
       });
     }
@@ -3433,11 +3484,11 @@ async function getOverviewDashboardByProduct(
     })),
   );
   const amazonOrderStats30d = toOrderStats(
-    systemAmazonRows.filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= from30d).map((row) => ({
-      id: row.id,
-      orderId: row.orderId,
-      qty: row.quantityPurchased,
-    })),
+    amazonDemandRows.flatMap(({ row, demandDate }) => {
+      return demandDate && demandDate >= from30d
+        ? [{ id: row.id, orderId: row.orderId, qty: row.quantityPurchased }]
+        : [];
+    }),
   );
   const manualOrderStats30d = toOrderStats(
     (systemManualRows as Array<{ id: bigint; orderId: string | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= from30d).map(
@@ -3451,6 +3502,37 @@ async function getOverviewDashboardByProduct(
 
   return {
     generatedAt: now.toISOString(),
+    dataSources: {
+      fba: latestFbaSalesSnapshot
+        ? {
+            mode: 'sp_api',
+            label: 'Amazon SP-API FBA订单',
+            available: true,
+            syncedAt: latestFbaSalesSnapshot.createdAt.toISOString(),
+            periodStart: latestFbaSalesSnapshot.periodStart?.toISOString().slice(0, 10) ?? null,
+            periodEnd: latestFbaSalesSnapshot.periodEnd?.toISOString().slice(0, 10) ?? null,
+          }
+        : {
+            mode: 'sp_api',
+            label: 'Amazon SP-API FBA订单',
+            available: false,
+            syncedAt: null,
+            periodStart: null,
+            periodEnd: null,
+          },
+      fbm: {
+        mode: 'sp_api_with_manual_fallback',
+        label: 'Amazon SP-API FBM订单 + 历史手动导入',
+        orderRows90d: amazonDemandRows.length,
+        apiRows90d: amazonDemandRows.filter(({ row }) => row.sourceKind === 'sp_api').length,
+        manualRows90d: amazonDemandRows.filter(({ row }) => row.sourceKind !== 'sp_api').length,
+      },
+      rakuten: {
+        mode: 'manual_import',
+        label: '乐天手动导入订单',
+        orderRows90d: systemRakutenRows.length,
+      },
+    },
     summary: {
       activeUserCount,
       masterProductCount,
@@ -3494,6 +3576,9 @@ async function getOverviewDashboardByProduct(
       totalItemRowCount:
         rakutenOrderStats30d.itemRowCount + amazonOrderStats30d.itemRowCount + manualOrderStats30d.itemRowCount,
       totalQuantity: rakutenOrderStats30d.quantity + amazonOrderStats30d.quantity + manualOrderStats30d.quantity,
+      fbmOrderCount: amazonOrderStats30d.orderCount,
+      fbmItemRowCount: amazonOrderStats30d.itemRowCount,
+      fbmQuantity: amazonOrderStats30d.quantity,
       rakutenOrderCount: rakutenOrderStats30d.orderCount,
       amazonOrderCount: amazonOrderStats30d.orderCount,
       manualOrderCount: manualOrderStats30d.orderCount,
