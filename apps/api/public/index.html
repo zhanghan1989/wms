@@ -1500,14 +1500,6 @@
         <div class="panel-head">
           <h2>系统看板</h2>
           <div class="panel-tools">
-            <label class="overview-period-control">
-              统计周期
-              <select id="overviewDashboardDays">
-                <option value="30" selected>近30天</option>
-                <option value="60">近60天</option>
-                <option value="90">近90天</option>
-              </select>
-            </label>
             <button type="button" id="refreshOverviewDashboard" class="ghost">刷新看板</button>
             <button type="button" id="logoutBtn" class="ghost hidden">退出登录</button>
           </div>
@@ -1539,39 +1531,40 @@
             </ul>
           </article>
 
-          <article class="card">
-            <h3>全渠道订单概览</h3>
-            <p class="muted overview-card-description">FBA取自Amazon SP-API；FBM以API为主并兼容历史手动导入；乐天取自手动导入。</p>
-            <ul class="stats overview-key-stats">
-              <li><span id="overviewFbaQtyLabel">30天FBA商品件数</span><strong id="overviewOrder30dAmazonCount">-</strong></li>
-              <li><span id="overviewFbmQtyLabel">30天FBM商品件数</span><strong id="overviewOrder30dManualCount">-</strong></li>
-              <li><span id="overviewRakutenQtyLabel">30天乐天商品件数</span><strong id="overviewOrder30dRakutenCount">-</strong></li>
-              <li><span id="overviewTotalQtyLabel">30天合计商品件数</span><strong id="overviewOrder30dQuantity">-</strong></li>
-              <li><span id="overviewFbmOrderCountLabel">30天FBM订单数</span><strong id="overviewOrder30dCount">-</strong></li>
-              <li><span id="overviewFbmItemRowsLabel">30天FBM商品明细行</span><strong id="overviewOrder30dItemRows">-</strong></li>
-            </ul>
-          </article>
-
-          <article id="overviewFbaUploadCard" class="card overview-fba-upload-card">
-            <h3>数据口径</h3>
-            <p class="muted">看板自动合并FBA、FBM和乐天订单，不再要求上传FBA销售报告。FBM按订单明细去重，同时存在API与人工记录时保留人工维护的仓库字段。</p>
-            <ul class="stats overview-key-stats">
-              <li><span>FBA数据源</span><strong id="overviewFbaSourceStatus">-</strong></li>
-              <li><span>FBM数据源</span><strong id="overviewFbmSourceStatus">-</strong></li>
-              <li><span>乐天数据源</span><strong id="overviewRakutenSourceStatus">-</strong></li>
-            </ul>
-            <div id="overviewFbaSalesSnapshotMeta" class="muted overview-fba-sales-meta">
-              正在读取Amazon SP-API同步状态。
-            </div>
-          </article>
-
           <article id="overviewDemandCard" class="card hidden">
             <div class="overview-demand-head">
               <div>
-                <h3>全渠道出单商品分析</h3>
+                <div class="overview-data-tooltip">
+                  <h3 class="overview-data-tooltip-trigger" tabindex="0" aria-describedby="overviewDataTooltipPanel">
+                    全渠道出单商品分析
+                    <span class="overview-data-tooltip-icon" aria-hidden="true">i</span>
+                  </h3>
+                  <div id="overviewDataTooltipPanel" class="overview-data-tooltip-panel" role="tooltip">
+                    <strong>数据口径</strong>
+                    <p>看板自动合并FBA、FBM和乐天订单。FBA取自Amazon SP-API；FBM以API为主并兼容历史手动导入；乐天取自手动导入。FBM按订单明细去重，同时存在API与人工记录时保留人工维护的仓库字段。</p>
+                    <dl class="overview-data-tooltip-sources">
+                      <div><dt>FBA数据源</dt><dd id="overviewFbaSourceStatus">-</dd></div>
+                      <div><dt>FBM数据源</dt><dd id="overviewFbmSourceStatus">-</dd></div>
+                      <div><dt>乐天数据源</dt><dd id="overviewRakutenSourceStatus">-</dd></div>
+                    </dl>
+                    <div id="overviewFbaSalesSnapshotMeta" class="overview-data-tooltip-meta">
+                      正在读取Amazon SP-API同步状态。
+                    </div>
+                  </div>
+                </div>
                 <p id="overviewDemandDescription" class="muted">统一按最近30天统计商品件数：API FBA + API为主的FBM + 手动导入的乐天订单。</p>
               </div>
-              <span id="overviewDemandPeriod" class="overview-demand-period">统计周期 30 天</span>
+              <div class="overview-demand-controls">
+                <label class="overview-period-control">
+                  统计周期
+                  <select id="overviewDashboardDays">
+                    <option value="30" selected>近30天</option>
+                    <option value="60">近60天</option>
+                    <option value="90">近90天</option>
+                  </select>
+                </label>
+                <span id="overviewDemandPeriod" class="overview-demand-period">统计周期 30 天</span>
+              </div>
             </div>
             <div class="overview-demand-summary">
               <div class="overview-demand-primary-metric">
