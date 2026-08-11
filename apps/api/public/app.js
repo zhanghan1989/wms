@@ -17779,7 +17779,10 @@ function bindRefresh() {
       .catch((error) => showToast(error.message, true));
   });
   $("refreshOverviewDashboard").addEventListener("click", () =>
-    loadOverviewDashboard({ forceRefresh: true }).catch((error) => showToast(error.message, true)),
+    withGlobalLoading(
+      "系统看板刷新中，请稍候...",
+      () => loadOverviewDashboard({ forceRefresh: true }),
+    ).catch((error) => showToast(error.message, true)),
   );
   $("downloadInventorySkuSummaryBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
