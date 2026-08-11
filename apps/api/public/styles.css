@@ -2548,6 +2548,10 @@ pre {
   z-index: 9999;
 }
 
+body.global-loading-active {
+  overflow: hidden;
+}
+
 .global-loading-card {
   display: grid;
   justify-items: center;

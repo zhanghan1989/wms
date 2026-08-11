@@ -333,6 +333,7 @@ let adjustBoxValidationToken = 0;
 let inventoryDetailInboundBoxValidationTimer = null;
 let inventoryDetailInboundBoxValidationToken = 0;
 let modalZIndexSeed = 20;
+let globalLoadingPreviousFocus = null;
 let overviewDashboardLoadPromise = null;
 let overviewDashboardLoadKey = "";
 let errorModalAutoActionTimer = null;
@@ -2803,7 +2804,10 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
   }
   if (targetId === "overview") {
     if (!state.overviewDashboard) {
-      loadOverviewDashboardWithAutomaticFba().catch((error) => showToast(error.message, true));
+      withGlobalLoading(
+        "系统看板加载中，请稍候...",
+        () => loadOverviewDashboardWithAutomaticFba(),
+      ).catch((error) => showToast(error.message, true));
       return;
     }
     const generatedAt = new Date(state.overviewDashboard.generatedAt || 0).getTime();
@@ -2948,8 +2952,16 @@ function openGlobalLoading(message = "读取中，请稍候...") {
     messageEl.textContent = String(message || "读取中，请稍候...");
   }
   if (!overlay) return;
+  globalLoadingPreviousFocus = document.activeElement instanceof HTMLElement
+    ? document.activeElement
+    : null;
+  [$("appTopbar"), $("appLayout")].forEach((element) => {
+    if (element) element.inert = true;
+  });
+  document.body.classList.add("global-loading-active");
   overlay.style.zIndex = "9999";
   overlay.classList.remove("hidden");
+  overlay.focus({ preventScroll: true });
 }
 
 function closeGlobalLoading() {
@@ -2957,6 +2969,14 @@ function closeGlobalLoading() {
   if (!overlay) return;
   overlay.classList.add("hidden");
   overlay.style.zIndex = "";
+  [$("appTopbar"), $("appLayout")].forEach((element) => {
+    if (element) element.inert = false;
+  });
+  document.body.classList.remove("global-loading-active");
+  if (globalLoadingPreviousFocus?.isConnected) {
+    globalLoadingPreviousFocus.focus({ preventScroll: true });
+  }
+  globalLoadingPreviousFocus = null;
 }
 
 async function withGlobalLoading(message, task) {
@@ -17752,12 +17772,10 @@ function bindRefresh() {
   $("overviewDashboardDays")?.addEventListener("change", (event) => {
     const days = Number(event.currentTarget.value || 30);
     state.overviewDashboardDays = [30, 60, 90].includes(days) ? days : 30;
-    loadOverviewDashboard({ days: state.overviewDashboardDays })
-      .then(() => {
-        if (state.overviewDashboardDays === days) {
-          showToast(`统计周期已切换为最近${days}天`);
-        }
-      })
+    withGlobalLoading(
+      `正在切换到最近${state.overviewDashboardDays}天，请稍候...`,
+      () => loadOverviewDashboard({ days: state.overviewDashboardDays }),
+    )
       .catch((error) => showToast(error.message, true));
   });
   $("refreshOverviewDashboard").addEventListener("click", () =>
