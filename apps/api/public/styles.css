@@ -1235,6 +1235,113 @@ button.ghost {
   margin-top: 5px;
 }
 
+.overview-demand-controls {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.overview-data-tooltip {
+  position: relative;
+  width: fit-content;
+}
+
+.overview-data-tooltip-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: help;
+  outline: none;
+}
+
+.overview-data-tooltip-trigger:focus-visible {
+  border-radius: 5px;
+  box-shadow: 0 0 0 3px rgba(21, 128, 82, 0.18);
+}
+
+.overview-data-tooltip-icon {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid #8bb99a;
+  border-radius: 50%;
+  color: #17603f;
+  font-family: Georgia, serif;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.overview-data-tooltip-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 10px);
+  left: 0;
+  display: none;
+  width: min(560px, calc(100vw - 56px));
+  padding: 16px;
+  border: 1px solid #b9d8c4;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 14px 36px rgba(25, 58, 39, 0.18);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.overview-data-tooltip:hover .overview-data-tooltip-panel,
+.overview-data-tooltip:focus-within .overview-data-tooltip-panel {
+  display: block;
+}
+
+.overview-data-tooltip-panel::before {
+  position: absolute;
+  top: -7px;
+  left: 26px;
+  width: 12px;
+  height: 12px;
+  border-top: 1px solid #b9d8c4;
+  border-left: 1px solid #b9d8c4;
+  background: #fff;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.overview-data-tooltip-panel p {
+  margin: 6px 0 12px;
+  color: var(--muted);
+}
+
+.overview-data-tooltip-sources {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.overview-data-tooltip-sources div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.overview-data-tooltip-sources dt {
+  color: var(--muted);
+}
+
+.overview-data-tooltip-sources dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.overview-data-tooltip-meta {
+  padding-top: 10px;
+  border-top: 1px solid #e0ece4;
+  color: var(--muted);
+}
+
 .overview-demand-period {
   flex: 0 0 auto;
   padding: 6px 10px;
@@ -1459,10 +1566,9 @@ button.ghost {
 }
 
 #overview .cards {
-  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
 }
 
-#overviewFbaUploadCard,
 #overviewDemandCard,
 #overviewProductionCard,
 #overviewObsoleteCard {
@@ -2749,6 +2855,10 @@ button.danger-solid {
 @media (max-width: 640px) {
   .overview-demand-head {
     display: grid;
+  }
+
+  .overview-demand-controls {
+    justify-content: flex-start;
   }
 
   .overview-demand-period {

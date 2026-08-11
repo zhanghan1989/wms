@@ -17752,7 +17752,13 @@ function bindRefresh() {
   $("overviewDashboardDays")?.addEventListener("change", (event) => {
     const days = Number(event.currentTarget.value || 30);
     state.overviewDashboardDays = [30, 60, 90].includes(days) ? days : 30;
-    loadOverviewDashboard({ days: state.overviewDashboardDays }).catch((error) => showToast(error.message, true));
+    loadOverviewDashboard({ days: state.overviewDashboardDays })
+      .then(() => {
+        if (state.overviewDashboardDays === days) {
+          showToast(`统计周期已切换为最近${days}天`);
+        }
+      })
+      .catch((error) => showToast(error.message, true));
   });
   $("refreshOverviewDashboard").addEventListener("click", () =>
     loadOverviewDashboard({ forceRefresh: true }).catch((error) => showToast(error.message, true)),
