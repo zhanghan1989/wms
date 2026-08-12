@@ -260,6 +260,23 @@ export class OrdersController {
     return this.ordersService.listOverseasWarehouse(limit);
   }
 
+  @Get('overseas-warehouse/export-excel')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async exportOverseasWarehouseOrders(@Res() res: Response): Promise<void> {
+    const file = await this.ordersService.buildOrderProcessingExport('overseas');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
   @Post('overseas-warehouse/:source/:id/switch-to-china')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async switchOverseasWarehouseOrderToChina(
@@ -277,6 +294,23 @@ export class OrdersController {
     @Query('offset') offset?: string,
   ): Promise<unknown[]> {
     return this.ordersService.listChinaOrderProcessing(limit, scope, offset);
+  }
+
+  @Get('china-orders/export-excel')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async exportChinaOrderProcessingOrders(@Res() res: Response): Promise<void> {
+    const file = await this.ordersService.buildOrderProcessingExport('china');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
   }
 
   @Post('china-orders/sync-xiya-tracking')

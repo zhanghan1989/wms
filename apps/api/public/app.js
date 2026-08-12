@@ -10237,6 +10237,15 @@ async function loadChinaOrderProcessingOrders() {
   setupChinaOrderProcessingExportedInfiniteScroll();
 }
 
+async function downloadChinaOrderProcessingOrders() {
+  const fileName = await downloadAuthorizedFile(
+    "/orders/china-orders/export-excel",
+    {},
+    "中国订单处理一览.xlsx",
+  );
+  showToast(`已下载 ${fileName}`);
+}
+
 function renderOverseasOrderProcessingTable() {
   const tbody = $("overseasOrderProcessingBody");
   const summary = $("overseasOrderProcessingSummary");
@@ -10356,6 +10365,15 @@ async function loadOverseasOrderProcessingOrders() {
   state.overseasOrderProcessingVisibleCount = state.inventoryPageSize;
   renderOverseasOrderProcessingTable();
   setupOverseasOrderProcessingLoadObserver();
+}
+
+async function downloadOverseasOrderProcessingOrders() {
+  const fileName = await downloadAuthorizedFile(
+    "/orders/overseas-warehouse/export-excel",
+    {},
+    "海外仓订单处理一览.xlsx",
+  );
+  showToast(`已下载 ${fileName}`);
 }
 
 async function switchOverseasPendingOrderToChina(source, id) {
@@ -14455,6 +14473,26 @@ function bindForms() {
   $("refreshChinaOrderProcessing")?.addEventListener("click", () =>
     Promise.all([loadChinaOrderProcessingOrders()])
       .catch((error) => showToast(error.message, true)),
+  );
+
+  $("downloadChinaOrderProcessingBtn")?.addEventListener("click", (event) =>
+    withBusyButton(event.currentTarget, "下载中...", async () => {
+      try {
+        await downloadChinaOrderProcessingOrders();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }),
+  );
+
+  $("downloadOverseasOrderProcessingBtn")?.addEventListener("click", (event) =>
+    withBusyButton(event.currentTarget, "下载中...", async () => {
+      try {
+        await downloadOverseasOrderProcessingOrders();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    }),
   );
 
   $("syncXiyaTrackingNumbers")?.addEventListener("click", (event) =>

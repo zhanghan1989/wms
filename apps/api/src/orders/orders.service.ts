@@ -515,6 +515,11 @@ interface OverseasWarehouseOrderListItem {
   shipmentNoRegisteredAt?: string | null;
 }
 
+interface OrderProcessingExportFile {
+  fileName: string;
+  content: Buffer;
+}
+
 interface SelectedOverseasWarehouseOrderRef {
   source?: 'rakuten' | 'amazon' | 'manual';
   id?: string | number;
@@ -3772,9 +3777,16 @@ export class OrdersService {
     return Boolean(bloggerCooperationId) || String(data.sourceFilePath ?? '').trim() === XIYA_MANUAL_ORDER_SOURCE_FILE_PATH;
   }
 
-  async listOverseasWarehouse(limitParam?: string): Promise<OverseasWarehouseOrderListItem[]> {
+  async listOverseasWarehouse(
+    limitParam?: string,
+    includeAll = false,
+  ): Promise<OverseasWarehouseOrderListItem[]> {
     const parsedLimit = Number(limitParam);
-    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    const limit = includeAll
+      ? Number.MAX_SAFE_INTEGER
+      : Number.isInteger(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, 1000)
+        : 200;
     const batchSize = Math.min(Math.max(limit, 200), 500);
     const collected: OverseasWarehouseOrderListItem[] = [];
     let rakutenSkip = 0;
@@ -4136,9 +4148,14 @@ export class OrdersService {
     limitParam?: string,
     scopeParam?: string,
     offsetParam?: string,
+    includeAll = false,
   ): Promise<OverseasWarehouseOrderListItem[]> {
     const parsedLimit = Number(limitParam);
-    const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
+    const limit = includeAll
+      ? Number.MAX_SAFE_INTEGER
+      : Number.isInteger(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, 1000)
+        : 200;
     const parsedOffset = Number(offsetParam);
     const offset = Number.isInteger(parsedOffset) && parsedOffset > 0 ? Math.min(parsedOffset, 100000) : 0;
     const collectTarget = offset + limit;
@@ -4353,6 +4370,74 @@ export class OrdersService {
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       })
       .slice(offset, offset + limit);
+  }
+
+  async buildOrderProcessingExport(
+    target: 'overseas' | 'china',
+  ): Promise<OrderProcessingExportFile> {
+    const orders =
+      target === 'overseas'
+        ? await this.listOverseasWarehouse(undefined, true)
+        : await this.listChinaOrderProcessing(undefined, 'all', undefined, true);
+    const isChina = target === 'china';
+    const headers = [
+      '导入时间',
+      '平台',
+      '订单号',
+      'SKU',
+      '产品ID',
+      '产品名称',
+      '数量',
+      '店铺',
+      '收件人',
+      '电话',
+      '邮编',
+      '地址',
+      '可用库存',
+      ...(isChina ? ['进入原因', '订单状态', '发货公司', '运单号', '登记时间'] : []),
+    ];
+    const rows = orders.map((order) => [
+      this.formatOrderProcessingExportDate(order.csvImportedAt || order.createdAt),
+      order.sourceLabel,
+      order.orderId ?? '',
+      order.skuCode ?? '',
+      order.resolvedProductId ?? '',
+      order.resolvedProductName ?? order.productName ?? '',
+      order.orderQuantity ?? '',
+      order.shopName ?? '',
+      order.shippingName ?? '',
+      order.shippingPhone ?? order.buyerPhoneNumber ?? '',
+      order.shippingPostalCode ?? order.shipPostalCode ?? '',
+      this.concatAddress([
+        order.shippingPrefecture ?? order.shipState,
+        order.shippingCity ?? order.shipAddress1,
+        order.shippingAddress ?? order.shipAddress2,
+        order.shipAddress3,
+      ]),
+      order.availableStock,
+      ...(isChina
+        ? [
+            order.chinaDispatchReason ?? '',
+            order.shipmentNo ? '已登记运单号' : '待 Xiya 拉取',
+            order.shipmentCompany ?? '',
+            order.shipmentNo ?? '',
+            this.formatOrderProcessingExportDate(order.shipmentNoRegisteredAt),
+          ]
+        : []),
+    ]);
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    worksheet['!cols'] = headers.map((header) => ({
+      wch: ['产品名称', '地址'].includes(header) ? 32 : Math.max(12, header.length * 2 + 2),
+    }));
+    worksheet['!autofilter'] = { ref: XLSX.utils.encode_range({ r: 0, c: 0 }, { r: rows.length, c: headers.length - 1 }) };
+    const workbook = XLSX.utils.book_new();
+    const sheetName = isChina ? '中国订单处理一览' : '海外仓订单处理一览';
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    const timestamp = this.formatYamatoFileNameStamp();
+    return {
+      fileName: `${sheetName}_${timestamp}.xlsx`,
+      content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+    };
   }
 
   async deleteAmazonBatch(payload: {
@@ -6951,6 +7036,14 @@ export class OrdersService {
   private formatYamatoFileNameStamp(date: Date = new Date()): string {
     const parts = getZonedDateParts(date, APP_TIMEZONE);
     return `${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}`;
+  }
+
+  private formatOrderProcessingExportDate(value: Date | string | null | undefined): string {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const parts = getZonedDateParts(date, APP_TIMEZONE);
+    return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
   }
 
   private normalizeAmazonTrackingNumber(value: string | null | undefined): string {
