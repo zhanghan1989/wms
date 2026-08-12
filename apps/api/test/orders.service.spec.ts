@@ -2,6 +2,40 @@ import { OrdersService } from '../src/orders/orders.service';
 import * as XLSX from 'xlsx';
 
 describe('OrdersService', () => {
+  it('includes processed overseas orders in an all-order download query', async () => {
+    const processedOrder = {
+      id: 1n,
+      dispatchMode: 'overseas',
+      sendStatus: 'sent',
+      shipmentNo: 'TRACK-1',
+      csvImportedAt: new Date('2026-08-10T00:00:00.000Z'),
+      createdAt: new Date('2026-08-10T00:00:00.000Z'),
+      orderId: 'ORDER-DONE',
+      skuCode: 'P-1',
+      setComponentSkuCode: null,
+      orderQuantity: 1,
+      productName: '已处理产品',
+      shopName: '一号店',
+      shippingName: '测试用户',
+    };
+    const rakutenFindMany = jest.fn().mockResolvedValue([processedOrder]);
+    const prisma = {
+      rakutenOrderRecord: { findMany: rakutenFindMany },
+      amazonOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
+      manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([{ productId: 'P-1', productName: '已处理产品', stockQty: 0 }]),
+      },
+    };
+    const service = new OrdersService(prisma as any);
+
+    const rows = await service.listOverseasWarehouse(undefined, true);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.orderId).toBe('ORDER-DONE');
+    expect(rakutenFindMany.mock.calls[0]?.[0]?.where).not.toHaveProperty('sendStatus');
+  });
+
   it('exports every overseas order returned by the unbounded order query', async () => {
     const service = new OrdersService({} as any);
     const listSpy = jest.spyOn(service, 'listOverseasWarehouse').mockResolvedValue([

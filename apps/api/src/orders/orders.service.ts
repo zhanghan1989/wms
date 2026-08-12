@@ -3801,10 +3801,22 @@ export class OrdersService {
         rakutenExhausted
           ? Promise.resolve([] as RakutenOrderRecord[])
           : this.prisma.rakutenOrderRecord.findMany({
-              where: {
-                sendStatus: OrderSendStatus.unsent,
-                OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
-              },
+              where: includeAll
+                ? {
+                    OR: [
+                      { dispatchMode: null },
+                      { dispatchMode: '' },
+                      { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
+                    ],
+                  }
+                : {
+                    sendStatus: OrderSendStatus.unsent,
+                    OR: [
+                      { dispatchMode: null },
+                      { dispatchMode: '' },
+                      { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
+                    ],
+                  },
               orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
               skip: rakutenSkip,
               take: batchSize,
@@ -3812,18 +3824,26 @@ export class OrdersService {
         amazonExhausted
           ? Promise.resolve([] as AmazonOrderRecord[])
           : this.prisma.amazonOrderRecord.findMany({
-              where: {
-                AND: [
-                  { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
-                  {
+              where: includeAll
+                ? {
                     OR: [
                       { dispatchMode: null },
                       { dispatchMode: '' },
                       { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
                     ],
+                  }
+                : {
+                    AND: [
+                      { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
+                      {
+                        OR: [
+                          { dispatchMode: null },
+                          { dispatchMode: '' },
+                          { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
+                        ],
+                      },
+                    ],
                   },
-                ],
-              },
               orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
               skip: amazonSkip,
               take: batchSize,
@@ -3831,18 +3851,26 @@ export class OrdersService {
         manualExhausted
           ? Promise.resolve([] as ManualOrderRecordLike[])
           : (this.prisma as any).manualOrderRecord.findMany({
-              where: {
-                AND: [
-                  { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
-                  {
+              where: includeAll
+                ? {
                     OR: [
                       { dispatchMode: null },
                       { dispatchMode: '' },
                       { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
                     ],
+                  }
+                : {
+                    AND: [
+                      { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
+                      {
+                        OR: [
+                          { dispatchMode: null },
+                          { dispatchMode: '' },
+                          { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
+                        ],
+                      },
+                    ],
                   },
-                ],
-              },
               orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
               skip: manualSkip,
               take: batchSize,
@@ -3862,28 +3890,30 @@ export class OrdersService {
         this.enrichManualOrderRows(manualRows),
       ]);
 
-      const activePickedRefs = await this.loadActiveOverseasPickingBatchRefs([
-        ...enrichedRakutenRows.map((row) => ({
-          source: 'rakuten' as const,
-          sourceRecordId: row.id,
-        })),
-        ...enrichedAmazonRows.map((row) => ({
-          source: 'amazon' as const,
-          sourceRecordId: row.id,
-        })),
-        ...enrichedManualRows.map((row) => ({
-          source: 'manual' as const,
-          sourceRecordId: row.id,
-        })),
-      ]);
+      const activePickedRefs = includeAll
+        ? new Set<string>()
+        : await this.loadActiveOverseasPickingBatchRefs([
+            ...enrichedRakutenRows.map((row) => ({
+              source: 'rakuten' as const,
+              sourceRecordId: row.id,
+            })),
+            ...enrichedAmazonRows.map((row) => ({
+              source: 'amazon' as const,
+              sourceRecordId: row.id,
+            })),
+            ...enrichedManualRows.map((row) => ({
+              source: 'manual' as const,
+              sourceRecordId: row.id,
+            })),
+          ]);
 
       collected.push(
         ...enrichedRakutenRows
           .filter(
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
-              row.availableStock > 0 &&
-              !activePickedRefs.has(`rakuten:${row.id.toString()}`),
+              (includeAll ||
+                (row.availableStock > 0 && !activePickedRefs.has(`rakuten:${row.id.toString()}`))),
           )
           .map((row) => ({
             source: 'rakuten' as const,
@@ -3915,8 +3945,8 @@ export class OrdersService {
           .filter(
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
-              row.availableStock > 0 &&
-              !activePickedRefs.has(`amazon:${row.id.toString()}`),
+              (includeAll ||
+                (row.availableStock > 0 && !activePickedRefs.has(`amazon:${row.id.toString()}`))),
           )
           .map((row) => ({
             source: 'amazon' as const,
@@ -3946,8 +3976,8 @@ export class OrdersService {
           .filter(
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
-              row.availableStock > 0 &&
-              !activePickedRefs.has(`manual:${row.id.toString()}`),
+              (includeAll ||
+                (row.availableStock > 0 && !activePickedRefs.has(`manual:${row.id.toString()}`))),
           )
           .map((row) => ({
             source: 'manual' as const,
