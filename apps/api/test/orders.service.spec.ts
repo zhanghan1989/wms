@@ -1,6 +1,46 @@
 import { OrdersService } from '../src/orders/orders.service';
+import * as XLSX from 'xlsx';
 
 describe('OrdersService', () => {
+  it('exports every overseas order returned by the unbounded order query', async () => {
+    const service = new OrdersService({} as any);
+    const listSpy = jest.spyOn(service, 'listOverseasWarehouse').mockResolvedValue([
+      {
+        source: 'rakuten',
+        sourceLabel: '乐天',
+        csvImportedAt: new Date('2026-08-12T01:02:03.000Z'),
+        createdAt: new Date('2026-08-12T01:02:03.000Z'),
+        orderId: 'ORDER-1',
+        skuCode: 'SKU-1',
+        resolvedProductId: 'P-1',
+        resolvedProductName: '产品一',
+        orderQuantity: 2,
+        shopName: '一号店',
+        shippingName: '测试用户',
+        availableStock: 9,
+      },
+    ]);
+
+    const file = await service.buildOrderProcessingExport('overseas');
+    const workbook = XLSX.read(file.content, { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json<Array<string | number>>(workbook.Sheets['海外仓订单处理一览'], {
+      header: 1,
+    });
+
+    expect(listSpy).toHaveBeenCalledWith(undefined, true);
+    expect(rows[1]).toEqual(expect.arrayContaining(['乐天', 'ORDER-1', 'SKU-1', 'P-1', '产品一', 2]));
+  });
+
+  it('exports pending and registered China orders through the all-order query', async () => {
+    const service = new OrdersService({} as any);
+    const listSpy = jest.spyOn(service, 'listChinaOrderProcessing').mockResolvedValue([]);
+
+    const file = await service.buildOrderProcessingExport('china');
+
+    expect(listSpy).toHaveBeenCalledWith(undefined, 'all', undefined, true);
+    expect(file.fileName).toMatch(/^中国订单处理一览_\d{8}_\d{6}\.xlsx$/);
+  });
+
   it('treats confirming an already picked batch as an idempotent retry', async () => {
     const confirmedAt = new Date('2026-07-21T02:35:04.000Z');
     const prisma = {
