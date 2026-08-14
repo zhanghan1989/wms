@@ -311,7 +311,6 @@ const state = {
   overviewFbaSnapshotId: "",
   overviewDashboardDays: 30,
   overviewDashboardCache: new Map(),
-  overviewProductionVisibleCount: 30,
   dataBackups: [],
   dataBackupsVisibleCount: 0,
   pendingPrintLabel: null,
@@ -354,7 +353,6 @@ let usersLoadObserver = null;
 let auditLoadObserver = null;
 let stocktakePlannerLoadObserver = null;
 let dataBackupLoadObserver = null;
-let overviewProductionLoadObserver = null;
 let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let rakutenComboProductLoadObserver = null;
@@ -1814,61 +1812,11 @@ function renderOverviewTable(bodyId, html, colspan) {
 
 function setOverviewFbaDependentVisibility(visible) {
   $("overviewDemandCard")?.classList.toggle("hidden", !state.overviewDashboard);
-  ["overviewProductionCard", "overviewObsoleteCard"].forEach((id) => $(id)?.classList.toggle("hidden", !visible));
-}
-
-function renderOverviewProductionRecommendations(production = state.overviewDashboard?.production || {}) {
-  const allRows = Array.isArray(production.recommendations) ? production.recommendations : [];
-  const visibleCount = Math.max(30, Number(state.overviewProductionVisibleCount || 0));
-  state.overviewProductionVisibleCount = visibleCount;
-  const productionRows = allRows
-    .slice(0, visibleCount)
-    .map((item) => {
-      const priority = displayText(item.priority);
-      const priorityClass =
-        priority === "紧急" ? "urgent" : priority === "高" ? "high" : priority === "中" ? "medium" : "normal";
-      return `
-      <tr>
-        <td>${escapeHtml(displayText(item.productId))}</td>
-        <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${formatOverviewNumber(item.totalStock)}</td>
-        <td>${formatOverviewNumber(item.availableStock)}</td>
-        <td>${formatOverviewNumber(item.inTransitStock)}</td>
-        <td>${formatOverviewNumber(item.fbaAvailableQty)}</td>
-        <td>${formatOverviewNumber(item.fbaInboundQty)}</td>
-        <td>${formatOverviewNumber(item.fbaReservedQty)}</td>
-        <td>${formatOverviewNumber(item.fbaUnfulfillableQty)}</td>
-        <td>${formatOverviewNumber(item.arrangedProductionQty)}</td>
-        <td>${formatOverviewNumber(item.securedStock)}</td>
-        <td>${formatOverviewNumber(item.fbmOrderQty90d)}</td>
-        <td>${formatOverviewNumber(item.rakutenOrderQty90d)}</td>
-        <td>${formatOverviewNumber(item.fbaOrderedQty90d)}</td>
-        <td>${formatOverviewNumber(item.totalOrderQty90d)}</td>
-        <td>${formatOverviewNumber(item.avgDailyOutbound90d ?? item.avgDailyOutbound, 1)}</td>
-        <td>${formatOverviewRatio(item.stockCoverageDays ?? item.coverageDays)}</td>
-        <td>${formatOverviewRatio(item.securedCoverageDays)}</td>
-        <td>${formatOverviewNumber(item.targetDemandQty ?? item.targetStock)}</td>
-        <td>${formatOverviewNumber(item.suggestedProductionQty)}</td>
-        <td>${formatOverviewRatio(item.shortageDays)}</td>
-        <td><span class="priority-chip priority-${priorityClass}">${escapeHtml(priority)}</span></td>
-      </tr>
-    `;
-    })
-    .join("");
-  renderOverviewTable("overviewProductionBody", productionRows, 22);
-}
-
-function loadMoreOverviewProductionIfNeeded() {
-  const production = state.overviewDashboard?.production || {};
-  const rows = Array.isArray(production.recommendations) ? production.recommendations : [];
-  if (state.overviewProductionVisibleCount >= rows.length) return;
-  state.overviewProductionVisibleCount += 30;
-  renderOverviewProductionRecommendations(production);
+  $("overviewObsoleteCard")?.classList.toggle("hidden", !visible);
 }
 
 function clearOverviewDashboard() {
   state.overviewDashboard = null;
-  state.overviewProductionVisibleCount = 30;
   setOverviewFbaDependentVisibility(false);
   setTextById("overviewNoSales90Heading", "90天系统无出单产品");
   $("statUsers").textContent = "-";
@@ -1908,12 +1856,6 @@ function clearOverviewDashboard() {
     "overviewDemandMatchedRate90d",
     "overviewUnmatchedOrderRows90d",
     "overviewUnmatchedOrderQty90d",
-    "overviewRecommendationCount",
-    "overviewRecommendationUrgentCount",
-    "overviewRecommendationHighCount",
-    "overviewRecommendationMediumCount",
-    "overviewTargetDays",
-    "overviewEstimatedArrivalDays",
     "overviewNoSales90Count",
     "overviewNoSales90StockQty",
   ].forEach((id) => setTextById(id, "-"));
@@ -1921,7 +1863,6 @@ function clearOverviewDashboard() {
   $("overviewFbaSalesSnapshotMeta").textContent =
     "正在读取Amazon SP-API同步状态。";
   setTextById("overviewDemandQualityHint", "未匹配订单不会进入产品需求和备货计算。");
-  renderOverviewTable("overviewProductionBody", "", 22);
   renderOverviewTable("overviewUnmatchedDemandBody", "", 6);
   renderOverviewTable("overviewNoSales90Body", "", 7);
   $("overviewUnmatchedDemandDetails")?.classList.add("hidden");
@@ -1934,7 +1875,6 @@ function clearOverviewDashboard() {
 }
 
 function renderOverviewDashboard(data) {
-  state.overviewProductionVisibleCount = 30;
   const summary = data?.summary || {};
   const health = data?.health || {};
   const demand = data?.demand || {};
@@ -1987,11 +1927,6 @@ function renderOverviewDashboard(data) {
   );
   setTextById("overviewMonthlyAverageHint", `按${periodDays}天数据折算为30天月均`);
   setTextById("overviewTopDemandHeading", `出单商品件数最高的产品（最近${periodDays}天）`);
-  setTextById("overviewProductionFbmDemandHeading", "90天FBM订单");
-  setTextById("overviewProductionRakutenDemandHeading", "90天乐天订单");
-  setTextById("overviewProductionFbaDemandHeading", "90天FBA订单");
-  setTextById("overviewProductionTotalDemandHeading", "90天全渠道订单");
-  setTextById("overviewProductionDailyDemandHeading", "90天日均消耗");
   setTextById("overviewFbaSourceStatus", dataSources.fba?.available ? "API已同步" : "待同步");
   setTextById(
     "overviewFbmSourceStatus",
@@ -2072,16 +2007,6 @@ function renderOverviewDashboard(data) {
       : `未匹配订单明细（${formatOverviewNumber(unmatchedDetails.length)} 行）`,
   );
 
-  setTextById("overviewRecommendationCount", formatOverviewNumber(production.recommendationCount));
-  setTextById("overviewRecommendationUrgentCount", formatOverviewNumber(production.urgentCount));
-  setTextById("overviewRecommendationHighCount", formatOverviewNumber(production.highCount));
-  setTextById("overviewRecommendationMediumCount", formatOverviewNumber(production.mediumCount));
-  setTextById("overviewTargetDays", formatOverviewNumber(production.targetDays));
-  const estimatedArrivalDays = Number(production.estimatedArrivalDays);
-  setTextById(
-    "overviewEstimatedArrivalDays",
-    Number.isFinite(estimatedArrivalDays) ? `发注 + ${formatOverviewNumber(estimatedArrivalDays)} 天` : "-",
-  );
   const noSales90Items = Array.isArray(obsolete.noSales90dSkus) ? obsolete.noSales90dSkus : [];
   setTextById("overviewNoSales90Count", formatOverviewNumber(noSales90Items.length));
   setTextById(
@@ -2123,8 +2048,6 @@ function renderOverviewDashboard(data) {
     )
     .join("");
   renderOverviewTable("overviewTopDemandBody", topRows, 8);
-
-  renderOverviewProductionRecommendations(production);
 
   const noSales90Rows = noSales90Items
     .map(
@@ -2207,18 +2130,6 @@ function loadOverviewDashboard(options = {}) {
 
 async function loadOverviewDashboardWithAutomaticFba() {
   return loadOverviewDashboard({ includeFba: false, fbaSnapshotId: '' });
-}
-
-async function downloadProductionRecommendationExcel() {
-  const endpoint = `/inventory/dashboard/production-recommendations-excel?days=${encodeURIComponent(
-    String(state.overviewDashboardDays || 30),
-  )}`;
-  const fileName = await downloadAuthorizedFile(
-    endpoint,
-    {},
-    "工厂备货建议.xlsx",
-  );
-  showToast(`已下载 ${fileName}`);
 }
 
 function formatFileSize(bytes) {
@@ -2490,6 +2401,36 @@ function renderAmazonStoreDashboard(payload) {
     "所选周期暂无SKU销售数据",
   );
 
+  const factory = dashboard.factoryRecommendations || {};
+  const factoryRows = Array.isArray(factory.rows) ? factory.rows : [];
+  setTextById(
+    "amazonStoreFactoryRecommendationCount",
+    factory.inventoryAvailable ? formatMetricNumber(factory.recommendationCount) : "-",
+  );
+  setTextById(
+    "amazonStoreFactorySuggestedQty",
+    factory.inventoryAvailable ? `${formatMetricNumber(factory.totalSuggestedFbaShipmentQty)} 件` : "-",
+  );
+  const factoryDownloadButton = $("downloadAmazonStoreFactoryExcelBtn");
+  if (factoryDownloadButton) factoryDownloadButton.disabled = !factory.inventoryAvailable;
+  renderAmazonDashboardTable(
+    "amazonStoreFactoryRecommendationBody",
+    factoryRows,
+    [
+      (row) => `<strong>${escapeHtml(displayText(row.sellerSku))}</strong><br><span class="muted">${escapeHtml(displayText(row.asin))}</span>`,
+      (row) => `${row.productId ? renderMasterProductDetailLink(row.productId) : '<span class="amazon-dashboard-chip warning">未匹配</span>'}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
+      (row) => escapeHtml(formatMetricNumber(row.fbaUnitCount90d)),
+      (row) => escapeHtml(formatMetricNumber(row.fbmUnitCount90d)),
+      (row) => escapeHtml(formatMetricNumber(row.totalUnitCount90d)),
+      (row) => escapeHtml(formatMetricNumber(row.availableQty)),
+      (row) => escapeHtml(formatMetricNumber(row.inboundQty)),
+      (row) => `<strong>${escapeHtml(formatMetricNumber(row.suggestedFbaShipmentQty))}</strong>`,
+    ],
+    factory.inventoryAvailable
+      ? "该店铺当前没有需要工厂直发FBA的产品"
+      : "尚无该店铺的FBA库存数据，暂时无法计算",
+  );
+
   renderAmazonMetricCards("amazonStoreDashboardInventory", [
     { label: "FBA库存SKU", value: inventory.available ? formatMetricNumber(inventory.skuCount) : "待开通权限" },
     { label: "可售", value: inventory.available ? formatMetricNumber(inventory.fulfillableQty) : "-" },
@@ -2522,6 +2463,18 @@ async function loadAmazonStoreDashboard(options = {}) {
   } finally {
     state.amazonStoreDashboardLoading = false;
   }
+}
+
+async function downloadAmazonStoreFactoryRecommendationsExcel() {
+  const connectionId = String(
+    state.amazonStoreDashboard?.selectedShop?.connectionId
+      || $("amazonStoreDashboardShop")?.value
+      || "",
+  ).trim();
+  if (!connectionId) throw new Error("请先选择Amazon店铺");
+  const endpoint = `/amazon-sp-api/store-dashboard/factory-recommendations-excel?connectionId=${encodeURIComponent(connectionId)}`;
+  const fileName = await downloadAuthorizedFile(endpoint, {}, "工厂直发FBA建议.xlsx");
+  showToast(`已下载 ${fileName}`);
 }
 
 function renderAmazonDashboardTable(bodyId, rows, columns, emptyText) {
@@ -4461,31 +4414,6 @@ function setupDataBackupLoadObserver() {
     },
   );
   dataBackupLoadObserver.observe(sentinel);
-}
-
-function setupOverviewProductionLoadObserver() {
-  if (overviewProductionLoadObserver) {
-    overviewProductionLoadObserver.disconnect();
-    overviewProductionLoadObserver = null;
-  }
-  if (typeof IntersectionObserver !== "function") return;
-  const sentinel = $("overviewProductionLoadSentinel");
-  const tableWrap = sentinel?.closest(".overview-table-wrap");
-  if (!tableWrap || !sentinel) return;
-
-  overviewProductionLoadObserver = new IntersectionObserver(
-    (entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) {
-        loadMoreOverviewProductionIfNeeded();
-      }
-    },
-    {
-      root: tableWrap,
-      rootMargin: "0px 0px 160px 0px",
-      threshold: 0.01,
-    },
-  );
-  overviewProductionLoadObserver.observe(sentinel);
 }
 
 function renderStocktakeTaskDetail(task, rows, boxCount = 0) {
@@ -12947,6 +12875,14 @@ function bindForms() {
   $("reloadAmazonStoreDashboardBtn")?.addEventListener("click", (event) => {
     refreshAmazonStoreDashboard(event.currentTarget);
   });
+  $("downloadAmazonStoreFactoryExcelBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "下载中...", downloadAmazonStoreFactoryRecommendationsExcel);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
   $("amazonStoreDashboardShop")?.addEventListener("change", async (event) => {
     try {
       await loadAmazonStoreDashboard({ connectionId: event.currentTarget.value });
@@ -14235,17 +14171,6 @@ function bindForms() {
     button.textContent = isHidden
       ? `查看未匹配明细（${formatOverviewNumber(count)}）`
       : "收起未匹配明细";
-  });
-
-  $("downloadProductionRecommendationExcelBtn")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    try {
-      await withBusyButton(button, "下载中...", async () => {
-        await downloadProductionRecommendationExcel();
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
   });
 
   $("openFbaReplenishmentPanel").addEventListener("click", async () => {
@@ -17888,7 +17813,6 @@ setupAuditLoadObserver();
 setupFbaReplenishmentLoadObserver();
 setupStocktakePlannerLoadObserver();
 setupDataBackupLoadObserver();
-setupOverviewProductionLoadObserver();
 setupRakutenComboProductLoadObserver();
 setupResponsiveTableLabels();
 ensureOverseasWarehouseQueryUi();

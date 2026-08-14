@@ -14,6 +14,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { createHash, randomBytes } from 'crypto';
+import * as XLSX from 'xlsx';
 import { parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
 import { AmazonSpApiClient } from './amazon-sp-api.client';
@@ -503,7 +504,8 @@ export class AmazonSpApiService {
     if (!connection) throw new NotFoundException('所选Amazon店铺连接不存在或已停用');
 
     const now = new Date();
-    const queryStart = new Date(now.getTime() - days * 2 * 24 * 60 * 60 * 1000);
+    const queryDays = Math.max(days * 2, 90);
+    const queryStart = new Date(now.getTime() - queryDays * 24 * 60 * 60 * 1000);
     const [fbaOrders, fbmOrderRows, inventory, skus, latestRun] = await Promise.all([
       this.prisma.amazonFbaOrderItem.findMany({
         where: { connectionId: connection.id, purchaseDate: { gte: queryStart } },
@@ -675,6 +677,80 @@ export class AmazonSpApiService {
           }
         : null,
       dashboard,
+    };
+  }
+
+  async buildStoreFactoryRecommendationsExcel(
+    connectionIdRaw?: string,
+  ): Promise<{ fileName: string; content: Buffer }> {
+    const payload = await this.getStoreDashboard(connectionIdRaw, '90') as {
+      selectedShop?: { shopName?: string } | null;
+      dashboard?: {
+        factoryRecommendations?: {
+          inventoryAvailable?: boolean;
+          rows?: Array<{
+            sellerSku?: string;
+            asin?: string | null;
+            productId?: string | null;
+            productName?: string | null;
+            fbaUnitCount90d?: number;
+            fbmUnitCount90d?: number;
+            totalUnitCount90d?: number;
+            availableQty?: number;
+            inboundQty?: number;
+            suggestedFbaShipmentQty?: number;
+          }>;
+        };
+      } | null;
+    };
+    if (!payload.selectedShop) throw new NotFoundException('尚无已启用的Amazon店铺连接');
+    const recommendations = payload.dashboard?.factoryRecommendations;
+    if (!recommendations?.inventoryAvailable) {
+      throw new BadRequestException('尚无该店铺的FBA库存数据，无法计算工厂直发FBA数量');
+    }
+    const shopName = String(payload.selectedShop.shopName ?? '').trim();
+    const data = (recommendations.rows ?? []).map((row) => ({
+      'Amazon店铺': shopName,
+      '产品ID': row.productId ?? '',
+      'FBA SKU': row.sellerSku ?? '',
+      'ASIN': row.asin ?? '',
+      '产品名称': row.productName ?? '',
+      '90天FBA销量': Number(row.fbaUnitCount90d ?? 0),
+      '90天FBM销量': Number(row.fbmUnitCount90d ?? 0),
+      '90天FBA+FBM销量': Number(row.totalUnitCount90d ?? 0),
+      'FBA可售库存': Number(row.availableQty ?? 0),
+      'FBA入库中': Number(row.inboundQty ?? 0),
+      '建议工厂直发FBA数量': Number(row.suggestedFbaShipmentQty ?? 0),
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(data, {
+      header: [
+        'Amazon店铺',
+        '产品ID',
+        'FBA SKU',
+        'ASIN',
+        '产品名称',
+        '90天FBA销量',
+        '90天FBM销量',
+        '90天FBA+FBM销量',
+        'FBA可售库存',
+        'FBA入库中',
+        '建议工厂直发FBA数量',
+      ],
+    });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '工厂直发FBA建议');
+    const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    const dateParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+    const dateRecord = Object.fromEntries(dateParts.map((part) => [part.type, part.value]));
+    const date = `${dateRecord.year}-${dateRecord.month}-${dateRecord.day}`;
+    return {
+      fileName: `工厂直发FBA建议-${shopName}-${date}.xlsx`,
+      content,
     };
   }
 

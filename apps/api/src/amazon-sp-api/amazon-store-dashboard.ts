@@ -60,6 +60,8 @@ interface PeriodMetrics {
 
 const SUCCESS_FBA_STATUSES = new Set(['SHIPPED', 'PARTIALLY_SHIPPED']);
 const EXCLUDED_FBM_STATUSES = new Set(['CANCELLED', 'UNFULFILLABLE']);
+const FACTORY_RECOMMENDATION_DAYS = 90;
+const FACTORY_RECOMMENDATION_MIN_UNITS_EXCLUSIVE = 10;
 
 function normalize(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
@@ -139,6 +141,7 @@ export function buildAmazonStoreDashboard(input: {
   const previousStart = new Date(periodStart.getTime() - periodMs);
   const current = calculateMetrics(fbaOrders, fbmOrders, periodStart, now);
   const previous = calculateMetrics(fbaOrders, fbmOrders, previousStart, periodStart);
+  const factoryPeriodStart = new Date(now.getTime() - FACTORY_RECOMMENDATION_DAYS * 24 * 60 * 60 * 1000);
 
   const skuLookup = new Map<string, AmazonDashboardSkuRow>();
   for (const sku of skus) {
@@ -155,6 +158,92 @@ export function buildAmazonStoreDashboard(input: {
       if (key && !inventoryLookup.has(key)) inventoryLookup.set(key, row);
     }
   }
+
+  type FactoryRecommendationMetric = {
+    sellerSku: string;
+    asin: string | null;
+    productId: string | null;
+    productName: string | null;
+    fbaUnitCount90d: number;
+    fbmUnitCount90d: number;
+    availableQty: number;
+    inboundQty: number;
+  };
+  const factoryMetrics = new Map<string, FactoryRecommendationMetric>();
+  const resolveFactoryIdentity = (sellerSkuRaw: string | null, asinRaw: string | null) => {
+    const sellerSku = String(sellerSkuRaw ?? '').trim();
+    const asin = String(asinRaw ?? '').trim() || null;
+    const matchedSku = skuLookup.get(normalize(sellerSku)) ?? skuLookup.get(normalize(asin));
+    const destinationSku = String(matchedSku?.sku ?? sellerSku).trim();
+    const key = matchedSku?.productId
+      ? `product:${matchedSku.productId}`
+      : destinationSku
+        ? `sku:${normalize(destinationSku)}`
+        : '';
+    return { key, destinationSku, asin: matchedSku?.asin || asin, matchedSku };
+  };
+  const factoryMetricFor = (
+    sellerSkuRaw: string | null,
+    asinRaw: string | null,
+    productNameRaw: string | null,
+  ): FactoryRecommendationMetric | null => {
+    const identity = resolveFactoryIdentity(sellerSkuRaw, asinRaw);
+    if (!identity.key || !identity.destinationSku) return null;
+    let metric = factoryMetrics.get(identity.key);
+    if (!metric) {
+      metric = {
+        sellerSku: identity.destinationSku,
+        asin: identity.asin,
+        productId: identity.matchedSku?.productId || null,
+        productName: identity.matchedSku?.productName || productNameRaw || null,
+        fbaUnitCount90d: 0,
+        fbmUnitCount90d: 0,
+        availableQty: 0,
+        inboundQty: 0,
+      };
+      factoryMetrics.set(identity.key, metric);
+    }
+    return metric;
+  };
+
+  for (const row of inventory) {
+    const metric = factoryMetricFor(row.sellerSku, row.asin, row.productName);
+    if (!metric) continue;
+    metric.availableQty += nonNegative(row.fulfillableQty);
+    metric.inboundQty += nonNegative(row.inboundWorkingQty)
+      + nonNegative(row.inboundShippedQty)
+      + nonNegative(row.inboundReceivingQty);
+  }
+  for (const row of fbaOrders) {
+    if (!SUCCESS_FBA_STATUSES.has(String(row.orderStatus ?? '').toUpperCase())
+      || !inRange(row.purchaseDate, factoryPeriodStart, now)) continue;
+    const metric = factoryMetricFor(row.sellerSku, row.asin, row.productName);
+    if (metric) metric.fbaUnitCount90d += nonNegative(row.quantityShipped);
+  }
+  for (const row of fbmOrders) {
+    if (EXCLUDED_FBM_STATUSES.has(String(row.orderStatus ?? '').toUpperCase())
+      || !inRange(row.purchaseDateRaw, factoryPeriodStart, now)) continue;
+    if (!skuLookup.get(normalize(row.sku))?.sku) continue;
+    const metric = factoryMetricFor(row.sku, null, row.productName);
+    if (metric) metric.fbmUnitCount90d += nonNegative(row.quantityPurchased);
+  }
+
+  const factoryRecommendations = inventory.length
+    ? Array.from(factoryMetrics.values())
+      .map((row) => {
+        const totalUnitCount90d = row.fbaUnitCount90d + row.fbmUnitCount90d;
+        const suggestedFbaShipmentQty = Math.max(
+          0,
+          Math.ceil(totalUnitCount90d - row.availableQty - row.inboundQty),
+        );
+        return { ...row, totalUnitCount90d, suggestedFbaShipmentQty };
+      })
+      .filter((row) => row.totalUnitCount90d > FACTORY_RECOMMENDATION_MIN_UNITS_EXCLUSIVE
+        && row.suggestedFbaShipmentQty > 0)
+      .sort((left, right) => right.suggestedFbaShipmentQty - left.suggestedFbaShipmentQty
+        || right.totalUnitCount90d - left.totalUnitCount90d
+        || left.sellerSku.localeCompare(right.sellerSku, 'en', { numeric: true }))
+    : [];
 
   type ProductMetric = {
     sellerSku: string;
@@ -299,6 +388,19 @@ export function buildAmazonStoreDashboard(input: {
       reservedQty: inventory.reduce((sum, row) => sum + nonNegative(row.reservedQty), 0),
       unfulfillableQty: inventory.reduce((sum, row) => sum + nonNegative(row.unfulfillableQty), 0),
       snapshotAt: inventory.reduce<Date | null>((latest, row) => !latest || row.snapshotAt > latest ? row.snapshotAt : latest, null)?.toISOString() ?? null,
+    },
+    factoryRecommendations: {
+      periodDays: FACTORY_RECOMMENDATION_DAYS,
+      periodStart: factoryPeriodStart.toISOString(),
+      periodEnd: now.toISOString(),
+      minimumTotalUnitCountExclusive: FACTORY_RECOMMENDATION_MIN_UNITS_EXCLUSIVE,
+      inventoryAvailable: inventory.length > 0,
+      recommendationCount: factoryRecommendations.length,
+      totalSuggestedFbaShipmentQty: factoryRecommendations.reduce(
+        (sum, row) => sum + row.suggestedFbaShipmentQty,
+        0,
+      ),
+      rows: factoryRecommendations,
     },
     orderStatuses: {
       fba: fbaOrders.filter((row) => inRange(row.purchaseDate, periodStart, now)).reduce<Record<string, number>>((result, row) => {

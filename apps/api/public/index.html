@@ -516,6 +516,37 @@
             </div>
           </article>
 
+          <article class="card amazon-store-factory-card">
+            <div class="card-head">
+              <div>
+                <h3>工厂备货建议</h3>
+                <p class="muted">固定按当前店铺最近90天计算，仅展示FBA与FBM销量合计超过10件且需要补货的产品；建议数量 = 90天合计销量 − FBA可售 − FBA入库中。</p>
+              </div>
+              <button type="button" id="downloadAmazonStoreFactoryExcelBtn" class="compact-btn">Excel下载</button>
+            </div>
+            <ul class="stats overview-inline-stats">
+              <li><span>建议备货产品数</span><strong id="amazonStoreFactoryRecommendationCount">-</strong></li>
+              <li><span>建议直发FBA总数</span><strong id="amazonStoreFactorySuggestedQty">-</strong></li>
+            </ul>
+            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
+              <table class="amazon-store-dashboard-product-table">
+                <thead>
+                  <tr>
+                    <th>FBA SKU / ASIN</th>
+                    <th>产品</th>
+                    <th>90天FBA销量</th>
+                    <th>90天FBM销量</th>
+                    <th>90天合计销量</th>
+                    <th>FBA可售</th>
+                    <th>FBA入库中</th>
+                    <th>建议工厂直发FBA</th>
+                  </tr>
+                </thead>
+                <tbody id="amazonStoreFactoryRecommendationBody"></tbody>
+              </table>
+            </div>
+          </article>
+
           <article class="card">
             <div class="card-head">
               <h3>同步与库存状态</h3>
@@ -1655,56 +1686,6 @@
                 </thead>
                 <tbody id="overviewTopDemandBody"></tbody>
               </table>
-            </div>
-          </article>
-
-          <article id="overviewProductionCard" class="card overview-production-card hidden">
-            <div class="card-head overview-production-head">
-              <div class="card-title-actions">
-                <h3>工厂备货建议</h3>
-                <button type="button" id="downloadProductionRecommendationExcelBtn" class="compact-btn">Excel下载</button>
-              </div>
-            </div>
-            <p class="muted">固定按最近90天计算，仅展示全渠道出单商品件数超过10件的产品。</p>
-            <ul class="stats overview-inline-stats">
-              <li><span>建议备货产品数</span><strong id="overviewRecommendationCount">-</strong></li>
-              <li><span>紧急</span><strong id="overviewRecommendationUrgentCount">-</strong></li>
-              <li><span>高优先</span><strong id="overviewRecommendationHighCount">-</strong></li>
-              <li><span>中优先</span><strong id="overviewRecommendationMediumCount">-</strong></li>
-              <li><span>备货目标天数</span><strong id="overviewTargetDays">-</strong></li>
-              <li><span>预计到货</span><strong id="overviewEstimatedArrivalDays">-</strong></li>
-            </ul>
-            <div class="overview-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>产品ID</th>
-                    <th>产品名称</th>
-                    <th>总库存</th>
-                    <th>可用库存</th>
-                    <th>在途库存</th>
-                    <th>FBA可售库存</th>
-                    <th>FBA入库中</th>
-                    <th>FBA预留库存</th>
-                    <th>FBA不可售库存</th>
-                    <th>已安排生产</th>
-                    <th>总保障库存</th>
-                    <th id="overviewProductionFbmDemandHeading">90天FBM订单</th>
-                    <th id="overviewProductionRakutenDemandHeading">90天乐天订单</th>
-                    <th id="overviewProductionFbaDemandHeading">90天FBA订单</th>
-                    <th id="overviewProductionTotalDemandHeading">90天全渠道订单</th>
-                    <th id="overviewProductionDailyDemandHeading">90天日均消耗</th>
-                    <th>在库覆盖天数</th>
-                    <th>总覆盖天数</th>
-                    <th>目标需求</th>
-                    <th>建议生产量</th>
-                    <th>预计缺口天数</th>
-                    <th>优先级</th>
-                  </tr>
-                </thead>
-                <tbody id="overviewProductionBody"></tbody>
-              </table>
-              <div id="overviewProductionLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
             </div>
           </article>
 
