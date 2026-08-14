@@ -1,5 +1,6 @@
-import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -95,5 +96,24 @@ export class AmazonSpApiController {
     @Query('days') days?: string,
   ): Promise<unknown> {
     return this.service.getStoreDashboard(connectionId, days);
+  }
+
+  @Get('store-dashboard/factory-recommendations-excel')
+  async downloadStoreFactoryRecommendationsExcel(
+    @Res() res: Response,
+    @Query('connectionId') connectionId?: string,
+  ): Promise<void> {
+    const file = await this.service.buildStoreFactoryRecommendationsExcel(connectionId);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(file.content);
   }
 }

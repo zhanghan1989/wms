@@ -133,4 +133,51 @@ describe('Amazon store dashboard analytics', () => {
     });
     expect(dashboard.topProducts[0].daysOfCover).toBe(150);
   });
+
+  it('calculates factory-to-FBA recommendations per store using a fixed 90-day FBA and FBM demand window', () => {
+    const dashboard = buildAmazonStoreDashboard({
+      now,
+      days: 7,
+      fbaOrders: [{
+        orderId: 'FBA-1', sellerSku: 'FBA-SKU-1', asin: 'ASIN-1', productName: 'Item 1',
+        orderStatus: 'SHIPPED', quantityOrdered: 8, quantityShipped: 8, itemAmount: 8000,
+        currency: 'JPY', purchaseDate: new Date('2026-06-15T03:00:00.000Z'),
+      }],
+      fbmOrders: [{
+        orderId: 'FBM-1', sku: 'FBM-SKU-1', productName: 'Item 1', orderStatus: 'SHIPPED',
+        quantityPurchased: 5, quantityShipped: 5, quantityToShip: 0,
+        purchaseDateRaw: '2026-06-20T03:00:00.000Z',
+      }],
+      inventory: [{
+        sellerSku: 'FBA-SKU-1', asin: 'ASIN-1', productName: 'Item 1', fulfillableQty: 2,
+        inboundWorkingQty: 1, inboundShippedQty: 1, inboundReceivingQty: 1,
+        reservedQty: 20, unfulfillableQty: 30, totalQty: 55, snapshotAt: now,
+      }],
+      skus: [{
+        sku: 'FBA-SKU-1', fbmSku: 'FBM-SKU-1', rbSku: null, asin: 'ASIN-1', fnsku: null,
+        productId: 'P-1', productName: 'Item 1',
+      }],
+    }) as any;
+
+    expect(dashboard.summary.unitCount).toBe(0);
+    expect(dashboard.factoryRecommendations).toMatchObject({
+      periodDays: 90,
+      minimumTotalUnitCountExclusive: 10,
+      inventoryAvailable: true,
+      recommendationCount: 1,
+      totalSuggestedFbaShipmentQty: 8,
+    });
+    expect(dashboard.factoryRecommendations.rows).toEqual([
+      expect.objectContaining({
+        productId: 'P-1',
+        sellerSku: 'FBA-SKU-1',
+        fbaUnitCount90d: 8,
+        fbmUnitCount90d: 5,
+        totalUnitCount90d: 13,
+        availableQty: 2,
+        inboundQty: 3,
+        suggestedFbaShipmentQty: 8,
+      }),
+    ]);
+  });
 });
