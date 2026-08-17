@@ -304,7 +304,7 @@ export class SkusService {
 
     const bodyRows = rows
       .map((row) => ({
-        rbSku: String(row.rbSku ?? '').trim(),
+        rbSku: this.normalizeAmazonSellerSku(row.rbSku),
         stockQty: Number(row.masterProduct?.stockQty ?? 0),
       }))
       .filter((row) => row.rbSku.length > 0)
@@ -323,6 +323,12 @@ export class SkusService {
       fileName: `亚马逊更新价格和数量模版-${this.formatDateTimeForFileName(new Date())}.txt`,
       content: iconv.encode(`${text}\r\n`, 'gb18030'),
     };
+  }
+
+  private normalizeAmazonSellerSku(value: unknown): string {
+    // A tab or line break inside a TSV cell creates extra Amazon records/columns.
+    // Join wrapped SKU fragments so values such as "rb-item\n-23" remain one SKU.
+    return String(value ?? '').replace(/[\t\r\n]+/g, '').trim();
   }
 
   async getBulkDeleteTemplate(): Promise<SkuExportFile> {
