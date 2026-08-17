@@ -94,7 +94,7 @@ export class SkusController {
   @Get('export-amazon-rb-link-stock-excel')
   async exportAmazonRbLinkStockExcel(@Res() res: Response): Promise<void> {
     const file = await this.skusService.exportAmazonRbLinkStockExcel();
-    res.setHeader('Content-Type', 'application/vnd.ms-excel.sheet.macroEnabled.12');
+    res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
