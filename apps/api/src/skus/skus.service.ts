@@ -83,7 +83,20 @@ const BULK_SKU_IMPORT_TRANSACTION_MAX_WAIT_MS = 10000;
 const SKU_EXPORT_FILE_NAME = '系统所有产品SKU.xlsx';
 const UNMATCHED_SKU_EXPORT_FILE_NAME = '未匹配产品ID的SKU.xlsx';
 const SKU_BULK_DELETE_TEMPLATE_FILE_NAME = '批量删除SKU模板.xlsx';
-const AMAZON_RB_LINK_STOCK_TEMPLATE_FILE = 'amazon-rb-stock-template.xlsm';
+const AMAZON_RB_LINK_STOCK_TEMPLATES = [
+  {
+    fileName: 'amazon-rb-stock-template-arc.xlsm',
+    outputName: 'amazon-rb-stock-arc',
+  },
+  {
+    fileName: 'amazon-rb-stock-template-store-1.xlsm',
+    outputName: 'amazon-rb-stock-store-1',
+  },
+  {
+    fileName: 'amazon-rb-stock-template-store-2.xlsm',
+    outputName: 'amazon-rb-stock-store-2',
+  },
+] as const;
 const AMAZON_RB_LINK_STOCK_TEMPLATE_SHEET_PATH = 'xl/worksheets/sheet5.xml';
 const AMAZON_RB_LINK_STOCK_DATA_START_ROW = 7;
 const AMAZON_RB_LINK_STOCK_FULFILLMENT_CHANNEL = '出品者出荷（デフォルト）';
@@ -270,19 +283,39 @@ export class SkusService {
         stockQty: Number(row.masterProduct?.stockQty ?? 0),
       }))
       .filter((row) => row.rbSku.length > 0);
-    const template = await this.readAmazonRbLinkStockTemplate();
+    const timestamp = this.formatDateTimeForFileName(new Date());
+    const outputArchive = new JSZip();
+    for (const templateConfig of AMAZON_RB_LINK_STOCK_TEMPLATES) {
+      const template = await this.readAmazonRbLinkStockTemplate(
+        templateConfig.fileName,
+      );
+      const populatedTemplate = await this.populateAmazonRbLinkStockTemplate(
+        template,
+        bodyRows,
+      );
+      outputArchive.file(
+        `${templateConfig.outputName}-${timestamp}.xlsm`,
+        populatedTemplate,
+      );
+    }
 
     return {
-      fileName: `亚马逊更新价格和数量模板-${this.formatDateTimeForFileName(new Date())}.xlsm`,
-      content: await this.populateAmazonRbLinkStockTemplate(template, bodyRows),
+      fileName: `亚马逊rb链接库存-${timestamp}.zip`,
+      content: await outputArchive.generateAsync({
+        type: 'nodebuffer',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 },
+      }),
     };
   }
 
-  private async readAmazonRbLinkStockTemplate(): Promise<Buffer> {
+  private async readAmazonRbLinkStockTemplate(
+    templateFileName: string,
+  ): Promise<Buffer> {
     const cwd = process.cwd();
     const candidates = [
-      join(cwd, 'docs', AMAZON_RB_LINK_STOCK_TEMPLATE_FILE),
-      join(cwd, '..', '..', 'docs', AMAZON_RB_LINK_STOCK_TEMPLATE_FILE),
+      join(cwd, 'docs', templateFileName),
+      join(cwd, '..', '..', 'docs', templateFileName),
     ];
 
     for (const templatePath of candidates) {
@@ -293,7 +326,7 @@ export class SkusService {
       }
     }
 
-    throw new NotFoundException(`找不到模板文件：${AMAZON_RB_LINK_STOCK_TEMPLATE_FILE}`);
+    throw new NotFoundException(`找不到模板文件：${templateFileName}`);
   }
 
   private async populateAmazonRbLinkStockTemplate(

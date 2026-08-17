@@ -1369,7 +1369,7 @@ async function downloadAmazonRbLinkStockExcel() {
   const fileName = await downloadAuthorizedFile(
     "/skus/export-amazon-rb-link-stock-excel",
     {},
-    `亚马逊更新价格和数量模板-${formatDateForFilename(new Date())}.xlsm`,
+    `亚马逊rb链接库存-${formatDateForFilename(new Date())}.zip`,
   );
   showToast(`已下载 ${fileName}`);
 }
