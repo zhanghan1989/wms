@@ -8,7 +8,7 @@ import {
 import { readFile } from 'fs/promises';
 import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { join } from 'path';
-import * as iconv from 'iconv-lite';
+import JSZip = require('jszip');
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
 import { normalizeNullableText, parseId } from '../common/utils';
@@ -83,48 +83,10 @@ const BULK_SKU_IMPORT_TRANSACTION_MAX_WAIT_MS = 10000;
 const SKU_EXPORT_FILE_NAME = '系统所有产品SKU.xlsx';
 const UNMATCHED_SKU_EXPORT_FILE_NAME = '未匹配产品ID的SKU.xlsx';
 const SKU_BULK_DELETE_TEMPLATE_FILE_NAME = '批量删除SKU模板.xlsx';
-const AMAZON_RB_LINK_STOCK_TEMPLATE_ROWS = [
-  ['TemplateType=PriceInventory', 'Version=2018.0924', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
-  [
-    '商品管理番号',
-    '販売価格',
-    '在庫数',
-    '通貨コード',
-    'セール価格',
-    'セール開始日',
-    'セール終了日',
-    '商品の入荷予定日',
-    '販売価格の下限設定',
-    '販売価格の上限設定',
-    '出荷経路',
-    '出荷作業日数',
-    '',
-    '',
-    '',
-    '',
-    '',
-  ],
-  [
-    'sku',
-    'price',
-    'quantity',
-    'currency',
-    'sale-price',
-    'sale-from-date',
-    'sale-through-date',
-    'restock-date',
-    'minimum-seller-allowed-price',
-    'maximum-seller-allowed-price',
-    'fulfillment-channel',
-    'handling-time',
-    '',
-    '',
-    '',
-    '',
-    '',
-  ],
-];
-const AMAZON_RB_LINK_STOCK_COLUMN_COUNT = 17;
+const AMAZON_RB_LINK_STOCK_TEMPLATE_FILE = 'amazon-rb-stock-template.xlsm';
+const AMAZON_RB_LINK_STOCK_TEMPLATE_SHEET_PATH = 'xl/worksheets/sheet5.xml';
+const AMAZON_RB_LINK_STOCK_DATA_START_ROW = 7;
+const AMAZON_RB_LINK_STOCK_FULFILLMENT_CHANNEL = '出品者出荷（デフォルト）';
 
 @Injectable()
 export class SkusService {
@@ -276,7 +238,7 @@ export class SkusService {
     };
   }
 
-  async exportAmazonRbLinkStockTxt(): Promise<SkuExportFile> {
+  async exportAmazonRbLinkStockExcel(): Promise<SkuExportFile> {
     const rows = await this.prisma.sku.findMany({
       where: {
         status: 1,
@@ -307,22 +269,90 @@ export class SkusService {
         rbSku: this.normalizeAmazonSellerSku(row.rbSku),
         stockQty: Number(row.masterProduct?.stockQty ?? 0),
       }))
-      .filter((row) => row.rbSku.length > 0)
-      .map((row) => {
-        const cells = Array.from({ length: AMAZON_RB_LINK_STOCK_COLUMN_COUNT }, () => '');
-        cells[0] = row.rbSku;
-        cells[2] = String(row.stockQty);
-        return cells;
-      });
-
-    const text = [...AMAZON_RB_LINK_STOCK_TEMPLATE_ROWS, ...bodyRows]
-      .map((row) => row.join('\t'))
-      .join('\r\n');
+      .filter((row) => row.rbSku.length > 0);
+    const template = await this.readAmazonRbLinkStockTemplate();
 
     return {
-      fileName: `亚马逊更新价格和数量模版-${this.formatDateTimeForFileName(new Date())}.txt`,
-      content: iconv.encode(`${text}\r\n`, 'gb18030'),
+      fileName: `亚马逊更新价格和数量模板-${this.formatDateTimeForFileName(new Date())}.xlsm`,
+      content: await this.populateAmazonRbLinkStockTemplate(template, bodyRows),
     };
+  }
+
+  private async readAmazonRbLinkStockTemplate(): Promise<Buffer> {
+    const cwd = process.cwd();
+    const candidates = [
+      join(cwd, 'docs', AMAZON_RB_LINK_STOCK_TEMPLATE_FILE),
+      join(cwd, '..', '..', 'docs', AMAZON_RB_LINK_STOCK_TEMPLATE_FILE),
+    ];
+
+    for (const templatePath of candidates) {
+      try {
+        return await readFile(templatePath);
+      } catch {
+        // try next candidate
+      }
+    }
+
+    throw new NotFoundException(`找不到模板文件：${AMAZON_RB_LINK_STOCK_TEMPLATE_FILE}`);
+  }
+
+  private async populateAmazonRbLinkStockTemplate(
+    template: Buffer,
+    rows: Array<{ rbSku: string; stockQty: number }>,
+  ): Promise<Buffer> {
+    const archive = await JSZip.loadAsync(template);
+    const worksheet = archive.file(AMAZON_RB_LINK_STOCK_TEMPLATE_SHEET_PATH);
+    if (!worksheet) {
+      throw new UnprocessableEntityException('亚马逊库存模板缺少テンプレート工作表');
+    }
+
+    const worksheetXml = await worksheet.async('string');
+    const sheetDataMatch = worksheetXml.match(/<sheetData>([\s\S]*?)<\/sheetData>/);
+    const fixedRowsMatch = sheetDataMatch?.[1].match(
+      /^([\s\S]*?<row\b[^>]*\br="6"[^>]*>[\s\S]*?<\/row>)/,
+    );
+    if (!sheetDataMatch || !fixedRowsMatch) {
+      throw new UnprocessableEntityException('亚马逊库存模板结构不正确');
+    }
+
+    const dataRowsXml = rows
+      .map((row, index) => {
+        const rowNumber = AMAZON_RB_LINK_STOCK_DATA_START_ROW + index;
+        const sku = this.escapeXmlText(row.rbSku);
+        const fulfillmentChannel = this.escapeXmlText(AMAZON_RB_LINK_STOCK_FULFILLMENT_CHANNEL);
+        const stockQty = Number.isFinite(row.stockQty) ? Math.trunc(row.stockQty) : 0;
+        return (
+          `<row r="${rowNumber}" spans="1:3" ht="12.75">` +
+          `<c r="A${rowNumber}" s="26" t="inlineStr"><is><t>${sku}</t></is></c>` +
+          `<c r="B${rowNumber}" s="26" t="inlineStr"><is><t>${fulfillmentChannel}</t></is></c>` +
+          `<c r="C${rowNumber}" s="32"><v>${stockQty}</v></c>` +
+          '</row>'
+        );
+      })
+      .join('');
+    const lastRow = Math.max(6, AMAZON_RB_LINK_STOCK_DATA_START_ROW + rows.length - 1);
+    const populatedWorksheetXml = worksheetXml
+      .replace(/<dimension ref="[^"]+"\s*\/>/, `<dimension ref="A1:AF${lastRow}"/>`)
+      .replace(
+        /<sheetData>[\s\S]*?<\/sheetData>/,
+        `<sheetData>${fixedRowsMatch[1]}${dataRowsXml}</sheetData>`,
+      );
+    archive.file(AMAZON_RB_LINK_STOCK_TEMPLATE_SHEET_PATH, populatedWorksheetXml);
+
+    return archive.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+  }
+
+  private escapeXmlText(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
   }
 
   private normalizeAmazonSellerSku(value: unknown): string {

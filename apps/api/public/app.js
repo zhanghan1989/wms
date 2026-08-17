@@ -1365,11 +1365,11 @@ async function bulkDeleteSkusFromExcel(file) {
   });
 }
 
-async function downloadAmazonRbLinkStockTxt() {
+async function downloadAmazonRbLinkStockExcel() {
   const fileName = await downloadAuthorizedFile(
-    "/skus/export-amazon-rb-link-stock-txt",
+    "/skus/export-amazon-rb-link-stock-excel",
     {},
-    `亚马逊更新价格和数量模版-${formatDateForFilename(new Date())}.txt`,
+    `亚马逊更新价格和数量模板-${formatDateForFilename(new Date())}.xlsm`,
   );
   showToast(`已下载 ${fileName}`);
 }
@@ -2828,17 +2828,17 @@ function ensureInventoryPanelUi() {
       }
     });
   }
-  let amazonRbLinkStockButton = $("downloadAmazonRbLinkStockTxtBtn");
+  let amazonRbLinkStockButton = $("downloadAmazonRbLinkStockExcelBtn");
   if (!amazonRbLinkStockButton) {
     amazonRbLinkStockButton = document.createElement("button");
     amazonRbLinkStockButton.type = "button";
-    amazonRbLinkStockButton.id = "downloadAmazonRbLinkStockTxtBtn";
-    amazonRbLinkStockButton.textContent = "亚马逊rb链接库存下载";
+    amazonRbLinkStockButton.id = "downloadAmazonRbLinkStockExcelBtn";
+    amazonRbLinkStockButton.textContent = "亚马逊rb链接库存Excel下载";
     amazonRbLinkStockButton.addEventListener("click", async (event) => {
       const button = event.currentTarget;
       try {
         await withBusyButton(button, "下载中...", async () => {
-          await downloadAmazonRbLinkStockTxt();
+          await downloadAmazonRbLinkStockExcel();
         });
       } catch (error) {
         showToast(error.message, true);

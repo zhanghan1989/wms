@@ -91,10 +91,10 @@ export class SkusController {
     res.status(200).send(file.content);
   }
 
-  @Get('export-amazon-rb-link-stock-txt')
-  async exportAmazonRbLinkStockTxt(@Res() res: Response): Promise<void> {
-    const file = await this.skusService.exportAmazonRbLinkStockTxt();
-    res.setHeader('Content-Type', 'text/plain; charset=GB18030');
+  @Get('export-amazon-rb-link-stock-excel')
+  async exportAmazonRbLinkStockExcel(@Res() res: Response): Promise<void> {
+    const file = await this.skusService.exportAmazonRbLinkStockExcel();
+    res.setHeader('Content-Type', 'application/vnd.ms-excel.sheet.macroEnabled.12');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
