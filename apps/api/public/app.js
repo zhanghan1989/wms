@@ -211,7 +211,13 @@ const state = {
   inventoryVisibleCount: 0,
   inventoryListPageSize: 20,
   skuManagementKeyword: "",
-  skuManagementVisibleCount: 0,
+  skuManagementRows: [],
+  skuManagementPage: 0,
+  skuManagementPageSize: 50,
+  skuManagementHasMore: false,
+  skuManagementLoading: false,
+  skuManagementTotal: 0,
+  skuManagementLoadToken: 0,
   inventoryPageSize: 30,
   inventoryHomeProducts: [],
   inventoryHomePage: 1,
@@ -4831,23 +4837,7 @@ function setupInventoryHomeLoadObserver() {
 }
 
 function getSkuManagementFilteredRows() {
-  const rows = Array.isArray(state.inventorySortedSkus) ? state.inventorySortedSkus : [];
-  const keyword = String(state.skuManagementKeyword || "").trim().toLowerCase();
-  if (!keyword) {
-    return rows;
-  }
-
-  return rows.filter((item) =>
-    [
-      item?.sku,
-      item?.asin,
-      item?.fnsku,
-      item?.fbmSku,
-      item?.rbSku,
-      item?.shop,
-      item?.remark,
-    ].some((value) => String(value || "").toLowerCase().includes(keyword)),
-  );
+  return Array.isArray(state.skuManagementRows) ? state.skuManagementRows : [];
 }
 
 function renderSkuManagementTable() {
@@ -4855,12 +4845,7 @@ function renderSkuManagementTable() {
   const summary = $("skuManagementSummary");
   if (!body) return;
 
-  const filteredRows = getSkuManagementFilteredRows();
-  const visibleCount = Math.max(
-    state.inventoryListPageSize,
-    Number(state.skuManagementVisibleCount || 0),
-  );
-  const rows = filteredRows.slice(0, visibleCount);
+  const rows = getSkuManagementFilteredRows();
 
   body.innerHTML =
     rows
@@ -4879,17 +4864,60 @@ function renderSkuManagementTable() {
           </tr>
         `;
       })
-      .join("") || '<tr><td colspan="8" class="muted">-</td></tr>';
+      .join("") ||
+    `<tr><td colspan="8" class="muted">${state.skuManagementLoading ? "加载中..." : "-"}</td></tr>`;
 
   if (summary) {
     const keyword = String(state.skuManagementKeyword || "").trim();
-    summary.textContent = keyword
-      ? `检索到 ${filteredRows.length} 条SKU`
-      : `共 ${filteredRows.length} 条SKU`;
+    const total = Number(state.skuManagementTotal || 0);
+    summary.textContent = state.skuManagementLoading && !rows.length
+      ? "正在加载SKU..."
+      : keyword
+        ? `检索到 ${total} 条SKU`
+        : `共 ${total} 条SKU`;
   }
 
   setupSkuManagementLoadObserver();
   maybeAutoLoadSkuManagement();
+}
+
+async function loadSkuManagementPage({ reset = false } = {}) {
+  if (state.skuManagementLoading && !reset) return;
+  if (!reset && !state.skuManagementHasMore) return;
+
+  if (reset) {
+    state.skuManagementLoadToken += 1;
+    state.skuManagementRows = [];
+    state.skuManagementPage = 0;
+    state.skuManagementHasMore = true;
+    state.skuManagementTotal = 0;
+  }
+
+  const loadToken = state.skuManagementLoadToken;
+  const page = reset ? 1 : state.skuManagementPage + 1;
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(state.skuManagementPageSize),
+  });
+  const keyword = String(state.skuManagementKeyword || "").trim();
+  if (keyword) params.set("q", keyword);
+
+  state.skuManagementLoading = true;
+  renderSkuManagementTable();
+  try {
+    const result = await request(`/skus?${params.toString()}`);
+    if (loadToken !== state.skuManagementLoadToken) return;
+    const items = Array.isArray(result?.items) ? result.items : [];
+    state.skuManagementRows = reset ? items : [...state.skuManagementRows, ...items];
+    state.skuManagementPage = Number(result?.page || page);
+    state.skuManagementHasMore = Boolean(result?.hasMore);
+    state.skuManagementTotal = Number(result?.total || 0);
+  } finally {
+    if (loadToken === state.skuManagementLoadToken) {
+      state.skuManagementLoading = false;
+      renderSkuManagementTable();
+    }
+  }
 }
 
 function renderProductSummaryMeta(containerId, product) {
@@ -5356,11 +5384,6 @@ async function loadInventory({ preserveSearch = false } = {}) {
   });
   state.inventoryVisibleCount = state.inventoryListPageSize;
   if (!preserveSearch) {
-    state.skuManagementKeyword = "";
-  }
-  state.skuManagementVisibleCount = state.inventoryListPageSize;
-  renderSkuManagementTable();
-  if (!preserveSearch) {
     resetInventorySearchState();
     setInventoryDisplayMode(false);
     renderInventoryTable();
@@ -5559,6 +5582,9 @@ async function searchInventoryProducts(keyword, { append = false } = {}) {
 
 function findSkuById(skuId) {
   return (
+    (Array.isArray(state.skuManagementRows) ? state.skuManagementRows : []).find(
+      (sku) => Number(sku.id) === Number(skuId),
+    ) ||
     (Array.isArray(state.inventorySkus) ? state.inventorySkus : []).find(
       (sku) => Number(sku.id) === Number(skuId),
     ) ||
@@ -6557,10 +6583,8 @@ function setupProductEditRequestLoadObserver() {
 function loadMoreSkuManagementIfNeeded() {
   const panel = $("skuManagement");
   if (!panel || !panel.classList.contains("active")) return;
-  const total = getSkuManagementFilteredRows().length;
-  if (state.skuManagementVisibleCount >= total) return;
-  state.skuManagementVisibleCount += state.inventoryListPageSize;
-  renderSkuManagementTable();
+  if (state.skuManagementLoading || !state.skuManagementHasMore) return;
+  loadSkuManagementPage({ reset: false }).catch((error) => showToast(error.message, true));
 }
 
 function maybeAutoLoadSkuManagement() {
@@ -6568,8 +6592,7 @@ function maybeAutoLoadSkuManagement() {
   if (!panel || !panel.classList.contains("active")) return;
   const tableWrap = $("skuManagementTableWrap");
   if (!tableWrap || tableWrap.classList.contains("hidden")) return;
-  const total = getSkuManagementFilteredRows().length;
-  if (state.skuManagementVisibleCount >= total) return;
+  if (state.skuManagementLoading || !state.skuManagementHasMore) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -12705,7 +12728,12 @@ async function reloadAll() {
     state.inventoryLocations = new Map();
     state.inventoryTotalsBySku = {};
     state.skuManagementKeyword = "";
-    state.skuManagementVisibleCount = 0;
+    state.skuManagementRows = [];
+    state.skuManagementPage = 0;
+    state.skuManagementHasMore = false;
+    state.skuManagementLoading = false;
+    state.skuManagementTotal = 0;
+    state.skuManagementLoadToken += 1;
     state.dataBackups = [];
     state.dataBackupsVisibleCount = 0;
     state.inventoryVisibleCount = 0;
@@ -14020,16 +14048,22 @@ function bindForms() {
 
   $("skuManagementSearchForm").addEventListener("submit", async (event) => {
     event.preventDefault();
-    state.skuManagementKeyword = String($("skuManagementKeyword").value || "").trim();
-    state.skuManagementVisibleCount = state.inventoryListPageSize;
-    renderSkuManagementTable();
+    try {
+      state.skuManagementKeyword = String($("skuManagementKeyword").value || "").trim();
+      await loadSkuManagementPage({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
-  $("resetSkuManagementKeywordBtn").addEventListener("click", () => {
-    $("skuManagementKeyword").value = "";
-    state.skuManagementKeyword = "";
-    state.skuManagementVisibleCount = state.inventoryListPageSize;
-    renderSkuManagementTable();
+  $("resetSkuManagementKeywordBtn").addEventListener("click", async () => {
+    try {
+      $("skuManagementKeyword").value = "";
+      state.skuManagementKeyword = "";
+      await loadSkuManagementPage({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   $("modalNewProductId").addEventListener("input", () => {
@@ -14312,8 +14346,11 @@ function bindForms() {
   $("openSkuManagementPanel").addEventListener("click", async () => {
     try {
       switchPanel("skuManagement");
-      await loadInventory({ preserveSearch: true });
-      renderSkuManagementTable();
+      if (state.skuManagementRows.length) {
+        renderSkuManagementTable();
+      } else {
+        await loadSkuManagementPage({ reset: true });
+      }
     } catch (error) {
       showToast(error.message, true);
     }
@@ -15186,8 +15223,7 @@ function bindForms() {
         await createSkuFromModal();
         closeModal("createSkuModal");
         showToast("SKU 已创建");
-        await loadInventory();
-        await loadAudit();
+        await Promise.all([loadSkuManagementPage({ reset: true }), loadAudit()]);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -15206,7 +15242,7 @@ function bindForms() {
         `上传完成：共${result.totalRows}行，新增${result.createdCount}条，恢复${Number(result.restoredCount || 0)}条，生成编辑申请${result.editRequestCount}条`,
         );
         await Promise.all([
-          loadInventory(),
+          loadSkuManagementPage({ reset: true }),
           loadProductEditRequests({ reset: true }),
           loadProductEditPendingSummary(),
           loadAudit(),
@@ -15229,7 +15265,7 @@ function bindForms() {
         closeModal("bulkSkuDeleteModal");
         showToast(`删除完成：共${result.totalRows}行，删除${result.deletedCount}条SKU`);
         await Promise.all([
-          loadInventory(),
+          loadSkuManagementPage({ reset: true }),
           loadProductEditRequests({ reset: true }),
           loadProductEditPendingSummary(),
           loadAudit(),
@@ -16651,8 +16687,11 @@ function bindDelegates() {
         if (!ok) return;
         await deleteSku(skuId);
         showToast("SKU已删除");
+        const skuManagementActive = $("skuManagement")?.classList.contains("active");
         await Promise.all([
-          loadInventory({ preserveSearch: true }),
+          skuManagementActive
+            ? loadSkuManagementPage({ reset: true })
+            : loadInventory({ preserveSearch: true }),
           loadAudit(),
         ]);
         return;
@@ -17774,7 +17813,7 @@ function bindRefresh() {
     ),
   );
   $("refreshSkuManagement").addEventListener("click", () =>
-    loadInventory({ preserveSearch: true }).catch((error) => showToast(error.message, true)),
+    loadSkuManagementPage({ reset: true }).catch((error) => showToast(error.message, true)),
   );
   $("refreshUsers").addEventListener("click", () =>
     Promise.all([loadUsers(), loadUserOptions()]).catch((error) => showToast(error.message, true)),

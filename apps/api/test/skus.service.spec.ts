@@ -3,6 +3,42 @@ import * as XLSX from 'xlsx';
 import { SkusService } from '../src/skus/skus.service';
 
 describe('SkusService', () => {
+  describe('listPage', () => {
+    it('returns one page plus the total without loading the entire SKU table', async () => {
+      const rows = [
+        { id: 3n, sku: 'sku-3', masterProduct: { productName: '产品三' } },
+        { id: 2n, sku: 'sku-2', masterProduct: null },
+        { id: 1n, sku: 'sku-1', masterProduct: { productName: '产品一' } },
+      ];
+      const prisma = {
+        sku: {
+          findMany: jest.fn().mockResolvedValue(rows),
+          count: jest.fn().mockResolvedValue(12554),
+        },
+      };
+      const service = new SkusService(prisma as any, {} as any);
+
+      const result = await service.listPage('rb-db', 2, 2);
+
+      expect(prisma.sku.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 2, take: 3 }),
+      );
+      expect(prisma.sku.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ status: 1, OR: expect.any(Array) }),
+      });
+      expect(result).toEqual({
+        items: [
+          expect.objectContaining({ id: 3n, productName: '产品三' }),
+          expect.objectContaining({ id: 2n, productName: null }),
+        ],
+        page: 2,
+        pageSize: 2,
+        hasMore: true,
+        total: 12554,
+      });
+    });
+  });
+
   describe('exportAmazonRbLinkStockExcel', () => {
     it('returns only the requested account XLSM with that shop data', async () => {
       const prisma = {
