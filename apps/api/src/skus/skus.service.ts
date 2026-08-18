@@ -106,6 +106,7 @@ const AMAZON_RB_LINK_STOCK_TEMPLATES = [
 const AMAZON_RB_LINK_STOCK_TEMPLATE_SHEET_PATH = 'xl/worksheets/sheet5.xml';
 const AMAZON_RB_LINK_STOCK_DATA_START_ROW = 7;
 const AMAZON_RB_LINK_STOCK_FULFILLMENT_CHANNEL = '出品者出荷（デフォルト）';
+const AMAZON_RB_LINK_STOCK_SHIPPING_TEMPLATE = '日本乐天发货';
 
 @Injectable()
 export class SkusService {
@@ -388,12 +389,14 @@ export class SkusService {
         const rowNumber = AMAZON_RB_LINK_STOCK_DATA_START_ROW + index;
         const sku = this.escapeXmlText(row.rbSku);
         const fulfillmentChannel = this.escapeXmlText(AMAZON_RB_LINK_STOCK_FULFILLMENT_CHANNEL);
+        const shippingTemplate = this.escapeXmlText(AMAZON_RB_LINK_STOCK_SHIPPING_TEMPLATE);
         const stockQty = Number.isFinite(row.stockQty) ? Math.trunc(row.stockQty) : 0;
         return (
-          `<row r="${rowNumber}" spans="1:3" ht="12.75">` +
+          `<row r="${rowNumber}" spans="1:32" ht="12.75">` +
           `<c r="A${rowNumber}" s="26" t="inlineStr"><is><t>${sku}</t></is></c>` +
           `<c r="B${rowNumber}" s="26" t="inlineStr"><is><t>${fulfillmentChannel}</t></is></c>` +
           `<c r="C${rowNumber}" s="32"><v>${stockQty}</v></c>` +
+          `<c r="AF${rowNumber}" s="26" t="inlineStr"><is><t>${shippingTemplate}</t></is></c>` +
           '</row>'
         );
       })
