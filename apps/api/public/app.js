@@ -2865,12 +2865,11 @@ function ensureInventoryPanelUi() {
   if (!unmatchedDownloadButton.isConnected) {
     downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
   }
-  let previousButton = unmatchedDownloadButton;
+  let previousAmazonButton = $("openShopManageModal");
   for (const amazonButton of amazonRbLinkStockButtons) {
-    if (!amazonButton.isConnected) {
-      previousButton.insertAdjacentElement("afterend", amazonButton);
-    }
-    previousButton = amazonButton;
+    if (!previousAmazonButton) break;
+    previousAmazonButton.insertAdjacentElement("afterend", amazonButton);
+    previousAmazonButton = amazonButton;
   }
 }
 
