@@ -99,7 +99,9 @@ describe('SkusService', () => {
         expect(worksheet?.A7?.v).toBe(testCase.rbSku);
         expect(worksheet?.B7?.v).toBe('出品者出荷（デフォルト）');
         expect(worksheet?.C7?.v).toBe(testCase.stockQty);
+        expect(worksheet?.AF7?.v).toBe('日本乐天发货');
         expect(worksheet?.A8).toBeUndefined();
+        expect(worksheet?.AF8).toBeUndefined();
         expect(worksheetXml).toContain('<dimension ref="A1:AF7"/>');
         expect(worksheetXml).toContain('<dataValidations count="64">');
 
