@@ -4,57 +4,67 @@ import { SkusService } from '../src/skus/skus.service';
 
 describe('SkusService', () => {
   describe('exportAmazonRbLinkStockExcel', () => {
-    it('returns three account-specific populated XLSM templates in one ZIP', async () => {
+    it('returns only the requested account XLSM with that shop data', async () => {
       const prisma = {
         sku: {
           findMany: jest.fn().mockResolvedValue([
             {
-              rbSku: 'rb-db-brooklyn -23-hei',
+              rbSku: 'rb-arc-sku',
               masterProduct: { stockQty: 15 },
+              shop: 'Arcdiary',
+            },
+            {
+              rbSku: 'rb-db-brooklyn -23-hei',
+              masterProduct: { stockQty: 9 },
+              shop: '1号店 DGAZ',
             },
             {
               rbSku: ' rb-wrapped\r\n-sku\t ',
-              masterProduct: { stockQty: 9 },
+              masterProduct: { stockQty: 5 },
+              shop: '2号店-DGAZ store',
             },
           ]),
         },
       };
       const service = new SkusService(prisma as any, {} as any);
-
-      const file = await service.exportAmazonRbLinkStockExcel();
-      const archive = await JSZip.loadAsync(file.content);
-
-      expect(file.fileName).toMatch(/^亚马逊rb链接库存-\d{8}-\d{6}\.zip$/);
-      const xlsmFiles = Object.keys(archive.files).filter((name) =>
-        name.endsWith('.xlsm'),
-      );
-      expect(xlsmFiles).toHaveLength(3);
-      expect(xlsmFiles).toEqual(
-        expect.arrayContaining([
-          expect.stringMatching(/^amazon-rb-stock-arc-\d{8}-\d{6}\.xlsm$/),
-          expect.stringMatching(/^amazon-rb-stock-store-1-\d{8}-\d{6}\.xlsm$/),
-          expect.stringMatching(/^amazon-rb-stock-store-2-\d{8}-\d{6}\.xlsm$/),
-        ]),
-      );
-
       const contributorIds = new Set<string>();
-      for (const xlsmFile of xlsmFiles) {
-        const xlsmContent = await archive.file(xlsmFile)?.async('nodebuffer');
-        expect(xlsmContent).toBeDefined();
-        const workbook = XLSX.read(xlsmContent as Buffer, { type: 'buffer' });
+      const cases = [
+        {
+          storeKey: 'store-1',
+          fileName: /^amazon-rb-stock-store-1-\d{8}-\d{6}\.xlsm$/,
+          rbSku: 'rb-db-brooklyn -23-hei',
+          stockQty: 9,
+        },
+        {
+          storeKey: 'store-2',
+          fileName: /^amazon-rb-stock-store-2-\d{8}-\d{6}\.xlsm$/,
+          rbSku: 'rb-wrapped-sku',
+          stockQty: 5,
+        },
+        {
+          storeKey: 'arc',
+          fileName: /^amazon-rb-stock-arc-\d{8}-\d{6}\.xlsm$/,
+          rbSku: 'rb-arc-sku',
+          stockQty: 15,
+        },
+      ];
+
+      for (const testCase of cases) {
+        const file = await service.exportAmazonRbLinkStockExcel(testCase.storeKey);
+        expect(file.fileName).toMatch(testCase.fileName);
+        const workbook = XLSX.read(file.content, { type: 'buffer' });
         const worksheet = workbook.Sheets['テンプレート'];
-        const innerArchive = await JSZip.loadAsync(xlsmContent as Buffer);
-        const worksheetXml = await innerArchive
+        const archive = await JSZip.loadAsync(file.content);
+        const worksheetXml = await archive
           .file('xl/worksheets/sheet5.xml')
           ?.async('string');
 
         expect(workbook.SheetNames).toContain('テンプレート');
-        expect(worksheet?.A7?.v).toBe('rb-db-brooklyn -23-hei');
+        expect(worksheet?.A7?.v).toBe(testCase.rbSku);
         expect(worksheet?.B7?.v).toBe('出品者出荷（デフォルト）');
-        expect(worksheet?.C7?.v).toBe(15);
-        expect(worksheet?.A8?.v).toBe('rb-wrapped-sku');
-        expect(worksheet?.C8?.v).toBe(9);
-        expect(worksheetXml).toContain('<dimension ref="A1:AF8"/>');
+        expect(worksheet?.C7?.v).toBe(testCase.stockQty);
+        expect(worksheet?.A8).toBeUndefined();
+        expect(worksheetXml).toContain('<dimension ref="A1:AF7"/>');
         expect(worksheetXml).toContain('<dataValidations count="64">');
 
         const settings = String(worksheet?.A1?.v ?? '');
@@ -63,6 +73,35 @@ describe('SkusService', () => {
         contributorIds.add(contributorId as string);
       }
       expect(contributorIds.size).toBe(3);
+    });
+
+    it('rejects unmapped shops instead of putting their SKU in the wrong template', async () => {
+      const prisma = {
+        sku: {
+          findMany: jest.fn().mockResolvedValue([
+            {
+              rbSku: 'rb-unknown-shop',
+              masterProduct: { stockQty: 3 },
+              shop: '未配置店铺',
+            },
+          ]),
+        },
+      };
+      const service = new SkusService(prisma as any, {} as any);
+
+      await expect(service.exportAmazonRbLinkStockExcel('arc')).rejects.toThrow(
+        '以下SKU店铺无法匹配亚马逊账号模板：未配置店铺（1条）',
+      );
+    });
+
+    it('rejects an invalid Amazon store parameter before querying SKU data', async () => {
+      const prisma = { sku: { findMany: jest.fn() } };
+      const service = new SkusService(prisma as any, {} as any);
+
+      await expect(service.exportAmazonRbLinkStockExcel('invalid')).rejects.toThrow(
+        '亚马逊店铺参数无效',
+      );
+      expect(prisma.sku.findMany).not.toHaveBeenCalled();
     });
   });
 });

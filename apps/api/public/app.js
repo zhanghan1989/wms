@@ -1365,11 +1365,11 @@ async function bulkDeleteSkusFromExcel(file) {
   });
 }
 
-async function downloadAmazonRbLinkStockExcel() {
+async function downloadAmazonRbLinkStockExcel(storeKey) {
   const fileName = await downloadAuthorizedFile(
-    "/skus/export-amazon-rb-link-stock-excel",
+    `/skus/export-amazon-rb-link-stock-excel?store=${encodeURIComponent(storeKey)}`,
     {},
-    `亚马逊rb链接库存-${formatDateForFilename(new Date())}.zip`,
+    `amazon-rb-stock-${storeKey}-${formatDateForFilename(new Date())}.xlsm`,
   );
   showToast(`已下载 ${fileName}`);
 }
@@ -2828,44 +2828,43 @@ function ensureInventoryPanelUi() {
       }
     });
   }
-  let amazonRbLinkStockButton = $("downloadAmazonRbLinkStockExcelBtn");
-  if (!amazonRbLinkStockButton) {
-    amazonRbLinkStockButton = document.createElement("button");
-    amazonRbLinkStockButton.type = "button";
-    amazonRbLinkStockButton.id = "downloadAmazonRbLinkStockExcelBtn";
-    amazonRbLinkStockButton.textContent = "亚马逊rb链接库存Excel下载";
-    amazonRbLinkStockButton.addEventListener("click", async (event) => {
-      const button = event.currentTarget;
-      try {
-        await withBusyButton(button, "下载中...", async () => {
-          await downloadAmazonRbLinkStockExcel();
-        });
-      } catch (error) {
-        showToast(error.message, true);
-      }
-    });
-  }
-  const shopManageButton = $("openShopManageModal");
-  if (shopManageButton) {
-    if (!downloadButton.isConnected) {
-      shopManageButton.insertAdjacentElement("afterend", downloadButton);
+  $("downloadAmazonRbLinkStockExcelBtn")?.remove();
+  const amazonRbLinkStockButtons = [
+    { id: "downloadAmazonRbLinkStockStore1Btn", storeKey: "store-1", label: "rb链接库存下载-1号店" },
+    { id: "downloadAmazonRbLinkStockStore2Btn", storeKey: "store-2", label: "rb链接库存下载-2号店" },
+    { id: "downloadAmazonRbLinkStockArcBtn", storeKey: "arc", label: "rb链接库存下载-arc" },
+  ].map((config) => {
+    let button = $(config.id);
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.id = config.id;
+      button.textContent = config.label;
+      button.addEventListener("click", async (event) => {
+        const currentButton = event.currentTarget;
+        try {
+          await withBusyButton(currentButton, "下载中...", async () => {
+            await downloadAmazonRbLinkStockExcel(config.storeKey);
+          });
+        } catch (error) {
+          showToast(error.message, true);
+        }
+      });
     }
-    if (!unmatchedDownloadButton.isConnected) {
-      downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
-    }
-    if (!amazonRbLinkStockButton.isConnected) {
-      unmatchedDownloadButton.insertAdjacentElement("afterend", amazonRbLinkStockButton);
-    }
-    return;
-  }
+    return button;
+  });
   if (!downloadButton.isConnected) {
     bulkUploadButton.insertAdjacentElement("afterend", downloadButton);
   }
   if (!unmatchedDownloadButton.isConnected) {
     downloadButton.insertAdjacentElement("afterend", unmatchedDownloadButton);
   }
-  if (!amazonRbLinkStockButton.isConnected) {
-    unmatchedDownloadButton.insertAdjacentElement("afterend", amazonRbLinkStockButton);
+  let previousButton = unmatchedDownloadButton;
+  for (const amazonButton of amazonRbLinkStockButtons) {
+    if (!amazonButton.isConnected) {
+      previousButton.insertAdjacentElement("afterend", amazonButton);
+    }
+    previousButton = amazonButton;
   }
 }
 
