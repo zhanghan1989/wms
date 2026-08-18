@@ -85,16 +85,22 @@ const UNMATCHED_SKU_EXPORT_FILE_NAME = '未匹配产品ID的SKU.xlsx';
 const SKU_BULK_DELETE_TEMPLATE_FILE_NAME = '批量删除SKU模板.xlsx';
 const AMAZON_RB_LINK_STOCK_TEMPLATES = [
   {
+    key: 'arc',
     fileName: 'amazon-rb-stock-template-arc.xlsm',
     outputName: 'amazon-rb-stock-arc',
+    shopNamePatterns: [/^arc(?:diary)?(?:店|store)?$/i],
   },
   {
+    key: 'store-1',
     fileName: 'amazon-rb-stock-template-store-1.xlsm',
     outputName: 'amazon-rb-stock-store-1',
+    shopNamePatterns: [/^(?:1|一)(?:号)?店(?:dgaz)?(?:store)?$/i, /^store1$/i],
   },
   {
+    key: 'store-2',
     fileName: 'amazon-rb-stock-template-store-2.xlsm',
     outputName: 'amazon-rb-stock-store-2',
+    shopNamePatterns: [/^(?:2|二)(?:号)?店(?:dgaz)?(?:store)?$/i, /^store2$/i],
   },
 ] as const;
 const AMAZON_RB_LINK_STOCK_TEMPLATE_SHEET_PATH = 'xl/worksheets/sheet5.xml';
@@ -251,7 +257,14 @@ export class SkusService {
     };
   }
 
-  async exportAmazonRbLinkStockExcel(): Promise<SkuExportFile> {
+  async exportAmazonRbLinkStockExcel(templateKey: string): Promise<SkuExportFile> {
+    const selectedTemplate = AMAZON_RB_LINK_STOCK_TEMPLATES.find(
+      (templateConfig) => templateConfig.key === templateKey,
+    );
+    if (!selectedTemplate) {
+      throw new BadRequestException('亚马逊店铺参数无效');
+    }
+
     const rows = await this.prisma.sku.findMany({
       where: {
         status: 1,
@@ -281,32 +294,50 @@ export class SkusService {
       .map((row) => ({
         rbSku: this.normalizeAmazonSellerSku(row.rbSku),
         stockQty: Number(row.masterProduct?.stockQty ?? 0),
+        shop: String(row.shop ?? '').trim(),
       }))
       .filter((row) => row.rbSku.length > 0);
-    const timestamp = this.formatDateTimeForFileName(new Date());
-    const outputArchive = new JSZip();
-    for (const templateConfig of AMAZON_RB_LINK_STOCK_TEMPLATES) {
-      const template = await this.readAmazonRbLinkStockTemplate(
-        templateConfig.fileName,
-      );
-      const populatedTemplate = await this.populateAmazonRbLinkStockTemplate(
-        template,
-        bodyRows,
-      );
-      outputArchive.file(
-        `${templateConfig.outputName}-${timestamp}.xlsm`,
-        populatedTemplate,
+    const selectedRows: typeof bodyRows = [];
+    const unmappedShops = new Map<string, number>();
+    for (const row of bodyRows) {
+      const templateConfig = this.resolveAmazonRbLinkStockTemplate(row.shop);
+      if (!templateConfig) {
+        const shopName = row.shop || '空店铺';
+        unmappedShops.set(shopName, (unmappedShops.get(shopName) ?? 0) + 1);
+        continue;
+      }
+      if (templateConfig.key === selectedTemplate.key) {
+        selectedRows.push(row);
+      }
+    }
+    if (unmappedShops.size > 0) {
+      const details = Array.from(unmappedShops.entries())
+        .map(([shopName, count]) => `${shopName}（${count}条）`)
+        .join('、');
+      throw new UnprocessableEntityException(
+        `以下SKU店铺无法匹配亚马逊账号模板：${details}`,
       );
     }
 
+    const timestamp = this.formatDateTimeForFileName(new Date());
+    const template = await this.readAmazonRbLinkStockTemplate(
+      selectedTemplate.fileName,
+    );
+
     return {
-      fileName: `亚马逊rb链接库存-${timestamp}.zip`,
-      content: await outputArchive.generateAsync({
-        type: 'nodebuffer',
-        compression: 'DEFLATE',
-        compressionOptions: { level: 6 },
-      }),
+      fileName: `${selectedTemplate.outputName}-${timestamp}.xlsm`,
+      content: await this.populateAmazonRbLinkStockTemplate(template, selectedRows),
     };
+  }
+
+  private resolveAmazonRbLinkStockTemplate(shopName: string) {
+    const normalizedShopName = shopName
+      .normalize('NFKC')
+      .trim()
+      .replace(/[\s_-]+/g, '');
+    return AMAZON_RB_LINK_STOCK_TEMPLATES.find((templateConfig) =>
+      templateConfig.shopNamePatterns.some((pattern) => pattern.test(normalizedShopName)),
+    );
   }
 
   private async readAmazonRbLinkStockTemplate(
