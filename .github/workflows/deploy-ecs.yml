@@ -170,12 +170,6 @@ jobs:
               echo "Missing production secret: RAKUTEN_RMS_API_ENCRYPTION_KEY"
               exit 1
             fi
-            if grep -q '^RAKUTEN_RMS_API_ENCRYPTION_KEY=' .env; then
-              sed -i "s/^RAKUTEN_RMS_API_ENCRYPTION_KEY=.*/RAKUTEN_RMS_API_ENCRYPTION_KEY=${RAKUTEN_RMS_API_ENCRYPTION_KEY}/" .env
-            else
-              printf '\nRAKUTEN_RMS_API_ENCRYPTION_KEY=%s\n' "${RAKUTEN_RMS_API_ENCRYPTION_KEY}" >> .env
-            fi
-            unset RAKUTEN_RMS_API_ENCRYPTION_KEY
             timed "publish_company_site" sh -c "install -d -m 0755 /var/www/fulangke && find /var/www/fulangke -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && cp -a apps/company-site/. /var/www/fulangke/ && chmod -R a+rX /var/www/fulangke"
             if command -v nginx >/dev/null 2>&1 && [ -e /etc/nginx/sites-enabled/www.fulangke.cn ]; then
               timed "nginx_config_test" nginx -t
@@ -195,7 +189,7 @@ jobs:
               printf '%s\n' '    build: null'
             } > /tmp/wms-api-image-compose.yml
             timed "show_api_image_compose" cat /tmp/wms-api-image-compose.yml
-            timed "validate_api_image_compose" sh -c "docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml config >/tmp/wms-api-compose-config.yml"
+            timed "validate_api_image_compose" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml config --quiet
             timed_retry "compose_up_db_redis" 3 docker compose up -d db redis
             if [ "${RUN_MIGRATIONS}" = "true" ]; then
               echo "Running prisma migrate deploy..."
