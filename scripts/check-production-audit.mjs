@@ -26,10 +26,48 @@ if (report.error || !report.auditReportVersion || !report.metadata?.vulnerabilit
 
 const approvedExceptions = new Map([
   [
+    'deepmerge-ts',
+    {
+      severity: 'high',
+      advisorySources: new Set([1145093]),
+      viaPackages: new Set(),
+      allowFixAvailable: true,
+      expiresAt: new Date('2026-09-18T00:00:00Z'),
+      reason:
+        'Prisma 6.19.3 pins deepmerge-ts 7.1.5 as a dev-only CLI dependency; awaiting a Prisma release that adopts the patched dependency.',
+    },
+  ],
+  [
+    '@prisma/config',
+    {
+      severity: 'high',
+      advisorySources: new Set(),
+      viaPackages: new Set(['deepmerge-ts']),
+      allowFixAvailable: true,
+      expiresAt: new Date('2026-09-18T00:00:00Z'),
+      reason:
+        'Transitive propagation of GHSA-ggr8-5vv4-36mx through the dev-only Prisma CLI; awaiting an upstream Prisma fix.',
+    },
+  ],
+  [
+    'prisma',
+    {
+      severity: 'high',
+      advisorySources: new Set(),
+      viaPackages: new Set(['@prisma/config']),
+      allowFixAvailable: true,
+      expiresAt: new Date('2026-09-18T00:00:00Z'),
+      reason:
+        'Transitive propagation of GHSA-ggr8-5vv4-36mx through the dev-only Prisma CLI; awaiting an upstream Prisma fix.',
+    },
+  ],
+  [
     'xlsx',
     {
       severity: 'high',
       advisorySources: new Set([1108110, 1108111]),
+      viaPackages: new Set(),
+      allowFixAvailable: false,
       expiresAt: new Date('2026-09-04T00:00:00Z'),
       reason: 'No patched npm release is available; replacement work is tracked for the Amazon SP-API launch.',
     },
@@ -48,14 +86,21 @@ for (const [packageName, vulnerability] of Object.entries(vulnerabilities)) {
   const advisorySources = (vulnerability.via ?? [])
     .filter((item) => typeof item === 'object' && item !== null)
     .map((item) => item.source);
+  const viaPackages = (vulnerability.via ?? []).filter((item) => typeof item === 'string');
   const advisoriesMatch =
     advisorySources.length === exception?.advisorySources.size &&
     advisorySources.every((source) => exception.advisorySources.has(source));
+  const viaPackagesMatch =
+    viaPackages.length === exception?.viaPackages.size &&
+    viaPackages.every((packageName) => exception.viaPackages.has(packageName));
+  const fixAvailabilityAccepted =
+    vulnerability.fixAvailable === false || exception?.allowFixAvailable === true;
   const exceptionIsValid =
     exception &&
     vulnerability.severity === exception.severity &&
-    vulnerability.fixAvailable === false &&
+    fixAvailabilityAccepted &&
     advisoriesMatch &&
+    viaPackagesMatch &&
     now < exception.expiresAt;
 
   if (exceptionIsValid) {
