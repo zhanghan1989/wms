@@ -90,12 +90,16 @@ const RAKUTEN_ORDER_COLUMNS = [
   { header: RAKUTEN_ORDER_HEADERS.orderQuantity, key: 'orderQuantityRaw' },
   { header: RAKUTEN_ORDER_HEADERS.orderId, key: 'orderId' },
   { header: RAKUTEN_ORDER_HEADERS.orderCreatedAt, key: 'orderCreatedAtRaw' },
-  { header: RAKUTEN_ORDER_HEADERS.orderConfirmedAt, key: 'orderConfirmedAtRaw' },
+  { header: RAKUTEN_ORDER_HEADERS.orderConfirmedAt, key: 'orderConfirmedAtRaw',
+  },
   { header: RAKUTEN_ORDER_HEADERS.deliveryMethod, key: 'deliveryMethod' },
   { header: RAKUTEN_ORDER_HEADERS.deliveryClass, key: 'deliveryClass' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPostalCode1, key: 'shippingPostalCode1' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPostalCode2, key: 'shippingPostalCode2' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPrefecture, key: 'shippingPrefecture' },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPostalCode1, key: 'shippingPostalCode1',
+  },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPostalCode2, key: 'shippingPostalCode2',
+  },
+  { header: RAKUTEN_ORDER_HEADERS.shippingPrefecture, key: 'shippingPrefecture',
+  },
   { header: RAKUTEN_ORDER_HEADERS.shippingCity, key: 'shippingCity' },
   { header: RAKUTEN_ORDER_HEADERS.shippingAddress, key: 'shippingAddress' },
   { header: RAKUTEN_ORDER_HEADERS.shippingLastName, key: 'shippingLastName' },
@@ -543,7 +547,7 @@ interface XiyaLogisticsRow {
   delivery_method_name?: string | null;
   logistics_method_name?: string | null;
   transport_method_name?: string | null;
-  '运输方式名称'?: string | null;
+  运输方式名称?: string | null;
 }
 
 interface XiyaTrackingCandidate {
@@ -945,8 +949,8 @@ const YAMATO_PRODUCT_PRINTER_ALIASES: Record<string, string> = {
   A: 'nekoposu',
   yamato: YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
   nekoposu: 'nekoposu',
-  'ヤマト': YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
-  'ネコポス': 'nekoposu',
+  ヤマト: YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
+  ネコポス: 'nekoposu',
 };
 const YAMATO_PRINT_JOB_STALE_MS = 5 * 60 * 1000;
 const YAMATO_EXPORT_FIXED_VALUES = {
@@ -986,7 +990,8 @@ const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const
 type AmazonTxtEncodingCandidate = (typeof AMAZON_TXT_ENCODING_CANDIDATES)[number];
 
 let pdfJsModulePromise: Promise<{
-  getDocument: (source: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<unknown> };
+  getDocument: (source: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<unknown>;
+  };
 }> | null = null;
 
 function normalizeAmazonSkuLookupKey(value: string | null | undefined): string {
@@ -1091,22 +1096,19 @@ export class OrdersService {
       new Set(
         batch.items
           .filter((item) => item.source === 'rakuten')
-          .map((item) => item.sourceRecordId),
-      ),
+          .map((item) => item.sourceRecordId)),
     );
     const amazonSourceIds = Array.from(
       new Set(
         batch.items
           .filter((item) => item.source === 'amazon')
-          .map((item) => item.sourceRecordId),
-      ),
+          .map((item) => item.sourceRecordId)),
     );
     const manualSourceIds = Array.from(
       new Set(
         batch.items
           .filter((item) => item.source === 'manual')
-          .map((item) => item.sourceRecordId),
-      ),
+          .map((item) => item.sourceRecordId)),
     );
     const [rakutenSourceRows, amazonSourceRows, manualSourceRows] = await Promise.all([
       rakutenSourceIds.length
@@ -1155,12 +1157,15 @@ export class OrdersService {
     const toIsoString = (value: Date | null | undefined): string | null => (value ? value.toISOString() : null);
 
     const resolvePickingLocation = (
-      locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number }>,
+      locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number;
+      }>,
       pickedQty: number,
       requestedQty: number,
     ): {
-      current: { shelfCode: string | null; boxCode: string | null; qty: number } | null;
-      next: { shelfCode: string | null; boxCode: string | null; qty: number } | null;
+      current: { shelfCode: string | null; boxCode: string | null; qty: number;
+      } | null;
+      next: { shelfCode: string | null; boxCode: string | null; qty: number;
+      } | null;
     } => {
       if (!locations.length) {
         return { current: null, next: null };
@@ -1170,7 +1175,8 @@ export class OrdersService {
         const location = locations[index];
         if (consumedQty < location.qty) {
           let remainingDemand = Math.max(requestedQty - consumedQty, 0);
-          let nextLocation: { shelfCode: string | null; boxCode: string | null; qty: number } | null = null;
+          let nextLocation: { shelfCode: string | null; boxCode: string | null; qty: number;
+          } | null = null;
           if (remainingDemand > location.qty) {
             nextLocation = locations[index + 1] ?? null;
           }
@@ -1187,11 +1193,14 @@ export class OrdersService {
       };
     };
     const buildPickingPlans = (
-      locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number }>,
+      locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number;
+      }>,
       requestedQty: number,
-    ): Array<{ shelfCode: string | null; boxCode: string | null; boxQty: number; pickQty: number }> => {
+    ): Array<{ shelfCode: string | null; boxCode: string | null; boxQty: number; pickQty: number;
+    }> => {
       let remaining = Math.max(requestedQty, 0);
-      const plans: Array<{ shelfCode: string | null; boxCode: string | null; boxQty: number; pickQty: number }> = [];
+      const plans: Array<{ shelfCode: string | null; boxCode: string | null; boxQty: number; pickQty: number;
+      }> = [];
       for (const location of locations) {
         const boxQty = Number(location.qty ?? 0);
         if (boxQty <= 0 || remaining <= 0) continue;
@@ -1215,7 +1224,8 @@ export class OrdersService {
         stockQty: number;
         requestedQty: number;
         actualQty: number;
-        locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number }>;
+        locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number;
+        }>;
         pickPlans: OverseasPickingPlanSnapshotItem[];
       }
     >();
@@ -1223,8 +1233,7 @@ export class OrdersService {
     sortedItems
       .filter(
         (item) =>
-          !this.isChinaDispatchMode(item.dispatchMode),
-      )
+          !this.isChinaDispatchMode(item.dispatchMode))
       .forEach((item) => {
         const requestedQty = Number(item.requestedQty ?? 0);
         const pickedQty = Number(item.actualQty ?? 0);
@@ -1380,8 +1389,7 @@ export class OrdersService {
     const activeDuplicates = await this.findActiveOverseasPickingBatchDuplicates(snapshots);
     if (activeDuplicates.length) {
       throw new ConflictException(
-        `以下订单已在进行中的拣货批次内：${activeDuplicates.join('、')}`,
-      );
+        `以下订单已在进行中的拣货批次内：${activeDuplicates.join('、')}`);
     }
 
     const batchNo = this.buildOverseasPickingBatchNo();
@@ -1534,7 +1542,8 @@ export class OrdersService {
   async switchOverseasPickingBatchProductToChina(
     batchIdRaw: string,
     productIdRaw: string,
-  ): Promise<{ success: true; productId: string; dispatchMode: string; batchDeleted: boolean }> {
+  ): Promise<{ success: true; productId: string; dispatchMode: string; batchDeleted: boolean;
+  }> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const productId = String(productIdRaw ?? '').trim();
     if (!productId) {
@@ -1582,22 +1591,19 @@ export class OrdersService {
       new Set(
         activeItems
           .filter((item) => item.source === 'rakuten')
-          .map((item) => item.sourceRecordId),
-      ),
+          .map((item) => item.sourceRecordId)),
     );
     const amazonIds = Array.from(
       new Set(
         activeItems
           .filter((item) => item.source === 'amazon')
-          .map((item) => item.sourceRecordId),
-      ),
+          .map((item) => item.sourceRecordId)),
     );
     const manualIds = Array.from(
       new Set(
         activeItems
           .filter((item) => item.source === 'manual')
-          .map((item) => item.sourceRecordId),
-      ),
+          .map((item) => item.sourceRecordId)),
     );
     const amazonSwitchScope = await this.resolveAmazonOrderSwitchScope(batchId, amazonIds);
     const targetAmazonIds = Array.from(
@@ -1742,7 +1748,8 @@ export class OrdersService {
   async switchOverseasPickingBatchItemToChina(
     batchIdRaw: string,
     itemIdRaw: string,
-  ): Promise<{ success: true; itemId: string; dispatchMode: string; batchDeleted: boolean }> {
+  ): Promise<{ success: true; itemId: string; dispatchMode: string; batchDeleted: boolean;
+  }> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const itemId = parseId(itemIdRaw, 'itemId');
     const item = await this.prisma.overseasPickingBatchItem.findUnique({
@@ -1781,11 +1788,13 @@ export class OrdersService {
     const manualSwitchScope =
       item.source === 'manual'
         ? await this.resolveXyjgManualOrderSwitchScope(batchId, [item.sourceRecordId])
-        : { manualIds: [] as bigint[], batchItemIds: [] as bigint[], pickedItems: [] as OverseasPickingScopePickedItem[] };
+        : { manualIds: [] as bigint[], batchItemIds: [] as bigint[], pickedItems: [] as OverseasPickingScopePickedItem[],
+          };
     const amazonSwitchScope =
       item.source === 'amazon'
         ? await this.resolveAmazonOrderSwitchScope(batchId, [item.sourceRecordId])
-        : { amazonIds: [] as bigint[], batchItemIds: [] as bigint[], pickedItems: [] as OverseasPickingScopePickedItem[] };
+        : { amazonIds: [] as bigint[], batchItemIds: [] as bigint[], pickedItems: [] as OverseasPickingScopePickedItem[],
+          };
     this.assertNoPickedItemsBeforeSwitchingOrderScopeToChina([
       ...amazonSwitchScope.pickedItems,
       ...manualSwitchScope.pickedItems,
@@ -1850,7 +1859,8 @@ export class OrdersService {
   private async resolveAmazonOrderSwitchScope(
     batchId: bigint,
     seedAmazonIds: bigint[],
-  ): Promise<{ amazonIds: bigint[]; batchItemIds: bigint[]; pickedItems: OverseasPickingScopePickedItem[] }> {
+  ): Promise<{ amazonIds: bigint[]; batchItemIds: bigint[]; pickedItems: OverseasPickingScopePickedItem[];
+  }> {
     const normalizedSeedIds = Array.from(new Set(seedAmazonIds.map((id) => id.toString()))).map((id) => BigInt(id));
     if (!normalizedSeedIds.length) {
       return { amazonIds: [], batchItemIds: [], pickedItems: [] };
@@ -1870,7 +1880,8 @@ export class OrdersService {
       new Set(seedRows.map((row) => String(row.orderId ?? '').trim()).filter((orderId) => orderId.length > 0)),
     );
     if (!orderIds.length) {
-      return { amazonIds: normalizedSeedIds, batchItemIds: [], pickedItems: [] };
+      return { amazonIds: normalizedSeedIds, batchItemIds: [], pickedItems: [],
+      };
     }
 
     const scopedRows = await this.prisma.amazonOrderRecord.findMany({
@@ -1885,7 +1896,8 @@ export class OrdersService {
     });
     const scopedAmazonIds = Array.from(new Set(scopedRows.map((row) => row.id.toString()))).map((id) => BigInt(id));
     if (!scopedAmazonIds.length) {
-      return { amazonIds: normalizedSeedIds, batchItemIds: [], pickedItems: [] };
+      return { amazonIds: normalizedSeedIds, batchItemIds: [], pickedItems: [],
+      };
     }
 
     const batchItems = await this.prisma.overseasPickingBatchItem.findMany({
@@ -1915,7 +1927,8 @@ export class OrdersService {
   private async resolveXyjgManualOrderSwitchScope(
     batchId: bigint,
     seedManualIds: bigint[],
-  ): Promise<{ manualIds: bigint[]; batchItemIds: bigint[]; pickedItems: OverseasPickingScopePickedItem[] }> {
+  ): Promise<{ manualIds: bigint[]; batchItemIds: bigint[]; pickedItems: OverseasPickingScopePickedItem[];
+  }> {
     const normalizedSeedIds = Array.from(new Set(seedManualIds.map((id) => id.toString()))).map((id) => BigInt(id));
     if (!normalizedSeedIds.length) {
       return { manualIds: [], batchItemIds: [], pickedItems: [] };
@@ -1935,7 +1948,8 @@ export class OrdersService {
       }))
       .filter((row) => row.orderId && row.bloggerCooperationId);
     if (!xyjgSeeds.length) {
-      return { manualIds: normalizedSeedIds, batchItemIds: [], pickedItems: [] };
+      return { manualIds: normalizedSeedIds, batchItemIds: [], pickedItems: [],
+      };
     }
 
     const orderIds = Array.from(new Set(xyjgSeeds.map((row) => row.orderId)));
@@ -1960,7 +1974,8 @@ export class OrdersService {
     ).map((id) => BigInt(id));
 
     if (!scopedManualIds.length) {
-      return { manualIds: normalizedSeedIds, batchItemIds: [], pickedItems: [] };
+      return { manualIds: normalizedSeedIds, batchItemIds: [], pickedItems: [],
+      };
     }
 
     const batchItems = await this.prisma.overseasPickingBatchItem.findMany({
@@ -2069,7 +2084,8 @@ export class OrdersService {
   async removeOverseasPickingBatchItem(
     batchIdRaw: string,
     itemIdRaw: string,
-  ): Promise<{ success: true; itemId: string; removedItemIds: string[]; batchDeleted: boolean }> {
+  ): Promise<{ success: true; itemId: string; removedItemIds: string[]; batchDeleted: boolean;
+  }> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const itemId = parseId(itemIdRaw, 'itemId');
     const item = await this.prisma.overseasPickingBatchItem.findUnique({
@@ -2100,7 +2116,8 @@ export class OrdersService {
     const amazonRemoveScope =
       item.source === 'amazon' && !this.isChinaDispatchMode(item.dispatchMode)
         ? await this.resolveAmazonOrderSwitchScope(batchId, [item.sourceRecordId])
-        : { amazonIds: [] as bigint[], batchItemIds: [] as bigint[], pickedItems: [] as OverseasPickingScopePickedItem[] };
+        : { amazonIds: [] as bigint[], batchItemIds: [] as bigint[], pickedItems: [] as OverseasPickingScopePickedItem[],
+          };
     this.assertNoPickedItemsBeforeSwitchingOrderScopeToChina(amazonRemoveScope.pickedItems);
     const targetItemIds = Array.from(new Set([item.id, ...amazonRemoveScope.batchItemIds]));
 
@@ -2399,6 +2416,45 @@ export class OrdersService {
     return this.enrichAmazonOrderRows(rows);
   }
 
+  async resolveRakutenXiyaManualAction(
+    idRaw: string,
+    username: string,
+  ): Promise<{
+    orderId: string | null;
+    resolvedCount: number;
+    resolvedAt: string;
+  }> {
+    const id = parseId(idRaw, "id");
+    const row = await this.prisma.rakutenOrderRecord.findUnique({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("乐天订单不存在");
+    if (!row.rmsManualActionDetectedAt || row.rmsManualActionResolvedAt) {
+      throw new BadRequestException("该订单当前没有待处理的 Xiya 人工通知提醒");
+    }
+    const orderId = String(row.orderId ?? "").trim();
+    const resolvedAt = new Date();
+    const result = await this.prisma.rakutenOrderRecord.updateMany({
+      where: {
+        ...(orderId ? { orderId } : { id }),
+        rmsManualActionDetectedAt: { not: null },
+        rmsManualActionResolvedAt: null,
+      },
+      data: {
+        rmsManualActionResolvedAt: resolvedAt,
+        rmsManualActionResolvedBy:
+          String(username ?? "")
+            .trim()
+            .slice(0, 64) || "unknown",
+      },
+    });
+    return {
+      orderId: orderId || null,
+      resolvedCount: result.count,
+      resolvedAt: resolvedAt.toISOString(),
+    };
+  }
+
   async listAmazonManualOrders(limitParam?: string, offsetParam?: string): Promise<ManualOrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
@@ -2456,8 +2512,7 @@ export class OrdersService {
       const historyRows = await this.findUnifiedOrdersByCustomerKeys(
         customerKeys.names,
         customerKeys.phoneDigits,
-        500,
-      );
+        500);
       const matchedKeys = new Set(matches.map((row) => `${row.source}:${row.id}`));
       return {
         query,
@@ -2508,7 +2563,8 @@ export class OrdersService {
     const id = parseId(idRaw, 'id');
 
     if (source === 'rakuten') {
-      const row = await this.prisma.rakutenOrderRecord.findUnique({ where: { id } });
+      const row = await this.prisma.rakutenOrderRecord.findUnique({ where: { id },
+      });
       if (!row) {
         throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
       }
@@ -2517,7 +2573,8 @@ export class OrdersService {
     }
 
     if (source === 'amazon') {
-      const row = await this.prisma.amazonOrderRecord.findUnique({ where: { id } });
+      const row = await this.prisma.amazonOrderRecord.findUnique({ where: { id },
+      });
       if (!row) {
         throw new NotFoundException(`亚马逊订单不存在: ${idRaw}`);
       }
@@ -2526,7 +2583,8 @@ export class OrdersService {
     }
 
     if (source === 'manual') {
-      const row = await (this.prisma as any).manualOrderRecord.findUnique({ where: { id } });
+      const row = await (this.prisma as any).manualOrderRecord.findUnique({ where: { id },
+      });
       if (!row) {
         throw new NotFoundException(`手动订单不存在: ${idRaw}`);
       }
@@ -2593,8 +2651,7 @@ export class OrdersService {
 
   private async findRecipientNameSuggestions(
     query: string,
-    limit: number,
-  ): Promise<UnifiedOrderSearchSuggestion[]> {
+    limit: number): Promise<UnifiedOrderSearchSuggestion[]> {
     const keyword = String(query ?? '').trim();
     if (!keyword) {
       return [];
@@ -2621,9 +2678,12 @@ export class OrdersService {
       }) as Promise<Array<{ recipientName: string | null }>>,
     ]);
     return [
-      ...rakutenRows.map((row) => ({ sourceLabel: '乐天', value: row.shippingName })),
-      ...amazonRows.map((row) => ({ sourceLabel: '亚马逊', value: row.recipientName })),
-      ...manualRows.map((row) => ({ sourceLabel: '手动订单', value: row.recipientName })),
+      ...rakutenRows.map((row) => ({ sourceLabel: '乐天', value: row.shippingName,
+      })),
+      ...amazonRows.map((row) => ({ sourceLabel: '亚马逊', value: row.recipientName,
+      })),
+      ...manualRows.map((row) => ({ sourceLabel: '手动订单', value: row.recipientName,
+      })),
     ]
       .map((row) => ({ ...row, value: String(row.value ?? '').trim() }))
       .filter((row) => row.value.length > 0)
@@ -2637,8 +2697,7 @@ export class OrdersService {
 
   private async findUnifiedOrdersByCustomerQuery(
     query: string,
-    limit: number,
-  ): Promise<UnifiedOrderSearchRow[]> {
+    limit: number): Promise<UnifiedOrderSearchRow[]> {
     const keyword = String(query ?? '').trim();
     const phoneDigits = this.normalizeSearchPhoneDigits(keyword);
     const [rakutenRows, amazonRows, manualRows] = await this.findUnifiedRawOrdersByCustomer({
@@ -2691,25 +2750,27 @@ export class OrdersService {
       manualNameRows,
       rakutenPhoneIds,
       amazonPhoneIds,
-      manualPhoneIds,
-    ] = await Promise.all([
+      manualPhoneIds] = await Promise.all([
       names.length
         ? this.prisma.rakutenOrderRecord.findMany({
-            where: { OR: names.map((name) => ({ shippingName: { contains: name } })) },
+            where: { OR: names.map((name) => ({ shippingName: { contains: name } })),
+              },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
             take: limit,
           })
         : Promise.resolve([] as RakutenOrderRecord[]),
       names.length
         ? this.prisma.amazonOrderRecord.findMany({
-            where: { OR: names.map((name) => ({ recipientName: { contains: name } })) },
+            where: { OR: names.map((name) => ({ recipientName: { contains: name } })),
+              },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
             take: limit,
           })
         : Promise.resolve([] as AmazonOrderRecord[]),
       names.length
         ? ((this.prisma as any).manualOrderRecord.findMany({
-            where: { OR: names.map((name) => ({ recipientName: { contains: name } })) },
+            where: { OR: names.map((name) => ({ recipientName: { contains: name } })),
+              },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
             take: limit,
           }) as Promise<ManualOrderRecordLike[]>)
@@ -2783,9 +2844,12 @@ export class OrdersService {
     }
 
     const tableConfig = {
-      rakuten: { tableName: 'rakuten_order_records', phoneColumn: 'shipping_phone' },
-      amazon: { tableName: 'amazon_order_records', phoneColumn: 'buyer_phone_number' },
-      manual: { tableName: 'manual_order_records', phoneColumn: 'buyer_phone_number' },
+      rakuten: { tableName: 'rakuten_order_records', phoneColumn: 'shipping_phone',
+      },
+      amazon: { tableName: 'amazon_order_records', phoneColumn: 'buyer_phone_number',
+      },
+      manual: { tableName: 'manual_order_records', phoneColumn: 'buyer_phone_number',
+      },
     }[source];
     const normalizedPhoneSql = `REGEXP_REPLACE(COALESCE(${tableConfig.phoneColumn}, ''), '[^0-9]', '')`;
     const normalizedLimit = Math.max(1, Math.min(Number(limit) || 500, 1000));
@@ -2861,16 +2925,13 @@ export class OrdersService {
 
   private toUnifiedOrderSearchRow(
     source: 'rakuten',
-    row: OrderListItem,
-  ): UnifiedOrderSearchRow;
+    row: OrderListItem): UnifiedOrderSearchRow;
   private toUnifiedOrderSearchRow(
     source: 'amazon',
-    row: AmazonEnrichedOrderListItem,
-  ): UnifiedOrderSearchRow;
+    row: AmazonEnrichedOrderListItem): UnifiedOrderSearchRow;
   private toUnifiedOrderSearchRow(
     source: 'manual',
-    row: ManualEnrichedOrderListItem,
-  ): UnifiedOrderSearchRow;
+    row: ManualEnrichedOrderListItem): UnifiedOrderSearchRow;
   private toUnifiedOrderSearchRow(
     source: UnifiedOrderSearchSource,
     row: OrderListItem | AmazonEnrichedOrderListItem | ManualEnrichedOrderListItem,
@@ -2951,24 +3012,40 @@ export class OrdersService {
     return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
   }
 
-  async updateRakutenOrder(idRaw: string, payload: UpdateRakutenOrderPayload): Promise<OrderListItem> {
+  async updateRakutenOrder(idRaw: string, payload: UpdateRakutenOrderPayload,
+    operatorUsername = "unknown",
+  ): Promise<OrderListItem> {
     const id = parseId(idRaw, 'id');
-    const current = await this.prisma.rakutenOrderRecord.findUnique({ where: { id } });
+    const current = await this.prisma.rakutenOrderRecord.findUnique({ where: { id },
+    });
     if (!current) {
       throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
     }
     if (this.hasRegisteredShipmentNo(current)) {
       const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
       const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
-      const updated = await this.prisma.rakutenOrderRecord.update({
+      const manualOverrideAt = new Date();
+      await this.prisma.$transaction(async (tx) => {
+        await tx.rakutenOrderRecord.update({
         where: { id },
         data: {
           shipmentCompany,
           shipmentNo,
-          shipmentNoRegisteredAt: shipmentNo ? new Date() : null,
+          shipmentNoRegisteredAt: shipmentNo ? manualOverrideAt : null,
           sendStatus: this.resolveSendStatus(shipmentNo),
-        },
+            rmsManualOverrideAt: manualOverrideAt,
+            rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
+          },
       });
+        await this.freezeRelatedRakutenOrderRowsAfterManualEdit(
+          tx,
+          current.orderId,
+          id,
+          manualOverrideAt,
+          operatorUsername,
+        );
+      });
+      const updated = await this.prisma.rakutenOrderRecord.findUniqueOrThrow({ where: { id } });
       const [enriched] = await this.enrichOrderRows([updated]);
       return enriched;
     }
@@ -3003,7 +3080,9 @@ export class OrdersService {
     );
     await this.assertEditedOrderIdentityDoesNotConflict('rakuten', id, current.orderId, orderId);
 
-    const updated = await this.prisma.rakutenOrderRecord.update({
+    const manualOverrideAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      await tx.rakutenOrderRecord.update({
       where: { id },
       data: {
         orderId,
@@ -3026,8 +3105,28 @@ export class OrdersService {
         deliveryDateRaw,
         deliveryTimeSlot,
         orderRemark,
-        rawPayload: this.mergeRawPayload(current.rawPayload, {
-          注文番号: orderId,
+          rmsManualOverrideAt: manualOverrideAt,
+          rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
+          rawPayload: this.mergeRawPayload(current.rawPayload, {
+            _wmsManualOverrideFields: [
+              "orderId",
+              "skuCode",
+              "orderQuantity",
+              "productName",
+              "mallName",
+              "shopName",
+              "shippingName",
+              "shippingPostalCode",
+              "shippingPrefecture",
+              "shippingCity",
+              "shippingAddress",
+              "shippingPhone",
+              "deliveryDateRaw",
+              "deliveryTimeSlot",
+              "orderRemark",
+            ].join(","),
+            _wmsManualOverrideUpdatedAt: manualOverrideAt.toISOString(),
+            注文番号: orderId,
           注文ID: orderId,
           SKU管理番号: skuCode,
           SKUコード: skuCode,
@@ -3053,14 +3152,50 @@ export class OrdersService {
         }),
       },
     });
+      await this.freezeRelatedRakutenOrderRowsAfterManualEdit(
+        tx,
+        current.orderId,
+        id,
+        manualOverrideAt,
+        operatorUsername,
+      );
+    });
 
+    const updated = await this.prisma.rakutenOrderRecord.findUniqueOrThrow({ where: { id } });
     const [enriched] = await this.enrichOrderRows([updated]);
     return enriched;
   }
 
+  private normalizeRakutenManualOperator(username: string): string {
+    return (
+      String(username ?? "")
+        .trim()
+        .slice(0, 64) || "unknown"
+    );
+  }
+
+  private async freezeRelatedRakutenOrderRowsAfterManualEdit(
+    tx: Prisma.TransactionClient,
+    originalOrderId: string | null,
+    editedId: bigint,
+    manualOverrideAt: Date,
+    operatorUsername: string,
+  ): Promise<void> {
+    const orderId = String(originalOrderId ?? "").trim();
+    if (!orderId) return;
+    await tx.rakutenOrderRecord.updateMany({
+      where: { orderId, id: { not: editedId } },
+      data: {
+        rmsManualOverrideAt: manualOverrideAt,
+        rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
+      },
+    });
+  }
+
   async updateAmazonOrder(idRaw: string, payload: UpdateAmazonOrderPayload): Promise<AmazonEnrichedOrderListItem> {
     const id = parseId(idRaw, 'id');
-    const current = await this.prisma.amazonOrderRecord.findUnique({ where: { id } });
+    const current = await this.prisma.amazonOrderRecord.findUnique({ where: { id },
+    });
     if (!current) {
       throw new NotFoundException(`亚马逊订单不存在: ${idRaw}`);
     }
@@ -3181,7 +3316,8 @@ export class OrdersService {
 
   async updateManualOrder(idRaw: string, payload: UpdateAmazonOrderPayload): Promise<ManualEnrichedOrderListItem> {
     const id = parseId(idRaw, 'id');
-    const current = await (this.prisma as any).manualOrderRecord.findUnique({ where: { id } });
+    const current = await (this.prisma as any).manualOrderRecord.findUnique({ where: { id },
+    });
     if (!current) {
       throw new NotFoundException(`手动订单不存在: ${idRaw}`);
     }
@@ -3297,9 +3433,9 @@ export class OrdersService {
     const row = await this.prisma.$transaction(
       async (tx) => {
         await this.assertManualOrderIdsDoNotExist([data], tx as any);
-        return ((tx as any).manualOrderRecord.create({
+        return (tx as any).manualOrderRecord.create({
           data,
-        })) as Promise<ManualOrderRecordLike>;
+        }) as Promise<ManualOrderRecordLike>;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
@@ -3331,21 +3467,22 @@ export class OrdersService {
     ];
     const rows = [
       headers,
-      ['MANUAL-001', '', '', '8736', 1, '', '', '2号店-DGAZ store', '山田太郎', '090-0000-0000', '100-0001', '東京都', '千代田区', '千代田1-1', '', '', ''],
+      ['MANUAL-001', '', '', '8736', 1, '', '', '2号店-DGAZ store', '山田太郎', '090-0000-0000', '100-0001', '東京都', '千代田区', '千代田1-1', '', '', '',
+      ],
     ];
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, '手动订单');
     return {
       fileName: MANUAL_ORDER_UPLOAD_TEMPLATE_FILE,
-      content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+      content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx',
+      }) as Buffer,
     };
   }
 
   async importAmazonManualOrdersFile(
     fileBuffer: Buffer,
-    originalName?: string,
-  ): Promise<ManualOrderFileImportResult> {
+    originalName?: string): Promise<ManualOrderFileImportResult> {
     const sourceFileName = String(originalName ?? '').trim() || 'manual-orders.xlsx';
     const items = this.parseManualOrderUploadFile(fileBuffer, sourceFileName);
     const result = await this.batchCreateAmazonManualOrders({ items }, 'system_batch');
@@ -3390,7 +3527,8 @@ export class OrdersService {
         await this.assertManualOrderIdsDoNotExist(createDataList, tx as any);
         const rows: ManualOrderRecordLike[] = [];
         for (const data of createDataList) {
-          const created = (await (tx as any).manualOrderRecord.create({ data })) as ManualOrderRecordLike;
+          const created = (await (tx as any).manualOrderRecord.create({ data,
+          })) as ManualOrderRecordLike;
           rows.push(created);
         }
         return { rows, createdCount: rows.length, updatedCount: 0 };
@@ -3423,8 +3561,7 @@ export class OrdersService {
   }
 
   async deleteAmazonManualOrdersForXiya(
-    payload: DeleteAmazonManualOrdersForXiyaPayload,
-  ): Promise<{
+    payload: DeleteAmazonManualOrdersForXiyaPayload): Promise<{
     requestedCount: number;
     matchedCount: number;
     deletedCount: number;
@@ -3443,15 +3580,13 @@ export class OrdersService {
     }
 
     const bloggerCooperationId = String(
-      payload?.bloggerCooperationId ?? payload?.blogger_cooperation_id ?? '',
-    ).trim();
+      payload?.bloggerCooperationId ?? payload?.blogger_cooperation_id ?? '').trim();
     const rows = (await (this.prisma as any).manualOrderRecord.findMany({
       where: {
         orderId: { in: orderIds },
         OR: [
           { sourceFilePath: XIYA_MANUAL_ORDER_SOURCE_FILE_PATH },
-          { bloggerCooperationId: { not: null } },
-        ],
+          { bloggerCooperationId: { not: null } }],
         ...(bloggerCooperationId ? { bloggerCooperationId } : {}),
       },
     })) as ManualOrderRecordLike[];
@@ -3633,7 +3768,8 @@ export class OrdersService {
         orderId: true,
         shipmentNo: true,
       },
-    })) as Array<{ id: bigint; orderId: string | null; shipmentNo: string | null }>;
+    })) as Array<{ id: bigint; orderId: string | null; shipmentNo: string | null;
+    }>;
     const rowWithShipment = rows.find((row) => String(row.shipmentNo ?? '').trim().length > 0);
     if (rowWithShipment) {
       throw new ConflictException(
@@ -3732,7 +3868,8 @@ export class OrdersService {
 
     const rowWithShipment = existingRows.find((row) => String(row.shipmentNo ?? '').trim());
     if (rowWithShipment) {
-      throw new ConflictException(`订单 ${String(rowWithShipment.orderId ?? '').trim()} 已经有运单号，请联系海外仓处理`);
+      throw new ConflictException(`订单 ${String(rowWithShipment.orderId ?? '').trim()} 已经有运单号，请联系海外仓处理`,
+      );
     }
 
     const existingOrderId = String(existingRows[0]?.orderId ?? '').trim();
@@ -3774,13 +3911,14 @@ export class OrdersService {
 
   private isXyjgManualOrderCreateData(data: Prisma.ManualOrderRecordCreateInput): boolean {
     const bloggerCooperationId = String(data.bloggerCooperationId ?? '').trim();
-    return Boolean(bloggerCooperationId) || String(data.sourceFilePath ?? '').trim() === XIYA_MANUAL_ORDER_SOURCE_FILE_PATH;
+    return (
+      Boolean(bloggerCooperationId) || String(data.sourceFilePath ?? '').trim() === XIYA_MANUAL_ORDER_SOURCE_FILE_PATH
+    );
   }
 
   async listOverseasWarehouse(
     limitParam?: string,
-    includeAll = false,
-  ): Promise<OverseasWarehouseOrderListItem[]> {
+    includeAll = false): Promise<OverseasWarehouseOrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = includeAll
       ? Number.MAX_SAFE_INTEGER
@@ -3797,7 +3935,8 @@ export class OrdersService {
     let manualExhausted = false;
 
     while (collected.length < limit && (!rakutenExhausted || !amazonExhausted || !manualExhausted)) {
-      const [rakutenRows, amazonRows, manualRows]: [RakutenOrderRecord[], AmazonOrderRecord[], ManualOrderRecordLike[]] = await Promise.all([
+      const [rakutenRows, amazonRows, manualRows]: [RakutenOrderRecord[], AmazonOrderRecord[], ManualOrderRecordLike[],
+      ] = await Promise.all([
         rakutenExhausted
           ? Promise.resolve([] as RakutenOrderRecord[])
           : this.prisma.rakutenOrderRecord.findMany({
@@ -4080,8 +4219,7 @@ export class OrdersService {
                   OR: [
                     { dispatchMode: null },
                     { dispatchMode: '' },
-                    { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
-                  ],
+                    { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
                 },
               ],
             },
@@ -4095,14 +4233,14 @@ export class OrdersService {
                   OR: [
                     { dispatchMode: null },
                     { dispatchMode: '' },
-                    { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
-                  ],
+                    { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
                 },
               ],
             },
           });
     if (!row) {
-      throw new NotFoundException(`${source === 'manual' ? '手动订单' : '亚马逊订单'}不存在或当前不可切中国发: ${idRaw}`);
+      throw new NotFoundException(`${source === 'manual' ? '手动订单' : '亚马逊订单'}不存在或当前不可切中国发: ${idRaw}`,
+      );
     }
     const [enrichedRows, activePickedRefs] = await Promise.all([
       source === 'amazon'
@@ -4131,8 +4269,7 @@ export class OrdersService {
                   OR: [
                     { dispatchMode: null },
                     { dispatchMode: '' },
-                    { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
-                  ],
+                    { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
                 },
               ],
             },
@@ -4200,7 +4337,8 @@ export class OrdersService {
     let manualExhausted = false;
 
     while (collected.length < collectTarget && (!rakutenExhausted || !amazonExhausted || !manualExhausted)) {
-      const [rakutenRows, amazonRows, manualRows]: [RakutenOrderRecord[], AmazonOrderRecord[], ManualOrderRecordLike[]] = await Promise.all([
+      const [rakutenRows, amazonRows, manualRows]: [RakutenOrderRecord[], AmazonOrderRecord[], ManualOrderRecordLike[],
+      ] = await Promise.all([
         rakutenExhausted
           ? Promise.resolve([] as RakutenOrderRecord[])
           : this.prisma.rakutenOrderRecord.findMany({
@@ -4403,8 +4541,7 @@ export class OrdersService {
   }
 
   async buildOrderProcessingExport(
-    target: 'overseas' | 'china',
-  ): Promise<OrderProcessingExportFile> {
+    target: 'overseas' | 'china'): Promise<OrderProcessingExportFile> {
     const orders =
       target === 'overseas'
         ? await this.listOverseasWarehouse(undefined, true)
@@ -4459,20 +4596,23 @@ export class OrdersService {
     worksheet['!cols'] = headers.map((header) => ({
       wch: ['产品名称', '地址'].includes(header) ? 32 : Math.max(12, header.length * 2 + 2),
     }));
-    worksheet['!autofilter'] = { ref: XLSX.utils.encode_range({ r: 0, c: 0 }, { r: rows.length, c: headers.length - 1 }) };
+    worksheet['!autofilter'] = { ref: XLSX.utils.encode_range({ r: 0, c: 0 }, { r: rows.length, c: headers.length - 1 }),
+    };
     const workbook = XLSX.utils.book_new();
     const sheetName = isChina ? '中国订单处理一览' : '海外仓订单处理一览';
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
     const timestamp = this.formatYamatoFileNameStamp();
     return {
       fileName: `${sheetName}_${timestamp}.xlsx`,
-      content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+      content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx',
+      }) as Buffer,
     };
   }
 
   async deleteAmazonBatch(payload: {
     ids?: Array<string | number>;
-  }, createdBy?: bigint): Promise<{ deletedCount: number }> {
+  }, createdBy?: bigint,
+  ): Promise<{ deletedCount: number }> {
     const rawIds = Array.isArray(payload?.ids) ? payload.ids : [];
     const ids = Array.from(
       new Set(
@@ -4495,10 +4635,10 @@ export class OrdersService {
       where: { id: { in: ids } },
     });
     const orderIds = Array.from(
-      new Set(selectedRows.map((row) => String(row.orderId ?? '').trim()).filter(Boolean)),
-    );
+      new Set(selectedRows.map((row) => String(row.orderId ?? '').trim()).filter(Boolean)));
     const allRows = orderIds.length
-      ? await this.prisma.amazonOrderRecord.findMany({ where: { orderId: { in: orderIds } } })
+      ? await this.prisma.amazonOrderRecord.findMany({ where: { orderId: { in: orderIds } },
+        })
       : [];
     const selectedIdSet = new Set(selectedRows.map((row) => row.id.toString()));
     const exclusions: Array<{
@@ -4529,7 +4669,8 @@ export class OrdersService {
           (remaining) => this.resolveOriginalAmazonOrderItemId(remaining.rawPayload, remaining.orderItemId) === orderItemId,
         );
         if (!sameLogicalItemRemains) {
-          exclusions.push({ spApiConnectionId: row.spApiConnectionId, orderId, orderItemId });
+          exclusions.push({ spApiConnectionId: row.spApiConnectionId, orderId, orderItemId,
+          });
         }
       }
     }
@@ -4537,10 +4678,12 @@ export class OrdersService {
     return this.prisma.$transaction(async (tx) => {
       for (const exclusion of exclusions) {
         await tx.amazonOrderSyncExclusion.create({
-          data: { ...exclusion, reason: 'user_delete', createdBy: createdBy ?? null },
+          data: { ...exclusion, reason: 'user_delete', createdBy: createdBy ?? null,
+          },
         });
       }
-      const result = await tx.amazonOrderRecord.deleteMany({ where: { id: { in: ids } } });
+      const result = await tx.amazonOrderRecord.deleteMany({ where: { id: { in: ids } },
+      });
       return { deletedCount: result.count };
     });
   }
@@ -4570,14 +4713,14 @@ export class OrdersService {
     if (!ids.length) throw new BadRequestException('请至少选择一条已删除订单记录');
     const result = await this.prisma.amazonOrderSyncExclusion.updateMany({
       where: { id: { in: ids }, isActive: true },
-      data: { isActive: false, restoredBy: restoredBy ?? null, restoredAt: new Date() },
+      data: { isActive: false, restoredBy: restoredBy ?? null, restoredAt: new Date(),
+      },
     });
     return { restoredCount: result.count };
   }
 
   async deleteManualBatch(payload: {
-    ids?: Array<string | number>;
-  }): Promise<{ deletedCount: number }> {
+    ids?: Array<string | number> }): Promise<{ deletedCount: number }> {
     const rawIds = Array.isArray(payload?.ids) ? payload.ids : [];
     const ids = Array.from(
       new Set(
@@ -4647,7 +4790,8 @@ export class OrdersService {
     };
   }
 
-  private buildAmazonShipmentConfirmationTxtContent(rows: Array<AmazonOrderRecord | AmazonEnrichedOrderListItem>): Buffer {
+  private buildAmazonShipmentConfirmationTxtContent(rows: Array<AmazonOrderRecord | AmazonEnrichedOrderListItem>,
+  ): Buffer {
     const headers = [
       'order-id',
       'order-item-id',
@@ -4695,8 +4839,7 @@ export class OrdersService {
           ]
             .map((value) => this.escapeTsvCell(value))
             .join('\t');
-        },
-      ),
+        }),
     ];
     return Buffer.from(`${lines.join('\r\n')}\r\n`, 'utf8');
   }
@@ -4737,16 +4880,22 @@ export class OrdersService {
       );
     }
 
-    const downloadableRows = isDailyEmailCsv
-      ? rows
-      : rows.filter(
-          (row) =>
-            !this.isChinaDispatchMode(row.dispatchMode) ||
-            this.resolveRakutenTrackingClearanceStatusFromRow(row).hasCustomsClearance,
-        );
+    const shipmentReturnContext = isDailyEmailCsv
+      ? {
+          chinaDispatchOrderRecordIdsByOrderId: new Map<string, Set<string>>(),
+          blockedOrderIds: new Set<string>(),
+        }
+      : await this.loadRakutenShipmentReturnContext(rows);
+    const downloadableRows = rows.filter(
+          (row) => {
+      if (row.rmsManualActionDetectedAt && !row.rmsManualActionResolvedAt) return false;
+      if (isDailyEmailCsv) return true;
+      const orderId = String(row.orderId ?? "").trim();
+      return !orderId || !shipmentReturnContext.blockedOrderIds.has(orderId);
+    });
     if (!downloadableRows.length) {
       throw new BadRequestException(
-        `${scope.label}没有可下载的乐天订单：中国发订单需要已取得「${UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT}」，日本发订单需要已登记发货单号`,
+        `${scope.label}没有可下载的乐天订单：订单可能正在等待日本操作人员人工通知中国，或同一订单的中国发快递尚未取得「${UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT}」`,
       );
     }
 
@@ -4764,8 +4913,7 @@ export class OrdersService {
       throw new BadRequestException(`无法生成乐天回传单号CSV：${invalidRows.join('；')}`);
     }
 
-    const chinaDispatchOrderRecordIdsByOrderId =
-      await this.loadRakutenChinaDispatchOrderRecordIdsByOrderId(downloadableRows);
+    const chinaDispatchOrderRecordIdsByOrderId = shipmentReturnContext.chinaDispatchOrderRecordIdsByOrderId;
     const headers = ['注文番号', '送付先ID', '発送明細ID', 'お荷物伝票番号', '配送会社', '発送日'];
     const lines = [
       headers.map((value) => this.escapeCsvCell(value)).join(','),
@@ -4794,8 +4942,9 @@ export class OrdersService {
   }
 
   async deleteRakutenBatch(payload: {
-    ids?: Array<string | number>;
-  }): Promise<{ deletedCount: number }> {
+    ids?: Array<string | number> },
+    createdBy?: bigint,
+  ): Promise<{ deletedCount: number }> {
     const rawIds = Array.isArray(payload?.ids) ? payload.ids : [];
     const ids = Array.from(
       new Set(
@@ -4815,11 +4964,87 @@ export class OrdersService {
     await this.assertOrderRecordsHaveNoShipmentNo('rakuten', ids);
     await this.assertOrderRecordsNotInOverseasPickingBatch('rakuten', ids);
 
-    const result = await this.prisma.rakutenOrderRecord.deleteMany({
+    const selectedRows = await this.prisma.rakutenOrderRecord.findMany({
+      where: { id: { in: ids } },
+    });
+    const orderIds = Array.from(new Set(selectedRows.map((row) => String(row.orderId ?? "").trim()).filter(Boolean)));
+    const selectedOrderGroups = new Map<string, { orderId: string; shopName: string }>();
+    for (const row of selectedRows) {
+      const orderId = String(row.orderId ?? "").trim();
+      if (!orderId) continue;
+      const shopName = String(row.shopName ?? "").trim();
+      selectedOrderGroups.set(`${shopName}\u0000${orderId}`, { orderId, shopName });
+    }
+    const allRows = orderIds.length
+      ? await this.prisma.rakutenOrderRecord.findMany({ where: { orderId: { in: orderIds } } })
+      : [];
+    const selectedIdSet = new Set(selectedRows.map((row) => row.id.toString()));
+    const exclusionMap = new Map<
+      string,
+      {
+        rmsConnectionId: bigint | null;
+        shopName: string | null;
+        orderId: string;
+        rmsItemKey: string | null;
+        skuCode: string | null;
+      }
+    >();
+
+    for (const { orderId, shopName } of selectedOrderGroups.values()) {
+      const orderRows = allRows.filter(
+        (row) => String(row.orderId ?? "").trim() === orderId && String(row.shopName ?? "").trim() === shopName,
+      );
+      const selectedOrderRows = orderRows.filter((row) => selectedIdSet.has(row.id.toString()));
+      if (!selectedOrderRows.length) continue;
+      if (selectedOrderRows.length === orderRows.length) {
+        const scopes = new Set(selectedOrderRows.map((row) => row.rmsConnectionId?.toString() ?? "global"));
+        for (const scope of scopes) {
+          const rmsConnectionId = scope === "global" ? null : BigInt(scope);
+          exclusionMap.set(`${shopName}|${scope}|${orderId}|order`, {
+            rmsConnectionId,
+            shopName: shopName || null,
+            orderId,
+            rmsItemKey: null,
+            skuCode: null,
+          });
+        }
+        continue;
+      }
+      for (const row of selectedOrderRows) {
+        const rmsItemKey = String(row.rmsItemKey ?? "").trim() || null;
+        const skuCode = rmsItemKey
+          ? null
+          : String(row.skuCode ?? "")
+              .trim()
+              .toLowerCase() || null;
+        if (!rmsItemKey && !skuCode) continue;
+        const scope = row.rmsConnectionId?.toString() ?? "global";
+        exclusionMap.set(`${shopName}|${scope}|${orderId}|${rmsItemKey ?? `sku:${skuCode}`}`, {
+          rmsConnectionId: row.rmsConnectionId,
+          shopName: String(row.shopName ?? "").trim() || null,
+          orderId,
+          rmsItemKey,
+          skuCode,
+        });
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      for (const exclusion of exclusionMap.values()) {
+        await tx.rakutenOrderSyncExclusion.create({
+          data: {
+            ...exclusion,
+            reason: "user_delete",
+            createdBy: createdBy ?? null,
+          },
+        });
+      }
+      const result = await tx.rakutenOrderRecord.deleteMany({
       where: { id: { in: ids } },
     });
 
     return { deletedCount: result.count };
+  });
   }
 
   async buildOverseasPickingBatchYamatoImport(batchIdRaw: string): Promise<YamatoImportFileResult> {
@@ -5029,7 +5254,8 @@ export class OrdersService {
 
       const row = source === 'amazon' ? amazonMap.get(id) : manualMap.get(id);
       if (!row) {
-        throw new BadRequestException(`${source === 'manual' ? '手动订单' : '亚马逊订单'} ${id} 不存在、无库存或已不在海外仓处理范围内`);
+        throw new BadRequestException(`${source === 'manual' ? '手动订单' : '亚马逊订单'} ${id} 不存在、无库存或已不在海外仓处理范围内`,
+        );
       }
       const orderId = String(row.orderId ?? '').trim();
       const productId = String(row.resolvedProductId ?? '').trim();
@@ -5037,7 +5263,8 @@ export class OrdersService {
       const requestedQty = Number(row.quantityPurchased ?? 0);
       if (!orderId || !productId || !skuCode || requestedQty <= 0) {
         const requiredFieldsText = source === 'manual' ? '订单号、产品ID 或数量' : '订单号、产品ID、SKU 或数量';
-        throw new BadRequestException(`${source === 'manual' ? '手动订单' : '亚马逊订单'} ${id} 缺少有效的${requiredFieldsText}`);
+        throw new BadRequestException(`${source === 'manual' ? '手动订单' : '亚马逊订单'} ${id} 缺少有效的${requiredFieldsText}`,
+        );
       }
       items.push({
         source,
@@ -5079,7 +5306,8 @@ export class OrdersService {
         stockQty: true,
       },
     });
-    const stockByProductId = new Map(stockRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]));
+    const stockByProductId = new Map(stockRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
+    );
     const shortageTexts = productIds
       .map((productId) => {
         const requestedQty = demandByProductId.get(productId) ?? 0;
@@ -5132,14 +5360,14 @@ export class OrdersService {
   }
 
   private async attachOverseasPickingPlanSnapshots(
-    snapshots: OverseasPickingBatchItemSnapshot[],
-  ): Promise<void> {
+    snapshots: OverseasPickingBatchItemSnapshot[]): Promise<void> {
     const locationMetaByProductId = await this.loadOverseasPickingBatchLocationMeta(
       snapshots.map((item) => item.productId),
     );
     const remainingLocationsByProductId = new Map<
       string,
-      Array<{ shelfCode: string | null; boxCode: string | null; qty: number; originalQty: number }>
+      Array<{ shelfCode: string | null; boxCode: string | null; qty: number; originalQty: number;
+      }>
     >();
 
     snapshots.forEach((snapshot) => {
@@ -5188,7 +5416,8 @@ export class OrdersService {
   }
 
   private async loadActiveOverseasPickingBatchRefs(
-    refs: Array<{ source: 'rakuten' | 'amazon' | 'manual'; sourceRecordId: bigint }>,
+    refs: Array<{ source: 'rakuten' | 'amazon' | 'manual'; sourceRecordId: bigint;
+    }>,
   ): Promise<Set<string>> {
     if (!refs.length) {
       return new Set();
@@ -5218,8 +5447,7 @@ export class OrdersService {
   }
 
   private parseOverseasPickingBatchActualQtyPayload(
-    payload: OverseasPickingBatchConfirmPayload,
-  ): Map<string, number> {
+    payload: OverseasPickingBatchConfirmPayload): Map<string, number> {
     const rows = Array.isArray(payload?.items) ? payload.items : [];
     const actualQtyByItemId = new Map<string, number>();
     if (!rows.length) {
@@ -5320,10 +5548,12 @@ export class OrdersService {
         boxCode: string | null;
         productName: string | null;
         stockQty: number;
-        locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number }>;
+        locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number;
+        }>;
       }
     >,
-  ): { productId: string; productName: string | null; shelfCode: string | null; boxCode: string | null } | null {
+  ): { productId: string; productName: string | null; shelfCode: string | null; boxCode: string | null;
+  } | null {
     const groupedItems = new Map<
       string,
       {
@@ -5469,8 +5699,7 @@ export class OrdersService {
       new Set(
         items
           .map((item) => String(item.productId ?? '').trim())
-          .filter((value) => value.length > 0),
-      ),
+          .filter((value) => value.length > 0)),
     );
 
     const [rakutenRows, amazonRows, manualRows, productRows]: [
@@ -5502,7 +5731,9 @@ export class OrdersService {
               yamatoPrinterName: true,
             },
           })
-        : Promise.resolve([] as Array<{ productId: string; yamatoPrinterName: string | null }>),
+        : Promise.resolve([] as Array<{ productId: string; yamatoPrinterName: string | null;
+            }>,
+          ),
     ]);
 
     const rakutenMap = new Map(rakutenRows.map((row) => [row.id.toString(), row] as const));
@@ -5592,8 +5823,7 @@ export class OrdersService {
   }
 
   private async loadOverseasPickingBatchLocationMeta(
-    productIdsRaw: string[],
-  ): Promise<
+    productIdsRaw: string[]): Promise<
     Map<
       string,
       {
@@ -5601,7 +5831,8 @@ export class OrdersService {
         boxCode: string | null;
         productName: string | null;
         stockQty: number;
-        locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number }>;
+        locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number;
+        }>;
       }
     >
   > {
@@ -5673,7 +5904,8 @@ export class OrdersService {
         boxCode: string | null;
         productName: string | null;
         stockQty: number;
-        locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number }>;
+        locations: Array<{ shelfCode: string | null; boxCode: string | null; qty: number;
+        }>;
       }
     >();
     productIds.forEach((productId) => {
@@ -5813,8 +6045,7 @@ export class OrdersService {
     const mergedPdfBuffer = await this.mergeUploadedPdfPagesInBatchOrder(orderedUploadedPages);
 
     const trackingNumbers = parsedPages.map((page) =>
-      this.extractTrackingNoFromPdfText(page?.text ?? ''),
-    );
+      this.extractTrackingNoFromPdfText(page?.text ?? ''));
     trackingNumbers.forEach((trackingNo, index) => {
       if (!trackingNo) {
         throw new BadRequestException(`PDF 第 ${parsedPages[index]?.pageNo ?? index + 1} 页未识别到快递单号`);
@@ -5860,8 +6091,7 @@ export class OrdersService {
           {
             pickingBatchId: batch.pickingBatchId,
             productIds: this.getBatchPageProductIds(page),
-          },
-        );
+          });
         updatedManualIds.forEach((id) => manualOrderIdsForXyjg.add(id));
 
         if (batch.pickingBatchId && String(page.orderId ?? '').trim()) {
@@ -6310,7 +6540,8 @@ export class OrdersService {
         !page.printedAt &&
         (pageNo === null || page.pageNo === pageNo) &&
         this.getBatchPageProductIds(page).some(
-          (candidate) => candidate.localeCompare(productId, undefined, { sensitivity: 'accent' }) === 0,
+          (candidate) => candidate.localeCompare(productId, undefined, { sensitivity: 'accent',
+            }) === 0,
         ),
     );
     if (options.excludeActivePrintJobs && printablePages.length) {
@@ -6359,7 +6590,8 @@ export class OrdersService {
   }
 
   private async loadPdfJsModule(): Promise<{
-    getDocument: (source: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<unknown> };
+    getDocument: (source: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<unknown>;
+    };
   }> {
     if (!pdfJsModulePromise) {
       pdfJsModulePromise = import('pdfjs-dist/legacy/build/pdf.mjs') as Promise<{
@@ -6378,7 +6610,8 @@ export class OrdersService {
     const document = (await loadingTask.promise) as {
       numPages: number;
       getPage: (pageNo: number) => Promise<{
-        getTextContent: () => Promise<{ items: Array<{ str?: string; hasEOL?: boolean }> }>;
+        getTextContent: () => Promise<{ items: Array<{ str?: string; hasEOL?: boolean }>;
+        }>;
       }>;
     };
 
@@ -6670,7 +6903,8 @@ export class OrdersService {
   private async buildYamatoShipmentPageProductDetails(
     page: Pick<YamatoShipmentBatchPage, 'productIds' | 'itemSummary'>,
   ): Promise<YamatoShipmentPageProductDetail[]> {
-    const parsedItems = this.parseYamatoItemSummaryProductQuantities(page.itemSummary, this.getBatchPageProductIds(page));
+    const parsedItems = this.parseYamatoItemSummaryProductQuantities(page.itemSummary, this.getBatchPageProductIds(page),
+    );
     const productIds = Array.from(new Set(parsedItems.map((item) => item.productId).filter(Boolean)));
     const productRows = productIds.length
       ? await this.prisma.masterProduct.findMany({
@@ -6818,8 +7052,7 @@ export class OrdersService {
 
   private async buildYamatoWorkbookBuffer(
     rows: YamatoMergedExportRow[],
-    currentDate: string,
-  ): Promise<Buffer> {
+    currentDate: string): Promise<Buffer> {
     const templateBuffer = await this.loadYamatoTemplateBuffer();
     const zip = await JSZip.loadAsync(templateBuffer);
     const sheetPath = 'xl/worksheets/sheet1.xml';
@@ -6869,8 +7102,7 @@ export class OrdersService {
       .replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${builtRows.join('')}</sheetData>`)
       .replace(
         /<dimension[^>]*ref="[A-Z]+\d+:[A-Z]+\d+"\s*\/>/,
-        `<dimension ref="A1:${finalColumn}${maxRow}"/>`,
-      );
+        `<dimension ref="A1:${finalColumn}${maxRow}"/>`);
 
     zip.file(sheetPath, nextSheetXml);
     return zip.generateAsync({
@@ -6950,22 +7182,18 @@ export class OrdersService {
     values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.address1), row.address1);
     values.set(
       XLSX.utils.encode_col(YAMATO_COLUMNS.address2),
-      this.normalizeYamatoOptionalCellValue(row.address2),
-    );
+      this.normalizeYamatoOptionalCellValue(row.address2));
     values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.recipientName), row.recipientName);
     values.set(
       XLSX.utils.encode_col(YAMATO_COLUMNS.recipientSuffix),
-      YAMATO_EXPORT_FIXED_VALUES.recipientSuffix,
-    );
+      YAMATO_EXPORT_FIXED_VALUES.recipientSuffix);
     values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.senderPhone), YAMATO_EXPORT_FIXED_VALUES.senderPhone);
     values.set(
       XLSX.utils.encode_col(YAMATO_COLUMNS.senderPostalCode),
-      YAMATO_EXPORT_FIXED_VALUES.senderPostalCode,
-    );
+      YAMATO_EXPORT_FIXED_VALUES.senderPostalCode);
     values.set(
       XLSX.utils.encode_col(YAMATO_COLUMNS.senderAddress),
-      YAMATO_EXPORT_FIXED_VALUES.senderAddress,
-    );
+      YAMATO_EXPORT_FIXED_VALUES.senderAddress);
     values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.senderName), YAMATO_EXPORT_FIXED_VALUES.senderName);
     values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.itemSummary), row.itemSummary);
     values.set(
@@ -6975,8 +7203,7 @@ export class OrdersService {
     values.set(XLSX.utils.encode_col(YAMATO_COLUMNS.coolType), YAMATO_EXPORT_FIXED_VALUES.coolType);
     values.set(
       XLSX.utils.encode_col(YAMATO_COLUMNS.deliveryType),
-      YAMATO_EXPORT_FIXED_VALUES.deliveryType,
-    );
+      YAMATO_EXPORT_FIXED_VALUES.deliveryType);
     return values;
   }
 
@@ -7123,18 +7350,22 @@ export class OrdersService {
     return String(row.shipmentCompany ?? '').trim().toUpperCase() === 'XIYA-SAGAWA' ? '1002' : '1001';
   }
 
-  private async loadRakutenChinaDispatchOrderRecordIdsByOrderId(
-    rows: RakutenOrderRecord[],
-  ): Promise<Map<string, Set<string>>> {
+  private async loadRakutenShipmentReturnContext(
+    rows: RakutenOrderRecord[]): Promise<{
+    chinaDispatchOrderRecordIdsByOrderId: Map<string, Set<string>>;
+    blockedOrderIds: Set<string>;
+  }> {
     const orderIds = Array.from(
       new Set(
         rows
           .map((row) => String(row.orderId ?? '').trim())
-          .filter((orderId) => orderId.length > 0),
-      ),
+          .filter((orderId) => orderId.length > 0)),
     );
     if (!orderIds.length) {
-      return new Map();
+      return {
+        chinaDispatchOrderRecordIdsByOrderId: new Map(),
+        blockedOrderIds: new Set(),
+      };
     }
 
     const relatedRows = await this.prisma.rakutenOrderRecord.findMany({
@@ -7150,8 +7381,13 @@ export class OrdersService {
         sourceRecordId: row.id,
       })),
     );
-    const result = new Map<string, Set<string>>();
+    const chinaDispatchOrderRecordIdsByOrderId = new Map<string, Set<string>>();
+    const blockedOrderIds = new Set<string>();
     for (const row of enrichedRows) {
+      if (row.rmsManualActionDetectedAt && !row.rmsManualActionResolvedAt) {
+        const pendingOrderId = String(row.orderId ?? "").trim();
+        if (pendingOrderId) blockedOrderIds.add(pendingOrderId);
+      }
       if (!this.isRakutenChinaDispatchRow(row, activePickedRefs)) {
         continue;
       }
@@ -7159,11 +7395,14 @@ export class OrdersService {
       if (!orderId) {
         continue;
       }
-      const ids = result.get(orderId) ?? new Set<string>();
+      const ids = chinaDispatchOrderRecordIdsByOrderId.get(orderId) ?? new Set<string>();
       ids.add(row.id.toString());
-      result.set(orderId, ids);
+      chinaDispatchOrderRecordIdsByOrderId.set(orderId, ids);
+      if (!this.resolveRakutenTrackingClearanceStatusFromRow(row).hasCustomsClearance) {
+        blockedOrderIds.add(orderId);
+      }
     }
-    return result;
+    return { chinaDispatchOrderRecordIdsByOrderId, blockedOrderIds };
   }
 
   private isRakutenChinaDispatchRow(row: OrderListItem, activePickedRefs: Set<string>): boolean {
@@ -7181,7 +7420,8 @@ export class OrdersService {
     return row.fulfillmentMode === 'xiya_api' && !activePickedRefs.has(`rakuten:${row.id.toString()}`);
   }
 
-  private normalizeShipmentConfirmationScope(daysRaw: string | number | null | undefined, noun: string): {
+  private normalizeShipmentConfirmationScope(daysRaw: string | number | null | undefined, noun: string,
+  ): {
     days: 1 | 2 | 3 | 5 | 15 | 30 | 'all';
     label: string;
     fileLabel: string;
@@ -7216,16 +7456,14 @@ export class OrdersService {
 
   async importUploadedCsv(
     fileBuffer: Buffer,
-    originalName?: string,
-  ): Promise<OrderImportResult> {
+    originalName?: string): Promise<OrderImportResult> {
     const sourceFileName = String(originalName ?? '').trim() || 'rakuten-orders.csv';
     return this.importCsvBuffer(fileBuffer, sourceFileName, `uploaded:${sourceFileName}`);
   }
 
   async importAmazonTxt(
     fileBuffer: Buffer,
-    originalName?: string,
-  ): Promise<AmazonOrderImportResult> {
+    originalName?: string): Promise<AmazonOrderImportResult> {
     const sourceFileName = String(originalName ?? '').trim() || 'amazon-orders.txt';
     return this.importAmazonTxtBuffer(fileBuffer, sourceFileName, `uploaded:${sourceFileName}`);
   }
@@ -7280,19 +7518,23 @@ export class OrdersService {
 
     const targetRows = [
       ...enrichedRakutenRows
-        .filter((row) => this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs))
+        .filter((row) => this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs,
+          ),
+        )
         .map((row) => ({
           createdAt: row.createdAt,
           row: this.toThirdPartyRow(row),
         })),
       ...enrichedAmazonRows
-        .filter((row) => this.shouldExportOrderToThirdParty('amazon', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs))
+        .filter((row) => this.shouldExportOrderToThirdParty('amazon', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs),
+        )
         .map((row) => ({
           createdAt: row.createdAt,
           row: this.toAmazonThirdPartyRow(row),
         })),
       ...enrichedManualRows
-        .filter((row) => this.shouldExportOrderToThirdParty('manual', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs))
+        .filter((row) => this.shouldExportOrderToThirdParty('manual', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs),
+        )
         .map((row) => ({
           createdAt: row.createdAt,
           row: this.toManualThirdPartyRow(row),
@@ -7307,8 +7549,7 @@ export class OrdersService {
   }
 
   async ackThirdPartyExport(payload: {
-    items?: ThirdPartyExportAckItem[];
-  }): Promise<{
+    items?: ThirdPartyExportAckItem[] }): Promise<{
     acknowledgedAt: string;
     requestedCount: number;
     rakutenCount: number;
@@ -7355,8 +7596,7 @@ export class OrdersService {
               id: { in: amazonIds },
               AND: [
                 { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
-                { xiyaExportedAt: null },
-              ],
+                { xiyaExportedAt: null }],
             },
           })
         : Promise.resolve([]),
@@ -7366,8 +7606,7 @@ export class OrdersService {
               id: { in: manualIds },
               AND: [
                 { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
-                { xiyaExportedAt: null },
-              ],
+                { xiyaExportedAt: null }],
             },
           })
         : Promise.resolve([] as ManualOrderRecordLike[]),
@@ -7487,8 +7726,7 @@ export class OrdersService {
         ),
         this.applyXiyaTrackingCandidates(
           'manual',
-          deduplicatedCandidates,
-        ),
+          deduplicatedCandidates),
       ]);
 
       return {
@@ -7549,8 +7787,7 @@ export class OrdersService {
         orderBy: [
           { trackingCheckedAt: 'asc' },
           { shipmentNoRegisteredAt: 'desc' },
-          { id: 'desc' },
-        ],
+          { id: 'desc' }],
         distinct: ['shipmentNo'],
         take: UOF_TRACKING_SYNC_MAX_PER_RUN,
       });
@@ -7681,11 +7918,10 @@ export class OrdersService {
     }
     const orderId = String(row.orderId ?? '').trim();
     const orderRows = orderId
-      ? (((await (this.prisma as any).manualOrderRecord.findMany({
+      ? ((await (this.prisma as any).manualOrderRecord.findMany({
           where: { orderId },
         })) as ManualOrderRecordLike[]).filter(
-          (candidate) => this.resolveManualOrderBloggerCooperationId(candidate) === bloggerCooperationId,
-        ))
+          (candidate) => this.resolveManualOrderBloggerCooperationId(candidate) === bloggerCooperationId)
       : rows;
     const targetRows = orderRows.length ? orderRows : rows;
 
@@ -8006,7 +8242,7 @@ export class OrdersService {
       return Array.isArray(rowDetails) ? rowDetails : [];
     });
     const latestDetail = details.find((detail) => detail && typeof detail === 'object') as
-      | Record<string, unknown>
+      Record<string, unknown>
       | undefined;
     const latestDescription = latestDetail
       ? String(latestDetail.track_description ?? latestDetail.track_description_en ?? '').trim()
@@ -8045,7 +8281,8 @@ export class OrdersService {
     };
   }
 
-  private getUofTrackingConfig(): { apiUrl: string; appToken: string; appKey: string } {
+  private getUofTrackingConfig(): { apiUrl: string; appToken: string; appKey: string;
+  } {
     const apiUrl = String(process.env.UOF_TRACKING_API_URL ?? UOF_TRACKING_API_URL).trim();
     const appToken = String(process.env.UOF_TRACKING_APP_TOKEN ?? UOF_TRACKING_DEFAULT_APP_TOKEN).trim();
     const appKey = String(process.env.UOF_TRACKING_APP_KEY ?? UOF_TRACKING_DEFAULT_APP_KEY).trim();
@@ -8338,12 +8575,12 @@ export class OrdersService {
         String(row.skuCode ?? '').trim() ||
         String(row.setComponentSkuCode ?? '').trim() ||
         null;
-      const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+      const availableStock = productId ? (stockQtyByProductId.get(productId) ?? 0) : 0;
 
       return {
         ...row,
         resolvedProductId: productId,
-        resolvedProductName: productId ? productNameByProductId.get(productId) ?? null : null,
+        resolvedProductName: productId ? (productNameByProductId.get(productId) ?? null) : null,
         availableStock,
         fulfillmentMode: this.resolveFulfillmentModeFromDispatchMode(row.dispatchMode, availableStock),
       };
@@ -8373,8 +8610,7 @@ export class OrdersService {
       new Set(
         relatedRows
           .map((row) => String(row.sku ?? '').trim())
-          .filter((value) => value.length > 0),
-      ),
+          .filter((value) => value.length > 0)),
     );
 
     const skuRows = lookupCodes.length
@@ -8449,7 +8685,7 @@ export class OrdersService {
         return {
           orderId: row.orderId,
           dispatchMode: this.resolveEffectiveAmazonDispatchMode(row),
-          availableStock: productId ? stockQtyByProductId.get(productId) ?? 0 : 0,
+          availableStock: productId ? (stockQtyByProductId.get(productId) ?? 0) : 0,
         };
       }),
     );
@@ -8461,7 +8697,7 @@ export class OrdersService {
         normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(skuCode)) ??
         null;
       const productId = resolveProductId(row);
-      const availableStock = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+      const availableStock = productId ? (stockQtyByProductId.get(productId) ?? 0) : 0;
       const orderId = String(row.orderId ?? '').trim();
       const effectiveDispatchMode = this.resolveEffectiveAmazonDispatchMode(row);
       const isChinaFulfillment =
@@ -8484,7 +8720,7 @@ export class OrdersService {
         ...row,
         shippingOrigin: isChinaFulfillment ? '中国発' : this.resolveAmazonShippingOriginFromDispatchMode(OVERSEAS_DISPATCH_MODE.OVERSEAS),
         resolvedProductId: productId,
-        resolvedProductName: productId ? productNameByProductId.get(productId) ?? null : null,
+        resolvedProductName: productId ? (productNameByProductId.get(productId) ?? null) : null,
         resolvedShopName: skuMeta?.shopName ?? null,
         availableStock,
         fulfillmentMode: isChinaFulfillment ? 'xiya_api' : 'overseas_warehouse',
@@ -8522,8 +8758,7 @@ export class OrdersService {
       new Set(
         rows
           .map((row) => String(row.orderId ?? '').trim())
-          .filter((orderId) => orderId.length > 0),
-      ),
+          .filter((orderId) => orderId.length > 0)),
     );
   }
 
@@ -8536,7 +8771,8 @@ export class OrdersService {
   }
 
   private resolveChinaFulfillmentOrderIds(
-    rows: Array<{ orderId: string | null; dispatchMode?: string | null; availableStock: number }>,
+    rows: Array<{ orderId: string | null; dispatchMode?: string | null; availableStock: number;
+    }>,
   ): Set<string> {
     const orderIds = new Set<string>();
     rows.forEach((row) => {
@@ -8577,8 +8813,7 @@ export class OrdersService {
       new Set(
         uniqueRows
           .map((row) => String(row.orderId ?? '').trim())
-          .filter((orderId) => orderId.length > 0),
-      ),
+          .filter((orderId) => orderId.length > 0)),
     );
     const existingOrderIds = new Set<string>();
     if (importOrderIds.length) {
@@ -8647,7 +8882,7 @@ export class OrdersService {
       shipmentNoRegisteredAt: row.shipmentNoRegisteredAt,
       dispatchMode: (() => {
         const productId = String(row.skuCode ?? row.setComponentSkuCode ?? '').trim();
-        const stockQty = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+        const stockQty = productId ? (stockQtyByProductId.get(productId) ?? 0) : 0;
         return stockQty > 0 ? OVERSEAS_DISPATCH_MODE.OVERSEAS : OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
       })(),
       sendStatus: row.sendStatus,
@@ -8696,8 +8931,7 @@ export class OrdersService {
       new Set(
         rows
           .map((row) => String(row.skuCode ?? '').trim())
-          .filter((skuCode) => /^zh-/i.test(skuCode)),
-      ),
+          .filter((skuCode) => /^zh-/i.test(skuCode))),
     );
     if (!comboSkuCodes.length) {
       return rows;
@@ -8724,14 +8958,12 @@ export class OrdersService {
       },
     });
     const comboBySku = new Map(
-      comboProducts.map((combo) => [String(combo.comboName ?? '').trim(), combo] as const),
-    );
+      comboProducts.map((combo) => [String(combo.comboName ?? '').trim(), combo] as const));
 
     const missingComboSkuCodes = comboSkuCodes.filter((skuCode) => !comboBySku.has(skuCode));
     if (missingComboSkuCodes.length) {
       throw new BadRequestException(
-        `以下乐天组合SKU未配置组合产品：${missingComboSkuCodes.join('、')}`,
-      );
+        `以下乐天组合SKU未配置组合产品：${missingComboSkuCodes.join('、')}`);
     }
 
     const expandedRows: ParsedOrderCsvRow[] = [];
@@ -8837,8 +9069,7 @@ export class OrdersService {
       const shippingPostalCode = this.combineNonEmptyParts(
         [
           rawPayload[RAKUTEN_ORDER_HEADERS.shippingPostalCode1],
-          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPostalCode2],
-        ],
+          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPostalCode2]],
         '-',
       );
       const shippingPhone = this.combineNonEmptyParts(
@@ -8966,8 +9197,7 @@ export class OrdersService {
       new Set(
         uniqueRows
           .map((row) => String(row.orderId ?? '').trim())
-          .filter((orderId) => orderId.length > 0),
-      ),
+          .filter((orderId) => orderId.length > 0)),
     );
     const existingOrderIds = new Set<string>();
     if (importOrderIds.length) {
@@ -9027,11 +9257,9 @@ export class OrdersService {
     const resolveSkuMeta = (skuCode: string | null) => {
       const rawCode = String(skuCode ?? '').trim();
       if (!rawCode) return null;
-      return (
-        skuMetaByCode.get(rawCode) ??
+      return skuMetaByCode.get(rawCode) ??
         normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(rawCode)) ??
-        null
-      );
+        null;
     };
 
     const productIds = Array.from(
@@ -9057,7 +9285,7 @@ export class OrdersService {
         const productId = resolveSkuMeta(row.sku)?.productId;
         return {
           orderId: row.orderId,
-          availableStock: productId ? stockQtyByProductId.get(productId) ?? 0 : 0,
+          availableStock: productId ? (stockQtyByProductId.get(productId) ?? 0) : 0,
         };
       }),
     );
@@ -9065,7 +9293,7 @@ export class OrdersService {
     const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = rowsToCreate.map((row) => {
       const dispatchMode = (() => {
         const productId = resolveSkuMeta(row.sku)?.productId;
-        const stockQty = productId ? stockQtyByProductId.get(productId) ?? 0 : 0;
+        const stockQty = productId ? (stockQtyByProductId.get(productId) ?? 0) : 0;
         const orderId = String(row.orderId ?? '').trim();
         return (orderId ? chinaFulfillmentOrderIds.has(orderId) : stockQty <= 0)
           ? OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK
@@ -9360,8 +9588,7 @@ export class OrdersService {
 
   private normalizeEditablePositiveInt(
     value: string | number | null | undefined,
-    fieldName: string,
-  ): number | null {
+    fieldName: string): number | null {
     const text = String(value ?? '').trim();
     if (!text) {
       return null;
@@ -9376,8 +9603,7 @@ export class OrdersService {
   private requireEditableText(
     value: string | number | null | undefined,
     fieldName: string,
-    maxLength: number,
-  ): string {
+    maxLength: number): string {
     const text = this.normalizeEditableText(value, fieldName, maxLength);
     if (!text) {
       throw new BadRequestException(`${fieldName}不能为空`);
@@ -9467,7 +9693,8 @@ export class OrdersService {
     return null;
   }
 
-  private resolveEffectiveAmazonDispatchMode(row: Pick<AmazonOrderRecord, 'dispatchMode' | 'shippingOrigin'>): string | null {
+  private resolveEffectiveAmazonDispatchMode(row: Pick<AmazonOrderRecord, 'dispatchMode' | 'shippingOrigin'>,
+  ): string | null {
     const dispatchMode = String(row.dispatchMode ?? '').trim();
     if (dispatchMode === OVERSEAS_DISPATCH_MODE.OVERSEAS || this.isChinaDispatchMode(dispatchMode)) {
       return dispatchMode;
@@ -9509,7 +9736,8 @@ export class OrdersService {
     const orderId = this.requireEditableText(payload.orderId, withField('orderId'), 64);
     const sku = this.normalizeEditableText(payload.sku, withField('sku'), 128);
     const productId = this.requireEditableText(payload.productId, withField('productId'), 64);
-    const quantityPurchased = this.requireEditablePositiveInt(payload.quantityPurchased, withField('quantityPurchased'));
+    const quantityPurchased = this.requireEditablePositiveInt(payload.quantityPurchased, withField('quantityPurchased'),
+    );
     const product = await this.prisma.masterProduct.findUnique({
       where: { productId },
       select: { productName: true },
@@ -9600,7 +9828,8 @@ export class OrdersService {
   private parseManualOrderUploadFile(fileBuffer: Buffer, sourceFileName: string): CreateAmazonManualOrderPayload[] {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer', cellDates: false, raw: false });
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', cellDates: false, raw: false,
+      });
     } catch {
       throw new BadRequestException('手动订单批量上传文件无法解析，请上传 xlsx 文件');
     }
@@ -9610,7 +9839,8 @@ export class OrdersService {
       throw new BadRequestException('手动订单批量上传文件没有可读取的工作表');
     }
     const sheet = workbook.Sheets[sheetName];
-    const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false });
+    const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false,
+    });
     const items = rawRows
       .map((row) => this.mapManualOrderUploadRow(row))
       .filter((item): item is CreateAmazonManualOrderPayload => Boolean(item));
@@ -9744,8 +9974,7 @@ export class OrdersService {
 
   private resolveOriginalAmazonOrderItemId(
     rawPayload: Prisma.JsonValue | null,
-    fallback: string | null,
-  ): string {
+    fallback: string | null): string {
     if (rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)) {
       const item = (rawPayload as Prisma.JsonObject).item;
       if (item && typeof item === 'object' && !Array.isArray(item)) {
@@ -9770,7 +9999,8 @@ export class OrdersService {
 
   private buildExpandedRakutenComboRawPayload(
     rawPayload: Record<OrderCsvHeader, string | null>,
-    payload: { componentProductId: string; componentProductName: string | null },
+    payload: { componentProductId: string; componentProductName: string | null;
+    },
   ): Record<OrderCsvHeader, string | null> {
     return {
       ...rawPayload,
@@ -9955,13 +10185,14 @@ export class OrdersService {
   }
 
   private buildChinaOrderShipmentNoFilter(
-    scope: 'pending' | 'exported' | 'all',
-  ):
+    scope: 'pending' | 'exported' | 'all'):
     | { OR: Array<{ shipmentNo: null } | { shipmentNo: string }> }
-    | { AND: Array<{ shipmentNo: { not: null } } | { shipmentNo: { not: string } }> }
+    | { AND: Array<{ shipmentNo: { not: null } } | { shipmentNo: { not: string } }>;
+      }
     | Record<string, never> {
     if (scope === 'exported') {
-      return { AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }] };
+      return { AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
+      };
     }
     if (scope === 'all') {
       return {};

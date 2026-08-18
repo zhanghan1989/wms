@@ -102,16 +102,16 @@
             cache: "no-store",
             headers: {
               "cache-control": "no-store",
-              pragma: "no-cache"
-            }
-          });
+              pragma: "no-cache",
+              },
+            });
           var payload = await response.json();
           if (response.ok) {
             return String(
               (payload && payload.data && payload.data.deployVersion) ||
               payload.deployVersion ||
-              ""
-            ).trim();
+              "",
+              ).trim();
           }
         } catch (error) {
           console.warn("failed to fetch deploy version for static assets", error);
@@ -1283,10 +1283,10 @@
                   <th>发货模式</th>
                   <th>店铺</th>
                   <th>收件人</th>
-                  <th>Amazon最新状态</th>
                   <th>发货公司</th>
                   <th>发货单号</th>
                   <th>快递最新状态</th>
+                  <th>人工处理提醒</th>
                   <th>发货单号登记时间</th>
                   <th class="admin-order-edit-only hidden">操作</th>
                 </tr>
@@ -1574,7 +1574,8 @@
                   </h3>
                   <div id="overviewDataTooltipPanel" class="overview-data-tooltip-panel" role="tooltip">
                     <strong>数据口径</strong>
-                    <p>看板自动合并FBA、FBM和乐天订单。FBA取自Amazon SP-API；FBM以API为主并兼容历史手动导入；乐天取自手动导入。FBM按订单明细去重，同时存在API与人工记录时保留人工维护的仓库字段。</p>
+                    <p>看板自动合并FBA、FBM和乐天订单。FBA、FBM取自Amazon SP-API；乐天以RMS
+                        API为主并兼容历史CSV导入。API同步按订单明细去重，并保留已经人工维护或进入发货流程的仓库字段。</p>
                     <dl class="overview-data-tooltip-sources">
                       <div><dt>FBA数据源</dt><dd id="overviewFbaSourceStatus">-</dd></div>
                       <div><dt>FBM数据源</dt><dd id="overviewFbmSourceStatus">-</dd></div>
@@ -2682,14 +2683,82 @@
       </form>
       <div class="manage-table-scroll">
         <table>
-          <thead><tr><th>店铺</th><th>Amazon连接</th><th>操作</th></tr></thead>
+          <thead><tr><th>店铺</th><th>Amazon连接</th><th>乐天连接</th>
+                <th>操作</th></tr></thead>
           <tbody id="shopsBody"></tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <div id="amazonSpApiConnectionModal" class="modal hidden">
+  <div id="rakutenRmsConnectionModal" class="modal hidden">
+      <div class="modal-card modal-wide">
+        <div class="modal-head">
+          <h3 id="rakutenRmsConnectionTitle">乐天 RMS API连接</h3>
+          <button type="button" class="ghost" data-action="closeRakutenRmsConnectionModal">关闭</button>
+        </div>
+        <form id="rakutenRmsConnectionForm">
+          <input id="rakutenRmsConnectionId" type="hidden" />
+          <input id="rakutenRmsShopId" type="hidden" />
+          <div class="form-grid compact">
+            <label>店铺<input id="rakutenRmsShopName" readonly /></label>
+            <label
+              >serviceSecret<input
+                id="rakutenRmsServiceSecret"
+                type="password"
+                maxlength="512"
+                autocomplete="new-password"
+            /></label>
+            <label
+              >licenseKey<input id="rakutenRmsLicenseKey" type="password" maxlength="2048" autocomplete="new-password"
+            /></label>
+            <label>License到期日<input id="rakutenRmsLicenseExpiresAt" type="date" /></label>
+            <label
+              >连接状态
+              <select id="rakutenRmsStatus">
+                <option value="1">启用</option>
+                <option value="0">停用</option>
+              </select>
+            </label>
+          </div>
+          <div class="checkbox-row">
+            <label><input id="rakutenRmsSyncOrders" type="checkbox" checked /> 允许定时同步此店铺的乐天订单</label>
+          </div>
+          <p class="muted">新建连接时必须填写 serviceSecret 和 licenseKey；保存后系统只显示连接状态，不会回显凭证。</p>
+          <p id="rakutenRmsConnectionMeta" class="muted">尚未连接。</p>
+          <div id="rakutenRmsSyncPreview" class="muted">正式同步前必须先生成预览并人工确认。</div>
+          <div class="manage-table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>同步时间</th>
+                  <th>状态</th>
+                  <th>结果</th>
+                  <th>错误</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="rakutenRmsSyncRunsBody">
+                <tr>
+                  <td colspan="5" class="muted">保存连接后显示同步记录</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="modal-actions modal-actions-split">
+            <div>
+              <button id="rakutenRmsSaveBtn" type="submit">保存连接</button>
+              <button id="rakutenRmsTestBtn" type="button" class="ghost hidden">测试连接</button>
+              <button id="rakutenRmsPreviewBtn" type="button" class="ghost hidden">预览同步</button>
+              <button id="rakutenRmsSyncBtn" type="button" class="hidden">确认正式同步</button>
+            </div>
+            <button type="button" class="ghost" data-action="closeRakutenRmsConnectionModal">取消</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="amazonSpApiConnectionModal" class="modal hidden">
     <div class="modal-card modal-wide">
       <div class="modal-head">
         <h3 id="amazonSpApiConnectionTitle">Amazon SP-API连接</h3>
