@@ -1,4 +1,4 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
   RakutenGetOrderResponse,
   RakutenJsonObject,
@@ -11,9 +11,12 @@ const RAKUTEN_API_BASE_URL = 'https://api.rms.rakuten.co.jp/es/2.0/order';
 const SEARCH_PAGE_SIZE = 1000;
 const GET_ORDER_BATCH_SIZE = 100;
 const MAX_SEARCH_RANGE_MS = 62 * 24 * 60 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 20_000;
 
 @Injectable()
 export class RakutenRmsApiClient {
+  private readonly logger = new Logger(RakutenRmsApiClient.name);
+
   async searchOrders(
     serviceSecret: string,
     licenseKey: string,
@@ -78,17 +81,29 @@ export class RakutenRmsApiClient {
     const authorization = Buffer.from(`${serviceSecret}:${licenseKey}`, 'utf8').toString('base64');
     const url = `${RAKUTEN_API_BASE_URL}/${operation}/`;
     let lastResponse: Response | null = null;
+    let lastNetworkError: unknown = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          accept: 'application/json',
-          authorization: `ESA ${authorization}`,
-          'content-type': 'application/json; charset=utf-8',
-          'user-agent': '001-wms-rakuten-sync/1.0',
-        },
-        body: JSON.stringify(body),
-      });
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            authorization: `ESA ${authorization}`,
+            'content-type': 'application/json; charset=utf-8',
+            'user-agent': '001-wms-rakuten-sync/1.0',
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch (error) {
+        lastNetworkError = error;
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 250));
+          continue;
+        }
+        break;
+      }
       lastResponse = response;
       if (response.status !== 429 && response.status < 500) {
         return this.readResponse<T>(response);
@@ -96,7 +111,18 @@ export class RakutenRmsApiClient {
       const retryAfter = Math.min(Number(response.headers.get('retry-after') ?? attempt + 1) || attempt + 1, 5);
       await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
     }
+    if (!lastResponse) {
+      const details = this.networkErrorMessage(lastNetworkError);
+      this.logger.error(`Rakuten RMS ${operation} network request failed after 3 attempts: ${details}`);
+      throw new ServiceUnavailableException(`无法连接乐天 RMS API（网络或TLS错误）：${details}`);
+    }
     return this.readResponse<T>(lastResponse as Response);
+  }
+
+  private networkErrorMessage(error: unknown): string {
+    const root = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+    const message = root instanceof Error ? root.message : String(root ?? '未知网络错误');
+    return message.replace(/[\r\n]+/g, ' ').slice(0, 300) || '未知网络错误';
   }
 
   private async readResponse<T>(response: Response): Promise<T> {
