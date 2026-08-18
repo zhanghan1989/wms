@@ -159,24 +159,27 @@ export class SkusService {
     q?: string,
     page = 1,
     pageSize = 30,
-  ): Promise<{ items: unknown[]; page: number; pageSize: number; hasMore: boolean }> {
+  ): Promise<{ items: unknown[]; page: number; pageSize: number; hasMore: boolean; total: number }> {
     const normalizedPage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
     const normalizedPageSize =
       Number.isFinite(pageSize) && pageSize > 0 ? Math.min(Math.floor(pageSize), 100) : 30;
     const where = this.buildListWhere(q);
-    const rows = await this.prisma.sku.findMany({
-      where,
-      include: {
-        masterProduct: {
-          select: {
-            productName: true,
+    const [rows, total] = await Promise.all([
+      this.prisma.sku.findMany({
+        where,
+        include: {
+          masterProduct: {
+            select: {
+              productName: true,
+            },
           },
         },
-      },
-      orderBy: [{ id: 'desc' }],
-      skip: (normalizedPage - 1) * normalizedPageSize,
-      take: normalizedPageSize + 1,
-    });
+        orderBy: [{ id: 'desc' }],
+        skip: (normalizedPage - 1) * normalizedPageSize,
+        take: normalizedPageSize + 1,
+      }),
+      this.prisma.sku.count({ where }),
+    ]);
     const hasMore = rows.length > normalizedPageSize;
     const items = rows.slice(0, normalizedPageSize).map((row) => ({
       ...row,
@@ -187,6 +190,7 @@ export class SkusService {
       page: normalizedPage,
       pageSize: normalizedPageSize,
       hasMore,
+      total,
     };
   }
 
