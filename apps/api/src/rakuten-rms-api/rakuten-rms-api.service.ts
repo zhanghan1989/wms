@@ -185,17 +185,17 @@ export class RakutenRmsApiService {
     this.assertLicenseActive(connection);
     const credentials = this.decryptCredentials(connection);
     const end = new Date();
-    const orderNumbers = await this.client.searchOrders(credentials.serviceSecret, credentials.licenseKey, {
+    const probe = await this.client.probeOrders(credentials.serviceSecret, credentials.licenseKey, {
       start: new Date(end.getTime() - CONNECTION_TEST_LOOKBACK_DAYS * 24 * 60 * 60 * 1000),
       end,
     });
-    const sampleOrderNumber = orderNumbers[0] ?? null;
+    const sampleOrderNumber = probe.sampleOrderNumber;
     if (sampleOrderNumber) {
       await this.client.getOrders(credentials.serviceSecret, credentials.licenseKey, [sampleOrderNumber]);
     }
     return {
       ok: true,
-      matchedOrderCount: orderNumbers.length,
+      matchedOrderCount: probe.matchedOrderCount,
       testedOperations: {
         searchOrder: true,
         getOrder: Boolean(sampleOrderNumber),

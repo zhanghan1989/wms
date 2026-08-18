@@ -64,6 +64,30 @@ describe("Rakuten RMS API integration", () => {
     });
   });
 
+  it("probes searchOrder with one record and does not traverse result pages", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          orderNumberList: ["421951-1"],
+          PaginationResponseModel: { totalRecordsAmount: 824, totalPages: 824 },
+        }),
+        { status: 200 },
+      ),
+    );
+    const client = new RakutenRmsApiClient();
+
+    await expect(
+      client.probeOrders("service-secret", "license-key", {
+        start: new Date("2026-06-17T00:00:00.000Z"),
+        end: new Date("2026-08-18T00:00:00.000Z"),
+      }),
+    ).resolves.toEqual({ matchedOrderCount: 824, sampleOrderNumber: "421951-1" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toMatchObject({
+      PaginationRequestModel: { requestPage: 1, requestRecordsAmount: 1 },
+    });
+  });
+
   it("retries a transient network failure before returning search results", async () => {
     const fetchMock = jest
       .spyOn(global, "fetch")
@@ -101,9 +125,7 @@ describe("Rakuten RMS API integration", () => {
         start: new Date("2026-08-17T00:00:00.000Z"),
         end: new Date("2026-08-18T00:00:00.000Z"),
       }),
-    ).rejects.toThrow(
-      "无法连接乐天 RMS API（网络或TLS错误）：getaddrinfo EAI_AGAIN api.rms.rakuten.co.jp",
-    );
+    ).rejects.toThrow("getaddrinfo EAI_AGAIN api.rms.rakuten.co.jp");
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -127,7 +149,7 @@ describe("Rakuten RMS API integration", () => {
       },
     } as unknown as PrismaService;
     const client = {
-      searchOrders: jest.fn().mockResolvedValue(["421951-1"]),
+      probeOrders: jest.fn().mockResolvedValue({ matchedOrderCount: 1, sampleOrderNumber: "421951-1" }),
       getOrders: jest.fn().mockResolvedValue([{ orderNumber: "421951-1" }]),
     } as unknown as RakutenRmsApiClient;
     const crypto = {
@@ -137,7 +159,7 @@ describe("Rakuten RMS API integration", () => {
 
     const result = (await service.testConnection("7")) as any;
 
-    expect(client.searchOrders).toHaveBeenCalledWith(
+    expect(client.probeOrders).toHaveBeenCalledWith(
       "service-secret",
       "license-key",
       expect.objectContaining({
@@ -145,7 +167,7 @@ describe("Rakuten RMS API integration", () => {
         end: expect.any(Date),
       }),
     );
-    expect((client.searchOrders as jest.Mock).mock.calls[0][2].orderProgressList).toBeUndefined();
+    expect((client.probeOrders as jest.Mock).mock.calls[0][2].orderProgressList).toBeUndefined();
     expect(client.getOrders).toHaveBeenCalledWith("service-secret", "license-key", ["421951-1"]);
     expect(result.testedOperations).toEqual({
       searchOrder: true,
