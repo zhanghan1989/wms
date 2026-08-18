@@ -17,6 +17,35 @@ const REQUEST_TIMEOUT_MS = 20_000;
 export class RakutenRmsApiClient {
   private readonly logger = new Logger(RakutenRmsApiClient.name);
 
+  async probeOrders(
+    serviceSecret: string,
+    licenseKey: string,
+    options: RakutenOrderSearchOptions,
+  ): Promise<{ matchedOrderCount: number; sampleOrderNumber: string | null }> {
+    const payload = await this.request<RakutenSearchOrderResponse>(serviceSecret, licenseKey, 'searchOrder', {
+      dateType: 1,
+      startDatetime: this.formatRakutenDate(options.start),
+      endDatetime: this.formatRakutenDate(options.end),
+      ...(options.orderProgressList?.length ? { orderProgressList: options.orderProgressList } : {}),
+      PaginationRequestModel: {
+        requestRecordsAmount: 1,
+        requestPage: 1,
+        SortModelList: [{ sortColumn: 1, sortDirection: 1 }],
+      },
+    });
+    this.assertNoApiErrors(payload.MessageModelList);
+    const orderNumbers = Array.isArray(payload.orderNumberList)
+      ? payload.orderNumberList.map((value) => String(value ?? '').trim()).filter(Boolean)
+      : [];
+    return {
+      matchedOrderCount: Math.max(
+        orderNumbers.length,
+        Number(payload.PaginationResponseModel?.totalRecordsAmount ?? orderNumbers.length) || 0,
+      ),
+      sampleOrderNumber: orderNumbers[0] ?? null,
+    };
+  }
+
   async searchOrders(
     serviceSecret: string,
     licenseKey: string,
@@ -120,9 +149,26 @@ export class RakutenRmsApiClient {
   }
 
   private networkErrorMessage(error: unknown): string {
-    const root = error instanceof Error && error.cause instanceof Error ? error.cause : error;
-    const message = root instanceof Error ? root.message : String(root ?? '未知网络错误');
-    return message.replace(/[\r\n]+/g, ' ').slice(0, 300) || '未知网络错误';
+    const details: string[] = [];
+    let current: unknown = error;
+    for (let depth = 0; depth < 3 && current !== null && current !== undefined; depth += 1) {
+      if (typeof current === 'string') {
+        details.push(current);
+        break;
+      }
+      if (typeof current !== 'object') {
+        details.push(String(current));
+        break;
+      }
+      const record = current as { cause?: unknown; code?: unknown; message?: unknown; name?: unknown };
+      for (const value of [record.name, record.code, record.message]) {
+        if (typeof value === 'string' && value.trim() && !details.includes(value.trim())) {
+          details.push(value.trim());
+        }
+      }
+      current = record.cause;
+    }
+    return details.join(': ').replace(/[\r\n]+/g, ' ').slice(0, 300) || '未知网络错误';
   }
 
   private async readResponse<T>(response: Response): Promise<T> {
