@@ -15,6 +15,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PrintAgentModule } from './print-agent/print-agent.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RakutenComboProductsModule } from './rakuten-combo-products/rakuten-combo-products.module';
+import { RakutenRmsApiModule } from './rakuten-rms-api/rakuten-rms-api.module';
 import { ReturnRecordsModule } from './return-records/return-records.module';
 import { ShelvesModule } from './shelves/shelves.module';
 import { ShopsModule } from './shops/shops.module';
@@ -52,6 +53,7 @@ import { UsersModule } from './users/users.module';
     OrdersModule,
     PrintAgentModule,
     RakutenComboProductsModule,
+    RakutenRmsApiModule,
     ReturnRecordsModule,
     AuditModule,
   ],

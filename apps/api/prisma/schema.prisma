@@ -165,6 +165,13 @@ enum AmazonSpApiSyncStatus {
   failed
 }
 
+enum RakutenRmsSyncStatus {
+  running
+  success
+  partial
+  failed
+}
+
 model User {
   id                             BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
   username                       String                    @unique @db.VarChar(64)
@@ -317,8 +324,85 @@ model Shop {
   updatedAt              DateTime                @updatedAt @map("updated_at")
   amazonSpApiConnection  AmazonSpApiConnection?
   amazonSpApiOAuthStates AmazonSpApiOAuthState[]
+  rakutenRmsConnection   RakutenRmsConnection?
 
   @@map("shops")
+}
+
+model RakutenRmsConnection {
+  id                     BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  shopId                 BigInt                  @unique @map("shop_id") @db.UnsignedBigInt
+  encryptedServiceSecret String                  @map("encrypted_service_secret") @db.Text
+  serviceSecretIv        String                  @map("service_secret_iv") @db.VarChar(64)
+  serviceSecretAuthTag   String                  @map("service_secret_auth_tag") @db.VarChar(64)
+  encryptedLicenseKey    String                  @map("encrypted_license_key") @db.Text
+  licenseKeyIv           String                  @map("license_key_iv") @db.VarChar(64)
+  licenseKeyAuthTag      String                  @map("license_key_auth_tag") @db.VarChar(64)
+  licenseExpiresAt       DateTime?               @map("license_expires_at")
+  status                 Int                     @default(1) @db.TinyInt
+  syncOrders             Boolean                 @default(true) @map("sync_orders")
+  lastOrdersSyncedAt     DateTime?               @map("last_orders_synced_at")
+  lastSuccessfulSyncAt   DateTime?               @map("last_successful_sync_at")
+  lastSyncError          String?                 @map("last_sync_error") @db.Text
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  shop                   Shop                    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  syncRuns               RakutenRmsSyncRun[]
+  syncPreviews           RakutenRmsSyncPreview[]
+  orderRecords           RakutenOrderRecord[]
+
+  @@index([status])
+  @@map("rakuten_rms_connections")
+}
+
+model RakutenRmsSyncRun {
+  id                BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId      BigInt               @map("connection_id") @db.UnsignedBigInt
+  status            RakutenRmsSyncStatus @default(running)
+  startedAt         DateTime             @default(now()) @map("started_at")
+  finishedAt        DateTime?            @map("finished_at")
+  fetchedCount      Int                  @default(0) @map("fetched_count")
+  createdCount      Int                  @default(0) @map("created_count")
+  updatedCount      Int                  @default(0) @map("updated_count")
+  skippedCount      Int                  @default(0) @map("skipped_count")
+  manualActionCount Int                  @default(0) @map("manual_action_count")
+  errorMessage      String?              @map("error_message") @db.Text
+  changeSnapshot    Json?                @map("change_snapshot")
+  rolledBackAt      DateTime?            @map("rolled_back_at")
+  connection        RakutenRmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, startedAt])
+  @@index([status, startedAt])
+  @@map("rakuten_rms_sync_runs")
+}
+
+model RakutenRmsSyncPreview {
+  token        String               @id @db.Char(64)
+  connectionId BigInt               @map("connection_id") @db.UnsignedBigInt
+  expiresAt    DateTime             @map("expires_at")
+  usedAt       DateTime?            @map("used_at")
+  previewData  Json                 @map("preview_data")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  connection   RakutenRmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, createdAt])
+  @@index([expiresAt])
+  @@map("rakuten_rms_sync_previews")
+}
+
+model RakutenOrderSyncExclusion {
+  id              BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  rmsConnectionId BigInt?  @map("rms_connection_id") @db.UnsignedBigInt
+  shopName        String?  @map("shop_name") @db.VarChar(128)
+  orderId         String   @map("order_id") @db.VarChar(64)
+  rmsItemKey      String?  @map("rms_item_key") @db.VarChar(191)
+  skuCode         String?  @map("sku_code") @db.VarChar(128)
+  reason          String   @default("user_delete") @db.VarChar(64)
+  createdBy       BigInt?  @map("created_by") @db.UnsignedBigInt
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([shopName, orderId, rmsItemKey, skuCode], map: "idx_rakuten_order_exclusion_lookup")
+  @@map("rakuten_order_sync_exclusions")
 }
 
 model AmazonSpApiConnection {
@@ -808,6 +892,19 @@ model BackupRecord {
 
 model RakutenOrderRecord {
   id                          BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  rmsConnectionId                BigInt?               @map("rms_connection_id") @db.UnsignedBigInt
+  rmsItemKey                     String?               @map("rms_item_key") @db.VarChar(191)
+  sourceKind                     String                @default("csv") @map("source_kind") @db.VarChar(16)
+  rmsLastSyncedAt                DateTime?             @map("rms_last_synced_at")
+  rmsManualOverrideAt            DateTime?             @map("rms_manual_override_at")
+  rmsManualOverrideBy            String?               @map("rms_manual_override_by") @db.VarChar(64)
+  rmsManualActionType            String?               @map("rms_manual_action_type") @db.VarChar(16)
+  rmsManualActionChangedFields   Json?                 @map("rms_manual_action_changed_fields")
+  rmsManualActionObservedPayload Json?                 @map("rms_manual_action_observed_payload")
+  rmsManualActionObservedHash    String?               @map("rms_manual_action_observed_hash") @db.Char(40)
+  rmsManualActionDetectedAt      DateTime?             @map("rms_manual_action_detected_at")
+  rmsManualActionResolvedAt      DateTime?             @map("rms_manual_action_resolved_at")
+  rmsManualActionResolvedBy      String?               @map("rms_manual_action_resolved_by") @db.VarChar(64)
   rowHash                     String          @unique @map("row_hash") @db.Char(40)
   orderId                     String?         @map("order_id") @db.VarChar(64)
   itemDetailStatus            String?         @map("item_detail_status") @db.VarChar(64)
@@ -852,7 +949,12 @@ model RakutenOrderRecord {
   csvImportedAt               DateTime        @default(now()) @map("csv_imported_at")
   createdAt                   DateTime        @default(now()) @map("created_at")
   updatedAt                   DateTime        @updatedAt @map("updated_at")
+  rmsConnection                  RakutenRmsConnection? @relation(fields: [rmsConnectionId], references: [id], onDelete: SetNull)
 
+  @@unique([rmsConnectionId, rmsItemKey], map: "uq_rakuten_rms_order_item")
+  @@index([rmsConnectionId])
+  @@index([rmsManualOverrideAt], map: "idx_rakuten_rms_manual_override")
+  @@index([rmsManualActionDetectedAt, rmsManualActionResolvedAt], map: "idx_rakuten_rms_manual_action")
   @@index([orderId])
   @@index([mallOrderNo])
   @@index([skuCode])

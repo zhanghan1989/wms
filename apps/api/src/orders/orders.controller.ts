@@ -68,6 +68,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async updateRakutenOrder(
     @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
     @Body()
     payload: {
       orderId?: string | null;
@@ -90,7 +91,16 @@ export class OrdersController {
       orderRemark?: string | null;
     },
   ): Promise<unknown> {
-    return this.ordersService.updateRakutenOrder(id, payload);
+    return this.ordersService.updateRakutenOrder(id, payload, user.username);
+  }
+
+  @Post('rakuten/:id/xiya-manual-action/resolve')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async resolveRakutenXiyaManualAction(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    return this.ordersService.resolveRakutenXiyaManualAction(id, user.username);
   }
 
   @Put('amazon/:id')
@@ -613,8 +623,9 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async deleteRakutenBatch(
     @Body() payload: { ids?: Array<string | number> },
+    @CurrentUser() user: AuthUser,
   ): Promise<{ deletedCount: number }> {
-    return this.ordersService.deleteRakutenBatch(payload);
+    return this.ordersService.deleteRakutenBatch(payload, user.id);
   }
 
   @Post('rakuten/import-csv')

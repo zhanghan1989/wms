@@ -176,6 +176,10 @@ const state = {
   skuTypes: [],
   shops: [],
   amazonSpApiConnections: [],
+  rakutenRmsConnections: [],
+  rakutenRmsSyncRuns: [],
+  rakutenRmsSyncRunsLoading: false,
+  rakutenRmsSyncPreview: null,
   skuEditRequests: [],
   skuEditRequestsPage: 1,
   skuEditRequestsPageSize: 30,
@@ -707,16 +711,16 @@ const LABEL_5030_SIZE_MM = {
 };
 
 const CODE39_PATTERNS = {
-  "0": "nnnwwnwnn",
-  "1": "wnnwnnnnw",
-  "2": "nnwwnnnnw",
-  "3": "wnwwnnnnn",
-  "4": "nnnwwnnnw",
-  "5": "wnnwwnnnn",
-  "6": "nnwwwnnnn",
-  "7": "nnnwnnwnw",
-  "8": "wnnwnnwnn",
-  "9": "nnwwnnwnn",
+  0: "nnnwwnwnn",
+  1: "wnnwnnnnw",
+  2: "nnwwnnnnw",
+  3: "wnwwnnnnn",
+  4: "nnnwwnnnw",
+  5: "wnnwwnnnn",
+  6: "nnwwwnnnn",
+  7: "nnnwnnwnw",
+  8: "wnnwnnwnn",
+  9: "nnwwnnwnn",
   A: "wnnnnwnnw",
   B: "nnwnnwnnw",
   C: "wnwnnwnnn",
@@ -746,7 +750,7 @@ const CODE39_PATTERNS = {
   "-": "nwnnnnwnw",
   ".": "wwnnnnwnn",
   " ": "nwwnnnwnn",
-  "$": "nwnwnwnnn",
+  $: "nwnwnwnnn",
   "/": "nwnwnnnwn",
   "+": "nwnnnwnwn",
   "%": "nnnwnwnwn",
@@ -1225,7 +1229,8 @@ function formatDateOnlyInTimeZone(value, timeZone = STOCKTAKE_DISPLAY_TIMEZONE) 
     month: "2-digit",
     day: "2-digit",
   }).formatToParts(date);
-  const mapped = Object.fromEntries(parts.filter((item) => item.type !== "literal").map((item) => [item.type, item.value]));
+  const mapped = Object.fromEntries(parts.filter((item) => item.type !== "literal").map((item) => [item.type, item.value]),
+  );
   return `${mapped.year || "0000"}/${mapped.month || "00"}/${mapped.day || "00"}`;
 }
 
@@ -1240,7 +1245,8 @@ function formatDateOnlyWithWeekdayInTimeZone(value, timeZone = STOCKTAKE_DISPLAY
     day: "2-digit",
     weekday: "long",
   }).formatToParts(date);
-  const mapped = Object.fromEntries(parts.filter((item) => item.type !== "literal").map((item) => [item.type, item.value]));
+  const mapped = Object.fromEntries(parts.filter((item) => item.type !== "literal").map((item) => [item.type, item.value]),
+  );
   return `${mapped.year || "0000"}/${mapped.month || "00"}/${mapped.day || "00"}(${mapped.weekday || "-"})`;
 }
 
@@ -1284,8 +1290,7 @@ async function downloadPrintAgentWindowsExe() {
   const fileName = await downloadAuthorizedFile(
     "/inventory/print-agent-windows-exe",
     {},
-    "wms-print-agent.exe",
-  );
+    "wms-print-agent.exe");
   showToast(`已生成并下载 ${fileName}`);
 }
 
@@ -1648,8 +1653,7 @@ function getAvailableRoleOptionItems() {
 function isUserOptionEnabled(options, code) {
   const target = String(code || "");
   const item = (Array.isArray(options) ? options : []).find(
-    (option) => String(option?.code || "") === target,
-  );
+    (option) => String(option?.code || "") === target);
   if (!item) return true;
   return Number(item.status) === 1;
 }
@@ -1898,8 +1902,7 @@ function renderOverviewDashboard(data) {
     "overviewNoSales90Heading",
     includesFba
       ? "90天全渠道无出单产品"
-      : "90天系统无出单产品",
-  );
+      : "90天系统无出单产品");
 
   setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
   setTextById("statSkus", formatOverviewNumber(summary.masterProductCount));
@@ -1943,8 +1946,7 @@ function renderOverviewDashboard(data) {
   setTextById("overviewOutboundQty90d", formatOverviewNumber(demand.outboundQty90d));
   setTextById(
     "overviewOutboundQty30dCalculated",
-    formatOverviewNumber(demand.outboundQty30dCalculated, 1),
-  );
+    formatOverviewNumber(demand.outboundQty30dCalculated, 1));
   setTextById("overviewDemandAvgDailyOutbound", formatOverviewNumber(demand.avgDailyOutbound, 1));
   const totalDemand90d = Number(demand.outboundQty90d || 0);
   const systemDemand90d = Number(demand.systemOrderQty90d || 0);
@@ -1978,7 +1980,8 @@ function renderOverviewDashboard(data) {
   const unmatchedDetails = Array.isArray(demand.unmatchedSystemOrders90d?.details)
     ? demand.unmatchedSystemOrders90d.details
     : [];
-  const channelLabels = { rakuten: "乐天（手动导入）", amazon: "Amazon FBM", manual: "其它手动订单" };
+  const channelLabels = { rakuten: "乐天（手动导入）", amazon: "Amazon FBM", manual: "其它手动订单",
+  };
   const unmatchedDetailRows = unmatchedDetails
     .map(
       (item) => `
@@ -2017,8 +2020,7 @@ function renderOverviewDashboard(data) {
   setTextById("overviewNoSales90Count", formatOverviewNumber(noSales90Items.length));
   setTextById(
     "overviewNoSales90StockQty",
-    formatOverviewNumber(obsolete.noSales90dStockQty),
-  );
+    formatOverviewNumber(obsolete.noSales90dStockQty));
 
   const fbaSnapshot = production.fbaSalesSnapshot;
   $("overviewFbaSalesSnapshotMeta").textContent = fbaSnapshot
@@ -2033,8 +2035,7 @@ function renderOverviewDashboard(data) {
       )} 行 / FBA库存：可售 ${formatOverviewNumber(fbaSnapshot.fbaAvailableQty)} 件 + 入库中 ${formatOverviewNumber(
         fbaSnapshot.fbaInboundQty,
       )} 件 / 库存快照 ${fbaSnapshot.inventorySnapshotDate || "日期未知"} / 上传 ${formatDate(
-        fbaSnapshot.importedAt,
-      )}`
+        fbaSnapshot.importedAt)}`
     : "尚无可用的FBA API订单与库存快照，请检查Amazon授权和同步状态。";
 
   const topRows = (Array.isArray(demand.topSkus) ? demand.topSkus : [])
@@ -2317,7 +2318,8 @@ function renderAmazonStoreDashboard(payload) {
   const currentConnectionId = String(selectedShop?.connectionId || shopSelect?.value || "");
   if (shopSelect) {
     shopSelect.innerHTML = shops.length
-      ? shops.map((shop) => `<option value="${escapeHtml(shop.connectionId)}">${escapeHtml(shop.shopName)}${shop.hasSyncError ? "（同步异常）" : ""}</option>`).join("")
+      ? shops.map((shop) => `<option value="${escapeHtml(shop.connectionId)}">${escapeHtml(shop.shopName)}${shop.hasSyncError ? "（同步异常）" : ""}</option>`,
+          ).join("")
       : '<option value="">暂无已授权店铺</option>';
     shopSelect.value = currentConnectionId;
   }
@@ -2349,12 +2351,18 @@ function renderAmazonStoreDashboard(payload) {
   }
 
   renderAmazonMetricCards("amazonStoreDashboardSummary", [
-    { label: "总订单（FBA+FBM）", value: formatMetricNumber(summary.orderCount) },
-    { label: "总销量（FBA+FBM）", value: `${formatMetricNumber(summary.unitCount)} 件` },
-    { label: "FBA商品销售额", value: formatAmazonStoreCurrency(summary.fbaSalesAmount, currency) },
-    { label: "FBA订单", value: `${formatMetricNumber(summary.fbaOrderCount)} 单` },
-    { label: "FBA销量", value: `${formatMetricNumber(summary.fbaUnitCount)} 件` },
-    { label: "FBM待发货", value: `${formatMetricNumber(summary.fbmPendingUnitCount)} 件` },
+    { label: "总订单（FBA+FBM）", value: formatMetricNumber(summary.orderCount),
+    },
+    { label: "总销量（FBA+FBM）", value: `${formatMetricNumber(summary.unitCount)} 件`,
+    },
+    { label: "FBA商品销售额", value: formatAmazonStoreCurrency(summary.fbaSalesAmount, currency),
+    },
+    { label: "FBA订单", value: `${formatMetricNumber(summary.fbaOrderCount)} 单`,
+    },
+    { label: "FBA销量", value: `${formatMetricNumber(summary.fbaUnitCount)} 件`,
+    },
+    { label: "FBM待发货", value: `${formatMetricNumber(summary.fbmPendingUnitCount)} 件`,
+    },
   ]);
 
   const comparisonBox = $("amazonStoreDashboardComparison");
@@ -2438,11 +2446,16 @@ function renderAmazonStoreDashboard(payload) {
   );
 
   renderAmazonMetricCards("amazonStoreDashboardInventory", [
-    { label: "FBA库存SKU", value: inventory.available ? formatMetricNumber(inventory.skuCount) : "待开通权限" },
-    { label: "可售", value: inventory.available ? formatMetricNumber(inventory.fulfillableQty) : "-" },
-    { label: "入库中", value: inventory.available ? formatMetricNumber(inventory.inboundQty) : "-" },
-    { label: "预留", value: inventory.available ? formatMetricNumber(inventory.reservedQty) : "-" },
-    { label: "不可售", value: inventory.available ? formatMetricNumber(inventory.unfulfillableQty) : "-" },
+    { label: "FBA库存SKU", value: inventory.available ? formatMetricNumber(inventory.skuCount) : "待开通权限",
+    },
+    { label: "可售", value: inventory.available ? formatMetricNumber(inventory.fulfillableQty) : "-",
+    },
+    { label: "入库中", value: inventory.available ? formatMetricNumber(inventory.inboundQty) : "-",
+    },
+    { label: "预留", value: inventory.available ? formatMetricNumber(inventory.reservedQty) : "-",
+    },
+    { label: "不可售", value: inventory.available ? formatMetricNumber(inventory.unfulfillableQty) : "-",
+    },
   ]);
   const latestRun = payload.latestSyncRun;
   $("amazonStoreDashboardSyncStatus").textContent = latestRun
@@ -2459,7 +2472,8 @@ async function loadAmazonStoreDashboard(options = {}) {
   state.amazonStoreDashboardLoading = true;
   const shopSelect = $("amazonStoreDashboardShop");
   const daysSelect = $("amazonStoreDashboardDays");
-  const connectionId = String(options.connectionId || shopSelect?.value || state.amazonStoreDashboard?.selectedShop?.connectionId || "").trim();
+  const connectionId = String(options.connectionId || shopSelect?.value || state.amazonStoreDashboard?.selectedShop?.connectionId || "",
+  ).trim();
   const days = String(options.days || daysSelect?.value || state.amazonStoreDashboard?.days || "30").trim();
   try {
     const query = new URLSearchParams({ days });
@@ -2567,10 +2581,8 @@ function setupResponsiveTableLabels() {
         if (typeof node.matches === "function" && node.matches("table, tr, td, th")) {
           return true;
         }
-        return (
-          typeof node.querySelector === "function" &&
-          Boolean(node.querySelector("table, tr, td, th"))
-        );
+        return typeof node.querySelector === "function" &&
+          Boolean(node.querySelector("table, tr, td, th"));
       });
     });
     if (shouldHydrate) {
@@ -2749,8 +2761,8 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
   }
   if (targetId === "chinaOrderProcessing" && state.token) {
     Promise.all([
-      state.chinaOrderProcessingOrders.length ? Promise.resolve() : loadChinaOrderProcessingOrders(),
-    ]).catch((error) => showToast(error.message, true));
+      state.chinaOrderProcessingOrders.length ? Promise.resolve() : loadChinaOrderProcessingOrders()]).catch((error) => showToast(error.message, true),
+    );
     return;
   }
   if (targetId === "returnManagement" && state.token && !state.returnRecords.length) {
@@ -2758,15 +2770,16 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
     return;
   }
   if (targetId === "overseasPickingBatchManagement" && state.token) {
-    Promise.all([loadOverseasPickingBatches(), loadYamatoShipmentBatches()]).catch((error) => showToast(error.message, true));
+    Promise.all([loadOverseasPickingBatches(), loadYamatoShipmentBatches()]).catch((error) => showToast(error.message, true),
+    );
     return;
   }
   if (targetId === "overview") {
     if (!state.overviewDashboard) {
       withGlobalLoading(
         "系统看板加载中，请稍候...",
-        () => loadOverviewDashboardWithAutomaticFba(),
-      ).catch((error) => showToast(error.message, true));
+        () => loadOverviewDashboardWithAutomaticFba()).catch((error) => showToast(error.message, true),
+      );
       return;
     }
     const generatedAt = new Date(state.overviewDashboard.generatedAt || 0).getTime();
@@ -2836,9 +2849,12 @@ function ensureInventoryPanelUi() {
   }
   $("downloadAmazonRbLinkStockExcelBtn")?.remove();
   const amazonRbLinkStockButtons = [
-    { id: "downloadAmazonRbLinkStockStore1Btn", storeKey: "store-1", label: "rb链接库存下载-1号店" },
-    { id: "downloadAmazonRbLinkStockStore2Btn", storeKey: "store-2", label: "rb链接库存下载-2号店" },
-    { id: "downloadAmazonRbLinkStockArcBtn", storeKey: "arc", label: "rb链接库存下载-arc" },
+    { id: "downloadAmazonRbLinkStockStore1Btn", storeKey: "store-1", label: "rb链接库存下载-1号店",
+    },
+    { id: "downloadAmazonRbLinkStockStore2Btn", storeKey: "store-2", label: "rb链接库存下载-2号店",
+    },
+    { id: "downloadAmazonRbLinkStockArcBtn", storeKey: "arc", label: "rb链接库存下载-arc",
+    },
   ].map((config) => {
     let button = $(config.id);
     if (!button) {
@@ -3424,7 +3440,8 @@ function bindInputRules() {
   bindDigitInput("boxManageCodeInput", 3);
   bindShelfCodeInput("modalNewShelfCodeDigits");
   bindShelfCodeInput("shelfManageCodeInput");
-  bindPositiveIntegerInput("batchCollectInitialBoxNumber", { min: 1, max: 999999 });
+  bindPositiveIntegerInput("batchCollectInitialBoxNumber", { min: 1, max: 999999,
+  });
   bindPositiveIntegerInput("batchCollectBoxCount", { min: 1, max: 500 });
   bindBatchNoInput("batchCollectBatchNo");
 }
@@ -3620,7 +3637,8 @@ function renderUserSelectOptions() {
 
   if (editDepartmentEl) {
     const selected = editDepartmentEl.value || "china_warehouse";
-    const options = getDepartmentOptionsWithFallback().filter((item) => Number(item.status) === 1 || item.code === selected);
+    const options = getDepartmentOptionsWithFallback().filter((item) => Number(item.status) === 1 || item.code === selected,
+    );
     editDepartmentEl.innerHTML = options
       .map((item) => {
         const suffix = Number(item.status) === 1 ? "" : "（禁用）";
@@ -3635,8 +3653,7 @@ function renderUserSelectOptions() {
   if (editRoleEl) {
     const selected = editRoleEl.value || "employee";
     const options = getAssignableRoleOptions().filter(
-      (item) => Number(item.status) === 1 || item.code === selected,
-    );
+      (item) => Number(item.status) === 1 || item.code === selected);
     editRoleEl.innerHTML = options
       .map((item) => {
         const suffix = Number(item.status) === 1 ? "" : "（禁用）";
@@ -3913,8 +3930,7 @@ async function getCurrentBoxSkuQty(skuId, boxCode) {
   if (!normalizedBoxCode) return 0;
   const rows = await getSkuInventoryRows(skuId);
   const matched = rows.find(
-    (row) => String(row?.box?.boxCode || "").toUpperCase() === normalizedBoxCode,
-  );
+    (row) => String(row?.box?.boxCode || "").toUpperCase() === normalizedBoxCode);
   return Math.max(0, Number(matched?.qty ?? 0));
 }
 
@@ -3931,8 +3947,7 @@ function findBoxByAnyCode(raw) {
   if (!normalized) return null;
   return (
     (Array.isArray(state.boxes) ? state.boxes : []).find(
-      (box) => normalizeBoxCodeInput(box?.boxCode) === normalized,
-    ) || null
+      (box) => normalizeBoxCodeInput(box?.boxCode) === normalized) || null
   );
 }
 
@@ -4109,7 +4124,7 @@ function renderBoxContentQueryResult(box, rows) {
           <td>${renderMasterProductDetailLink(displayText(row?.product?.productId))}</td>
           <td>${escapeHtml(displayText(row?.product?.productName))}</td>
           <td>${escapeHtml(displayText(row?.qty))}</td>
-          <td>${index === 0 ? (renderBoxContentQueryActions(box) || '<span class="muted">-</span>') : ""}</td>
+          <td>${index === 0 ? renderBoxContentQueryActions(box) || '<span class="muted">-</span>' : ""}</td>
         </tr>
       `,
     )
@@ -4124,10 +4139,10 @@ async function archiveReleaseBox(boxId, boxCode) {
   );
   if (!ok) return null;
 
-  const result = await request(`/boxes/${boxId}/archive-release`, { method: "POST" });
+  const result = await request(`/boxes/${boxId}/archive-release`, { method: "POST",
+  });
   showToast(
-    `箱号 ${result?.releasedBoxCode || boxCode} 已释放，旧箱已归档为 ${result?.archivedBoxCode || "-"}`,
-  );
+    `箱号 ${result?.releasedBoxCode || boxCode} 已释放，旧箱已归档为 ${result?.archivedBoxCode || "-"}`);
   await reloadBoxesAfterManageMutation();
   return result;
 }
@@ -4135,7 +4150,9 @@ async function archiveReleaseBox(boxId, boxCode) {
 async function getShelfBoxQueryRows(shelf) {
   const boxes = (Array.isArray(state.boxes) ? state.boxes : [])
     .filter((box) => Number(box?.shelf?.id) === Number(shelf?.id))
-    .sort((a, b) => String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true }));
+    .sort((a, b) => String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true,
+      }),
+    );
 
   const rowsByBox = await Promise.all(
     boxes.map(async (box) => {
@@ -4290,7 +4307,8 @@ function renderStocktakePlanner() {
   if (!body || !summary) return;
 
   const tasks = [...(Array.isArray(state.stocktakeTasks) ? state.stocktakeTasks : [])].sort((a, b) =>
-    String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""), "en", { numeric: true }),
+    String(b?.createdAt || "").localeCompare(String(a?.createdAt || ""), "en", { numeric: true,
+    }),
   );
   const visibleTasks = tasks.slice(0, Math.max(state.stocktakeVisibleCount || 0, state.inventoryPageSize));
 
@@ -4320,9 +4338,9 @@ function renderStocktakePlanner() {
           <td>${escapeHtml(displayText(task?.confirmedByName) || "-")}</td>
           <td>
             <div class="action-row">
-              ${(task?.status === "pending" || task?.status === "confirming") ? `<button type="button" class="tiny-btn secondary" data-action="printStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">打印</button>` : ""}
-              ${(task?.status === "pending" || task?.status === "confirming") ? `<button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">删除</button>` : ""}
-              ${(task?.status === "pending" || task?.status === "confirming") ? `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>` : ""}
+              ${task?.status === "pending" || task?.status === "confirming" ? `<button type="button" class="tiny-btn secondary" data-action="printStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">打印</button>` : ""}
+              ${task?.status === "pending" || task?.status === "confirming" ? `<button type="button" class="tiny-btn danger" data-action="cancelStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">删除</button>` : ""}
+              ${task?.status === "pending" || task?.status === "confirming" ? `<button type="button" class="tiny-btn" data-action="confirmStocktakeTask" data-id="${escapeHtml(displayText(task?.id))}">确认</button>` : ""}
             </div>
           </td>
         </tr>
@@ -4799,8 +4817,7 @@ function maybeAutoLoadInventoryHome() {
     const body = document.body;
     const scrollHeight = Math.max(
       Number(doc?.scrollHeight || 0),
-      Number(body?.scrollHeight || 0),
-    );
+      Number(body?.scrollHeight || 0));
     const currentBottom = window.innerHeight + window.scrollY;
     if (currentBottom < scrollHeight - threshold) return;
   }
@@ -5067,7 +5084,9 @@ async function openPendingAmazonAppstoreAuthorization() {
   const shopSelect = $('amazonAppstoreShopId');
   const activeShops = [...state.shops]
     .filter((shop) => Number(shop.status ?? 1) === 1)
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN', { numeric: true }));
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN', { numeric: true,
+      }),
+    );
   shopSelect.innerHTML = activeShops
     .map((shop) => `<option value="${escapeHtml(shop.id)}">${escapeHtml(shop.name)}</option>`)
     .join('');
@@ -5214,7 +5233,8 @@ function buildInventoryDetailBoxRows(detail) {
           productName: currentProductName || null,
           qty: Number(box?.qty ?? 0),
           isCurrentProduct: true,
-        }];
+        },
+          ];
 
     const sortedItems = items
       .sort((a, b) => {
@@ -5296,7 +5316,8 @@ function renderInventoryHomeDetail(detail) {
   $("inventoryDetailTitle").textContent = "";
   $("inventoryDetailSubtitle").textContent = "";
   renderProductSummaryMeta("inventoryDetailMeta", detail?.product);
-  renderProductSkuTable(detail, { bodyId: "inventoryDetailSkuBody", selectId: "inventoryDetailFbaSkuId" });
+  renderProductSkuTable(detail, { bodyId: "inventoryDetailSkuBody", selectId: "inventoryDetailFbaSkuId",
+  });
   renderProductBoxTable(detail, {
     bodyId: "inventoryDetailBoxBody",
     actionRenderer: buildInventoryDetailBoxActionButtons,
@@ -5585,8 +5606,7 @@ function findSkuById(skuId) {
       (sku) => Number(sku.id) === Number(skuId),
     ) ||
     (Array.isArray(state.inventorySkus) ? state.inventorySkus : []).find(
-      (sku) => Number(sku.id) === Number(skuId),
-    ) ||
+      (sku) => Number(sku.id) === Number(skuId)) ||
     (Array.isArray(state.inventorySearchSkus) ? state.inventorySearchSkus : []).find(
       (sku) => Number(sku.id) === Number(skuId),
     ) ||
@@ -5714,7 +5734,8 @@ function renderSkuOptionsForSelect(selectId, placeholder) {
   if (!control) return;
 
   const rows = [...state.inventorySkus].sort((a, b) =>
-    String(a.sku || "").localeCompare(String(b.sku || ""), "en", { numeric: true }),
+    String(a.sku || "").localeCompare(String(b.sku || ""), "en", { numeric: true,
+    }),
   );
 
   if (String(control.tagName || "").toUpperCase() === "SELECT") {
@@ -5751,7 +5772,8 @@ function getKnownMasterProductsSorted() {
   const pushProduct = (productId, productName = "") => {
     const normalizedId = String(productId || "").trim();
     if (!normalizedId) return;
-    const current = productMap.get(normalizedId) || { productId: normalizedId, productName: "" };
+    const current = productMap.get(normalizedId) || { productId: normalizedId, productName: "",
+    };
     if (!current.productName && productName) {
       current.productName = String(productName || "").trim();
     }
@@ -5767,11 +5789,14 @@ function getKnownMasterProductsSorted() {
   (Array.isArray(state.masterProducts) ? state.masterProducts : []).forEach((item) => {
     pushProduct(item?.productId, item?.productName);
   });
-  pushProduct(state.inventoryHomeSelectedDetail?.product?.productId, state.inventoryHomeSelectedDetail?.product?.productName);
-  pushProduct(state.selectedMasterProductDetail?.product?.productId, state.selectedMasterProductDetail?.product?.productName);
+  pushProduct(state.inventoryHomeSelectedDetail?.product?.productId, state.inventoryHomeSelectedDetail?.product?.productName,
+  );
+  pushProduct(state.selectedMasterProductDetail?.product?.productId, state.selectedMasterProductDetail?.product?.productName,
+  );
 
   return [...productMap.values()].sort((a, b) =>
-    String(a.productId || "").localeCompare(String(b.productId || ""), "en", { numeric: true }),
+    String(a.productId || "").localeCompare(String(b.productId || ""), "en", { numeric: true,
+    }),
   );
 }
 
@@ -5859,19 +5884,25 @@ function resolveMoveProductProductId() {
 function getEnabledBrandsSorted() {
   return state.brands
     .filter((item) => Number(item.status) === 1)
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }));
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true,
+      }),
+    );
 }
 
 function getEnabledSkuTypesSorted() {
   return state.skuTypes
     .filter((item) => Number(item.status) === 1)
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }));
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true,
+      }),
+    );
 }
 
 function getEnabledShopsSorted() {
   return state.shops
     .filter((item) => Number(item.status) === 1)
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }));
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true,
+      }),
+    );
 }
 
 function renderBrandOptionsForSelect(selectId, placeholder, selectedValue = "") {
@@ -5941,7 +5972,8 @@ function renderBrandsTable() {
   const body = $("brandsBody");
   if (!body) return;
   const rows = [...state.brands].sort((a, b) =>
-    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
+    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true,
+    }),
   );
 
   body.innerHTML =
@@ -5967,8 +5999,7 @@ function renderBrandsTable() {
         </td>
       </tr>
     `;
-        },
-      )
+        })
       .join("") || '<tr><td colspan="2" class="muted">-</td></tr>';
 }
 
@@ -5976,7 +6007,8 @@ function renderSkuTypesTable() {
   const body = $("skuTypesBody");
   if (!body) return;
   const rows = [...state.skuTypes].sort((a, b) =>
-    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
+    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true,
+    }),
   );
 
   body.innerHTML =
@@ -6009,7 +6041,8 @@ function renderShopsTable() {
   const body = $("shopsBody");
   if (!body) return;
   const rows = [...state.shops].sort((a, b) =>
-    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
+    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true,
+    }),
   );
 
   body.innerHTML =
@@ -6018,6 +6051,9 @@ function renderShopsTable() {
         const itemId = String(item.id);
         const editing = state.shopEditingIds.has(itemId);
         const amazonConnection = state.amazonSpApiConnections.find(
+          (connection) => String(connection?.shop?.id || "") === itemId,
+        );
+        const rakutenConnection = state.rakutenRmsConnections.find(
           (connection) => String(connection?.shop?.id || "") === itemId,
         );
         return `
@@ -6038,13 +6074,19 @@ function renderShopsTable() {
           ${amazonConnection?.lastSyncError ? '<span class="muted">同步异常</span>' : ''}
         </td>
         <td>
+          <button class="tiny-btn ghost" data-action="rakutenRmsApi" data-id="${escapeHtml(item.id)}">
+            ${rakutenConnection ? (rakutenConnection.renewalDue ? "待续期" : Number(rakutenConnection.status) === 1 ? "已连接" : "已停用") : "未连接"}
+          </button>
+          ${rakutenConnection?.lastSyncError ? '<span class="muted">同步异常</span>' : ""}
+        </td>
+        <td>
           <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="3" class="muted">-</td></tr>';
+      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
 }
 
 async function loadAmazonSpApiConnections() {
@@ -6053,12 +6095,138 @@ async function loadAmazonSpApiConnections() {
   return state.amazonSpApiConnections;
 }
 
+async function loadRakutenRmsConnections() {
+  state.rakutenRmsConnections = (await request("/rakuten-rms-api/connections")) || [];
+  renderShopsTable();
+  return state.rakutenRmsConnections;
+}
+
+function renderRakutenRmsSyncRuns() {
+  const body = $("rakutenRmsSyncRunsBody");
+  if (!body) return;
+  if (state.rakutenRmsSyncRunsLoading) {
+    body.innerHTML = '<tr><td colspan="5" class="muted">正在读取同步记录...</td></tr>';
+    return;
+  }
+  const rows = Array.isArray(state.rakutenRmsSyncRuns) ? state.rakutenRmsSyncRuns : [];
+  const statusLabels = {
+    running: "同步中",
+    success: "成功",
+    partial: "部分成功",
+    failed: "失败",
+  };
+  body.innerHTML =
+    rows
+      .map((run) => {
+        const status = String(run?.status || "");
+        const result = `取得 ${formatOverviewNumber(run?.fetchedCount)} / 新增 ${formatOverviewNumber(run?.createdCount)} / 更新 ${formatOverviewNumber(run?.updatedCount)} / 跳过 ${formatOverviewNumber(run?.skippedCount)} / 待人工通知 ${formatOverviewNumber(run?.manualActionCount)}`;
+        const errorMessage = String(run?.errorMessage || "").trim();
+        return `<tr>
+      <td>${escapeHtml(displayText(run?.startedAt ? formatDate(run.startedAt) : null))}</td>
+      <td>${escapeHtml(statusLabels[status] || displayText(status))}</td>
+      <td>${escapeHtml(result)}</td>
+      <td title="${escapeHtml(errorMessage)}">${escapeHtml(errorMessage || "-")}</td>
+      <td>${run?.rollbackAvailable ? `<button type="button" class="tiny-btn danger" data-action="rollbackRakutenRmsSync" data-id="${escapeHtml(run.id)}">回滚</button>` : run?.rolledBackAt ? "已回滚" : "-"}</td>
+    </tr>`;
+      })
+      .join("") || '<tr><td colspan="5" class="muted">暂无同步记录</td></tr>';
+}
+
+function renderRakutenRmsSyncPreview() {
+  const node = $("rakutenRmsSyncPreview");
+  const confirmButton = $("rakutenRmsSyncBtn");
+  if (!node || !confirmButton) return;
+  const preview = state.rakutenRmsSyncPreview;
+  if (!preview) {
+    node.textContent = "正式同步前必须先生成预览并人工确认。首次同步固定为最近1天、最多5张订单。";
+    confirmButton.classList.add("hidden");
+    return;
+  }
+  const summary = preview.summary || {};
+  const actionLabels = {
+    create: "新增",
+    update: "更新",
+    claim: "认领CSV",
+    frozen: "冻结",
+    manual_action: "待日本人工通知中国",
+    excluded: "已删除并禁止重新拉取",
+    conflict: "冲突",
+  };
+  const details = (Array.isArray(preview.items) ? preview.items : [])
+    .slice(0, 20)
+    .map((item) => {
+      const changedFields =
+        Array.isArray(item.changedFields) && item.changedFields.length
+          ? `；变更字段：${item.changedFields.join(", ")}`
+          : "";
+      return `${item.orderId} / ${item.skuCode || "-"}：${actionLabels[item.action] || item.action}${item.reason ? `（${item.reason}）` : ""}${changedFields}`;
+    })
+    .join("；");
+  node.textContent = `预览结果：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。${details ? ` ${details}` : ""}`;
+  confirmButton.classList.toggle("hidden", !preview.canConfirm);
+}
+
+async function loadRakutenRmsSyncRuns(connectionId) {
+  const normalizedId = String(connectionId || "").trim();
+  if (!normalizedId) {
+    state.rakutenRmsSyncRuns = [];
+    state.rakutenRmsSyncRunsLoading = false;
+    renderRakutenRmsSyncRuns();
+    return [];
+  }
+  state.rakutenRmsSyncRunsLoading = true;
+  renderRakutenRmsSyncRuns();
+  try {
+    const rows = await request(`/rakuten-rms-api/sync-runs?connectionId=${encodeURIComponent(normalizedId)}&limit=10`);
+    if (String($("rakutenRmsConnectionId")?.value || "") !== normalizedId) return [];
+    state.rakutenRmsSyncRuns = Array.isArray(rows) ? rows : [];
+    return state.rakutenRmsSyncRuns;
+  } finally {
+    if (String($("rakutenRmsConnectionId")?.value || "") === normalizedId) {
+      state.rakutenRmsSyncRunsLoading = false;
+      renderRakutenRmsSyncRuns();
+    }
+  }
+}
+
+function openRakutenRmsConnectionModal(shopId) {
+  const shop = state.shops.find((item) => String(item.id) === String(shopId));
+  if (!shop) throw new Error("店铺不存在");
+  const connection = state.rakutenRmsConnections.find((item) => String(item?.shop?.id || "") === String(shopId));
+  $("rakutenRmsConnectionId").value = connection?.id || "";
+  $("rakutenRmsShopId").value = String(shopId);
+  $("rakutenRmsShopName").value = shop.name || "";
+  $("rakutenRmsServiceSecret").value = "";
+  $("rakutenRmsLicenseKey").value = "";
+  $("rakutenRmsLicenseExpiresAt").value = connection?.licenseExpiresAt
+    ? String(connection.licenseExpiresAt).slice(0, 10)
+    : "";
+  $("rakutenRmsStatus").value = String(connection?.status ?? 1);
+  $("rakutenRmsSyncOrders").checked = connection?.syncOrders !== false;
+  $("rakutenRmsTestBtn").classList.toggle("hidden", !connection);
+  $("rakutenRmsPreviewBtn").classList.toggle("hidden", !connection || Number(connection.status) !== 1);
+  state.rakutenRmsSyncPreview = null;
+  renderRakutenRmsSyncPreview();
+  $("rakutenRmsConnectionTitle").textContent = `${shop.name} / 乐天 RMS API连接`;
+  $("rakutenRmsConnectionMeta").textContent = connection
+    ? `License到期：${connection.licenseExpiresAt ? formatDate(connection.licenseExpiresAt) : "未登记"} / 最后成功：${
+        connection.lastSuccessfulSyncAt ? formatDate(connection.lastSuccessfulSyncAt) : "尚未同步"
+      } / 定时同步：${connection.scheduledSyncEnabled ? `已启用（${connection.scheduledSyncTimezone}）` : "服务器未启用"}${connection.lastSyncError ? ` / 错误：${connection.lastSyncError}` : ""}`
+    : "尚未连接。请在乐天 RMS 的 WEB API 服务中启用 searchOrder 和 getOrder 后填写凭证。";
+  state.rakutenRmsSyncRuns = [];
+  state.rakutenRmsSyncRunsLoading = false;
+  renderRakutenRmsSyncRuns();
+  openModal("rakutenRmsConnectionModal");
+  if (connection) {
+    loadRakutenRmsSyncRuns(connection.id).catch((error) => showToast(error.message, true));
+  }
+}
+
 function openAmazonSpApiConnectionModal(shopId) {
   const shop = state.shops.find((item) => String(item.id) === String(shopId));
   if (!shop) throw new Error('店铺不存在');
   const connection = state.amazonSpApiConnections.find(
-    (item) => String(item?.shop?.id || '') === String(shopId),
-  );
+    (item) => String(item?.shop?.id || '') === String(shopId));
   $('amazonSpApiConnectionId').value = connection?.id || '';
   $('amazonSpApiShopId').value = String(shopId);
   $('amazonSpApiShopName').value = shop.name || '';
@@ -6116,7 +6284,8 @@ async function openMfaSetupModal() {
     showToast('当前账号已经启用MFA');
     return;
   }
-  const result = await request('/auth/me/mfa/setup', { method: 'POST', body: '{}' });
+  const result = await request('/auth/me/mfa/setup', { method: 'POST', body: '{}',
+  });
   $('mfaSetupAccount').value = `Fulangke WMS / ${state.me?.username || ''}`;
   $('mfaSetupSecret').value = String(result?.secret || '');
   $('mfaSetupCode').value = '';
@@ -6144,13 +6313,15 @@ function buildAmazonAppstoreOAuthPayload(pending) {
 
 function getShelvesSortedForManage() {
   return [...(Array.isArray(state.shelves) ? state.shelves : [])].sort((a, b) =>
-    String(a?.shelfCode || "").localeCompare(String(b?.shelfCode || ""), "en", { numeric: true }),
+    String(a?.shelfCode || "").localeCompare(String(b?.shelfCode || ""), "en", { numeric: true,
+    }),
   );
 }
 
 function getBoxesSortedForManage() {
   return [...(Array.isArray(state.boxManageRows) ? state.boxManageRows : [])].sort((a, b) =>
-    String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true }),
+    String(a?.boxCode || "").localeCompare(String(b?.boxCode || ""), "en", { numeric: true,
+    }),
   );
 }
 
@@ -6711,7 +6882,9 @@ function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
 function getEnabledBoxesSorted() {
   return state.boxes
     .filter((box) => Number(box.status) === 1)
-    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true }));
+    .sort((a, b) => String(a.boxCode).localeCompare(String(b.boxCode), "en", { numeric: true,
+      }),
+    );
 }
 
 function normalizeBoxCodeInput(raw) {
@@ -6733,9 +6906,7 @@ function resolveEnabledBoxCode(raw) {
 function findEnabledBoxByCode(raw) {
   const normalized = normalizeBoxCodeInput(raw);
   if (!normalized) return null;
-  return (
-    getEnabledBoxesSorted().find((box) => normalizeBoxCodeInput(box?.boxCode) === normalized) || null
-  );
+  return getEnabledBoxesSorted().find((box) => normalizeBoxCodeInput(box?.boxCode) === normalized) || null;
 }
 
 function upsertEnabledBox(box) {
@@ -6773,7 +6944,9 @@ async function resolveEnabledBoxCodeLive(raw) {
 function getEnabledShelvesSorted() {
   return state.shelves
     .filter((shelf) => Number(shelf.status) === 1)
-    .sort((a, b) => String(a.shelfCode).localeCompare(String(b.shelfCode), "en", { numeric: true }));
+    .sort((a, b) => String(a.shelfCode).localeCompare(String(b.shelfCode), "en", { numeric: true,
+      }),
+    );
 }
 
 function formatShelfCodeWithName(shelf) {
@@ -6922,7 +7095,9 @@ async function refreshMoveProductOldBoxOptionsByProduct() {
 
   const rows = (await request(`/inventory/master-product-boxes?productId=${encodeURIComponent(productId)}`))
     .filter((row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode)
-    .sort((a, b) => String(a.box.boxCode).localeCompare(String(b.box.boxCode), "en", { numeric: true }));
+    .sort((a, b) => String(a.box.boxCode).localeCompare(String(b.box.boxCode), "en", { numeric: true,
+      }),
+    );
   const hasMultiple = rows.length > 1;
 
   const prev = resolveEnabledBoxCode(select.value);
@@ -6968,8 +7143,7 @@ async function loadProductEditRequests({ reset = true } = {}) {
   const targetPage = reset ? 1 : state.skuEditRequestsPage;
   try {
     const result = await request(
-      `/sku-edit-requests?page=${targetPage}&pageSize=${state.skuEditRequestsPageSize}`,
-    );
+      `/sku-edit-requests?page=${targetPage}&pageSize=${state.skuEditRequestsPageSize}`);
     const items = Array.isArray(result?.items) ? result.items : [];
     state.skuEditRequests = reset ? items : state.skuEditRequests.concat(items);
     state.skuEditRequestsHasMore = Boolean(result?.hasMore);
@@ -7083,8 +7257,8 @@ async function loadMasterProductExportFilterOptions(force = false) {
     "color",
     "bagType",
     "patternType",
-    "size",
-  ].forEach((field) => renderMasterProductExportOptions(field, state.masterProductExportFilterOptions?.[field]));
+    "size"].forEach((field) => renderMasterProductExportOptions(field, state.masterProductExportFilterOptions?.[field]),
+  );
   return state.masterProductExportFilterOptions;
 }
 
@@ -7093,11 +7267,13 @@ function renderMasterProductDetailMeta(product) {
 }
 
 function renderMasterProductSkuTable(detail) {
-  renderProductSkuTable(detail, { bodyId: "masterProductSkuBody", selectId: "masterProductFbaSkuId" });
+  renderProductSkuTable(detail, { bodyId: "masterProductSkuBody", selectId: "masterProductFbaSkuId",
+  });
 }
 
 function renderMasterProductBoxTable(detail) {
-  renderProductBoxTable(detail, { bodyId: "masterProductBoxBody", actionPrefix: "MasterProduct" });
+  renderProductBoxTable(detail, { bodyId: "masterProductBoxBody", actionPrefix: "MasterProduct",
+  });
 }
 
 function renderMasterProductDetail(detail) {
@@ -7436,13 +7612,13 @@ function buildMasterProductExportPayload() {
     "color",
     "bagType",
     "patternType",
-    "size",
-  ].forEach((field) => {
+    "size"].forEach((field) => {
     const value = String($(`masterProductExport_${field}`)?.value || "").trim();
     if (value) {
       payload[field] = value;
     }
-  });
+  },
+  );
   ["stockQtyMin", "stockQtyMax"].forEach((field) => {
     const raw = String($(`masterProductExport_${field}`)?.value || "").trim();
     if (!raw) return;
@@ -7577,7 +7753,8 @@ async function submitInventoryDetailInbound() {
     throw new Error("请先选择主商品");
   }
   const rawBoxCode = $("inventoryDetailInboundBoxCode").value;
-  const boxCode = await validateInventoryDetailInboundBoxInput(rawBoxCode, { normalizeInput: true });
+  const boxCode = await validateInventoryDetailInboundBoxInput(rawBoxCode, { normalizeInput: true,
+  });
   if (!boxCode) {
     throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
   }
@@ -7785,8 +7962,7 @@ async function loadBrands() {
   state.brands = brands;
   const latestIds = new Set((Array.isArray(brands) ? brands : []).map((item) => String(item.id)));
   state.brandEditingIds = new Set(
-    [...state.brandEditingIds].filter((id) => latestIds.has(String(id))),
-  );
+    [...state.brandEditingIds].filter((id) => latestIds.has(String(id))));
   renderBrandOptionsForSelect("modalNewBrand", "请选择品牌");
   renderBrandOptionsForSelect("editBrand", "请选择品牌");
   renderBrandsTable();
@@ -7797,8 +7973,7 @@ async function loadSkuTypes() {
   state.skuTypes = skuTypes;
   const latestIds = new Set((Array.isArray(skuTypes) ? skuTypes : []).map((item) => String(item.id)));
   state.skuTypeEditingIds = new Set(
-    [...state.skuTypeEditingIds].filter((id) => latestIds.has(String(id))),
-  );
+    [...state.skuTypeEditingIds].filter((id) => latestIds.has(String(id))));
   renderSkuTypeOptionsForSelect("modalNewType", "请选择类型");
   renderSkuTypeOptionsForSelect("editType", "请选择类型");
   renderSkuTypesTable();
@@ -7809,8 +7984,7 @@ async function loadShops() {
   state.shops = shops;
   const latestIds = new Set((Array.isArray(shops) ? shops : []).map((item) => String(item.id)));
   state.shopEditingIds = new Set(
-    [...state.shopEditingIds].filter((id) => latestIds.has(String(id))),
-  );
+    [...state.shopEditingIds].filter((id) => latestIds.has(String(id))));
   renderShopOptionsForSelect("modalNewShop", "请选择店铺");
   renderShopOptionsForSelect("editShop", "请选择店铺");
   renderShopsTable();
@@ -7821,8 +7995,7 @@ async function loadShelves() {
   state.shelves = shelves;
   const latestIds = new Set((Array.isArray(shelves) ? shelves : []).map((item) => String(item.id)));
   state.shelfEditingIds = new Set(
-    [...state.shelfEditingIds].filter((id) => latestIds.has(String(id))),
-  );
+    [...state.shelfEditingIds].filter((id) => latestIds.has(String(id))));
   $("statShelves").textContent = shelves.length;
 
   renderShelfOptionsForSelect("newBoxShelfId", "请选择货架号");
@@ -8000,8 +8173,7 @@ function renderBatchInboundUploadOptions() {
   const options = waitingUploadOrders
     .map(
       (order) =>
-        `<option value="${escapeHtml(order.id)}">${escapeHtml(order.orderNo)}</option>`,
-    )
+        `<option value="${escapeHtml(order.id)}">${escapeHtml(order.orderNo)}</option>`)
     .join("");
   select.innerHTML = waitingUploadOrders.length
     ? `<option value="">请选择入库单</option>${options}`
@@ -8250,8 +8422,7 @@ function renderBatchInboundDetail(detail) {
         <div>状态：${escapeHtml(getBatchInboundStatusText(detail.status, detail))}</div>
         <div>采集范围：${escapeHtml(formatBatchRange(detail))}</div>
         <div>明细进度：${escapeHtml(detail.confirmedCount ?? 0)} / ${escapeHtml(
-          detail.itemCount ?? 0,
-        )}</div>
+          detail.itemCount ?? 0)}</div>
       </div>
       <div class="batch-detail-actions">${headerActions}</div>
     </div>
@@ -8291,7 +8462,8 @@ async function loadBatchInboundOrders({ keepSelection = true } = {}) {
     return;
   }
 
-  await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
+  await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
+  });
 }
 
 async function loadBatchInboundOrderDetail(orderId, { silent = false } = {}) {
@@ -8691,7 +8863,32 @@ function renderRakutenTrackingClearanceStatus(item) {
 function renderRakutenTrackingStatusSummary(summary) {
   const node = $("rakutenTrackingStatusSummary");
   if (!node) return;
-  node.textContent = "";
+  const pendingOrderIds = new Set(
+    state.orders
+      .filter((item) => item?.rmsManualActionDetectedAt && !item?.rmsManualActionResolvedAt)
+      .map((item) => String(item?.orderId || item?.id || ""))
+      .filter(Boolean),
+  );
+  node.textContent = pendingOrderIds.size ? `⚠ 待日本人工通知中国：${pendingOrderIds.size} 单` : "";
+  node.classList.toggle("amazon-state-warning", pendingOrderIds.size > 0);
+}
+
+function renderRakutenXiyaManualAction(item) {
+  if (!item?.rmsManualActionDetectedAt) return '<span class="muted">-</span>';
+  const typeLabel = item.rmsManualActionType === "cancel" ? "乐天已取消" : "乐天订单有更新";
+  const changedFields = Array.isArray(item.rmsManualActionChangedFields)
+    ? item.rmsManualActionChangedFields.join(", ")
+    : "";
+  if (item.rmsManualActionResolvedAt) {
+    const resolvedBy = String(item.rmsManualActionResolvedBy || "").trim();
+    const resolvedText = `${resolvedBy ? `${resolvedBy} / ` : ""}${formatDate(item.rmsManualActionResolvedAt)}`;
+    return `<span class="muted" title="${escapeHtml(`${typeLabel}；${changedFields}`)}">已通知中国（${escapeHtml(resolvedText)}）</span>`;
+  }
+  const title = `${typeLabel}。系统不会自动修改或取消 Xiya 订单，请日本操作人员人工通知中国。${changedFields ? ` 变化字段：${changedFields}` : ""}`;
+  return `<div class="rakuten-xiya-manual-alert" title="${escapeHtml(title)}">
+    <span>${escapeHtml(typeLabel)}：请人工通知中国</span>
+    <button type="button" class="tiny-btn danger" data-action="resolveRakutenXiyaManualAction" data-id="${escapeHtml(item.id)}" data-order-id="${escapeHtml(item.orderId || "")}">已通知中国</button>
+  </div>`;
 }
 
 function renderOrdersTable() {
@@ -8703,7 +8900,7 @@ function renderOrdersTable() {
   const list = state.orders.slice(0, visibleCount);
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="${canEdit ? 16 : 15}" class="muted">暂无订单数据</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${canEdit ? 17 : 16}" class="muted">暂无订单数据</td></tr>`;
     updateRakutenOrdersSelectAll();
     updateRakutenBatchDeleteButtonState();
     return;
@@ -8745,6 +8942,7 @@ function renderOrdersTable() {
         <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
         <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         <td>${renderRakutenTrackingClearanceStatus(item)}</td>
+        <td>${renderRakutenXiyaManualAction(item)}</td>
         <td>${escapeHtml(formatDate(item.shipmentNoRegisteredAt))}</td>
         ${
           canEdit
@@ -8755,8 +8953,7 @@ function renderOrdersTable() {
         }
       </tr>
     `;
-      },
-    )
+      })
     .join("");
   updateRakutenOrdersSelectAll();
   updateRakutenBatchDeleteButtonState();
@@ -8833,8 +9030,7 @@ function buildRakutenOrderDetailFields(item) {
   const postalCode =
     joinRakutenParts(
       [getRakutenRawValue(item, "送付先郵便番号1"), getRakutenRawValue(item, "送付先郵便番号2")],
-      "-",
-    ) || item?.shippingPostalCode || "";
+      "-") || item?.shippingPostalCode || "";
   const address1 =
     joinRakutenParts([getRakutenRawValue(item, "送付先住所都道府県"), getRakutenRawValue(item, "送付先住所郡市区")]) ||
     joinRakutenParts([item?.shippingPrefecture, item?.shippingCity]) ||
@@ -8907,11 +9103,13 @@ function buildAmazonOrderDetailFields(item) {
   const phone = getAmazonRawValue(item, "buyer-phone-number") || item?.buyerPhoneNumber || "";
   const postalCode = getAmazonRawValue(item, "ship-postal-code") || item?.shipPostalCode || "";
   const address1 = joinRakutenParts(
-    [getAmazonRawValue(item, "ship-state") || item?.shipState, getAmazonRawValue(item, "ship-address-1") || item?.shipAddress1],
+    [getAmazonRawValue(item, "ship-state") || item?.shipState, getAmazonRawValue(item, "ship-address-1") || item?.shipAddress1,
+    ],
     " ",
   );
   const address2 = joinRakutenParts(
-    [getAmazonRawValue(item, "ship-address-2") || item?.shipAddress2, getAmazonRawValue(item, "ship-address-3") || item?.shipAddress3],
+    [getAmazonRawValue(item, "ship-address-2") || item?.shipAddress2, getAmazonRawValue(item, "ship-address-3") || item?.shipAddress3,
+    ],
     " ",
   );
 
@@ -9047,8 +9245,7 @@ function setOrderEditShipmentOnlyMode(enabled) {
     "orderEditSource",
     "orderEditId",
     "orderEditShipmentCompany",
-    "orderEditShipmentNo",
-  ]);
+    "orderEditShipmentNo"]);
   document.querySelectorAll("#orderEditForm input, #orderEditForm textarea").forEach((node) => {
     node.disabled = Boolean(enabled) && !editableIds.has(node.id);
   });
@@ -9238,7 +9435,8 @@ function openOrderEditModal(source, id) {
   setOrderEditFieldValue("orderEditMallName", item.mallName || (isAmazon ? "亚马逊" : ""));
   setOrderEditFieldValue("orderEditShopName", isAmazon ? item.resolvedShopName || item.shopName : item.shopName);
   setOrderEditProductMeta(item.resolvedProductId || (!isAmazon ? item.skuCode : ""), item.resolvedProductName || "");
-  setOrderEditFieldValue("orderEditDispatchMode", formatOrderEditDispatchMode(resolveOrderEditDispatchMode(item, normalizedSource)));
+  setOrderEditFieldValue("orderEditDispatchMode", formatOrderEditDispatchMode(resolveOrderEditDispatchMode(item, normalizedSource)),
+  );
   setOrderEditFieldValue("orderEditRecipientName", isAmazon ? item.recipientName : item.shippingName);
   setOrderEditFieldValue("orderEditPhone", isAmazon ? item.buyerPhoneNumber : item.shippingPhone);
   setOrderEditFieldValue("orderEditPostalCode", isAmazon ? item.shipPostalCode : item.shippingPostalCode);
@@ -9441,8 +9639,7 @@ function buildOrderSearchRowsHtml(rows, emptyText) {
           <td>${escapeHtml(displayText(item.shipmentNo))}</td>
         </tr>
       `;
-      },
-    )
+      })
     .join("");
 }
 
@@ -9453,7 +9650,8 @@ async function openOrderSearchOrderDetail(source, id) {
     throw new Error("缺少订单详情标识");
   }
 
-  const item = await request(`/orders/detail/${encodeURIComponent(normalizedSource)}/${encodeURIComponent(normalizedId)}`);
+  const item = await request(`/orders/detail/${encodeURIComponent(normalizedSource)}/${encodeURIComponent(normalizedId)}`,
+  );
   if (normalizedSource === "rakuten") {
     openRakutenOrderDetailModalFromItem(item);
     return;
@@ -9887,8 +10085,7 @@ function renderAmazonOrdersTable() {
         }
       </tr>
     `;
-      },
-    )
+      })
     .join("");
   updateAmazonOrdersSelectAll();
   updateAmazonBatchDeleteButtonState();
@@ -9942,8 +10139,7 @@ function renderManualOrdersTable() {
         }
       </tr>
     `;
-      },
-    )
+      })
     .join("");
   updateManualOrdersSelectAll();
   updateManualOrderBatchDeleteButtonState();
@@ -10058,8 +10254,7 @@ async function loadMoreChinaOrderProcessingExportedOrders() {
   try {
     const offset = Number(state.chinaOrderProcessingExportedOffset || 0);
     const list = await request(
-      `/orders/china-orders?scope=exported&limit=${state.inventoryPageSize}&offset=${offset}`,
-    );
+      `/orders/china-orders?scope=exported&limit=${state.inventoryPageSize}&offset=${offset}`);
     const rows = Array.isArray(list) ? list : [];
     state.chinaOrderProcessingExportedOrders = [...state.chinaOrderProcessingExportedOrders, ...rows];
     state.chinaOrderProcessingExportedOffset += rows.length;
@@ -10190,8 +10385,7 @@ async function downloadChinaOrderProcessingOrders() {
   const fileName = await downloadAuthorizedFile(
     "/orders/china-orders/export-excel",
     {},
-    "中国订单处理一览.xlsx",
-  );
+    "中国订单处理一览.xlsx");
   showToast(`已下载 ${fileName}`);
 }
 
@@ -10435,8 +10629,7 @@ function renderOverseasPickingBatchItems() {
                 return `<div>${escapeHtml(displayText(boxQty))} → <span class="picking-stock-after">${escapeHtml(
                   displayText(remainingQty),
                 )}</span></div>`;
-              },
-            )
+              })
             .join("")
         : '<div>-</div>';
       return `
@@ -10741,7 +10934,8 @@ function renderOverseasPickingBatchOrders() {
       if (canRemoveFromBatch) {
         actionButtons.push(`<button type="button" class="tiny-btn" data-action="removeOverseasOrderFromBatch" data-item-id="${escapeHtml(
           item.itemId,
-        )}" data-order-id="${escapeHtml(item.orderId || "")}" data-product-id="${escapeHtml(item.productId || "")}">踢出本批次发货</button>`);
+        )}" data-order-id="${escapeHtml(item.orderId || "")}" data-product-id="${escapeHtml(item.productId || "")}">踢出本批次发货</button>`,
+        );
       }
       const orderCell =
         item.source === "rakuten"
@@ -11019,8 +11213,7 @@ async function submitOverseasPickingScan(scanRequest = null) {
   await loadOverseasPickingBatchDetail(detail.id);
   scrollOverseasPickingBatchItemsToTop();
   showToast(
-    `产品ID ${result.productId || rawValue} 已拣 ${result.pickedQty}/${result.requestedQty}`,
-  );
+    `产品ID ${result.productId || rawValue} 已拣 ${result.pickedQty}/${result.requestedQty}`);
   focusOverseasPickingScanInput();
 }
 
@@ -11236,8 +11429,7 @@ async function previewYamatoShipmentPageByProductId(batchId, productId) {
     {
       method: "POST",
       body: JSON.stringify({ productId }),
-    },
-  );
+    });
 }
 
 async function directPrintYamatoShipmentLabelByProductId(batchId, productId) {
@@ -11246,8 +11438,7 @@ async function directPrintYamatoShipmentLabelByProductId(batchId, productId) {
     {
       method: "POST",
       body: JSON.stringify({ productId }),
-    },
-  );
+    });
 }
 
 async function queueYamatoShipmentLabelByProductId(batchId, productId, options = {}) {
@@ -11256,8 +11447,7 @@ async function queueYamatoShipmentLabelByProductId(batchId, productId, options =
     {
       method: "POST",
       body: JSON.stringify({ productId, ...options }),
-    },
-  );
+    });
 }
 
 async function requeueYamatoShipmentLabelByProductId(batchId, productId, options = {}) {
@@ -11266,8 +11456,7 @@ async function requeueYamatoShipmentLabelByProductId(batchId, productId, options
     {
       method: "POST",
       body: JSON.stringify({ productId, ...options }),
-    },
-  );
+    });
 }
 
 async function getYamatoPrintJobStatus(jobId) {
@@ -11474,7 +11663,8 @@ function renderYamatoMergedScanSession() {
 
   const remainingProducts = session.products
     .filter((item) => Number(item.scannedQty || 0) < Number(item.quantity || 0))
-    .map((item) => `${item.productId}${item.productName ? ` ${item.productName}` : ""} ×${Number(item.quantity || 0) - Number(item.scannedQty || 0)}`);
+    .map((item) => `${item.productId}${item.productName ? ` ${item.productName}` : ""} ×${Number(item.quantity || 0) - Number(item.scannedQty || 0)}`,
+    );
   summary.textContent = remainingProducts.length
     ? `该面单包含多个产品，请继续扫码：${remainingProducts.join("、")}`
     : "该面单产品已全部确认，正在打印...";
@@ -11726,7 +11916,8 @@ async function loadAmazonDeletedOrders() {
         <td>${escapeHtml(displayText(item.orderItemId))}</td>
         <td>${item.orderItemId ? "单条明细" : "整个订单"}</td>
         <td><button type="button" class="ghost compact-btn" data-action="restoreAmazonDeletedOrder" data-id="${escapeHtml(item.id)}">恢复</button></td>
-      </tr>`).join("")
+      </tr>`,
+        ).join("")
     : '<tr><td colspan="5" class="muted">暂无已删除的同步排除记录</td></tr>';
 }
 
@@ -11770,7 +11961,8 @@ async function downloadAmazonShipmentConfirmationTxt(days) {
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = href;
-  link.download = resolveDownloadFileName(response, `amazon_shipment_confirmation_${formatDateForFilename(new Date())}.txt`);
+  link.download = resolveDownloadFileName(response, `amazon_shipment_confirmation_${formatDateForFilename(new Date())}.txt`,
+  );
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -11790,7 +11982,8 @@ async function downloadRakutenShipmentConfirmationCsv(days, options = {}) {
   const href = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = href;
-  link.download = resolveDownloadFileName(response, `rakuten_shipment_confirmation_${formatDateForFilename(new Date())}.csv`);
+  link.download = resolveDownloadFileName(response, `rakuten_shipment_confirmation_${formatDateForFilename(new Date())}.csv`,
+  );
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -12137,8 +12330,7 @@ function syncSelectedFbaIds() {
       .map((item) => String(item.id)),
   );
   state.selectedFbaIds = new Set(
-    Array.from(state.selectedFbaIds).filter((id) => selectableIds.has(String(id))),
-  );
+    Array.from(state.selectedFbaIds).filter((id) => selectableIds.has(String(id))));
 }
 
 function syncSelectedAmazonOrderIds() {
@@ -12348,8 +12540,7 @@ async function quickOutboundOne(skuId, boxCode) {
   await loadFbaPendingSummary();
   const rows = await getSkuInventoryRows(skuId);
   const matched = rows.find(
-    (row) => String(row?.box?.boxCode || "").toUpperCase() === normalizedBoxCode,
-  );
+    (row) => String(row?.box?.boxCode || "").toUpperCase() === normalizedBoxCode);
   const currentQty = Math.max(0, Number(matched?.qty ?? 0));
   const boxId = Number(matched?.box?.id ?? 0);
   const pendingQty = boxId > 0 ? getFbaPendingQtyByBoxSku(boxId, skuId) : 0;
@@ -12383,7 +12574,8 @@ async function submitAdjustForm() {
     throw new Error("请选择箱号");
   }
   if (direction === "inbound") {
-    boxCode = await validateAdjustBoxInput(rawBoxCode, { normalizeInput: true });
+    boxCode = await validateAdjustBoxInput(rawBoxCode, { normalizeInput: true,
+    });
     if (!boxCode) {
       throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
     }
@@ -12397,10 +12589,12 @@ async function submitAdjustForm() {
     $("adjustQty").dataset.maxQty = String(latestQty);
 
     if (latestQty <= 0) {
-      throw new Error("\u5f53\u524d\u7bb1\u53f7\u8be5SKU\u53ef\u7528\u5e93\u5b58\u4e3a0\uff0c\u4e0d\u80fd\u751f\u6210FBA\u8865\u8d27\u7533\u8bf7\u5355");
+      throw new Error("\u5f53\u524d\u7bb1\u53f7\u8be5SKU\u53ef\u7528\u5e93\u5b58\u4e3a0\uff0c\u4e0d\u80fd\u751f\u6210FBA\u8865\u8d27\u7533\u8bf7\u5355",
+      );
     }
     if (qty > latestQty) {
-      throw new Error(`FBA\u8865\u8d27\u6570\u91cf\u4e0d\u80fd\u5927\u4e8e\u5f53\u524d\u7bb1\u53f7\u8be5SKU\u53ef\u7528\u6570\u91cf\uff08${latestQty}\uff09`);
+      throw new Error(`FBA\u8865\u8d27\u6570\u91cf\u4e0d\u80fd\u5927\u4e8e\u5f53\u524d\u7bb1\u53f7\u8be5SKU\u53ef\u7528\u6570\u91cf\uff08${latestQty}\uff09`,
+      );
     }
   }
   if (reason && reason.length > 10) {
@@ -12525,8 +12719,7 @@ async function submitMoveBoxShelfForm() {
 
   const targetShelfCode = resolveEnabledShelfCode(
     $("moveShelfTargetCode").value,
-    sourceBox?.shelf?.id ?? null,
-  );
+    sourceBox?.shelf?.id ?? null);
   if (!targetShelfCode) {
     throw new Error("请选择目标货架号");
   }
@@ -12534,8 +12727,7 @@ async function submitMoveBoxShelfForm() {
     (item) => String(item.shelfCode).toUpperCase() === String(targetShelfCode).toUpperCase(),
   );
   $("moveShelfTargetCode").value = formatShelfCodeWithName(
-    targetShelf || { shelfCode: targetShelfCode },
-  );
+    targetShelf || { shelfCode: targetShelfCode });
   const targetShelfId = Number(targetShelf?.id || 0);
   if (!Number.isInteger(targetShelfId) || targetShelfId <= 0) {
     throw new Error("请选择目标货架号");
@@ -12568,8 +12760,7 @@ async function submitMoveBoxCodeForm() {
     throw new Error("请选择旧箱号");
   }
   const oldRow = rows.find(
-    (row) => String(row.box.boxCode).toUpperCase() === String(oldBoxCode).toUpperCase(),
-  );
+    (row) => String(row.box.boxCode).toUpperCase() === String(oldBoxCode).toUpperCase());
   if (!oldRow) {
     if (rows.length > 1) {
       throw new Error("该主商品存在多个箱号，请手动指定旧箱号");
@@ -12797,8 +12988,7 @@ async function reloadAll() {
   const tasks = [
     loadInventory(),
     loadInventoryHomeProducts({ reset: true }),
-    loadProductEditPendingSummary(),
-  ];
+    loadProductEditPendingSummary()];
   if (!isAdmin) {
     state.departmentOptions = [];
     state.roleOptions = [];
@@ -12911,7 +13101,8 @@ function bindForms() {
   });
   $("amazonStoreDashboardShop")?.addEventListener("change", async (event) => {
     try {
-      await loadAmazonStoreDashboard({ connectionId: event.currentTarget.value });
+      await loadAmazonStoreDashboard({ connectionId: event.currentTarget.value,
+      });
     } catch (error) {
       showToast(error.message, true);
     }
@@ -13045,16 +13236,17 @@ function bindForms() {
         }
         const result = await createOverseasPickingBatch(items);
         state.selectedOverseasOrderKeys = new Set();
-        await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches()]);
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches(),
+        ]);
         switchPanel("overseasPickingBatchManagement");
         if (result?.id) {
-          await openOverseasPickingBatchDetail(String(result.id || ""), { focusScan: true });
+          await openOverseasPickingBatchDetail(String(result.id || ""), { focusScan: true,
+          });
         }
         showToast(
           result?.batchNo
             ? `已创建拣货批次 ${result.batchNo}，请按货架顺序扫码拣货`
-            : "拣货批次已创建",
-        );
+            : "拣货批次已创建");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -13109,7 +13301,8 @@ function bindForms() {
           throw new Error(`当前批次状态为 ${status || "未知"}，不能生成 Yamato Excel`);
         }
         const result = await downloadOverseasPickingBatchYamatoImport(detail.id);
-        await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches()]);
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches(),
+        ]);
         await loadOverseasPickingBatchDetail(detail.id);
         if (result.batchId) {
           state.selectedYamatoShipmentBatchId = result.batchId;
@@ -13835,7 +14028,8 @@ function bindForms() {
         await request(isEditing ? `/rakuten-combo-products/${encodeURIComponent(payload.id)}` : "/rakuten-combo-products", {
           method: isEditing ? "PUT" : "POST",
           body: JSON.stringify(payload),
-        });
+        },
+        );
         showToast(isEditing ? "组合产品已更新" : "组合产品已新增");
         closeModal("createRakutenComboProductModal");
         await loadRakutenComboProducts({ reset: true });
@@ -13852,8 +14046,7 @@ function bindForms() {
         await downloadAuthorizedFile(
           "/rakuten-combo-products/upload-template",
           {},
-          "乐天组合产品上传模板.xlsx",
-        );
+          "乐天组合产品上传模板.xlsx");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -14010,8 +14203,7 @@ function bindForms() {
         await Promise.all([
           loadMasterProductDetail(productId),
           loadFbaReplenishments(),
-          loadFbaPendingSummary(),
-        ]);
+          loadFbaPendingSummary()]);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -14136,8 +14328,7 @@ function bindForms() {
         await Promise.all([
           loadInventory({ preserveSearch: true }),
           loadBoxes(),
-          loadAudit(),
-        ]);
+          loadAudit()]);
         await loadInventoryHomeProductDetail(productId);
       });
     } catch (error) {
@@ -14158,8 +14349,7 @@ function bindForms() {
           loadInventory({ preserveSearch: true }),
           loadBoxes(),
           loadAudit(),
-          loadFbaReplenishments(),
-        ]);
+          loadFbaReplenishments()]);
         await loadInventoryHomeProductDetail(productId);
       });
     } catch (error) {
@@ -14172,7 +14362,8 @@ function bindForms() {
       switchPanel("batchInbound");
       await loadBatchInboundOrders();
       if (state.selectedBatchInboundOrderId) {
-        await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
+        await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
+        });
       } else {
         renderBatchInboundDetail(null);
       }
@@ -14259,11 +14450,9 @@ function bindForms() {
           throw new Error("请先选择待出库申请单");
         }
         const selectedRows = state.fbaReplenishments.filter((item) =>
-          ids.includes(Number(item?.id)),
-        );
+          ids.includes(Number(item?.id)));
         const blockedRow = selectedRows.find((item) =>
-          hasPendingProductEditRequestBySkuId(Number(item?.sku?.id)),
-        );
+          hasPendingProductEditRequestBySkuId(Number(item?.sku?.id)));
         if (blockedRow) {
           throw new Error(SKU_EDIT_PENDING_BLOCK_MESSAGE);
         }
@@ -14275,7 +14464,8 @@ function bindForms() {
         const shouldPreserveInventoryView = state.inventorySearchMode;
         await loadFbaReplenishments();
         await loadFbaPendingSummary();
-        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView });
+        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView,
+        });
         await loadBoxes();
         await loadAudit();
       });
@@ -14326,8 +14516,7 @@ function bindForms() {
         loadShelves(),
         loadBoxes(),
         loadInventory(),
-        loadMasterProductSyncRecords({ reset: true }),
-      ]);
+        loadMasterProductSyncRecords({ reset: true })]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -14692,7 +14881,7 @@ function bindForms() {
   $("openShopManageModal").addEventListener("click", async () => {
     try {
       state.shopEditingIds = new Set();
-      await Promise.all([loadShops(), loadAmazonSpApiConnections()]);
+      await Promise.all([loadShops(), loadAmazonSpApiConnections(), loadRakutenRmsConnections()]);
       openModal("shopManageModal");
     } catch (error) {
       showToast(error.message, true);
@@ -14943,8 +15132,7 @@ function bindForms() {
       await withBusyButton(button, "打印中...", async () => {
         openBatchProductIdLabelWindow(
           state.selectedShelfBoxQueryRows,
-          state.selectedShelfBoxQueryShelfCode,
-        );
+          state.selectedShelfBoxQueryShelfCode);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -14965,8 +15153,7 @@ function bindForms() {
 
   $("openCreateSkuModal").addEventListener("click", async () => {
     await loadShops().catch((error) =>
-      showToast(error.message, true),
-    );
+      showToast(error.message, true));
     $("createSkuModalForm").reset();
     $("modalNewProductName").value = "";
     renderShopOptionsForSelect("modalNewShop", "请选择店铺");
@@ -15188,7 +15375,8 @@ function bindForms() {
   $("inventoryDetailInboundBoxCode").addEventListener("blur", (event) => {
     if (event.target.readOnly) return;
     clearTimeout(inventoryDetailInboundBoxValidationTimer);
-    validateInventoryDetailInboundBoxInput(event.target.value, { normalizeInput: true }).catch(() => {});
+    validateInventoryDetailInboundBoxInput(event.target.value, { normalizeInput: true,
+    }).catch(() => {});
   });
   $("inventoryDetailInboundQty").addEventListener("input", (event) => {
     const input = event.target;
@@ -15442,7 +15630,8 @@ function bindForms() {
         await submitAdjustForm();
         closeModal("adjustModal");
         showToast(direction === "outbound" ? "FBA补货申请单已生成" : "入库成功");
-        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView });
+        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView,
+        });
         await loadBoxes();
         await loadFbaReplenishments();
         await loadAudit();
@@ -15685,7 +15874,8 @@ function bindDelegates() {
         showToast("国内单号已保存");
         await loadBatchInboundOrders();
         if (state.selectedBatchInboundOrderId) {
-          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
+          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
+          });
         }
       } else if (action === "batchInboundSaveSeaOrderNo") {
         const input = $(button.dataset.inputId || "");
@@ -15697,13 +15887,13 @@ function bindDelegates() {
         showToast("海运单号已保存");
         await loadBatchInboundOrders();
         if (state.selectedBatchInboundOrderId) {
-          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
+          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
+          });
         }
       } else if (action === "batchInboundDeleteOrder") {
         const orderNo = button.dataset.orderNo || orderId;
         const ok = await openDeleteConfirmModal(
-          `确认删除批量入库单 ${orderNo} ？删除后会释放该单锁定的箱号。`,
-        );
+          `确认删除批量入库单 ${orderNo} ？删除后会释放该单锁定的箱号。`);
         if (!ok) return;
         await deleteBatchInboundOrder(orderId);
         showToast("删除成功，已释放锁定箱号");
@@ -15766,6 +15956,8 @@ function bindDelegates() {
     try {
       if (action === "amazonSpApi") {
         openAmazonSpApiConnectionModal(id);
+      } else if (action === "rakutenRmsApi") {
+        openRakutenRmsConnectionModal(id);
       } else if (action === "editShop") {
         const input = $(`shopName-${id}`);
         if (!input) return;
@@ -15829,10 +16021,137 @@ function bindDelegates() {
         await startAmazonOAuth();
         return;
       }
-      await request(`/amazon-sp-api/connections/${connectionId}`, { method: 'PUT', body: JSON.stringify(payload) });
+      await request(`/amazon-sp-api/connections/${connectionId}`, { method: 'PUT', body: JSON.stringify(payload),
+      });
       await loadAmazonSpApiConnections();
       closeModal('amazonSpApiConnectionModal');
       showToast('Amazon同步设置已保存');
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsConnectionForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
+    const serviceSecret = String($("rakutenRmsServiceSecret").value || "").trim();
+    const licenseKey = String($("rakutenRmsLicenseKey").value || "").trim();
+    const expiresOn = String($("rakutenRmsLicenseExpiresAt").value || "").trim();
+    if (!connectionId && (!serviceSecret || !licenseKey)) {
+      showToast("新建乐天连接时必须填写 serviceSecret 和 licenseKey", true);
+      return;
+    }
+    const payload = {
+      ...(!connectionId ? { shopId: String($("rakutenRmsShopId").value || "") } : {}),
+      ...(serviceSecret ? { serviceSecret } : {}),
+      ...(licenseKey ? { licenseKey } : {}),
+      ...(expiresOn ? { licenseExpiresAt: `${expiresOn}T23:59:59+09:00` } : {}),
+      status: Number($("rakutenRmsStatus").value),
+      syncOrders: $("rakutenRmsSyncOrders").checked,
+    };
+    try {
+      await request(connectionId ? `/rakuten-rms-api/connections/${connectionId}` : "/rakuten-rms-api/connections", {
+        method: connectionId ? "PUT" : "POST",
+        body: JSON.stringify(payload),
+      });
+      await loadRakutenRmsConnections();
+      closeModal("rakutenRmsConnectionModal");
+      showToast("乐天 RMS API连接已保存");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsTestBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
+    if (!connectionId) return;
+    try {
+      const result = await withBusyButton(event.currentTarget, "测试中...", () =>
+        request(`/rakuten-rms-api/connections/${connectionId}/test`, {
+          method: "POST",
+          body: "{}",
+        }),
+      );
+      const getOrderVerified = Boolean(result?.testedOperations?.getOrder);
+      showToast(
+        getOrderVerified
+          ? `乐天连接测试成功，searchOrder / getOrder 均可用，近62天匹配 ${formatOverviewNumber(result?.matchedOrderCount)} 个订单`
+          : `searchOrder 测试成功；近62天无订单，暂时无法验证 getOrder 权限`,
+      );
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsPreviewBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
+    if (!connectionId) return;
+    try {
+      state.rakutenRmsSyncPreview = null;
+      renderRakutenRmsSyncPreview();
+      const preview = await withBusyButton(event.currentTarget, "预览中...", () =>
+        request(`/rakuten-rms-api/connections/${connectionId}/preview`, {
+          method: "POST",
+          body: "{}",
+        }),
+      );
+      state.rakutenRmsSyncPreview = preview;
+      renderRakutenRmsSyncPreview();
+      showToast(preview?.canConfirm ? "预览完成，请核对后确认正式同步" : "预览发现冲突，正式同步已锁定");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsSyncBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
+    const previewToken = String(state.rakutenRmsSyncPreview?.previewToken || "").trim();
+    if (!connectionId || !previewToken) return;
+    const confirmed = await openActionConfirmModal(
+      "将按照当前预览正式写入乐天订单。同步批次会保存快照，可在订单未被后续处理时回滚。确定继续吗？",
+      "确认乐天正式同步",
+      "确认同步",
+    );
+    if (!confirmed) return;
+    try {
+      const result = await withBusyButton(event.currentTarget, "同步中...", () =>
+        request(`/rakuten-rms-api/connections/${connectionId}/sync`, {
+          method: "POST",
+          body: JSON.stringify({ previewToken }),
+        }),
+      );
+      state.rakutenRmsSyncPreview = null;
+      await loadRakutenRmsConnections();
+      openRakutenRmsConnectionModal($("rakutenRmsShopId").value);
+      showToast(
+        `乐天同步完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}`,
+      );
+    } catch (error) {
+      await loadRakutenRmsSyncRuns(connectionId).catch(() => {});
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsSyncRunsBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='rollbackRakutenRmsSync']");
+    if (!button) return;
+    const syncRunId = String(button.dataset.id || "").trim();
+    if (!syncRunId) return;
+    const confirmed = await openActionConfirmModal(
+      "回滚会删除本批次新增订单，并恢复本批次更新前的数据。如果订单后来被人工修改或进入发货流程，系统会拒绝回滚。",
+      "确认回滚乐天同步",
+      "确认回滚",
+    );
+    if (!confirmed) return;
+    try {
+      const result = await withBusyButton(button, "回滚中...", () =>
+        request(`/rakuten-rms-api/sync-runs/${encodeURIComponent(syncRunId)}/rollback`, {
+          method: "POST",
+          body: "{}",
+        }),
+      );
+      await Promise.all([loadRakutenRmsConnections(), loadRakutenRmsSyncRuns($("rakutenRmsConnectionId").value)]);
+      showToast(`回滚完成，恢复 ${formatOverviewNumber(result?.restoredCount)} 条订单记录`);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -15880,7 +16199,8 @@ function bindDelegates() {
     if (!connectionId) return;
     try {
       await withBusyButton(event.currentTarget, '测试中...', () =>
-        request(`/amazon-sp-api/connections/${connectionId}/test`, { method: 'POST', body: '{}' }),
+        request(`/amazon-sp-api/connections/${connectionId}/test`, { method: 'POST', body: '{}',
+        }),
       );
       showToast('Amazon SP-API连接测试成功');
     } catch (error) {
@@ -16018,8 +16338,7 @@ function bindDelegates() {
         const ok = await openActionConfirmModal(
           `确认删除货架 ${shelfCode} ？`,
           "确认操作",
-          "确认删除",
-        );
+          "确认删除");
         if (!ok) return;
         await request(`/shelves/${id}`, { method: "DELETE" });
         state.shelfEditingIds.delete(String(id));
@@ -16077,8 +16396,7 @@ function bindDelegates() {
       const ok = await openActionConfirmModal(
         `确认废除空箱 ${boxCode} 吗？`,
         "确认操作",
-        "确认废除",
-      );
+        "确认废除");
       if (!ok) return;
       await request(`/boxes/${id}`, { method: "DELETE" });
       showToast("空箱已废除");
@@ -16094,8 +16412,7 @@ function bindDelegates() {
       const confirmed = await openActionConfirmModal(
         "确认执行“移动箱子到新货架”？",
         "确认操作",
-        "确认",
-      );
+        "确认");
       if (!confirmed) return;
       await submitMoveBoxShelfForm();
       showToast("箱号已移动至新货架");
@@ -16112,8 +16429,7 @@ function bindDelegates() {
       const confirmed = await openActionConfirmModal(
         "确认执行“移动主商品到新箱子”？",
         "确认操作",
-        "确认",
-      );
+        "确认");
       if (!confirmed) return;
       const result = await submitMoveBoxCodeForm();
       showToast(`已将${result.qty}件主商品从 ${result.oldBoxCode} 移动到 ${result.newBoxCode}`);
@@ -16138,13 +16454,17 @@ function bindDelegates() {
         showToast("整单确认入库成功");
       } else if (action === "batchInboundConfirmBox") {
         const boxCode = button.dataset.boxCode;
-        const actualQuantities = collectBatchInboundActualQuantities({ boxCode });
-        await confirmBatchInboundAction("box", orderId, { boxCode, actualQuantities });
+        const actualQuantities = collectBatchInboundActualQuantities({ boxCode,
+        });
+        await confirmBatchInboundAction("box", orderId, { boxCode, actualQuantities,
+        });
         showToast("整箱确认入库成功");
       } else if (action === "batchInboundConfirmItem") {
         const itemId = button.dataset.itemId;
-        const actualQuantities = collectBatchInboundActualQuantities({ itemId });
-        await confirmBatchInboundAction("item", orderId, { itemId, actualQuantities });
+        const actualQuantities = collectBatchInboundActualQuantities({ itemId,
+        });
+        await confirmBatchInboundAction("item", orderId, { itemId, actualQuantities,
+        });
         showToast("产品和数量确认入库成功");
       } else if (action === "batchInboundPrintItemLabel") {
         const itemId = button.dataset.itemId;
@@ -16228,7 +16548,8 @@ function bindDelegates() {
       state.selectedFbaIds.delete(String(id));
       await loadFbaReplenishments();
       await loadFbaPendingSummary();
-      await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView });
+      await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView,
+      });
       await loadBoxes();
       await loadAudit();
     } catch (error) {
@@ -16311,8 +16632,28 @@ function bindDelegates() {
     updateOverseasCreatePickingBatchButtonState();
   });
 
-  $("rakutenOrdersBody").addEventListener("click", (event) => {
+  $("rakutenOrdersBody").addEventListener("click", async (event) => {
     try {
+      const manualActionTrigger = event.target.closest("button[data-action='resolveRakutenXiyaManualAction']");
+      if (manualActionTrigger) {
+        const orderId = String(manualActionTrigger.dataset.orderId || "").trim();
+        const confirmed = await openActionConfirmModal(
+          `请确认日本操作人员已经人工通知中国处理乐天订单 ${orderId || "-"} 的更新或取消。系统不会向 Xiya 自动发送任何修改。`,
+          "确认已人工通知中国",
+          "已通知中国",
+        );
+        if (!confirmed) return;
+        const result = await request(
+          `/orders/rakuten/${encodeURIComponent(manualActionTrigger.dataset.id || "")}/xiya-manual-action/resolve`,
+          {
+            method: "POST",
+            body: "{}",
+          },
+        );
+        showToast(`已完成 ${Number(result?.resolvedCount || 0)} 条同订单提醒`);
+        await loadOrders();
+        return;
+      }
       const editTrigger = event.target.closest("button[data-action='editRakutenOrder']");
       if (editTrigger) {
         openOrderEditModal("rakuten", editTrigger.dataset.id || "");
@@ -16450,8 +16791,7 @@ function bindDelegates() {
           throw new Error("缺少产品ID");
         }
         const ok = await openDeleteConfirmModal(
-          `确认将产品 ${productId} 变更回未拣货状态？`,
-        );
+          `确认将产品 ${productId} 变更回未拣货状态？`);
         if (!ok) return;
         await resetOverseasPickingBatchProductPicking(detail.id, productId);
         await Promise.all([loadOverseasPickingBatches(), loadOverseasPickingBatchDetail(detail.id)]);
@@ -16488,7 +16828,9 @@ function bindDelegates() {
             .map((row) => String(row?.orderId || "").trim())
             .filter(Boolean),
         ),
-      ).filter((orderId) => getAmazonSameOrderOverseasRows(orders, { source: "amazon", orderId }).length > 1);
+      ).filter((orderId) => getAmazonSameOrderOverseasRows(orders, { source: "amazon", orderId,
+          }).length > 1,
+      );
       const ok = await openDeleteConfirmModal(
         affectedAmazonOrderIds.length
           ? `产品 ${productId} 关联亚马逊多产品订单，同订单其他日本发产品也会一起切中国发。涉及订单：${affectedAmazonOrderIds.join(
@@ -16652,7 +16994,8 @@ function bindDelegates() {
         await quickOutboundOne(skuId, boxCode);
         const confirmed = await openActionConfirmModal("出库1件成功", "提示", "确认", { showCancel: false });
         if (!confirmed) return;
-        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView });
+        await refreshInventoryViewAfterStockMutation({ preserveCurrentView: shouldPreserveInventoryView,
+        });
         await loadBoxes();
         await loadAudit();
         return;
@@ -16667,8 +17010,7 @@ function bindDelegates() {
         direction,
         skuId,
         boxCode,
-        Number.isInteger(maxQty) && maxQty > 0 ? maxQty : null,
-      );
+        Number.isInteger(maxQty) && maxQty > 0 ? maxQty : null);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -16943,8 +17285,7 @@ function bindDelegates() {
             await Promise.all([
               loadInventory({ preserveSearch: true }),
               loadBoxes(),
-              loadAudit(),
-            ]);
+              loadAudit()]);
             await loadInventoryHomeProductDetail(productId);
           });
         })
@@ -17018,8 +17359,7 @@ function bindDelegates() {
         const firstError = failedMessages[0];
         showToast(
           `批量确认完成：成功 ${successCount} 条，失败 ${failedMessages.length} 条。${firstError}`,
-          true,
-        );
+          true);
       }
     } catch (error) {
       showToast(error.message, true);
@@ -17029,8 +17369,7 @@ function bindDelegates() {
   $("confirmProductEditRequestBtn").addEventListener("click", async () => {
     try {
       const permission = resolveProductEditConfirmPermission(
-        state.selectedProductEditRequestChangedFields,
-      );
+        state.selectedProductEditRequestChangedFields);
       if (!permission.allowed) {
         throw new Error(permission.contactMessage || permission.message);
       }
@@ -17041,8 +17380,7 @@ function bindDelegates() {
       const ok = await openActionConfirmModal(
         "确认后会正式更新产品数据，是否继续？",
         "确认编辑申请",
-        "确认",
-      );
+        "确认");
       if (!ok) return;
       await confirmProductEditRequest(id);
       showToast("编辑申请已确认并更新数据库");
@@ -17102,15 +17440,13 @@ function bindDelegates() {
       return;
     }
     const bulkInventoryUpdateClose = event.target.closest(
-      "button[data-action='closeBulkInventoryUpdateModal']",
-    );
+      "button[data-action='closeBulkInventoryUpdateModal']");
     if (bulkInventoryUpdateClose) {
       closeModal("bulkInventoryUpdateModal");
       return;
     }
     const masterProductImportClose = event.target.closest(
-      "button[data-action='closeMasterProductImportModal']",
-    );
+      "button[data-action='closeMasterProductImportModal']");
     if (masterProductImportClose) {
       closeModal("masterProductImportModal");
       return;
@@ -17155,15 +17491,13 @@ function bindDelegates() {
       return;
     }
     const inventoryDetailInboundClose = event.target.closest(
-      "button[data-action='closeInventoryDetailInboundModal']",
-    );
+      "button[data-action='closeInventoryDetailInboundModal']");
     if (inventoryDetailInboundClose) {
       closeModal("inventoryDetailInboundModal");
       return;
     }
     const inventoryDetailFbaClose = event.target.closest(
-      "button[data-action='closeInventoryDetailFbaModal']",
-    );
+      "button[data-action='closeInventoryDetailFbaModal']");
     if (inventoryDetailFbaClose) {
       closeModal("inventoryDetailFbaModal");
       return;
@@ -17218,6 +17552,11 @@ function bindDelegates() {
     const amazonSpApiClose = event.target.closest("button[data-action='closeAmazonSpApiConnectionModal']");
     if (amazonSpApiClose) {
       closeModal('amazonSpApiConnectionModal');
+      return;
+    }
+    const rakutenRmsClose = event.target.closest("button[data-action='closeRakutenRmsConnectionModal']");
+    if (rakutenRmsClose) {
+      closeModal("rakutenRmsConnectionModal");
       return;
     }
     const shelfManageClose = event.target.closest("button[data-action='closeShelfManageModal']");
@@ -17383,15 +17722,13 @@ function bindDelegates() {
       return;
     }
     const batchInboundDetailModalClose = event.target.closest(
-      "button[data-action='closeBatchInboundDetailModal']",
-    );
+      "button[data-action='closeBatchInboundDetailModal']");
     if (batchInboundDetailModalClose) {
       closeModal("batchInboundDetailModal");
       return;
     }
     const fbaOutboundModalClose = event.target.closest(
-      "button[data-action='closeFbaOutboundModal']",
-    );
+      "button[data-action='closeFbaOutboundModal']");
     if (fbaOutboundModalClose) {
       closeModal("fbaOutboundModal");
     }
@@ -17781,8 +18118,8 @@ function bindRefresh() {
   $("refreshOverviewDashboard").addEventListener("click", () =>
     withGlobalLoading(
       "系统看板刷新中，请稍候...",
-      () => loadOverviewDashboard({ forceRefresh: true }),
-    ).catch((error) => showToast(error.message, true)),
+      () => loadOverviewDashboard({ forceRefresh: true })).catch((error) => showToast(error.message, true),
+    ),
   );
   $("downloadInventorySkuSummaryBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
@@ -17806,8 +18143,7 @@ function bindRefresh() {
   $("refreshProductManagement").addEventListener("click", () =>
     Promise.all([
       loadProductEditRequests({ reset: true }),
-      loadProductEditPendingSummary(),
-    ]).catch((error) =>
+      loadProductEditPendingSummary()]).catch((error) =>
       showToast(error.message, true),
     ),
   );
@@ -17830,8 +18166,7 @@ function bindRefresh() {
   );
   $("refreshFbaReplenishment").addEventListener("click", () =>
     Promise.all([loadFbaReplenishments(), loadFbaPendingSummary()]).catch((error) =>
-      showToast(error.message, true),
-    ),
+      showToast(error.message, true)),
   );
   $("refreshAudit").addEventListener("click", () => loadAudit().catch((error) => showToast(error.message, true)));
 }

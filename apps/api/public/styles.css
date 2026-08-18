@@ -3571,3 +3571,13 @@ button.danger-solid {
   color: #b42318;
   font-weight: 700;
 }
+
+.rakuten-xiya-manual-alert {
+  display: flex;
+  min-width: 210px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  color: #b42318;
+  font-weight: 700;
+}
