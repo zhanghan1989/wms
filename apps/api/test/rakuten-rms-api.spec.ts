@@ -64,6 +64,49 @@ describe("Rakuten RMS API integration", () => {
     });
   });
 
+  it("retries a transient network failure before returning search results", async () => {
+    const fetchMock = jest
+      .spyOn(global, "fetch")
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            orderNumberList: ["421951-1"],
+            PaginationResponseModel: { totalPages: 1 },
+          }),
+          { status: 200 },
+        ),
+      );
+    const client = new RakutenRmsApiClient();
+
+    await expect(
+      client.searchOrders("service-secret", "license-key", {
+        start: new Date("2026-08-17T00:00:00.000Z"),
+        end: new Date("2026-08-18T00:00:00.000Z"),
+      }),
+    ).resolves.toEqual(["421951-1"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns an actionable error after repeated network failures", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockRejectedValue(
+      new TypeError("fetch failed", {
+        cause: new Error("getaddrinfo EAI_AGAIN api.rms.rakuten.co.jp"),
+      }),
+    );
+    const client = new RakutenRmsApiClient();
+
+    await expect(
+      client.searchOrders("service-secret", "license-key", {
+        start: new Date("2026-08-17T00:00:00.000Z"),
+        end: new Date("2026-08-18T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow(
+      "无法连接乐天 RMS API（网络或TLS错误）：getaddrinfo EAI_AGAIN api.rms.rakuten.co.jp",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("tests getOrder permission when a recent order is available", async () => {
     const connection = {
       id: 7n,
