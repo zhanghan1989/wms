@@ -60,6 +60,7 @@ jobs:
     env:
       DEPLOY_REF: ${{ github.sha }}
       RUN_MIGRATIONS: ${{ github.event.inputs.run_migrations || 'true' }}
+      RAKUTEN_RMS_API_ENCRYPTION_KEY: ${{ secrets.RAKUTEN_RMS_API_ENCRYPTION_KEY }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -114,7 +115,7 @@ jobs:
           key: ${{ secrets.ECS_SSH_KEY }}
           command_timeout: 30m
           script_stop: true
-          envs: DEPLOY_REF,RUN_MIGRATIONS
+          envs: DEPLOY_REF,RUN_MIGRATIONS,RAKUTEN_RMS_API_ENCRYPTION_KEY
           script: |
             set -eu
             JOB_START_TS="$(date +%s)"
@@ -165,6 +166,16 @@ jobs:
             export DEPLOY_SESSION_VERSION
             echo "Using DEPLOY_SESSION_VERSION=${DEPLOY_SESSION_VERSION}"
             timed "git_show_head" git show -s --format="%H %s" HEAD
+            if [ -z "${RAKUTEN_RMS_API_ENCRYPTION_KEY:-}" ]; then
+              echo "Missing production secret: RAKUTEN_RMS_API_ENCRYPTION_KEY"
+              exit 1
+            fi
+            if grep -q '^RAKUTEN_RMS_API_ENCRYPTION_KEY=' .env; then
+              sed -i "s/^RAKUTEN_RMS_API_ENCRYPTION_KEY=.*/RAKUTEN_RMS_API_ENCRYPTION_KEY=${RAKUTEN_RMS_API_ENCRYPTION_KEY}/" .env
+            else
+              printf '\nRAKUTEN_RMS_API_ENCRYPTION_KEY=%s\n' "${RAKUTEN_RMS_API_ENCRYPTION_KEY}" >> .env
+            fi
+            unset RAKUTEN_RMS_API_ENCRYPTION_KEY
             timed "publish_company_site" sh -c "install -d -m 0755 /var/www/fulangke && find /var/www/fulangke -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + && cp -a apps/company-site/. /var/www/fulangke/ && chmod -R a+rX /var/www/fulangke"
             if command -v nginx >/dev/null 2>&1 && [ -e /etc/nginx/sites-enabled/www.fulangke.cn ]; then
               timed "nginx_config_test" nginx -t
