@@ -180,6 +180,7 @@ const state = {
   rakutenRmsSyncRuns: [],
   rakutenRmsSyncRunsLoading: false,
   rakutenRmsSyncPreview: null,
+  rakutenApiImportPreview: null,
   skuEditRequests: [],
   skuEditRequestsPage: 1,
   skuEditRequestsPageSize: 30,
@@ -6163,11 +6164,8 @@ function renderRakutenRmsSyncRuns() {
       .join("") || '<tr><td colspan="5" class="muted">暂无同步记录</td></tr>';
 }
 
-function renderRakutenRmsSyncPreview() {
-  const node = $("rakutenRmsSyncPreview");
-  const confirmButton = $("rakutenRmsSyncBtn");
+function renderRakutenSyncPreview(node, confirmButton, preview, context) {
   if (!node || !confirmButton) return;
-  const preview = state.rakutenRmsSyncPreview;
   if (!preview) {
     node.textContent = "正式同步前必须先生成预览并人工确认。首次同步固定为最近1天、最多5张订单。";
     confirmButton.classList.add("hidden");
@@ -6181,6 +6179,7 @@ function renderRakutenRmsSyncPreview() {
     frozen: "冻结",
     manual_action: "待日本人工通知中国",
     excluded: "已删除并禁止重新拉取",
+    ignored: "人工忽略",
     conflict: "冲突",
   };
   const groups = new Map();
@@ -6193,6 +6192,7 @@ function renderRakutenRmsSyncPreview() {
         skuCodes: new Set(),
         results: new Map(),
         changedFields: new Set(),
+        conflictItemKeys: [],
       });
     }
     const group = groups.get(orderId);
@@ -6200,6 +6200,8 @@ function renderRakutenRmsSyncPreview() {
     const skuCode = String(item?.skuCode || "").trim();
     if (skuCode) group.skuCodes.add(skuCode);
     const action = String(item?.action || "").trim();
+    const itemKey = String(item?.itemKey || "").trim();
+    if (action === "conflict" && itemKey) group.conflictItemKeys.push(itemKey);
     const reason = String(item?.reason || "").trim();
     const resultKey = `${action}\u0000${reason}`;
     const result = group.results.get(resultKey) || {
@@ -6214,7 +6216,7 @@ function renderRakutenRmsSyncPreview() {
       if (normalizedField) group.changedFields.add(normalizedField);
     }
   }
-  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
+  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
   const orderRows = Array.from(groups.values())
     .map((group) => {
       const results = Array.from(group.results.values())
@@ -6228,12 +6230,16 @@ function renderRakutenRmsSyncPreview() {
       const changedFieldsCell = changedFields.length
         ? `<details><summary>共 ${changedFields.length} 项</summary><div class="rakuten-rms-preview-fields">${escapeHtml(changedFields.join(", "))}</div></details>`
         : "-";
+      const actionCell = group.conflictItemKeys.length
+        ? `<button type="button" class="tiny-btn danger" data-action="ignoreRakutenRmsConflicts" data-context="${escapeHtml(context)}" data-order-id="${escapeHtml(group.orderId)}">确认忽略冲突</button>`
+        : "-";
       return `<tr>
         <td>${escapeHtml(group.orderId)}</td>
         <td>${escapeHtml(group.itemCount)}</td>
         <td>${escapeHtml(results || "-")}</td>
         <td>${escapeHtml(skuCodes.join(", ") || "-")}</td>
         <td>${changedFieldsCell}</td>
+        <td>${actionCell}</td>
       </tr>`;
     })
     .join("");
@@ -6242,13 +6248,108 @@ function renderRakutenRmsSyncPreview() {
       orderRows
         ? `<div class="rakuten-rms-preview-scroll">
             <table class="rakuten-rms-preview-table">
-              <thead><tr><th>订单号</th><th>明细数</th><th>处理结果</th><th>SKU</th><th>变更字段</th></tr></thead>
+              <thead><tr><th>订单号</th><th>明细数</th><th>处理结果</th><th>SKU</th><th>变更字段</th><th>操作</th></tr></thead>
               <tbody>${orderRows}</tbody>
             </table>
           </div>`
         : '<div class="muted">本次没有订单明细。</div>'
     }`;
   confirmButton.classList.toggle("hidden", !preview.canConfirm);
+}
+
+function renderRakutenRmsSyncPreview() {
+  renderRakutenSyncPreview(
+    $("rakutenRmsSyncPreview"),
+    $("rakutenRmsSyncBtn"),
+    state.rakutenRmsSyncPreview,
+    "connection",
+  );
+}
+
+function renderRakutenApiImportPreview() {
+  renderRakutenSyncPreview(
+    $("rakutenApiImportPreview"),
+    $("rakutenApiImportSyncBtn"),
+    state.rakutenApiImportPreview,
+    "api-import",
+  );
+}
+
+function getSelectedRakutenApiImportConnection() {
+  const id = String($("rakutenApiImportConnection")?.value || "").trim();
+  return state.rakutenRmsConnections.find((connection) => String(connection?.id || "") === id) || null;
+}
+
+function resetRakutenApiImportPreview() {
+  state.rakutenApiImportPreview = null;
+  renderRakutenApiImportPreview();
+  const connection = getSelectedRakutenApiImportConnection();
+  const meta = $("rakutenApiImportMeta");
+  if (meta) {
+    meta.textContent = connection
+      ? `店铺：${connection.shop?.name || "-"} / 最后成功：${connection.lastSuccessfulSyncAt ? formatDate(connection.lastSuccessfulSyncAt) : "尚未同步"}`
+      : "没有可用的乐天 RMS API 连接。";
+  }
+}
+
+async function openRakutenApiImportModal() {
+  await loadRakutenRmsConnections();
+  const connections = state.rakutenRmsConnections.filter(
+    (connection) => Number(connection?.status) === 1 && connection?.syncOrders !== false,
+  );
+  if (!connections.length) throw new Error("没有已启用且允许同步订单的乐天 RMS API 连接");
+  const select = $("rakutenApiImportConnection");
+  select.innerHTML = connections
+    .map(
+      (connection) =>
+        `<option value="${escapeHtml(connection.id)}">${escapeHtml(connection.shop?.name || `连接 ${connection.id}`)}</option>`,
+    )
+    .join("");
+  resetRakutenApiImportPreview();
+  openModal("rakutenApiImportModal");
+}
+
+async function ignoreRakutenRmsPreviewConflicts(button, context) {
+  const apiImport = context === "api-import";
+  const connectionId = apiImport
+    ? String(getSelectedRakutenApiImportConnection()?.id || "").trim()
+    : String($("rakutenRmsConnectionId")?.value || "").trim();
+  const preview = apiImport ? state.rakutenApiImportPreview : state.rakutenRmsSyncPreview;
+  const previewToken = String(preview?.previewToken || "").trim();
+  const orderId = String(button.dataset.orderId || "").trim();
+  const itemKeys = Array.from(
+    new Set(
+      (Array.isArray(preview?.items) ? preview.items : [])
+        .filter((item) => String(item?.orderId || "").trim() === orderId && item?.action === "conflict")
+        .map((item) => String(item?.itemKey || "").trim())
+        .filter(Boolean),
+    ),
+  );
+  if (!connectionId || !previewToken || !orderId || !itemKeys.length) return;
+  const confirmed = await openActionConfirmModal(
+    `确认永久忽略订单 ${orderId} 的 ${itemKeys.length} 条冲突明细吗？系统不会创建重复订单，后续预览会将这些明细显示为“人工忽略”。`,
+    "确认忽略乐天冲突",
+    "确认忽略",
+  );
+  if (!confirmed) return;
+  await withBusyButton(button, "处理中...", () =>
+    request(`/rakuten-rms-api/connections/${connectionId}/conflicts/ignore`, {
+      method: "POST",
+      body: JSON.stringify({ previewToken, itemKeys }),
+    }),
+  );
+  const refreshedPreview = await request(`/rakuten-rms-api/connections/${connectionId}/preview`, {
+    method: "POST",
+    body: "{}",
+  });
+  if (apiImport) {
+    state.rakutenApiImportPreview = refreshedPreview;
+    renderRakutenApiImportPreview();
+  } else {
+    state.rakutenRmsSyncPreview = refreshedPreview;
+    renderRakutenRmsSyncPreview();
+  }
+  showToast(`订单 ${orderId} 的冲突已人工忽略，预览已刷新`);
 }
 
 async function loadRakutenRmsSyncRuns(connectionId) {
@@ -14899,6 +15000,78 @@ function bindForms() {
     openModal("rakutenOrderImportModal");
   });
 
+  $("openRakutenApiImportModal")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "读取中...", () => openRakutenApiImportModal());
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenApiImportConnection")?.addEventListener("change", resetRakutenApiImportPreview);
+
+  $("rakutenApiImportPreviewBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String(getSelectedRakutenApiImportConnection()?.id || "").trim();
+    if (!connectionId) return;
+    try {
+      state.rakutenApiImportPreview = null;
+      renderRakutenApiImportPreview();
+      state.rakutenApiImportPreview = await withBusyButton(event.currentTarget, "预览中...", () =>
+        request(`/rakuten-rms-api/connections/${connectionId}/preview`, {
+          method: "POST",
+          body: "{}",
+        }),
+      );
+      renderRakutenApiImportPreview();
+      showToast(
+        state.rakutenApiImportPreview?.canConfirm
+          ? "预览完成，请核对后确认正式同步"
+          : "预览发现冲突，正式同步已锁定",
+      );
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenApiImportPreview")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='ignoreRakutenRmsConflicts']");
+    if (!button) return;
+    try {
+      await ignoreRakutenRmsPreviewConflicts(button, "api-import");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenApiImportSyncBtn")?.addEventListener("click", async (event) => {
+    const connection = getSelectedRakutenApiImportConnection();
+    const connectionId = String(connection?.id || "").trim();
+    const previewToken = String(state.rakutenApiImportPreview?.previewToken || "").trim();
+    if (!connectionId || !previewToken) return;
+    const confirmed = await openActionConfirmModal(
+      `将按照当前预览把 ${connection?.shop?.name || "该店铺"} 的乐天订单正式写入系统。确定继续吗？`,
+      "确认乐天 API 导入",
+      "确认同步",
+    );
+    if (!confirmed) return;
+    try {
+      const result = await withBusyButton(event.currentTarget, "同步中...", () =>
+        request(`/rakuten-rms-api/connections/${connectionId}/sync`, {
+          method: "POST",
+          body: JSON.stringify({ previewToken }),
+        }),
+      );
+      state.rakutenApiImportPreview = null;
+      closeModal("rakutenApiImportModal");
+      await Promise.all([loadOrders(), loadRakutenRmsConnections()]);
+      showToast(
+        `乐天 API 导入完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，跳过 ${formatOverviewNumber(result?.skipped)}`,
+      );
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("closeRakutenOrderImportModal").addEventListener("click", () => {
     closeModal("rakutenOrderImportModal");
   });
@@ -16192,6 +16365,16 @@ function bindDelegates() {
       state.rakutenRmsSyncPreview = preview;
       renderRakutenRmsSyncPreview();
       showToast(preview?.canConfirm ? "预览完成，请核对后确认正式同步" : "预览发现冲突，正式同步已锁定");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsSyncPreview")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='ignoreRakutenRmsConflicts']");
+    if (!button) return;
+    try {
+      await ignoreRakutenRmsPreviewConflicts(button, "connection");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -17653,6 +17836,11 @@ function bindDelegates() {
     const rakutenRmsClose = event.target.closest("button[data-action='closeRakutenRmsConnectionModal']");
     if (rakutenRmsClose) {
       closeModal("rakutenRmsConnectionModal");
+      return;
+    }
+    const rakutenApiImportClose = event.target.closest("button[data-action='closeRakutenApiImportModal']");
+    if (rakutenApiImportClose) {
+      closeModal("rakutenApiImportModal");
       return;
     }
     const shelfManageClose = event.target.closest("button[data-action='closeShelfManageModal']");

@@ -1257,6 +1257,7 @@
               <div class="action-row">
                 <button id="openRakutenOrderImportModal">订单导入</button>
                 <button id="rakutenBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
+                <button id="openRakutenApiImportModal" type="button" class="admin-access-only">API导入</button>
               </div>
             </div>
             <div class="action-row-right">
@@ -1965,6 +1966,30 @@
           <button type="button" class="ghost" id="cancelRakutenOrderImportModal">取消</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="rakutenApiImportModal" class="modal hidden">
+    <div class="modal-card modal-wide">
+      <div class="modal-head">
+        <h3>乐天 API 导入</h3>
+        <button type="button" class="ghost" data-action="closeRakutenApiImportModal">关闭</button>
+      </div>
+      <div class="form-grid compact">
+        <label>
+          乐天店铺
+          <select id="rakutenApiImportConnection"></select>
+        </label>
+      </div>
+      <p id="rakutenApiImportMeta" class="muted"></p>
+      <div id="rakutenApiImportPreview" class="muted">请先选择店铺并生成同步预览。</div>
+      <div class="modal-actions modal-actions-split">
+        <div>
+          <button id="rakutenApiImportPreviewBtn" type="button" class="ghost">预览同步</button>
+          <button id="rakutenApiImportSyncBtn" type="button" class="hidden">确认正式同步</button>
+        </div>
+        <button type="button" class="ghost" data-action="closeRakutenApiImportModal">取消</button>
+      </div>
     </div>
   </div>
 

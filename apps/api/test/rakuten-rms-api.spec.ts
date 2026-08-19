@@ -422,7 +422,7 @@ describe("Rakuten RMS API integration", () => {
 
   it("does not recreate a Rakuten item that an operator deleted", async () => {
     const prisma = {
-      rakutenOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue({ id: 12n }) },
+      rakutenOrderSyncExclusion: { findMany: jest.fn().mockResolvedValue([{ reason: "user_delete" }]) },
     } as unknown as PrismaService;
     const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
 
@@ -435,6 +435,83 @@ describe("Rakuten RMS API integration", () => {
     expect(plan).toMatchObject({
       action: "excluded",
       reason: "已经由操作人员删除，禁止 RMS API 重新拉取",
+    });
+  });
+
+  it("classifies an operator-confirmed RMS conflict as ignored", async () => {
+    const prisma = {
+      rakutenOrderSyncExclusion: { findMany: jest.fn().mockResolvedValue([{ reason: "conflict_ignore" }]) },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+
+    const plan = await (service as any).planOrderItem(
+      prisma,
+      { id: 7n, shop: { id: 3n, name: "乐天店" } },
+      { orderId: "ORDER-1", itemKey: "ORDER-1|ITEM-1", skuCode: "NEW-SKU" },
+    );
+
+    expect(plan).toMatchObject({
+      action: "ignored",
+      reason: "已经由操作人员确认忽略此冲突明细",
+    });
+  });
+
+  it("persists an operator-confirmed conflict ignore from a valid preview", async () => {
+    const exclusionCreate = jest.fn().mockResolvedValue({ id: 13n });
+    const tx = {
+      rakutenOrderSyncExclusion: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: exclusionCreate,
+      },
+      rakutenOrderRecord: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([{ id: 21n, skuCode: "OLD-SKU" }]),
+      },
+    };
+    const item = {
+      orderId: "ORDER-1",
+      itemKey: "ORDER-1|ITEM-1",
+      skuCode: "NEW-SKU",
+    };
+    const prisma = {
+      rakutenRmsSyncPreview: {
+        findUnique: jest.fn().mockResolvedValue({
+          token: "a".repeat(64),
+          connectionId: 7n,
+          usedAt: null,
+          expiresAt: new Date(Date.now() + 60_000),
+          previewData: {
+            mappedItems: [item],
+            planDescriptors: [
+              { itemKey: item.itemKey, action: "conflict", existingId: null, existingUpdatedAt: null },
+            ],
+          },
+        }),
+      },
+      $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+    jest.spyOn(service as any, "loadConnection").mockResolvedValue({
+      id: 7n,
+      shop: { id: 3n, name: "乐天店" },
+    });
+
+    await expect(
+      service.ignorePreviewConflicts(
+        "7",
+        { previewToken: "a".repeat(64), itemKeys: [item.itemKey] },
+        5n,
+      ),
+    ).resolves.toEqual({ ignoredCount: 1, orderCount: 1 });
+    expect(exclusionCreate).toHaveBeenCalledWith({
+      data: {
+        rmsConnectionId: 7n,
+        orderId: item.orderId,
+        rmsItemKey: item.itemKey,
+        reason: "conflict_ignore",
+        createdBy: 5n,
+      },
     });
   });
 
