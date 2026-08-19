@@ -5,11 +5,14 @@ import { RakutenRmsApiService } from "../src/rakuten-rms-api/rakuten-rms-api.ser
 
 describe("Rakuten RMS API integration", () => {
   const originalEncryptionKey = process.env.RAKUTEN_RMS_API_ENCRYPTION_KEY;
+  const originalProxyUrl = process.env.RAKUTEN_RMS_API_PROXY_URL;
 
   afterEach(() => {
     jest.restoreAllMocks();
     if (originalEncryptionKey === undefined) delete process.env.RAKUTEN_RMS_API_ENCRYPTION_KEY;
     else process.env.RAKUTEN_RMS_API_ENCRYPTION_KEY = originalEncryptionKey;
+    if (originalProxyUrl === undefined) delete process.env.RAKUTEN_RMS_API_PROXY_URL;
+    else process.env.RAKUTEN_RMS_API_PROXY_URL = originalProxyUrl;
   });
 
   it("encrypts the RMS credentials with authenticated encryption", () => {
@@ -62,6 +65,39 @@ describe("Rakuten RMS API integration", () => {
     expect(JSON.parse(String((fetchMock.mock.calls[1][1] as RequestInit).body))).toMatchObject({
       PaginationRequestModel: { requestPage: 2 },
     });
+  });
+
+  it("uses the dedicated proxy only when the Rakuten proxy setting is configured", async () => {
+    process.env.RAKUTEN_RMS_API_PROXY_URL = "http://100.64.0.10:3128";
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ orderNumberList: [], PaginationResponseModel: { totalPages: 1 } }),
+        { status: 200 },
+      ),
+    );
+    const client = new RakutenRmsApiClient();
+
+    await client.searchOrders("service-secret", "license-key", {
+      start: new Date("2026-08-17T00:00:00.000Z"),
+      end: new Date("2026-08-18T00:00:00.000Z"),
+    });
+
+    expect(fetchMock.mock.calls[0][1]).toHaveProperty("dispatcher");
+    await client.onModuleDestroy();
+  });
+
+  it("rejects an unsafe Rakuten proxy protocol before making a request", async () => {
+    process.env.RAKUTEN_RMS_API_PROXY_URL = "socks5://100.64.0.10:3128";
+    const fetchMock = jest.spyOn(global, "fetch");
+    const client = new RakutenRmsApiClient();
+
+    await expect(
+      client.searchOrders("service-secret", "license-key", {
+        start: new Date("2026-08-17T00:00:00.000Z"),
+        end: new Date("2026-08-18T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow("仅支持 http:// 或 https://");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("probes searchOrder with one record and does not traverse result pages", async () => {

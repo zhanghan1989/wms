@@ -61,6 +61,8 @@ jobs:
       DEPLOY_REF: ${{ github.sha }}
       RUN_MIGRATIONS: ${{ github.event.inputs.run_migrations || 'true' }}
       RAKUTEN_RMS_API_ENCRYPTION_KEY: ${{ secrets.RAKUTEN_RMS_API_ENCRYPTION_KEY }}
+      RAKUTEN_RMS_API_PROXY_URL: http://rakuten-egress:1055
+      RAKUTEN_RMS_EXIT_NODE_IP: 100.87.11.96
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -115,7 +117,7 @@ jobs:
           key: ${{ secrets.ECS_SSH_KEY }}
           command_timeout: 30m
           script_stop: true
-          envs: DEPLOY_REF,RUN_MIGRATIONS,RAKUTEN_RMS_API_ENCRYPTION_KEY
+          envs: DEPLOY_REF,RUN_MIGRATIONS,RAKUTEN_RMS_API_ENCRYPTION_KEY,RAKUTEN_RMS_API_PROXY_URL,RAKUTEN_RMS_EXIT_NODE_IP
           script: |
             set -eu
             JOB_START_TS="$(date +%s)"
@@ -189,7 +191,11 @@ jobs:
               printf '%s\n' '    build: null'
             } > /tmp/wms-api-image-compose.yml
             timed "show_api_image_compose" cat /tmp/wms-api-image-compose.yml
-            timed "validate_api_image_compose" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml config --quiet
+            timed "ensure_rakuten_tailscale_volume" sh -c "docker volume inspect rakuten_tailscale_state >/dev/null 2>&1 || docker volume create rakuten_tailscale_state"
+            if docker container inspect rakuten-tailscale-test >/dev/null 2>&1; then
+              timed "remove_rakuten_egress_test_container" docker rm -f rakuten-tailscale-test
+            fi
+            timed "validate_api_image_compose" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress config --quiet
             timed_retry "compose_up_db_redis" 3 docker compose up -d db redis
             if [ "${RUN_MIGRATIONS}" = "true" ]; then
               echo "Running prisma migrate deploy..."
@@ -197,9 +203,24 @@ jobs:
             else
               echo "Skipping prisma migrate deploy."
             fi
-            timed_retry "compose_up_api_recreate" 3 docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml up -d --force-recreate --remove-orphans api
-            timed "compose_ps" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml ps
-            timed "api_logs_tail_120" sh -c "docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml logs --tail=120 api || true"
+            timed_retry "compose_up_rakuten_egress" 3 docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress up -d --force-recreate rakuten-egress
+            RAKUTEN_EGRESS_READY=0
+            for i in $(seq 1 20); do
+              if docker exec wms_rakuten_egress tailscale status 2>/dev/null | grep -Eq "${RAKUTEN_RMS_EXIT_NODE_IP}.*exit node"; then
+                RAKUTEN_EGRESS_READY=1
+                echo "Rakuten Japan egress is ready (attempt ${i})."
+                break
+              fi
+              sleep 2
+            done
+            if [ "${RAKUTEN_EGRESS_READY}" -ne 1 ]; then
+              echo "Rakuten Japan egress did not select the configured exit node."
+              docker logs --tail=120 wms_rakuten_egress || true
+              exit 1
+            fi
+            timed_retry "compose_up_api_recreate" 3 docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress up -d --force-recreate --remove-orphans api
+            timed "compose_ps" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress ps
+            timed "api_logs_tail_120" sh -c "docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress logs --tail=120 api || true"
             echo "Smoke check static assets..."
             READY=0
             SMOKE_START_TS="$(date +%s)"
@@ -213,8 +234,8 @@ jobs:
             done
             if [ "${READY}" -ne 1 ]; then
               echo "API readiness check timeout."
-              docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml ps
-              docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml logs --tail=200 api || true
+              docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress ps
+              docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress logs --tail=200 api || true
               exit 1
             fi
             SMOKE_END_TS="$(date +%s)"
