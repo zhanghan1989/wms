@@ -12,6 +12,7 @@ import {
   AmazonSpApiSyncStatus,
   AmazonSpApiSyncType,
   Prisma,
+  ShopPlatform,
 } from '@prisma/client';
 import { createHash, randomBytes } from 'crypto';
 import * as XLSX from 'xlsx';
@@ -1533,6 +1534,9 @@ export class AmazonSpApiService {
     const shopId = parseId(payload.shopId, 'shopId');
     const shop = await this.prisma.shop.findUnique({ where: { id: shopId } });
     if (!shop) throw new NotFoundException('店铺不存在');
+    if (shop.platform !== ShopPlatform.amazon) {
+      throw new BadRequestException('只有亚马逊店铺可以配置 Amazon SP-API 连接');
+    }
 
     const rawState = randomBytes(32).toString('base64url');
     const stateHash = createHash('sha256').update(rawState).digest('hex');

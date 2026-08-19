@@ -3,6 +3,7 @@ import { AmazonSpApiClient } from '../src/amazon-sp-api/amazon-sp-api.client';
 import { AmazonSpApiCryptoService } from '../src/amazon-sp-api/amazon-sp-api-crypto.service';
 import { AmazonSpApiService } from '../src/amazon-sp-api/amazon-sp-api.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { ShopPlatform } from '@prisma/client';
 
 describe('Amazon public OAuth workflow', () => {
   const originalApplicationId = process.env.AMAZON_SP_API_APPLICATION_ID;
@@ -28,7 +29,9 @@ describe('Amazon public OAuth workflow', () => {
     process.env.AMAZON_SP_API_OAUTH_DRAFT = 'true';
     const create = jest.fn().mockResolvedValue({});
     const prisma = {
-      shop: { findUnique: jest.fn().mockResolvedValue({ id: 7n, name: 'JP Store' }) },
+      shop: {
+        findUnique: jest.fn().mockResolvedValue({ id: 7n, name: 'JP Store', platform: ShopPlatform.amazon }),
+      },
       amazonSpApiOAuthState: { create, deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     } as unknown as PrismaService;
     const service = new AmazonSpApiService(
@@ -61,7 +64,13 @@ describe('Amazon public OAuth workflow', () => {
       'https://wms.fulangke.cn/api/amazon-sp-api/oauth/callback';
     const create = jest.fn().mockResolvedValue({});
     const prisma = {
-      shop: { findUnique: jest.fn().mockResolvedValue({ id: 9n, name: 'Independent Store' }) },
+      shop: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 9n,
+          name: 'Independent Store',
+          platform: ShopPlatform.amazon,
+        }),
+      },
       amazonSpApiConnection: {
         findUnique: jest.fn().mockResolvedValue(null),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -121,5 +130,31 @@ describe('Amazon public OAuth workflow', () => {
       sellingPartnerId: 'A1SELLERTEST123',
     }, 4n)).rejects.toThrow('Amazon callback URI未通过安全校验');
     expect(prisma.shop.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects Amazon authorization for a Rakuten shop', async () => {
+    const prisma = {
+      shop: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 9n,
+          name: '乐天-1号店',
+          platform: ShopPlatform.rakuten,
+        }),
+      },
+      amazonSpApiOAuthState: { create: jest.fn(), deleteMany: jest.fn() },
+    } as unknown as PrismaService;
+    const service = new AmazonSpApiService(
+      prisma,
+      {} as AmazonSpApiClient,
+      {} as AmazonSpApiCryptoService,
+    );
+
+    await expect(
+      service.startOAuth(
+        { shopId: '9', region: 'FE', marketplaceIds: ['A1VC38T7YXB528'] },
+        4n,
+      ),
+    ).rejects.toThrow('只有亚马逊店铺可以配置 Amazon SP-API 连接');
+    expect(prisma.amazonSpApiOAuthState.create).not.toHaveBeenCalled();
   });
 });

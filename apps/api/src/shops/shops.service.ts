@@ -35,6 +35,7 @@ export class ShopsService {
       const created = await tx.shop.create({
         data: {
           name,
+          platform: payload.platform,
           status: payload.status ?? 1,
         },
       });

@@ -308,6 +308,7 @@ const state = {
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
   shopEditingIds: new Set(),
+  shopManagePlatform: "amazon",
   shelfEditingIds: new Set(),
   shelfManageVisibleCount: 10,
   boxManageVisibleCount: 30,
@@ -5083,7 +5084,7 @@ async function openPendingAmazonAppstoreAuthorization() {
   await Promise.all([loadShops(), loadAmazonSpApiConnections()]);
   const shopSelect = $('amazonAppstoreShopId');
   const activeShops = [...state.shops]
-    .filter((shop) => Number(shop.status ?? 1) === 1)
+    .filter((shop) => Number(shop.status ?? 1) === 1 && String(shop.platform || "amazon") === "amazon")
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'zh-Hans-CN', { numeric: true,
       }),
     );
@@ -6039,11 +6040,29 @@ function renderSkuTypesTable() {
 
 function renderShopsTable() {
   const body = $("shopsBody");
-  if (!body) return;
-  const rows = [...state.shops].sort((a, b) =>
+  const head = $("shopsHead");
+  if (!body || !head) return;
+  const platform = state.shopManagePlatform === "rakuten" ? "rakuten" : "amazon";
+  const platformLabels = { amazon: "亚马逊", rakuten: "乐天" };
+  const allRows = Array.isArray(state.shops) ? state.shops : [];
+  const rows = allRows.filter((item) => String(item?.platform || "amazon") === platform).sort((a, b) =>
     String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true,
     }),
   );
+
+  for (const targetPlatform of ["amazon", "rakuten"]) {
+    const tab = $(`${targetPlatform}ShopTab`);
+    const active = platform === targetPlatform;
+    tab?.classList.toggle("active", active);
+    tab?.setAttribute("aria-selected", active ? "true" : "false");
+    const count = $(`${targetPlatform}ShopCount`);
+    if (count) {
+      count.textContent = String(
+        allRows.filter((item) => String(item?.platform || "amazon") === targetPlatform).length,
+      );
+    }
+  }
+  head.innerHTML = `<tr><th>店铺</th><th>${platform === "amazon" ? "Amazon SP-API连接" : "乐天 RMS API连接"}</th><th>操作</th></tr>`;
 
   body.innerHTML =
     rows
@@ -6056,9 +6075,27 @@ function renderShopsTable() {
         const rakutenConnection = state.rakutenRmsConnections.find(
           (connection) => String(connection?.shop?.id || "") === itemId,
         );
+        const connection = platform === "amazon" ? amazonConnection : rakutenConnection;
+        const connectionAction = platform === "amazon" ? "amazonSpApi" : "rakutenRmsApi";
+        const connectionLabel =
+          platform === "amazon"
+            ? connection
+              ? connection.renewalDue
+                ? "待续期"
+                : Number(connection.status) === 1
+                  ? "已连接"
+                  : "已停用"
+              : "未授权"
+            : connection
+              ? connection.renewalDue
+                ? "待续期"
+                : Number(connection.status) === 1
+                  ? "已连接"
+                  : "已停用"
+              : "未连接";
         return `
       <tr>
-        <td>
+        <td data-label="店铺">
           <input
             id="shopName-${escapeHtml(item.id)}"
             value="${escapeHtml(item.name)}"
@@ -6067,26 +6104,20 @@ function renderShopsTable() {
             data-original-name="${escapeHtml(item.name)}"
           />
         </td>
-        <td>
-          <button class="tiny-btn ghost" data-action="amazonSpApi" data-id="${escapeHtml(item.id)}">
-            ${amazonConnection ? (amazonConnection.renewalDue ? "待续期" : Number(amazonConnection.status) === 1 ? "已连接" : "已停用") : "未授权"}
+        <td data-label="${escapeHtml(platform === "amazon" ? "Amazon连接" : "乐天连接")}">
+          <button class="tiny-btn ghost" data-action="${connectionAction}" data-id="${escapeHtml(item.id)}">
+            ${connectionLabel}
           </button>
-          ${amazonConnection?.lastSyncError ? '<span class="muted">同步异常</span>' : ''}
+          ${connection?.lastSyncError ? '<span class="muted">同步异常</span>' : ""}
         </td>
-        <td>
-          <button class="tiny-btn ghost" data-action="rakutenRmsApi" data-id="${escapeHtml(item.id)}">
-            ${rakutenConnection ? (rakutenConnection.renewalDue ? "待续期" : Number(rakutenConnection.status) === 1 ? "已连接" : "已停用") : "未连接"}
-          </button>
-          ${rakutenConnection?.lastSyncError ? '<span class="muted">同步异常</span>' : ""}
-        </td>
-        <td>
+        <td data-label="操作">
           <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
     `;
       })
-      .join("") || '<tr><td colspan="4" class="muted">-</td></tr>';
+      .join("") || `<tr><td colspan="3" class="muted">暂无${platformLabels[platform]}店铺</td></tr>`;
 }
 
 async function loadAmazonSpApiConnections() {
@@ -16058,6 +16089,17 @@ function bindDelegates() {
     }
   });
 
+  $("shopManageModal")?.addEventListener("click", (event) => {
+    const tab = event.target.closest("button[data-action='switchShopPlatformTab']");
+    if (!tab) return;
+    const platform = tab.dataset.platform === "rakuten" ? "rakuten" : "amazon";
+    state.shopManagePlatform = platform;
+    const platformInput = $("shopPlatformInput");
+    if (platformInput) platformInput.value = platform;
+    state.shopEditingIds = new Set();
+    renderShopsTable();
+  });
+
   $('amazonSpApiConnectionForm')?.addEventListener('submit', async (event) => {
     event.preventDefault();
     const connectionId = String($('amazonSpApiConnectionId').value || '').trim();
@@ -16287,11 +16329,16 @@ function bindDelegates() {
       if (!name) {
         throw new Error("请输入店铺名称");
       }
+      const platform = String($("shopPlatformInput").value || "").trim();
+      if (platform !== "amazon" && platform !== "rakuten") {
+        throw new Error("请选择店铺平台");
+      }
       await request("/shops", {
         method: "POST",
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, platform }),
       });
       $("shopNameInput").value = "";
+      state.shopManagePlatform = platform;
       showToast("店铺已新增");
       await Promise.all([loadShops(), loadInventory(), loadAudit()]);
     } catch (error) {

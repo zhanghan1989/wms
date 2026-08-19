@@ -13,6 +13,11 @@ enum Role {
   system_admin
 }
 
+enum ShopPlatform {
+  amazon
+  rakuten
+}
+
 enum ItemCodeStatus {
   in_stock
   outbound
@@ -319,6 +324,7 @@ model SkuType {
 model Shop {
   id                     BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
   name                   String                  @unique @db.VarChar(128)
+  platform               ShopPlatform            @default(amazon)
   status                 Int                     @default(1) @db.TinyInt
   createdAt              DateTime                @default(now()) @map("created_at")
   updatedAt              DateTime                @updatedAt @map("updated_at")
