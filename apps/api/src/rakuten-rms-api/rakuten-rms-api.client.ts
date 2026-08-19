@@ -1,4 +1,5 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, ServiceUnavailableException } from '@nestjs/common';
+import { Dispatcher, ProxyAgent } from 'undici';
 import {
   RakutenGetOrderResponse,
   RakutenJsonObject,
@@ -14,8 +15,13 @@ const MAX_SEARCH_RANGE_MS = 62 * 24 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 20_000;
 
 @Injectable()
-export class RakutenRmsApiClient {
+export class RakutenRmsApiClient implements OnModuleDestroy {
   private readonly logger = new Logger(RakutenRmsApiClient.name);
+  private proxyDispatcher: ProxyAgent | null | undefined;
+
+  async onModuleDestroy(): Promise<void> {
+    await this.proxyDispatcher?.close();
+  }
 
   async probeOrders(
     serviceSecret: string,
@@ -109,12 +115,13 @@ export class RakutenRmsApiClient {
   ): Promise<T> {
     const authorization = Buffer.from(`${serviceSecret}:${licenseKey}`, 'utf8').toString('base64');
     const url = `${RAKUTEN_API_BASE_URL}/${operation}/`;
+    const dispatcher = this.getProxyDispatcher();
     let lastResponse: Response | null = null;
     let lastNetworkError: unknown = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       let response: Response;
       try {
-        response = await fetch(url, {
+        const requestInit: RequestInit & { dispatcher?: Dispatcher } = {
           method: 'POST',
           headers: {
             accept: 'application/json',
@@ -124,7 +131,9 @@ export class RakutenRmsApiClient {
           },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
+          ...(dispatcher ? { dispatcher } : {}),
+        };
+        response = await fetch(url, requestInit);
       } catch (error) {
         lastNetworkError = error;
         if (attempt < 2) {
@@ -146,6 +155,30 @@ export class RakutenRmsApiClient {
       throw new ServiceUnavailableException(`无法连接乐天 RMS API（网络或TLS错误）：${details}`);
     }
     return this.readResponse<T>(lastResponse as Response);
+  }
+
+  private getProxyDispatcher(): ProxyAgent | undefined {
+    if (this.proxyDispatcher !== undefined) return this.proxyDispatcher ?? undefined;
+
+    const rawProxyUrl = String(process.env.RAKUTEN_RMS_API_PROXY_URL ?? '').trim();
+    if (!rawProxyUrl) {
+      this.proxyDispatcher = null;
+      return undefined;
+    }
+
+    let proxyUrl: URL;
+    try {
+      proxyUrl = new URL(rawProxyUrl);
+    } catch {
+      throw new ServiceUnavailableException('RAKUTEN_RMS_API_PROXY_URL 格式无效');
+    }
+    if (!['http:', 'https:'].includes(proxyUrl.protocol)) {
+      throw new ServiceUnavailableException('RAKUTEN_RMS_API_PROXY_URL 仅支持 http:// 或 https://');
+    }
+
+    this.proxyDispatcher = new ProxyAgent(rawProxyUrl);
+    this.logger.log('Rakuten RMS requests will use the configured private proxy');
+    return this.proxyDispatcher;
   }
 
   private networkErrorMessage(error: unknown): string {

@@ -39,6 +39,7 @@ services:
       AMAZON_SP_API_SCHEDULED_SYNC_ENABLED: ${AMAZON_SP_API_SCHEDULED_SYNC_ENABLED:-false}
       AMAZON_SP_API_INCLUDE_RECIPIENT: ${AMAZON_SP_API_INCLUDE_RECIPIENT:-false}
       RAKUTEN_RMS_API_ENCRYPTION_KEY: ${RAKUTEN_RMS_API_ENCRYPTION_KEY:-}
+      RAKUTEN_RMS_API_PROXY_URL: ${RAKUTEN_RMS_API_PROXY_URL:-}
       RAKUTEN_RMS_API_SYNC_CRON: "${RAKUTEN_RMS_API_SYNC_CRON:-0 */15 * * * *}"
       RAKUTEN_RMS_API_SYNC_TIMEZONE: ${RAKUTEN_RMS_API_SYNC_TIMEZONE:-Asia/Tokyo}
       RAKUTEN_RMS_API_SCHEDULED_SYNC_ENABLED: ${RAKUTEN_RMS_API_SCHEDULED_SYNC_ENABLED:-false}
@@ -49,6 +50,21 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - backup_data:/app/storage/backups
+    restart: unless-stopped
+
+  rakuten-egress:
+    profiles: ["rakuten-egress"]
+    image: tailscale/tailscale:v1.98.4
+    container_name: wms_rakuten_egress
+    hostname: wms-rakuten-egress
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_ACCEPT_DNS: "false"
+      TS_OUTBOUND_HTTP_PROXY_LISTEN: ":1055"
+      TS_EXTRA_ARGS: "--exit-node=${RAKUTEN_RMS_EXIT_NODE_IP:-100.87.11.96}"
+    volumes:
+      - rakuten_tailscale_state:/var/lib/tailscale
     restart: unless-stopped
 
   db:
@@ -79,3 +95,6 @@ services:
 volumes:
   mysql_data:
   backup_data:
+  rakuten_tailscale_state:
+    external: true
+    name: rakuten_tailscale_state

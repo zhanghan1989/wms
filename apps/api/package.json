@@ -38,6 +38,7 @@
     "pdfjs-dist": "^6.2.108",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "undici": "^7.29.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
