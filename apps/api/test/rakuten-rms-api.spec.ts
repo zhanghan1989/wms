@@ -617,7 +617,8 @@ describe("Rakuten RMS API integration", () => {
                 manageNumber: "bolide-bag-in-bag",
                 SkuModelList: [
                   {
-                    merchantDefinedSkuId: "9259",
+                    variantId: "oty-zip-mini-hei",
+                    merchantDefinedSkuId: "system-integration-sku",
                     skuInfo: "Bolide 31 / blue jean",
                   },
                 ],
@@ -633,7 +634,7 @@ describe("Rakuten RMS API integration", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       orderId: "421951-20260805-0302246615",
-      skuCode: "9259",
+      skuCode: "oty-zip-mini-hei",
       shippingPostalCode: "655-0865",
       shippingCity: "神戸市垂水区清玄町",
       shippingAddress: "8-1",
