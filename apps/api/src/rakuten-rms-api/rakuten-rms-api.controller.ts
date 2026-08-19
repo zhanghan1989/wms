@@ -1,9 +1,12 @@
 import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { AuthUser } from '../common/types/auth-user.type';
 import { CreateRakutenRmsConnectionDto } from './dto/create-rakuten-rms-connection.dto';
+import { IgnoreRakutenRmsConflictsDto } from './dto/ignore-rakuten-rms-conflicts.dto';
 import { PreviewRakutenRmsSyncDto } from './dto/preview-rakuten-rms-sync.dto';
 import { SyncRakutenRmsConnectionDto } from './dto/sync-rakuten-rms-connection.dto';
 import { UpdateRakutenRmsConnectionDto } from './dto/update-rakuten-rms-connection.dto';
@@ -52,6 +55,15 @@ export class RakutenRmsApiController {
     @Body() payload: PreviewRakutenRmsSyncDto,
   ): Promise<unknown> {
     return this.service.previewConnection(id, payload);
+  }
+
+  @Post('connections/:id/conflicts/ignore')
+  async ignorePreviewConflicts(
+    @Param('id') id: string,
+    @Body() payload: IgnoreRakutenRmsConflictsDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    return this.service.ignorePreviewConflicts(id, payload, user.id);
   }
 
   @Post('sync-runs/:id/rollback')

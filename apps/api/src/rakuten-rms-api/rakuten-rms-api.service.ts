@@ -12,6 +12,7 @@ import { createHash, randomBytes } from "crypto";
 import { parseId } from "../common/utils";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateRakutenRmsConnectionDto } from "./dto/create-rakuten-rms-connection.dto";
+import { IgnoreRakutenRmsConflictsDto } from "./dto/ignore-rakuten-rms-conflicts.dto";
 import { PreviewRakutenRmsSyncDto } from "./dto/preview-rakuten-rms-sync.dto";
 import { SyncRakutenRmsConnectionDto } from "./dto/sync-rakuten-rms-connection.dto";
 import { UpdateRakutenRmsConnectionDto } from "./dto/update-rakuten-rms-connection.dto";
@@ -39,7 +40,15 @@ type SyncCounters = {
   skipped: number;
   manualActions: number;
 };
-type SyncPlanAction = "create" | "update" | "claim" | "frozen" | "manual_action" | "excluded" | "conflict";
+type SyncPlanAction =
+  | "create"
+  | "update"
+  | "claim"
+  | "frozen"
+  | "manual_action"
+  | "excluded"
+  | "ignored"
+  | "conflict";
 type RakutenOrderWriteData = Omit<Prisma.RakutenOrderRecordUncheckedCreateInput, "rowHash" | "sendStatus">;
 
 interface SyncPlan {
@@ -267,6 +276,7 @@ export class RakutenRmsApiService {
       frozen: plans.filter((plan) => plan.action === "frozen").length,
       manualAction: plans.filter((plan) => plan.action === "manual_action").length,
       excluded: plans.filter((plan) => plan.action === "excluded").length,
+      ignored: plans.filter((plan) => plan.action === "ignored").length,
       conflict: conflictCount,
     };
     const token = randomBytes(32).toString("hex");
@@ -302,12 +312,90 @@ export class RakutenRmsApiService {
       canConfirm: conflictCount === 0,
       items: plans.slice(0, 100).map((plan) => ({
         orderId: plan.item.orderId,
+        itemKey: plan.item.itemKey,
         skuCode: plan.item.skuCode,
         action: plan.action,
         existingId: plan.existing?.id.toString() ?? null,
         changedFields: plan.changedFields,
         reason: plan.reason,
       })),
+    };
+  }
+
+  async ignorePreviewConflicts(
+    idRaw: string,
+    payload: IgnoreRakutenRmsConflictsDto,
+    createdBy: bigint,
+  ): Promise<{ ignoredCount: number; orderCount: number }> {
+    const connection = await this.loadConnection(idRaw, true);
+    const preview = await this.prisma.rakutenRmsSyncPreview.findUnique({
+      where: { token: payload.previewToken },
+    });
+    if (!preview || preview.connectionId !== connection.id) {
+      throw new BadRequestException("同步预览不存在或不属于当前店铺");
+    }
+    if (preview.usedAt) throw new ConflictException("该同步预览已经使用，请重新预览");
+    if (preview.expiresAt.getTime() <= Date.now()) {
+      throw new BadRequestException("同步预览已过期，请重新预览");
+    }
+    const previewData = preview.previewData as unknown as {
+      mappedItems: MappedRakutenItem[];
+      planDescriptors: SyncPlanDescriptor[];
+    };
+    if (
+      !Array.isArray(previewData.mappedItems) ||
+      !Array.isArray(previewData.planDescriptors) ||
+      previewData.mappedItems.length !== previewData.planDescriptors.length
+    ) {
+      throw new BadRequestException("同步预览数据不完整，请重新预览");
+    }
+    const requestedKeys = new Set(payload.itemKeys);
+    const selected: MappedRakutenItem[] = [];
+    for (let index = 0; index < previewData.mappedItems.length; index += 1) {
+      const item = previewData.mappedItems[index];
+      if (!requestedKeys.has(item.itemKey)) continue;
+      const expected = previewData.planDescriptors[index];
+      if (!expected || expected.itemKey !== item.itemKey || expected.action !== "conflict") {
+        throw new BadRequestException(`明细 ${item.itemKey} 不是可忽略的冲突，请重新预览`);
+      }
+      selected.push(item);
+    }
+    if (selected.length !== requestedKeys.size) {
+      throw new BadRequestException("部分冲突明细不在当前预览中，请重新预览");
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const item of selected) {
+        const currentPlan = await this.planOrderItem(tx, connection, item);
+        if (currentPlan.action !== "conflict") {
+          throw new ConflictException(`订单 ${item.orderId} / ${item.skuCode ?? "-"} 的冲突状态已变化，请重新预览`);
+        }
+        const existingIgnore = await tx.rakutenOrderSyncExclusion.findFirst({
+          where: {
+            rmsConnectionId: connection.id,
+            shopName: null,
+            orderId: item.orderId,
+            rmsItemKey: item.itemKey,
+            reason: "conflict_ignore",
+          },
+          select: { id: true },
+        });
+        if (!existingIgnore) {
+          await tx.rakutenOrderSyncExclusion.create({
+            data: {
+              rmsConnectionId: connection.id,
+              orderId: item.orderId,
+              rmsItemKey: item.itemKey,
+              reason: "conflict_ignore",
+              createdBy,
+            },
+          });
+        }
+      }
+    });
+    return {
+      ignoredCount: selected.length,
+      orderCount: new Set(selected.map((item) => item.orderId)).size,
     };
   }
 
@@ -538,7 +626,8 @@ export class RakutenRmsApiService {
             plan.action === "conflict" ||
             plan.action === "frozen" ||
             plan.action === "manual_action" ||
-            plan.action === "excluded"
+            plan.action === "excluded" ||
+            plan.action === "ignored"
           ) {
             counters.skipped += 1;
             if (plan.action === "conflict") conflictCount += 1;
@@ -840,12 +929,16 @@ export class RakutenRmsApiService {
     connection: RakutenRmsConnection & { shop: { id: bigint; name: string } },
     item: MappedRakutenItem,
   ): Promise<SyncPlan> {
-    if (await this.isOrderItemExcluded(db, connection, item)) {
+    const exclusionReason = await this.orderItemExclusionReason(db, connection, item);
+    if (exclusionReason) {
       return {
-        action: "excluded",
+        action: exclusionReason === "conflict_ignore" ? "ignored" : "excluded",
         item,
         existing: null,
-        reason: "已经由操作人员删除，禁止 RMS API 重新拉取",
+        reason:
+          exclusionReason === "conflict_ignore"
+            ? "已经由操作人员确认忽略此冲突明细"
+            : "已经由操作人员删除，禁止 RMS API 重新拉取",
         changedFields: [],
       };
     }
@@ -929,20 +1022,20 @@ export class RakutenRmsApiService {
     };
   }
 
-  private async isOrderItemExcluded(
+  private async orderItemExclusionReason(
     db: Prisma.TransactionClient | PrismaService,
     connection: RakutenRmsConnection & { shop: { id: bigint; name: string } },
     item: MappedRakutenItem,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
     const exclusionStore = (db as PrismaService).rakutenOrderSyncExclusion;
-    if (!exclusionStore) return false;
+    if (!exclusionStore) return null;
     const normalizedSku = this.normalizeSku(item.skuCode);
     const itemScopes: Prisma.RakutenOrderSyncExclusionWhereInput[] = [
       { rmsItemKey: item.itemKey },
       { rmsItemKey: null, skuCode: null },
     ];
     if (normalizedSku) itemScopes.push({ rmsItemKey: null, skuCode: normalizedSku });
-    const excluded = await exclusionStore.findFirst({
+    const exclusions = await exclusionStore.findMany({
       where: {
         orderId: item.orderId,
         AND: [
@@ -956,9 +1049,10 @@ export class RakutenRmsApiService {
           { OR: itemScopes },
         ],
       },
-      select: { id: true },
+      select: { reason: true },
     });
-    return Boolean(excluded);
+    if (!exclusions.length) return null;
+    return exclusions.some((row) => row.reason !== "conflict_ignore") ? "user_delete" : "conflict_ignore";
   }
 
   private async applyOrderPlan(

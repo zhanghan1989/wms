@@ -2148,7 +2148,7 @@ td {
 }
 
 .rakuten-rms-preview-table {
-  min-width: 920px;
+  min-width: 1040px;
   margin: 0;
 }
 
@@ -2162,6 +2162,11 @@ td {
 .rakuten-rms-preview-table td:first-child,
 .rakuten-rms-preview-table th:nth-child(2),
 .rakuten-rms-preview-table td:nth-child(2) {
+  white-space: nowrap;
+}
+
+.rakuten-rms-preview-table th:last-child,
+.rakuten-rms-preview-table td:last-child {
   white-space: nowrap;
 }
 
