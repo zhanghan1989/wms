@@ -856,7 +856,7 @@ export class RakutenRmsApiService {
     let existing = exact;
     if (!existing) {
       const candidates = await db.rakutenOrderRecord.findMany({
-        where: { orderId: item.orderId, shopName: connection.shop.name },
+        where: { orderId: item.orderId },
         orderBy: { id: "asc" },
       });
       const normalizedItemSku = this.normalizeSku(item.skuCode);
@@ -876,10 +876,10 @@ export class RakutenRmsApiService {
           existing: null,
           reason:
             skuMatches.length > 1
-              ? "同一店铺、订单号和SKU匹配到多条CSV记录"
+              ? "同一订单号和SKU匹配到多条CSV记录"
               : skuMatches.length === 1
                 ? "匹配记录已绑定其他 RMS 连接"
-                : "同一店铺和订单号已存在，但SKU不一致",
+                : "同一订单号已存在，但SKU不一致",
           changedFields: [],
         };
       }
