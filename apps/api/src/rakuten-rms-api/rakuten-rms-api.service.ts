@@ -6,6 +6,7 @@ import {
   RakutenOrderRecord,
   RakutenRmsConnection,
   RakutenRmsSyncStatus,
+  ShopPlatform,
 } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
 import { parseId } from "../common/utils";
@@ -114,9 +115,12 @@ export class RakutenRmsApiService {
     const shopId = parseId(payload.shopId, "shopId");
     const shop = await this.prisma.shop.findUnique({
       where: { id: shopId },
-      select: { id: true },
+      select: { id: true, platform: true },
     });
     if (!shop) throw new NotFoundException("店铺不存在");
+    if (shop.platform !== ShopPlatform.rakuten) {
+      throw new BadRequestException("只有乐天店铺可以配置乐天 RMS API 连接");
+    }
     const existing = await this.prisma.rakutenRmsConnection.findUnique({
       where: { shopId },
     });

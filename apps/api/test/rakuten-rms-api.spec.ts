@@ -1,3 +1,4 @@
+import { ShopPlatform } from "@prisma/client";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { RakutenRmsApiClient } from "../src/rakuten-rms-api/rakuten-rms-api.client";
 import { RakutenRmsApiCryptoService } from "../src/rakuten-rms-api/rakuten-rms-api-crypto.service";
@@ -22,6 +23,29 @@ describe("Rakuten RMS API integration", () => {
 
     expect(encrypted.encryptedValue).not.toContain("SL421951_license-key");
     expect(crypto.decrypt(encrypted.encryptedValue, encrypted.iv, encrypted.authTag)).toBe("SL421951_license-key");
+  });
+
+  it("rejects an RMS connection for an Amazon shop", async () => {
+    const prisma = {
+      shop: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3n, platform: ShopPlatform.amazon }),
+      },
+      rakutenRmsConnection: { findUnique: jest.fn(), create: jest.fn() },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(
+      prisma,
+      {} as RakutenRmsApiClient,
+      {} as RakutenRmsApiCryptoService,
+    );
+
+    await expect(
+      service.createConnection({
+        shopId: "3",
+        serviceSecret: "secret",
+        licenseKey: "license",
+      }),
+    ).rejects.toThrow("只有乐天店铺可以配置乐天 RMS API 连接");
+    expect(prisma.rakutenRmsConnection.findUnique).not.toHaveBeenCalled();
   });
 
   it("uses ESA authentication and follows searchOrder pagination", async () => {

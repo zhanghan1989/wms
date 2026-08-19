@@ -1996,6 +1996,61 @@ td {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.manage-inline-form.shop-manage-create-form {
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 240px) auto;
+}
+
+.shop-platform-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f6faf7;
+}
+
+.shop-platform-tab {
+  flex: 1 1 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.shop-platform-tab:hover {
+  background: #eaf4ed;
+  color: var(--ink);
+}
+
+.shop-platform-tab.active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 5px 12px rgba(22, 133, 91, 0.2);
+}
+
+.shop-platform-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  margin-left: 5px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.shop-platform-tab:not(.active) .shop-platform-count {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+}
+
 .manage-create-btn {
   width: auto;
   justify-self: start;
@@ -2770,6 +2825,10 @@ button.danger-solid {
   .modal-grid,
   .cards,
   .edit-request-compare-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .manage-inline-form.shop-manage-create-form {
     grid-template-columns: 1fr;
   }
 
