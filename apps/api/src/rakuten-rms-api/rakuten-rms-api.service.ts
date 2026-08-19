@@ -738,6 +738,7 @@ export class RakutenRmsApiService {
         const itemDetailId = this.pickText(item, "itemDetailId", "ItemDetailId");
         const skuModel = this.pickObjectList(item, "SkuModelList", "skuModelList")[0] ?? {};
         const skuCode =
+          this.pickText(skuModel, "variantId") ||
           this.pickText(skuModel, "merchantDefinedSkuId") ||
           this.pickText(item, "manageNumber", "skuManagementNumber", "itemNumber", "itemUrl");
         const quantity = Math.max(1, this.pickInt(item, "units", "quantity", "orderQuantity") ?? 1);
