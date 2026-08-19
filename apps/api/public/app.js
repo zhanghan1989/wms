@@ -16094,8 +16094,6 @@ function bindDelegates() {
     if (!tab) return;
     const platform = tab.dataset.platform === "rakuten" ? "rakuten" : "amazon";
     state.shopManagePlatform = platform;
-    const platformInput = $("shopPlatformInput");
-    if (platformInput) platformInput.value = platform;
     state.shopEditingIds = new Set();
     renderShopsTable();
   });
@@ -16329,10 +16327,7 @@ function bindDelegates() {
       if (!name) {
         throw new Error("请输入店铺名称");
       }
-      const platform = String($("shopPlatformInput").value || "").trim();
-      if (platform !== "amazon" && platform !== "rakuten") {
-        throw new Error("请选择店铺平台");
-      }
+      const platform = state.shopManagePlatform === "rakuten" ? "rakuten" : "amazon";
       await request("/shops", {
         method: "POST",
         body: JSON.stringify({ name, platform }),
