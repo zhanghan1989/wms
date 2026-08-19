@@ -6152,17 +6152,71 @@ function renderRakutenRmsSyncPreview() {
     excluded: "已删除并禁止重新拉取",
     conflict: "冲突",
   };
-  const details = (Array.isArray(preview.items) ? preview.items : [])
-    .slice(0, 20)
-    .map((item) => {
-      const changedFields =
-        Array.isArray(item.changedFields) && item.changedFields.length
-          ? `；变更字段：${item.changedFields.join(", ")}`
-          : "";
-      return `${item.orderId} / ${item.skuCode || "-"}：${actionLabels[item.action] || item.action}${item.reason ? `（${item.reason}）` : ""}${changedFields}`;
+  const groups = new Map();
+  for (const item of Array.isArray(preview.items) ? preview.items : []) {
+    const orderId = String(item?.orderId || "-").trim() || "-";
+    if (!groups.has(orderId)) {
+      groups.set(orderId, {
+        orderId,
+        itemCount: 0,
+        skuCodes: new Set(),
+        results: new Map(),
+        changedFields: new Set(),
+      });
+    }
+    const group = groups.get(orderId);
+    group.itemCount += 1;
+    const skuCode = String(item?.skuCode || "").trim();
+    if (skuCode) group.skuCodes.add(skuCode);
+    const action = String(item?.action || "").trim();
+    const reason = String(item?.reason || "").trim();
+    const resultKey = `${action}\u0000${reason}`;
+    const result = group.results.get(resultKey) || {
+      label: actionLabels[action] || action || "-",
+      reason,
+      count: 0,
+    };
+    result.count += 1;
+    group.results.set(resultKey, result);
+    for (const field of Array.isArray(item?.changedFields) ? item.changedFields : []) {
+      const normalizedField = String(field || "").trim();
+      if (normalizedField) group.changedFields.add(normalizedField);
+    }
+  }
+  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
+  const orderRows = Array.from(groups.values())
+    .map((group) => {
+      const results = Array.from(group.results.values())
+        .map(
+          (result) =>
+            `${result.label}${result.count > 1 ? ` ×${result.count}` : ""}${result.reason ? `（${result.reason}）` : ""}`,
+        )
+        .join("；");
+      const skuCodes = Array.from(group.skuCodes);
+      const changedFields = Array.from(group.changedFields);
+      const changedFieldsCell = changedFields.length
+        ? `<details><summary>共 ${changedFields.length} 项</summary><div class="rakuten-rms-preview-fields">${escapeHtml(changedFields.join(", "))}</div></details>`
+        : "-";
+      return `<tr>
+        <td>${escapeHtml(group.orderId)}</td>
+        <td>${escapeHtml(group.itemCount)}</td>
+        <td>${escapeHtml(results || "-")}</td>
+        <td>${escapeHtml(skuCodes.join(", ") || "-")}</td>
+        <td>${changedFieldsCell}</td>
+      </tr>`;
     })
-    .join("；");
-  node.textContent = `预览结果：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。${details ? ` ${details}` : ""}`;
+    .join("");
+  node.innerHTML = `<div class="rakuten-rms-preview-summary">${escapeHtml(summaryText)}</div>
+    ${
+      orderRows
+        ? `<div class="rakuten-rms-preview-scroll">
+            <table class="rakuten-rms-preview-table">
+              <thead><tr><th>订单号</th><th>明细数</th><th>处理结果</th><th>SKU</th><th>变更字段</th></tr></thead>
+              <tbody>${orderRows}</tbody>
+            </table>
+          </div>`
+        : '<div class="muted">本次没有订单明细。</div>'
+    }`;
   confirmButton.classList.toggle("hidden", !preview.canConfirm);
 }
 
