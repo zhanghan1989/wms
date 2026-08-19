@@ -305,6 +305,48 @@ describe("Rakuten RMS API integration", () => {
     expect(plan.reason).toContain("SKU不一致");
   });
 
+  it("claims a unique CSV row by order number and SKU even when the legacy shop name differs", async () => {
+    const existing = {
+      id: 9n,
+      rmsConnectionId: null,
+      rmsItemKey: null,
+      sourceKind: "csv",
+      orderId: "421951-1",
+      shopName: "1号店-DGAZ store",
+      skuCode: "9259",
+      comboOrderSku: null,
+      setComponentSkuCode: null,
+      dispatchMode: "overseas",
+      shipmentNo: null,
+      xiyaExportedAt: null,
+      rmsManualOverrideAt: null,
+      rawPayload: {},
+      updatedAt: new Date("2026-08-19T00:00:00.000Z"),
+    };
+    const findMany = jest.fn().mockResolvedValue([existing]);
+    const prisma = {
+      rakutenOrderRecord: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany,
+      },
+      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+
+    const plan = await (service as any).planOrderItem(
+      prisma,
+      { id: 7n, shop: { id: 3n, name: "乐天-1号店" } },
+      { orderId: "421951-1", itemKey: "item-1", skuCode: "9259" },
+    );
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { orderId: "421951-1" },
+      orderBy: { id: "asc" },
+    });
+    expect(plan.action).toBe("claim");
+    expect(plan.existing).toBe(existing);
+  });
+
   it("freezes an RMS order that has already entered a picking batch", async () => {
     const existing = {
       id: 9n,
