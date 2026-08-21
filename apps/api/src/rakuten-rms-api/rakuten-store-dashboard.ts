@@ -4,7 +4,7 @@ export interface RakutenDashboardOrderRow {
   productName: string | null;
   orderQuantity: number | null;
   orderStatusText: string | null;
-  orderImportedAtRaw: string | null;
+  orderImportedAtRaw: string | Date | null;
   dispatchMode: string | null;
   shipmentNo: string | null;
   trackingIsDelivered: boolean;
