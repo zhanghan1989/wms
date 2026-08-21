@@ -15,17 +15,17 @@ describe('Rakuten store dashboard', () => {
           orderId: 'current-1', skuCode: 'RB-1', productName: '乐天产品', orderQuantity: 13,
           orderStatusText: '300', orderImportedAtRaw: '2026-08-20 10:00:00', dispatchMode: 'overseas',
           shipmentNo: 'TRACK-1', trackingIsDelivered: true,
-          rawPayload: { rmsItem: { price: 1200, subtotalPrice: 15600 } },
+          salesAmount: 15600,
         },
         {
           orderId: 'previous-1', skuCode: 'RB-1', productName: '系统产品', orderQuantity: 1,
           orderStatusText: '300', orderImportedAtRaw: '2026-08-10 10:00:00', dispatchMode: 'overseas',
-          shipmentNo: null, trackingIsDelivered: false, rawPayload: { 単価: '1000' },
+          shipmentNo: null, trackingIsDelivered: false, salesAmount: 1000,
         },
         {
           orderId: 'cancelled', skuCode: 'RB-1', productName: '系统产品', orderQuantity: 99,
           orderStatusText: '900', orderImportedAtRaw: '2026-08-20 10:00:00', dispatchMode: 'overseas',
-          shipmentNo: null, trackingIsDelivered: false, rawPayload: { 単価: '1000' },
+          shipmentNo: null, trackingIsDelivered: false, salesAmount: 99000,
         },
       ],
     }) as any;
@@ -42,17 +42,31 @@ describe('Rakuten store dashboard', () => {
   });
 
   it.each([
-    ['乐天-1号店', { OR: [{ rmsConnectionId: 7n }, { rmsConnectionId: null }] }, true],
-    ['乐天-2号店', { rmsConnectionId: 7n }, false],
-  ])('uses the expected historical scope for %s', async (shopName, expectedWhere, includesLegacyData) => {
-    const orderFindMany = jest.fn().mockResolvedValue([]);
+    ['乐天-1号店', true],
+    ['乐天-2号店', false],
+  ])('uses the expected optimized scope for %s', async (shopName, includesLegacyData) => {
+    const queryRaw = jest.fn().mockResolvedValue([{
+      rmsConnectionId: 7n,
+      sourceKind: 'rms_api',
+      orderId: 'order-1',
+      skuCode: 'RB-1',
+      productName: '产品',
+      orderQuantity: 1,
+      orderStatusText: '300',
+      orderImportedAtRaw: '2026-08-20 10:00:00',
+      dispatchMode: 'overseas',
+      shipmentNo: null,
+      trackingIsDelivered: 0,
+      salesAmount: '1000',
+    }]);
+    const productFindMany = jest.fn().mockResolvedValue([]);
     const prisma = {
       rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([{
         id: 7n, shopId: 3n, shop: { id: 3n, name: shopName }, status: 1, syncOrders: true,
         lastOrdersSyncedAt: null, lastSuccessfulSyncAt: null, lastSyncError: null, licenseExpiresAt: null,
       }]) },
-      rakutenOrderRecord: { findMany: orderFindMany },
-      masterProduct: { findMany: jest.fn().mockResolvedValue([]) },
+      $queryRaw: queryRaw,
+      masterProduct: { findMany: productFindMany },
       rakutenRmsSyncRun: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
     const service = new RakutenRmsApiService(
@@ -61,7 +75,16 @@ describe('Rakuten store dashboard', () => {
 
     const result = await service.getStoreDashboard('7', '30') as any;
 
-    expect(orderFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: expectedWhere }));
+    const sql = queryRaw.mock.calls[0][0];
+    const queryText = sql.strings.join(' ');
+    expect(queryText).toContain('order_imported_at_raw >=');
+    expect(queryText).toContain('MAX_EXECUTION_TIME(15000)');
+    expect(queryText).not.toContain('raw_payload AS');
+    expect(queryText.includes('rms_connection_id IS NULL')).toBe(includesLegacyData);
+    expect(productFindMany).toHaveBeenCalledWith({
+      where: { productId: { in: ['RB-1'] } },
+      select: { productId: true, productName: true, stockQty: true },
+    });
     expect(result.sourceSummary.includesLegacyData).toBe(includesLegacyData);
   });
 

@@ -8,7 +8,7 @@ export interface RakutenDashboardOrderRow {
   dispatchMode: string | null;
   shipmentNo: string | null;
   trackingIsDelivered: boolean;
-  rawPayload: unknown;
+  salesAmount: number;
 }
 
 export interface RakutenDashboardProductRow {
@@ -62,28 +62,11 @@ function percentageChange(current: number, previous: number): number | null {
   return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
-function objectValue(source: unknown, ...keys: string[]): unknown {
-  if (!source || typeof source !== 'object' || Array.isArray(source)) return undefined;
-  const record = source as Record<string, unknown>;
-  for (const key of keys) if (record[key] !== undefined && record[key] !== null) return record[key];
-  return undefined;
-}
-
-function itemSalesAmount(rawPayload: unknown, quantity: number): number {
-  const item = objectValue(rawPayload, 'rmsItem');
-  const subtotal = Number(objectValue(item, 'subtotalPrice', 'subtotal'));
-  if (Number.isFinite(subtotal)) return Math.max(0, subtotal);
-  const price = Number(objectValue(item, 'price', 'itemPrice', 'unitPrice'));
-  if (Number.isFinite(price)) return Math.max(0, price) * quantity;
-  const legacyUnitPrice = Number(objectValue(rawPayload, '単価', 'unitPrice'));
-  return Number.isFinite(legacyUnitPrice) ? Math.max(0, legacyUnitPrice) * quantity : 0;
-}
-
 function metrics(rows: RakutenDashboardOrderRow[]) {
   const orderIds = new Set(rows.map((row) => row.orderId).filter(Boolean));
   const unitCount = rows.reduce((sum, row) => sum + nonNegative(row.orderQuantity), 0);
   const salesAmount = rows.reduce(
-    (sum, row) => sum + itemSalesAmount(row.rawPayload, nonNegative(row.orderQuantity)), 0,
+    (sum, row) => sum + nonNegative(row.salesAmount), 0,
   );
   return {
     orderCount: orderIds.size,
@@ -162,7 +145,7 @@ export function buildRakutenStoreDashboard(input: {
     if (row.orderId) metric.orders.add(row.orderId);
     const quantity = nonNegative(row.orderQuantity);
     metric.units += quantity;
-    metric.salesAmount += itemSalesAmount(row.rawPayload, quantity);
+    metric.salesAmount += nonNegative(row.salesAmount);
     if (row.shipmentNo) metric.shippedUnits += quantity;
   }
   const topProducts = Array.from(productMetrics.values()).map((row) => ({
@@ -186,7 +169,7 @@ export function buildRakutenStoreDashboard(input: {
     if (row.orderId) daily.orderIds.add(row.orderId);
     const quantity = nonNegative(row.orderQuantity);
     daily.units += quantity;
-    daily.salesAmount += itemSalesAmount(row.rawPayload, quantity);
+    daily.salesAmount += nonNegative(row.salesAmount);
     dailyMap.set(key, daily);
   }
 

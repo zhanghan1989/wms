@@ -2586,8 +2586,8 @@ function renderRakutenStoreDashboard(payload) {
   const latestRun = payload.latestSyncRun;
   $("rakutenStoreDashboardSyncStatus").textContent = latestRun ? `最近任务：${displayText(latestRun.status)} / 读取 ${formatMetricNumber(latestRun.fetchedCount)} 条` : "尚无同步任务";
   const sourceText = sourceSummary.includesLegacyData
-    ? `数据来源：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细 + 历史手动导入 ${formatMetricNumber(sourceSummary.legacyItemCount)} 条明细。`
-    : `数据来源：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细。`;
+    ? `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细 + 历史手动导入 ${formatMetricNumber(sourceSummary.legacyItemCount)} 条明细。`
+    : `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细。`;
   const licenseText = selectedShop.licenseExpiresAt ? ` RMS License 到期时间：${formatDate(selectedShop.licenseExpiresAt)}。` : "";
   $("rakutenStoreDashboardStatusMeta").textContent = `${sourceText}${licenseText} 取消订单已排除。`;
   hydrateResponsiveTableLabels($("rakutenDashboard"));
