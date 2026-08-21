@@ -6167,7 +6167,7 @@ function renderRakutenRmsSyncRuns() {
 function renderRakutenSyncPreview(node, confirmButton, preview, context) {
   if (!node || !confirmButton) return;
   if (!preview) {
-    node.textContent = "正式同步前必须先生成预览并人工确认。首次同步固定为最近1天、最多5张订单。";
+    node.textContent = "正式同步前必须先生成预览并人工确认。";
     confirmButton.classList.add("hidden");
     return;
   }
@@ -6182,62 +6182,32 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
     ignored: "人工忽略",
     conflict: "冲突",
   };
-  const groups = new Map();
-  for (const item of Array.isArray(preview.items) ? preview.items : []) {
-    const orderId = String(item?.orderId || "-").trim() || "-";
-    if (!groups.has(orderId)) {
-      groups.set(orderId, {
-        orderId,
-        itemCount: 0,
-        skuCodes: new Set(),
-        results: new Map(),
-        changedFields: new Set(),
-        conflictItemKeys: [],
-      });
-    }
-    const group = groups.get(orderId);
-    group.itemCount += 1;
-    const skuCode = String(item?.skuCode || "").trim();
-    if (skuCode) group.skuCodes.add(skuCode);
-    const action = String(item?.action || "").trim();
-    const itemKey = String(item?.itemKey || "").trim();
-    if (action === "conflict" && itemKey) group.conflictItemKeys.push(itemKey);
-    const reason = String(item?.reason || "").trim();
-    const resultKey = `${action}\u0000${reason}`;
-    const result = group.results.get(resultKey) || {
-      label: actionLabels[action] || action || "-",
-      reason,
-      count: 0,
-    };
-    result.count += 1;
-    group.results.set(resultKey, result);
-    for (const field of Array.isArray(item?.changedFields) ? item.changedFields : []) {
-      const normalizedField = String(field || "").trim();
-      if (normalizedField) group.changedFields.add(normalizedField);
-    }
-  }
   const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
-  const orderRows = Array.from(groups.values())
-    .map((group) => {
-      const results = Array.from(group.results.values())
-        .map(
-          (result) =>
-            `${result.label}${result.count > 1 ? ` ×${result.count}` : ""}${result.reason ? `（${result.reason}）` : ""}`,
-        )
-        .join("；");
-      const skuCodes = Array.from(group.skuCodes);
-      const changedFields = Array.from(group.changedFields);
+  const itemRows = (Array.isArray(preview.items) ? preview.items : [])
+    .map((item) => {
+      const orderId = String(item?.orderId || "-").trim() || "-";
+      const skuCode = String(item?.skuCode || "").trim();
+      const action = String(item?.action || "").trim();
+      const itemKey = String(item?.itemKey || "").trim();
+      const reason = String(item?.reason || "").trim();
+      const result = `${actionLabels[action] || action || "-"}${reason ? `（${reason}）` : ""}`;
+      const changedFields = Array.from(
+        new Set(
+          (Array.isArray(item?.changedFields) ? item.changedFields : [])
+            .map((field) => String(field || "").trim())
+            .filter(Boolean),
+        ),
+      );
       const changedFieldsCell = changedFields.length
         ? `<details><summary>共 ${changedFields.length} 项</summary><div class="rakuten-rms-preview-fields">${escapeHtml(changedFields.join(", "))}</div></details>`
         : "-";
-      const actionCell = group.conflictItemKeys.length
-        ? `<button type="button" class="tiny-btn danger" data-action="ignoreRakutenRmsConflicts" data-context="${escapeHtml(context)}" data-order-id="${escapeHtml(group.orderId)}">确认忽略冲突</button>`
+      const actionCell = action === "conflict" && itemKey
+        ? `<button type="button" class="tiny-btn danger" data-action="ignoreRakutenRmsConflicts" data-context="${escapeHtml(context)}" data-order-id="${escapeHtml(orderId)}" data-item-key="${escapeHtml(itemKey)}">确认忽略冲突</button>`
         : "-";
       return `<tr>
-        <td>${escapeHtml(group.orderId)}</td>
-        <td>${escapeHtml(group.itemCount)}</td>
-        <td>${escapeHtml(results || "-")}</td>
-        <td>${escapeHtml(skuCodes.join(", ") || "-")}</td>
+        <td>${escapeHtml(orderId)}</td>
+        <td>${escapeHtml(result)}</td>
+        <td>${escapeHtml(skuCode || "-")}</td>
         <td>${changedFieldsCell}</td>
         <td>${actionCell}</td>
       </tr>`;
@@ -6245,11 +6215,11 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
     .join("");
   node.innerHTML = `<div class="rakuten-rms-preview-summary">${escapeHtml(summaryText)}</div>
     ${
-      orderRows
+      itemRows
         ? `<div class="rakuten-rms-preview-scroll">
             <table class="rakuten-rms-preview-table">
-              <thead><tr><th>订单号</th><th>明细数</th><th>处理结果</th><th>SKU</th><th>变更字段</th><th>操作</th></tr></thead>
-              <tbody>${orderRows}</tbody>
+              <thead><tr><th>订单号</th><th>处理结果（每行1条明细）</th><th>SKU</th><th>变更字段</th><th>操作</th></tr></thead>
+              <tbody>${itemRows}</tbody>
             </table>
           </div>`
         : '<div class="muted">本次没有订单明细。</div>'
@@ -6317,17 +6287,23 @@ async function ignoreRakutenRmsPreviewConflicts(button, context) {
   const preview = apiImport ? state.rakutenApiImportPreview : state.rakutenRmsSyncPreview;
   const previewToken = String(preview?.previewToken || "").trim();
   const orderId = String(button.dataset.orderId || "").trim();
+  const itemKey = String(button.dataset.itemKey || "").trim();
   const itemKeys = Array.from(
     new Set(
       (Array.isArray(preview?.items) ? preview.items : [])
-        .filter((item) => String(item?.orderId || "").trim() === orderId && item?.action === "conflict")
+        .filter(
+          (item) =>
+            String(item?.orderId || "").trim() === orderId &&
+            item?.action === "conflict" &&
+            (!itemKey || String(item?.itemKey || "").trim() === itemKey),
+        )
         .map((item) => String(item?.itemKey || "").trim())
         .filter(Boolean),
     ),
   );
   if (!connectionId || !previewToken || !orderId || !itemKeys.length) return;
   const confirmed = await openActionConfirmModal(
-    `确认永久忽略订单 ${orderId} 的 ${itemKeys.length} 条冲突明细吗？系统不会创建重复订单，后续预览会将这些明细显示为“人工忽略”。`,
+    `确认永久忽略订单 ${orderId} 的这条冲突明细吗？系统不会创建重复订单，后续预览会将该明细显示为“人工忽略”。`,
     "确认忽略乐天冲突",
     "确认忽略",
   );
@@ -6349,7 +6325,7 @@ async function ignoreRakutenRmsPreviewConflicts(button, context) {
     state.rakutenRmsSyncPreview = refreshedPreview;
     renderRakutenRmsSyncPreview();
   }
-  showToast(`订单 ${orderId} 的冲突已人工忽略，预览已刷新`);
+  showToast(`订单 ${orderId} 的该条冲突明细已人工忽略，预览已刷新`);
 }
 
 async function loadRakutenRmsSyncRuns(connectionId) {

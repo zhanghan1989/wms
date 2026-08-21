@@ -2140,6 +2140,16 @@ td {
   margin-bottom: 8px;
 }
 
+.rakuten-api-import-actions {
+  margin-top: 24px;
+}
+
+#rakutenApiImportPreviewBtn {
+  background: var(--accent);
+  border-color: #0b6a48;
+  color: #fff;
+}
+
 .rakuten-rms-preview-scroll {
   max-height: 320px;
   overflow: auto;

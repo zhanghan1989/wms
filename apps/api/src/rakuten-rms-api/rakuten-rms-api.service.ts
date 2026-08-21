@@ -25,12 +25,10 @@ const RAKUTEN_SYNC_TIMEZONE = process.env.RAKUTEN_RMS_API_SYNC_TIMEZONE || "Asia
 const RAKUTEN_SCHEDULED_SYNC_ENABLED =
   String(process.env.RAKUTEN_RMS_API_SCHEDULED_SYNC_ENABLED ?? "false").toLowerCase() === "true";
 const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
-const ACTIONABLE_ORDER_PROGRESS = [100, 200, 300, 400, 600, 700, 800, 900];
+const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
+const IMPORTABLE_ORDER_PROGRESS = [PENDING_SHIPMENT_ORDER_PROGRESS];
 const CONNECTION_TEST_LOOKBACK_DAYS = 62;
-const OPEN_ORDER_RECONCILIATION_LIMIT = 1000;
 const PREVIEW_EXPIRY_MS = 30 * 60 * 1000;
-const FIRST_SYNC_LOOKBACK_DAYS = 1;
-const FIRST_SYNC_MAX_ORDERS = 5;
 const MANUAL_OVERRIDE_KEY = "_wmsManualOverrideFields";
 
 type SyncCounters = {
@@ -237,7 +235,6 @@ export class RakutenRmsApiService {
       reconciledOrderCount: number;
       requestedOrderCount: number;
       truncated: boolean;
-      firstSync: boolean;
     };
     if (previewData.planDescriptors.some((plan) => plan.action === "conflict")) {
       throw new ConflictException("预览中存在冲突订单，请处理后重新预览");
@@ -253,15 +250,13 @@ export class RakutenRmsApiService {
       reconciledOrderCount: previewData.reconciledOrderCount,
       requestedOrderCount: previewData.requestedOrderCount,
       truncated: previewData.truncated,
-      firstSyncPreview: previewData.firstSync,
     });
   }
 
   async previewConnection(idRaw: string, payload: PreviewRakutenRmsSyncDto = {}): Promise<unknown> {
     const connection = await this.loadConnection(idRaw, true);
-    const firstSync = !connection.lastSuccessfulSyncAt;
-    const initialLookbackDays = firstSync ? FIRST_SYNC_LOOKBACK_DAYS : (payload.initialLookbackDays ?? 14);
-    const maxOrders = firstSync ? FIRST_SYNC_MAX_ORDERS : payload.maxOrders;
+    const initialLookbackDays = payload.initialLookbackDays ?? 7;
+    const maxOrders = payload.maxOrders;
     const fetched = await this.fetchSyncItems(connection, initialLookbackDays, maxOrders);
     const plans: SyncPlan[] = [];
     for (const item of fetched.mappedItems) {
@@ -297,20 +292,18 @@ export class RakutenRmsApiService {
           reconciledOrderCount: fetched.reconciledOrderCount,
           requestedOrderCount: fetched.requestedOrderCount,
           truncated: fetched.truncated,
-          firstSync,
         }),
       },
     });
     return {
       previewToken: token,
       expiresAt: expiresAt.toISOString(),
-      firstSync,
       appliedLimits: { initialLookbackDays, maxOrders: maxOrders ?? null },
       ...fetched,
       mappedItems: undefined,
       summary,
       canConfirm: conflictCount === 0,
-      items: plans.slice(0, 100).map((plan) => ({
+      items: plans.map((plan) => ({
         orderId: plan.item.orderId,
         itemKey: plan.item.itemKey,
         skuCode: plan.item.skuCode,
@@ -399,7 +392,7 @@ export class RakutenRmsApiService {
     };
   }
 
-  async syncAllConnections(scheduled = false): Promise<{ results: unknown[] }> {
+  async syncAllConnections(): Promise<{ results: unknown[] }> {
     const rows = await this.prisma.rakutenRmsConnection.findMany({
       where: { status: 1, syncOrders: true },
       include: { shop: true },
@@ -408,16 +401,7 @@ export class RakutenRmsApiService {
     const results: unknown[] = [];
     for (const row of rows) {
       try {
-        if (!row.lastSuccessfulSyncAt) {
-          results.push({
-            connectionId: row.id.toString(),
-            shopName: row.shop.name,
-            skipped: true,
-            reason: "首次同步必须由管理员预览并确认",
-          });
-          continue;
-        }
-        const fetched = await this.fetchSyncItems(row, scheduled ? 7 : 14);
+        const fetched = await this.fetchSyncItems(row, 7);
         results.push(await this.runSync(row, fetched));
       } catch (error) {
         results.push({
@@ -557,7 +541,7 @@ export class RakutenRmsApiService {
   async runScheduledSync(): Promise<void> {
     if (!RAKUTEN_SCHEDULED_SYNC_ENABLED) return;
     try {
-      const result = await this.syncAllConnections(true);
+      const result = await this.syncAllConnections();
       this.logger.log(`Rakuten scheduled sync completed: connections=${result.results.length}`);
     } catch (error) {
       this.logger.error(`Rakuten scheduled sync failed: ${this.errorMessage(error)}`);
@@ -574,7 +558,6 @@ export class RakutenRmsApiService {
       previewToken?: string;
       expectedPlans?: SyncPlanDescriptor[];
       truncated?: boolean;
-      firstSyncPreview?: boolean;
     },
   ): Promise<unknown> {
     const connectionKey = connection.id.toString();
@@ -648,7 +631,7 @@ export class RakutenRmsApiService {
           else counters.updated += 1;
         }
         const hasConflicts = conflictCount > 0;
-        const incompleteByLimit = Boolean(input.truncated && !input.firstSyncPreview);
+        const incompleteByLimit = Boolean(input.truncated);
         const isPartial = hasConflicts || incompleteByLimit;
         await tx.rakutenRmsSyncRun.update({
           where: { id: activeRun.id },
@@ -745,34 +728,22 @@ export class RakutenRmsApiService {
     const searchedOrderNumbers = await this.client.searchOrders(credentials.serviceSecret, credentials.licenseKey, {
       start,
       end: now,
-      orderProgressList: ACTIONABLE_ORDER_PROGRESS,
+      orderProgressList: IMPORTABLE_ORDER_PROGRESS,
     });
-    const reconciliationOrderNumbers = await this.loadOpenOrderNumbersForReconciliation(connection.id);
-    const allOrderNumbers = Array.from(new Set([...searchedOrderNumbers, ...reconciliationOrderNumbers]));
+    const allOrderNumbers = Array.from(new Set(searchedOrderNumbers));
     const orderNumbers = maxOrders ? allOrderNumbers.slice(0, maxOrders) : allOrderNumbers;
     const orders = await this.client.getOrders(credentials.serviceSecret, credentials.licenseKey, orderNumbers);
+    const pendingShipmentOrders = orders.filter(
+      (order) =>
+        this.pickText(order, "orderProgress", "OrderProgress") === String(PENDING_SHIPMENT_ORDER_PROGRESS),
+    );
     return {
-      mappedItems: await this.mapOrders(orders),
+      mappedItems: await this.mapOrders(pendingShipmentOrders),
       searchedOrderCount: searchedOrderNumbers.length,
-      reconciledOrderCount: reconciliationOrderNumbers.length,
+      reconciledOrderCount: 0,
       requestedOrderCount: orderNumbers.length,
       truncated: orderNumbers.length < allOrderNumbers.length,
     };
-  }
-
-  private async loadOpenOrderNumbersForReconciliation(connectionId: bigint): Promise<string[]> {
-    const rows = await this.prisma.rakutenOrderRecord.findMany({
-      where: {
-        rmsConnectionId: connectionId,
-        orderId: { not: null },
-        shipmentNo: null,
-        sendStatus: OrderSendStatus.unsent,
-      },
-      select: { orderId: true },
-      orderBy: [{ rmsLastSyncedAt: "asc" }, { id: "asc" }],
-      take: OPEN_ORDER_RECONCILIATION_LIMIT,
-    });
-    return Array.from(new Set(rows.map((row) => String(row.orderId ?? "").trim()).filter(Boolean)));
   }
 
   private async mapOrders(orders: RakutenJsonObject[]): Promise<MappedRakutenItem[]> {

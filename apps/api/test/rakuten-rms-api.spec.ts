@@ -1,6 +1,8 @@
 import { ShopPlatform } from "@prisma/client";
+import { ROLES_KEY } from "../src/common/decorators/roles.decorator";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { RakutenRmsApiClient } from "../src/rakuten-rms-api/rakuten-rms-api.client";
+import { RakutenRmsApiController } from "../src/rakuten-rms-api/rakuten-rms-api.controller";
 import { RakutenRmsApiCryptoService } from "../src/rakuten-rms-api/rakuten-rms-api-crypto.service";
 import { RakutenRmsApiService } from "../src/rakuten-rms-api/rakuten-rms-api.service";
 
@@ -14,6 +16,26 @@ describe("Rakuten RMS API integration", () => {
     else process.env.RAKUTEN_RMS_API_ENCRYPTION_KEY = originalEncryptionKey;
     if (originalProxyUrl === undefined) delete process.env.RAKUTEN_RMS_API_PROXY_URL;
     else process.env.RAKUTEN_RMS_API_PROXY_URL = originalProxyUrl;
+  });
+
+  it("does not role-restrict any Rakuten RMS API operation", () => {
+    const unrestrictedHandlers = [
+      RakutenRmsApiController.prototype.listConnections,
+      RakutenRmsApiController.prototype.createConnection,
+      RakutenRmsApiController.prototype.updateConnection,
+      RakutenRmsApiController.prototype.testConnection,
+      RakutenRmsApiController.prototype.previewConnection,
+      RakutenRmsApiController.prototype.syncConnection,
+      RakutenRmsApiController.prototype.ignorePreviewConflicts,
+      RakutenRmsApiController.prototype.rollbackSyncRun,
+      RakutenRmsApiController.prototype.syncAllConnections,
+      RakutenRmsApiController.prototype.listSyncRuns,
+    ];
+
+    expect(Reflect.getMetadata(ROLES_KEY, RakutenRmsApiController)).toBeUndefined();
+    for (const handler of unrestrictedHandlers) {
+      expect(Reflect.getMetadata(ROLES_KEY, handler)).toBeUndefined();
+    }
   });
 
   it("encrypts the RMS credentials with authenticated encryption", () => {
@@ -235,28 +257,41 @@ describe("Rakuten RMS API integration", () => {
     });
   });
 
-  it("selects unshipped API orders for status reconciliation", async () => {
-    const findMany = jest
-      .fn()
-      .mockResolvedValue([{ orderId: "421951-2" }, { orderId: "421951-2" }, { orderId: "421951-3" }]);
-    const prisma = {
-      rakutenOrderRecord: { findMany },
-    } as unknown as PrismaService;
-    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
-
-    const result = await (service as any).loadOpenOrderNumbersForReconciliation(7n);
-
-    expect(result).toEqual(["421951-2", "421951-3"]);
-    expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          rmsConnectionId: 7n,
-          shipmentNo: null,
-          sendStatus: "unsent",
-        }),
-        take: 1000,
-      }),
+  it("requests and maps only pending-shipment orders", async () => {
+    const client = {
+      searchOrders: jest.fn().mockResolvedValue(["pending-order", "changed-order"]),
+      getOrders: jest.fn().mockResolvedValue([
+        { orderNumber: "pending-order", orderProgress: 300 },
+        { orderNumber: "changed-order", orderProgress: 400 },
+      ]),
+    } as unknown as RakutenRmsApiClient;
+    const service = new RakutenRmsApiService(
+      {} as PrismaService,
+      client,
+      {} as RakutenRmsApiCryptoService,
     );
+    jest.spyOn(service as any, "decryptCredentials").mockReturnValue({
+      serviceSecret: "service-secret",
+      licenseKey: "license-key",
+    });
+    const mapOrders = jest.spyOn(service as any, "mapOrders").mockResolvedValue([]);
+
+    const result = await (service as any).fetchSyncItems(
+      { id: 7n, licenseExpiresAt: null, lastOrdersSyncedAt: null },
+      14,
+    );
+
+    expect(client.searchOrders).toHaveBeenCalledWith(
+      "service-secret",
+      "license-key",
+      expect.objectContaining({ orderProgressList: [300] }),
+    );
+    expect(mapOrders).toHaveBeenCalledWith([{ orderNumber: "pending-order", orderProgress: 300 }]);
+    expect(result).toMatchObject({
+      searchedOrderCount: 2,
+      reconciledOrderCount: 0,
+      requestedOrderCount: 2,
+    });
   });
 
   it("returns sync history without exposing encrypted connection credentials", async () => {
@@ -568,7 +603,7 @@ describe("Rakuten RMS API integration", () => {
     expect((service as any).isCancellationStatus("300")).toBe(false);
   });
 
-  it("limits the first preview to one day and five orders without writing order rows", async () => {
+  it("uses the standard preview range for a connection that has never synced", async () => {
     const previewCreate = jest.fn().mockResolvedValue({ token: "saved" });
     const prisma = {
       rakutenRmsSyncPreview: {
@@ -591,18 +626,65 @@ describe("Rakuten RMS API integration", () => {
       truncated: false,
     });
 
-    const result = (await service.previewConnection("7", {
-      initialLookbackDays: 30,
-      maxOrders: 100,
-    })) as any;
+    const result = (await service.previewConnection("7")) as any;
 
-    expect(fetchSpy).toHaveBeenCalledWith(connection, 1, 5);
+    expect(fetchSpy).toHaveBeenCalledWith(connection, 7, undefined);
     expect(result.appliedLimits).toEqual({
-      initialLookbackDays: 1,
-      maxOrders: 5,
+      initialLookbackDays: 7,
+      maxOrders: null,
     });
     expect(result.canConfirm).toBe(true);
     expect(previewCreate).toHaveBeenCalled();
+  });
+
+  it("returns every preview detail when the sync plan contains more than 100 rows", async () => {
+    const prisma = {
+      rakutenRmsSyncPreview: {
+        create: jest.fn().mockResolvedValue({ token: "saved" }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+    const connection = {
+      id: 7n,
+      lastSuccessfulSyncAt: new Date("2026-08-19T00:00:00.000Z"),
+      shop: { id: 3n, name: "乐天店" },
+    };
+    const mappedItems = [
+      ...Array.from({ length: 100 }, (_, index) => ({
+        orderId: `frozen-${index}`,
+        itemKey: `frozen-item-${index}`,
+        skuCode: `frozen-sku-${index}`,
+        previewAction: "frozen",
+      })),
+      ...Array.from({ length: 16 }, (_, index) => ({
+        orderId: `create-${index}`,
+        itemKey: `create-item-${index}`,
+        skuCode: `create-sku-${index}`,
+        previewAction: "create",
+      })),
+    ];
+    jest.spyOn(service as any, "loadConnection").mockResolvedValue(connection);
+    jest.spyOn(service as any, "fetchSyncItems").mockResolvedValue({
+      mappedItems,
+      searchedOrderCount: 116,
+      reconciledOrderCount: 0,
+      requestedOrderCount: 116,
+      truncated: false,
+    });
+    jest.spyOn(service as any, "planOrderItem").mockImplementation(async (_db, _connection, item: any) => ({
+      action: item.previewAction,
+      item,
+      existing: null,
+      reason: null,
+      changedFields: [],
+    }));
+
+    const result = (await service.previewConnection("7")) as any;
+
+    expect(result.summary).toMatchObject({ fetched: 116, create: 16, frozen: 100 });
+    expect(result.items).toHaveLength(116);
+    expect(result.items.filter((item: any) => item.action === "create")).toHaveLength(16);
   });
 
   it("rolls back a created order only when it has not changed since the sync", async () => {

@@ -1,9 +1,6 @@
 import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
-import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { Roles } from '../common/decorators/roles.decorator';
-import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { CreateRakutenRmsConnectionDto } from './dto/create-rakuten-rms-connection.dto';
 import { IgnoreRakutenRmsConflictsDto } from './dto/ignore-rakuten-rms-conflicts.dto';
@@ -13,8 +10,7 @@ import { UpdateRakutenRmsConnectionDto } from './dto/update-rakuten-rms-connecti
 import { RakutenRmsApiService } from './rakuten-rms-api.service';
 
 @Controller('rakuten-rms-api')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.admin)
+@UseGuards(JwtAuthGuard)
 export class RakutenRmsApiController {
   constructor(private readonly service: RakutenRmsApiService) {}
 
