@@ -4880,12 +4880,7 @@ export class OrdersService {
       );
     }
 
-    const shipmentReturnContext = isDailyEmailCsv
-      ? {
-          chinaDispatchOrderRecordIdsByOrderId: new Map<string, Set<string>>(),
-          blockedOrderIds: new Set<string>(),
-        }
-      : await this.loadRakutenShipmentReturnContext(rows);
+    const shipmentReturnContext = await this.loadRakutenShipmentReturnContext(rows);
     const downloadableRows = rows.filter(
           (row) => {
       if (row.rmsManualActionDetectedAt && !row.rmsManualActionResolvedAt) return false;

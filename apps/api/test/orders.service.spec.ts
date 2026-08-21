@@ -1,7 +1,52 @@
 import { OrdersService } from '../src/orders/orders.service';
 import * as XLSX from 'xlsx';
+import * as iconv from 'iconv-lite';
 
 describe('OrdersService', () => {
+  it("includes China shipment detail labels in the Rakuten daily email CSV without applying the customs gate", async () => {
+    const importedAt = new Date();
+    const rows = [
+      {
+        id: 1n,
+        orderId: "MIXED-ORDER",
+        dispatchMode: "overseas",
+        shipmentNo: null,
+        shipmentCompany: null,
+        shipmentNoRegisteredAt: null,
+        csvImportedAt: importedAt,
+        rawPayload: {},
+        rmsManualActionDetectedAt: null,
+        rmsManualActionResolvedAt: null,
+      },
+      {
+        id: 2n,
+        orderId: "MIXED-ORDER",
+        dispatchMode: "china_pending",
+        shipmentNo: null,
+        shipmentCompany: null,
+        shipmentNoRegisteredAt: null,
+        csvImportedAt: importedAt,
+        rawPayload: {},
+        rmsManualActionDetectedAt: null,
+        rmsManualActionResolvedAt: null,
+      },
+    ];
+    const service = new OrdersService({
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
+    } as any);
+    jest.spyOn(service as any, "loadRakutenShipmentReturnContext").mockResolvedValue({
+      chinaDispatchOrderRecordIdsByOrderId: new Map([["MIXED-ORDER", new Set(["2"])]]),
+      blockedOrderIds: new Set(["MIXED-ORDER"]),
+    });
+
+    const file = await service.buildRakutenShipmentConfirmationCsv({ days: 1, purpose: "daily-email" });
+    const csv = iconv.decode(file.content, "cp932");
+
+    expect(file.rowCount).toBe(2);
+    expect(csv).toContain('"MIXED-ORDER","","中国発あり"');
+    expect(csv).toContain('"MIXED-ORDER","","中国発"');
+  });
+
   it("blocks every line of a mixed Rakuten order until all China shipments clear customs", async () => {
     const registeredAt = new Date("2026-08-18T01:00:00.000Z");
     const rows = [
