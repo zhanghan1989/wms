@@ -1184,13 +1184,15 @@ button.ghost {
   justify-content: flex-start;
 }
 
-#downloadAmazonStoreFactoryExcelBtn {
+#downloadAmazonStoreFactoryExcelBtn,
+#downloadRakutenStoreFactoryExcelBtn {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
 }
 
-#downloadAmazonStoreFactoryExcelBtn:hover {
+#downloadAmazonStoreFactoryExcelBtn:hover,
+#downloadRakutenStoreFactoryExcelBtn:hover {
   background: #0b6f4c;
   border-color: #0b6f4c;
 }

@@ -9,6 +9,7 @@ import {
   ShopPlatform,
 } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
+import * as XLSX from "xlsx";
 import { parseId } from "../common/utils";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateRakutenRmsConnectionDto } from "./dto/create-rakuten-rms-connection.dto";
@@ -19,6 +20,7 @@ import { UpdateRakutenRmsConnectionDto } from "./dto/update-rakuten-rms-connecti
 import { RakutenRmsApiClient } from "./rakuten-rms-api.client";
 import { RakutenRmsApiCryptoService } from "./rakuten-rms-api-crypto.service";
 import { RakutenJsonObject } from "./rakuten-rms-api.types";
+import { buildRakutenStoreDashboard } from "./rakuten-store-dashboard";
 
 const RAKUTEN_SYNC_CRON = process.env.RAKUTEN_RMS_API_SYNC_CRON || "0 */15 * * * *";
 const RAKUTEN_SYNC_TIMEZONE = process.env.RAKUTEN_RMS_API_SYNC_TIMEZONE || "Asia/Tokyo";
@@ -30,6 +32,7 @@ const IMPORTABLE_ORDER_PROGRESS = [PENDING_SHIPMENT_ORDER_PROGRESS];
 const CONNECTION_TEST_LOOKBACK_DAYS = 62;
 const PREVIEW_EXPIRY_MS = 30 * 60 * 1000;
 const MANUAL_OVERRIDE_KEY = "_wmsManualOverrideFields";
+const LEGACY_RAKUTEN_DEFAULT_SHOP_NAME = "乐天-1号店";
 
 type SyncCounters = {
   fetched: number;
@@ -116,6 +119,126 @@ export class RakutenRmsApiService {
       orderBy: { id: "asc" },
     });
     return rows.map((row) => this.serializeConnection(row));
+  }
+
+  async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string): Promise<unknown> {
+    const days = [7, 30, 90].includes(Number(daysRaw)) ? Number(daysRaw) : 30;
+    const connections = await this.prisma.rakutenRmsConnection.findMany({
+      where: { status: 1, syncOrders: true },
+      include: { shop: { select: { id: true, name: true } } },
+      orderBy: { id: "asc" },
+    });
+    const requestedId = connectionIdRaw ? parseId(connectionIdRaw, "connectionId") : null;
+    const selected = requestedId ? connections.find((row) => row.id === requestedId) : connections[0];
+    if (requestedId && !selected) throw new NotFoundException("所选乐天店铺连接不存在或已停用");
+    const shops = connections.map((row) => ({
+      connectionId: row.id.toString(),
+      shopId: row.shopId.toString(),
+      shopName: row.shop.name,
+      lastOrdersSyncedAt: row.lastOrdersSyncedAt?.toISOString() ?? null,
+      hasSyncError: Boolean(row.lastSyncError),
+    }));
+    if (!selected) {
+      return { generatedAt: new Date().toISOString(), days, shops, selectedShop: null, dashboard: null };
+    }
+    const includesLegacyData = selected.shop.name === LEGACY_RAKUTEN_DEFAULT_SHOP_NAME;
+
+    const [orders, products, latestSyncRun] = await Promise.all([
+      this.prisma.rakutenOrderRecord.findMany({
+        where: includesLegacyData
+          ? { OR: [{ rmsConnectionId: selected.id }, { rmsConnectionId: null }] }
+          : { rmsConnectionId: selected.id },
+        select: {
+          rmsConnectionId: true,
+          sourceKind: true,
+          orderId: true,
+          skuCode: true,
+          productName: true,
+          orderQuantity: true,
+          orderStatusText: true,
+          orderImportedAtRaw: true,
+          dispatchMode: true,
+          shipmentNo: true,
+          trackingIsDelivered: true,
+          rawPayload: true,
+        },
+      }),
+      this.prisma.masterProduct.findMany({
+        select: { productId: true, productName: true, stockQty: true },
+      }),
+      this.prisma.rakutenRmsSyncRun.findFirst({
+        where: { connectionId: selected.id },
+        orderBy: { startedAt: "desc" },
+        select: {
+          status: true, startedAt: true, finishedAt: true, fetchedCount: true,
+          createdCount: true, updatedCount: true, skippedCount: true, errorMessage: true,
+        },
+      }),
+    ]);
+    const selectedShop = {
+      connectionId: selected.id.toString(),
+      shopId: selected.shopId.toString(),
+      shopName: selected.shop.name,
+      lastOrdersSyncedAt: selected.lastOrdersSyncedAt?.toISOString() ?? null,
+      lastSuccessfulSyncAt: selected.lastSuccessfulSyncAt?.toISOString() ?? null,
+      licenseExpiresAt: selected.licenseExpiresAt?.toISOString() ?? null,
+      syncIssue: selected.lastSyncError ? { message: selected.lastSyncError } : null,
+      includesLegacyData,
+    };
+    return {
+      generatedAt: new Date().toISOString(),
+      days,
+      shops,
+      selectedShop,
+      latestSyncRun: latestSyncRun ? {
+        ...latestSyncRun,
+        startedAt: latestSyncRun.startedAt.toISOString(),
+        finishedAt: latestSyncRun.finishedAt?.toISOString() ?? null,
+      } : null,
+      sourceSummary: {
+        apiItemCount: orders.filter((row) => row.rmsConnectionId === selected.id).length,
+        legacyItemCount: orders.filter((row) => row.rmsConnectionId === null).length,
+        includesLegacyData,
+      },
+      dashboard: buildRakutenStoreDashboard({ now: new Date(), days, orders, products }),
+    };
+  }
+
+  async buildStoreFactoryRecommendationsExcel(
+    connectionIdRaw?: string,
+  ): Promise<{ fileName: string; content: Buffer }> {
+    const payload = await this.getStoreDashboard(connectionIdRaw, "90") as {
+      selectedShop?: { shopName?: string } | null;
+      dashboard?: { factoryRecommendations?: { rows?: Array<{
+        skuCode?: string; productId?: string; productName?: string | null;
+        unitCount90d?: number; stockQty?: number; suggestedFactoryQty?: number;
+      }> } } | null;
+    };
+    if (!payload.selectedShop) throw new NotFoundException("尚无已启用的乐天店铺连接");
+    const shopName = String(payload.selectedShop.shopName ?? "").trim();
+    const data = (payload.dashboard?.factoryRecommendations?.rows ?? []).map((row) => ({
+      "乐天店铺": shopName,
+      "产品ID": row.productId ?? "",
+      "乐天SKU": row.skuCode ?? "",
+      "产品名称": row.productName ?? "",
+      "近90天销量": Number(row.unitCount90d ?? 0),
+      "当前日本库存": Number(row.stockQty ?? 0),
+      "建议工厂备货数量": Number(row.suggestedFactoryQty ?? 0),
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(data, {
+      header: ["乐天店铺", "产品ID", "乐天SKU", "产品名称", "近90天销量", "当前日本库存", "建议工厂备货数量"],
+    });
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "乐天工厂备货建议");
+    const content = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date());
+    const date = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return {
+      fileName: `乐天工厂备货建议-${shopName}-${date.year}-${date.month}-${date.day}.xlsx`,
+      content,
+    };
   }
 
   async createConnection(payload: CreateRakutenRmsConnectionDto): Promise<unknown> {

@@ -187,6 +187,7 @@
           <span id="productEditPendingBadge" class="quick-badge hidden">0</span>
         </button>
         <button type="button" id="openAmazonDashboardPanel">亚马逊店铺看板</button>
+        <button type="button" id="openRakutenDashboardPanel">乐天店铺看板</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -558,6 +559,69 @@
           </article>
         </div>
 
+      </section>
+
+      <section class="panel" id="rakutenDashboard">
+        <div class="panel-head">
+          <h2>乐天店铺看板</h2>
+          <div class="panel-tools">
+            <button type="button" id="refreshRakutenStoreDashboardBtn" class="ghost">刷新看板</button>
+          </div>
+        </div>
+        <article class="card amazon-store-dashboard-toolbar-card">
+          <div class="form-grid amazon-store-dashboard-toolbar">
+            <label>乐天店铺<select id="rakutenStoreDashboardShop"></select></label>
+            <label>统计周期<select id="rakutenStoreDashboardDays">
+              <option value="7">近7天</option><option value="30" selected>近30天</option><option value="90">近90天</option>
+            </select></label>
+            <button type="button" id="reloadRakutenStoreDashboardBtn">读取最新数据</button>
+          </div>
+          <div id="rakutenStoreDashboardMeta" class="amazon-dashboard-file-meta muted">正在读取已配置店铺…</div>
+          <div id="rakutenStoreDashboardIssue" class="amazon-store-dashboard-issue hidden" role="status"></div>
+        </article>
+        <div id="rakutenStoreDashboardEmpty" class="card hidden">
+          尚无已启用的乐天 RMS API 店铺连接。请先在“产品管理 → 店铺管理”中完成配置。
+        </div>
+        <div id="rakutenStoreDashboardResult" class="hidden">
+          <div id="rakutenStoreDashboardSummary" class="amazon-dashboard-summary-grid"></div>
+          <article class="card">
+            <div class="card-head">
+              <div><h3>销售趋势</h3><p id="rakutenStoreDashboardTrendMeta" class="muted">按日本时间统计</p></div>
+              <div id="rakutenStoreDashboardComparison" class="amazon-store-dashboard-comparison"></div>
+            </div>
+            <div id="rakutenStoreDashboardTrend" class="amazon-store-dashboard-trend"></div>
+          </article>
+          <article class="card">
+            <div class="card-head"><div><h3>SKU销售排行</h3><p id="rakutenStoreDashboardProductMeta" class="muted">按商品销售额排序</p></div></div>
+            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
+              <table class="amazon-store-dashboard-product-table">
+                <thead><tr><th>排名</th><th>SKU</th><th>产品</th><th>订单</th><th>件数</th><th>商品销售额</th><th>已发货件数</th><th>日本库存</th><th>预计可售天数</th></tr></thead>
+                <tbody id="rakutenStoreDashboardProductBody"></tbody>
+              </table>
+            </div>
+          </article>
+          <article class="card amazon-store-factory-card">
+            <div class="card-head">
+              <div><h3>工厂备货建议</h3><p class="muted">固定按当前店铺最近90天计算，仅展示销量超过10件且需要补货的产品；建议数量 = 90天销量 − 当前日本库存。组合商品按组成产品计算。</p></div>
+              <button type="button" id="downloadRakutenStoreFactoryExcelBtn" class="compact-btn">Excel下载</button>
+            </div>
+            <ul class="stats overview-inline-stats">
+              <li><span>建议备货产品数</span><strong id="rakutenStoreFactoryRecommendationCount">-</strong></li>
+              <li><span>建议工厂备货总数</span><strong id="rakutenStoreFactorySuggestedQty">-</strong></li>
+            </ul>
+            <div class="master-product-table-wrap amazon-dashboard-table-wrap">
+              <table class="amazon-store-dashboard-product-table">
+                <thead><tr><th>乐天SKU</th><th>产品</th><th>近90天销量</th><th>当前日本库存</th><th>建议工厂备货</th></tr></thead>
+                <tbody id="rakutenStoreFactoryRecommendationBody"></tbody>
+              </table>
+            </div>
+          </article>
+          <article class="card">
+            <div class="card-head"><h3>履约与同步状态</h3><span id="rakutenStoreDashboardSyncStatus" class="muted">-</span></div>
+            <div id="rakutenStoreDashboardFulfillment" class="amazon-dashboard-metric-row"></div>
+            <p id="rakutenStoreDashboardStatusMeta" class="muted"></p>
+          </article>
+        </div>
       </section>
 
       <section class="panel" id="skuManagement">
