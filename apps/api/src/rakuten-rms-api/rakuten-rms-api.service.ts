@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import {
+  BatchInboundItemStatus,
+  BatchInboundOrderStatus,
   OrderSendStatus,
   Prisma,
   RakutenOrderRecord,
@@ -102,6 +104,20 @@ interface MappedRakutenItem {
   rawPayload: Prisma.InputJsonValue;
 }
 
+interface RakutenDashboardQueryRow {
+  rmsConnectionId: bigint | null;
+  orderId: string | null;
+  skuCode: string | null;
+  productName: string | null;
+  orderQuantity: number | null;
+  orderStatusText: string | null;
+  orderImportedAtRaw: string | null;
+  dispatchMode: string | null;
+  shipmentNo: string | null;
+  trackingIsDelivered: boolean | number;
+  salesAmount: Prisma.Decimal | number | string | null;
+}
+
 @Injectable()
 export class RakutenRmsApiService {
   private readonly logger = new Logger(RakutenRmsApiService.name);
@@ -142,38 +158,88 @@ export class RakutenRmsApiService {
       return { generatedAt: new Date().toISOString(), days, shops, selectedShop: null, dashboard: null };
     }
     const includesLegacyData = selected.shop.name === LEGACY_RAKUTEN_DEFAULT_SHOP_NAME;
-
-    const [orders, products, latestSyncRun] = await Promise.all([
-      this.prisma.rakutenOrderRecord.findMany({
-        where: includesLegacyData
-          ? { OR: [{ rmsConnectionId: selected.id }, { rmsConnectionId: null }] }
-          : { rmsConnectionId: selected.id },
-        select: {
-          rmsConnectionId: true,
-          sourceKind: true,
-          orderId: true,
-          skuCode: true,
-          productName: true,
-          orderQuantity: true,
-          orderStatusText: true,
-          orderImportedAtRaw: true,
-          dispatchMode: true,
-          shipmentNo: true,
-          trackingIsDelivered: true,
-          rawPayload: true,
-        },
-      }),
-      this.prisma.masterProduct.findMany({
-        select: { productId: true, productName: true, stockQty: true },
-      }),
-      this.prisma.rakutenRmsSyncRun.findFirst({
-        where: { connectionId: selected.id },
-        orderBy: { startedAt: "desc" },
-        select: {
-          status: true, startedAt: true, finishedAt: true, fetchedCount: true,
-          createdCount: true, updatedCount: true, skippedCount: true, errorMessage: true,
-        },
-      }),
+    const now = new Date();
+    const analysisDays = Math.max(days * 2, 90);
+    const analysisStart = new Date(now.getTime() - analysisDays * 24 * 60 * 60 * 1000);
+    const analysisEndDay = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const orderScope = includesLegacyData
+      ? Prisma.sql`(rms_connection_id = ${selected.id} OR rms_connection_id IS NULL)`
+      : Prisma.sql`rms_connection_id = ${selected.id}`;
+    const latestSyncRunPromise = this.prisma.rakutenRmsSyncRun.findFirst({
+      where: { connectionId: selected.id },
+      orderBy: { startedAt: "desc" },
+      select: {
+        status: true, startedAt: true, finishedAt: true, fetchedCount: true,
+        createdCount: true, updatedCount: true, skippedCount: true, errorMessage: true,
+      },
+    });
+    const orderRows = await this.prisma.$queryRaw<RakutenDashboardQueryRow[]>(Prisma.sql`
+      SELECT /*+ MAX_EXECUTION_TIME(15000) */
+        rms_connection_id AS rmsConnectionId,
+        order_id AS orderId,
+        sku_code AS skuCode,
+        product_name AS productName,
+        order_quantity AS orderQuantity,
+        order_status_text AS orderStatusText,
+        order_imported_at_raw AS orderImportedAtRaw,
+        dispatch_mode AS dispatchMode,
+        shipment_no AS shipmentNo,
+        tracking_is_delivered AS trackingIsDelivered,
+        COALESCE(
+          CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.subtotalPrice')), ',', ''), ''), 'null') AS DECIMAL(16, 2)),
+          CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.subtotal')), ',', ''), ''), 'null') AS DECIMAL(16, 2)),
+          CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.price')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
+          CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.itemPrice')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
+          CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.unitPrice')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
+          CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$."単価"')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
+          CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.unitPrice')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
+          0
+        ) AS salesAmount
+      FROM rakuten_order_records
+      WHERE ${orderScope}
+        AND (
+          (order_imported_at_raw >= ${this.formatTokyoDateKey(analysisStart, "-")}
+            AND order_imported_at_raw < ${this.formatTokyoDateKey(analysisEndDay, "-")})
+          OR
+          (order_imported_at_raw >= ${this.formatTokyoDateKey(analysisStart, "/")}
+            AND order_imported_at_raw < ${this.formatTokyoDateKey(analysisEndDay, "/")})
+        )
+    `);
+    const orders = orderRows.map((row) => ({
+      ...row,
+      trackingIsDelivered: Boolean(row.trackingIsDelivered),
+      salesAmount: Number(row.salesAmount ?? 0),
+    }));
+    const productIds = Array.from(new Set(
+      orders.map((row) => String(row.skuCode ?? "").trim()).filter(Boolean),
+    ));
+    const [products, inTransitRows, latestSyncRun] = await Promise.all([
+      productIds.length
+        ? this.prisma.masterProduct.findMany({
+          where: { productId: { in: productIds } },
+          select: { productId: true, productName: true, stockQty: true },
+        })
+        : Promise.resolve([]),
+      productIds.length
+        ? this.prisma.batchInboundItem.groupBy({
+          by: ["productId"],
+          where: {
+            productId: { in: productIds },
+            status: BatchInboundItemStatus.pending,
+            order: {
+              domesticOrderNo: { not: "" },
+              status: {
+                in: [
+                  BatchInboundOrderStatus.waiting_upload,
+                  BatchInboundOrderStatus.waiting_inbound,
+                ],
+              },
+            },
+          },
+          _sum: { qty: true },
+        })
+        : Promise.resolve([]),
+      latestSyncRunPromise,
     ]);
     const selectedShop = {
       connectionId: selected.id.toString(),
@@ -200,7 +266,16 @@ export class RakutenRmsApiService {
         legacyItemCount: orders.filter((row) => row.rmsConnectionId === null).length,
         includesLegacyData,
       },
-      dashboard: buildRakutenStoreDashboard({ now: new Date(), days, orders, products }),
+      dashboard: buildRakutenStoreDashboard({
+        now,
+        days,
+        orders,
+        products,
+        inTransit: inTransitRows.map((row) => ({
+          productId: row.productId,
+          inTransitQty: Number(row._sum.qty ?? 0),
+        })),
+      }),
     };
   }
 
@@ -211,7 +286,7 @@ export class RakutenRmsApiService {
       selectedShop?: { shopName?: string } | null;
       dashboard?: { factoryRecommendations?: { rows?: Array<{
         skuCode?: string; productId?: string; productName?: string | null;
-        unitCount90d?: number; stockQty?: number; suggestedFactoryQty?: number;
+        unitCount90d?: number; stockQty?: number; inTransitQty?: number; suggestedFactoryQty?: number;
       }> } } | null;
     };
     if (!payload.selectedShop) throw new NotFoundException("尚无已启用的乐天店铺连接");
@@ -223,10 +298,11 @@ export class RakutenRmsApiService {
       "产品名称": row.productName ?? "",
       "近90天销量": Number(row.unitCount90d ?? 0),
       "当前日本库存": Number(row.stockQty ?? 0),
+      "国内单号在途数量": Number(row.inTransitQty ?? 0),
       "建议工厂备货数量": Number(row.suggestedFactoryQty ?? 0),
     }));
     const worksheet = XLSX.utils.json_to_sheet(data, {
-      header: ["乐天店铺", "产品ID", "乐天SKU", "产品名称", "近90天销量", "当前日本库存", "建议工厂备货数量"],
+      header: ["乐天店铺", "产品ID", "乐天SKU", "产品名称", "近90天销量", "当前日本库存", "国内单号在途数量", "建议工厂备货数量"],
     });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "乐天工厂备货建议");
@@ -1518,6 +1594,17 @@ export class RakutenRmsApiService {
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
+  }
+
+  private formatTokyoDateKey(value: Date, separator: "-" | "/"): string {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Tokyo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(value);
+    const row = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${row.year}${separator}${row.month}${separator}${row.day}`;
   }
 
   private pickObject(source: RakutenJsonObject, ...keys: string[]): RakutenJsonObject | null {

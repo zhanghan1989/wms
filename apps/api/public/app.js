@@ -2574,6 +2574,7 @@ function renderRakutenStoreDashboard(payload) {
     (row) => `${renderMasterProductDetailLink(row.productId)}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
     (row) => escapeHtml(formatMetricNumber(row.unitCount90d)),
     (row) => escapeHtml(formatMetricNumber(row.stockQty)),
+    (row) => escapeHtml(formatMetricNumber(row.inTransitQty)),
     (row) => `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
   ], "该店铺当前没有需要工厂备货的产品");
   renderAmazonMetricCards("rakutenStoreDashboardFulfillment", [
@@ -2586,8 +2587,8 @@ function renderRakutenStoreDashboard(payload) {
   const latestRun = payload.latestSyncRun;
   $("rakutenStoreDashboardSyncStatus").textContent = latestRun ? `最近任务：${displayText(latestRun.status)} / 读取 ${formatMetricNumber(latestRun.fetchedCount)} 条` : "尚无同步任务";
   const sourceText = sourceSummary.includesLegacyData
-    ? `数据来源：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细 + 历史手动导入 ${formatMetricNumber(sourceSummary.legacyItemCount)} 条明细。`
-    : `数据来源：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细。`;
+    ? `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细 + 历史手动导入 ${formatMetricNumber(sourceSummary.legacyItemCount)} 条明细。`
+    : `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细。`;
   const licenseText = selectedShop.licenseExpiresAt ? ` RMS License 到期时间：${formatDate(selectedShop.licenseExpiresAt)}。` : "";
   $("rakutenStoreDashboardStatusMeta").textContent = `${sourceText}${licenseText} 取消订单已排除。`;
   hydrateResponsiveTableLabels($("rakutenDashboard"));
@@ -13407,25 +13408,22 @@ function bindForms() {
     }
   });
 
-  const refreshRakutenStoreDashboard = async (button) => {
-    try {
-      await withBusyButton(button, "刷新中...", loadRakutenStoreDashboard);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  };
-  $("refreshRakutenStoreDashboardBtn")?.addEventListener("click", (event) => refreshRakutenStoreDashboard(event.currentTarget));
-  $("reloadRakutenStoreDashboardBtn")?.addEventListener("click", (event) => refreshRakutenStoreDashboard(event.currentTarget));
   $("rakutenStoreDashboardShop")?.addEventListener("change", async (event) => {
     try {
-      await loadRakutenStoreDashboard({ connectionId: event.currentTarget.value });
+      await withGlobalLoading(
+        "正在加载中，请稍候...",
+        () => loadRakutenStoreDashboard({ connectionId: event.currentTarget.value }),
+      );
     } catch (error) {
       showToast(error.message, true);
     }
   });
   $("rakutenStoreDashboardDays")?.addEventListener("change", async (event) => {
     try {
-      await loadRakutenStoreDashboard({ days: event.currentTarget.value });
+      await withGlobalLoading(
+        "正在加载中，请稍候...",
+        () => loadRakutenStoreDashboard({ days: event.currentTarget.value }),
+      );
     } catch (error) {
       showToast(error.message, true);
     }
