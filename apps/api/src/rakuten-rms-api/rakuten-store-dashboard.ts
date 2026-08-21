@@ -26,11 +26,9 @@ const CANCELLED_STATUSES = new Set(['800', '900']);
 const FACTORY_RECOMMENDATION_DAYS = 90;
 const FACTORY_PRODUCTION_DAYS = 30;
 const FACTORY_TRANSPORT_DAYS = 15;
-const FACTORY_SAFETY_DAYS = 3;
-const FACTORY_TARGET_COVER_DAYS = FACTORY_PRODUCTION_DAYS
-  + FACTORY_TRANSPORT_DAYS
-  + FACTORY_SAFETY_DAYS;
-const FACTORY_FORECAST_WEIGHTS = { days7: 0.5, days30: 0.3, days90: 0.2 } as const;
+const FACTORY_PRODUCTION_LOGISTICS_DAYS = FACTORY_PRODUCTION_DAYS + FACTORY_TRANSPORT_DAYS;
+const FACTORY_TARGET_STOCK_DAYS = 60;
+const FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE = 0.1;
 
 function nonNegative(value: unknown): number {
   const parsed = Number(value ?? 0);
@@ -113,11 +111,9 @@ export function buildRakutenStoreDashboard(input: {
     normalize(row.productId), nonNegative(row.inTransitQty),
   ]));
   const factoryPeriodStart = new Date(now.getTime() - FACTORY_RECOMMENDATION_DAYS * 24 * 60 * 60 * 1000);
-  const factory30dStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const factory7dStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const factoryMetrics = new Map<string, {
     skuCode: string; productId: string; productName: string | null;
-    unitCount7d: number; unitCount30d: number; unitCount90d: number;
+    unitCount90d: number;
     pendingShipmentQty: number; stockQty: number; inTransitQty: number;
   }>();
   const factoryDatedRows = factoryOrders
@@ -132,8 +128,6 @@ export function buildRakutenStoreDashboard(input: {
       skuCode: String(row.skuCode ?? '').trim() || product.productId,
       productId: product.productId,
       productName: product.productName || row.productName || null,
-      unitCount7d: 0,
-      unitCount30d: 0,
       unitCount90d: 0,
       pendingShipmentQty: 0,
       stockQty: nonNegative(product.stockQty),
@@ -141,28 +135,25 @@ export function buildRakutenStoreDashboard(input: {
     };
     const quantity = nonNegative(row.orderQuantity);
     metric.unitCount90d += quantity;
-    if (date >= factory30dStart) metric.unitCount30d += quantity;
-    if (date >= factory7dStart) metric.unitCount7d += quantity;
     if (!row.shipmentNo) metric.pendingShipmentQty += quantity;
     factoryMetrics.set(key, metric);
   }
   const factoryRows = Array.from(factoryMetrics.values()).map((row) => {
-    const averageDaily7d = row.unitCount7d / 7;
-    const averageDaily30d = row.unitCount30d / 30;
     const averageDaily90d = row.unitCount90d / 90;
-    const weightedDaily = averageDaily7d * FACTORY_FORECAST_WEIGHTS.days7
-      + averageDaily30d * FACTORY_FORECAST_WEIGHTS.days30
-      + averageDaily90d * FACTORY_FORECAST_WEIGHTS.days90;
-    const forecastDailyQty = Math.max(averageDaily90d, weightedDaily);
-    const targetDemandQty = Math.ceil(forecastDailyQty * FACTORY_TARGET_COVER_DAYS);
-    const suggestedFactoryQty = Math.max(
-      0,
-      targetDemandQty + row.pendingShipmentQty - row.stockQty - row.inTransitQty,
-    );
+    const effectiveStockQty = row.stockQty + row.inTransitQty - row.pendingShipmentQty;
+    const productionLogisticsDemandQty = averageDaily90d * FACTORY_PRODUCTION_LOGISTICS_DAYS;
+    const remainingQtyAtArrival = Math.max(0, effectiveStockQty - productionLogisticsDemandQty);
+    const targetStockQtyRaw = averageDaily90d * FACTORY_TARGET_STOCK_DAYS;
+    const suggestedFactoryQty = averageDaily90d > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE
+      ? Math.max(0, Math.ceil(targetStockQtyRaw - remainingQtyAtArrival))
+      : 0;
     return {
       ...row,
-      forecastDailyQty: Math.round(forecastDailyQty * 1000) / 1000,
-      targetDemandQty,
+      averageDaily90d: Math.round(averageDaily90d * 1000) / 1000,
+      effectiveStockQty,
+      productionLogisticsDemandQty: Math.round(productionLogisticsDemandQty * 1000) / 1000,
+      remainingQtyAtArrival: Math.round(remainingQtyAtArrival * 1000) / 1000,
+      targetStockQty: Math.ceil(targetStockQtyRaw),
       suggestedFactoryQty,
     };
   }).filter((row) => row.suggestedFactoryQty > 0)
@@ -251,9 +242,9 @@ export function buildRakutenStoreDashboard(input: {
       periodEnd: now.toISOString(),
       productionDays: FACTORY_PRODUCTION_DAYS,
       transportDays: FACTORY_TRANSPORT_DAYS,
-      safetyDays: FACTORY_SAFETY_DAYS,
-      targetCoverDays: FACTORY_TARGET_COVER_DAYS,
-      forecastWeights: FACTORY_FORECAST_WEIGHTS,
+      productionLogisticsDays: FACTORY_PRODUCTION_LOGISTICS_DAYS,
+      targetStockDays: FACTORY_TARGET_STOCK_DAYS,
+      minimumAverageDailySalesExclusive: FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE,
       recommendationCount: factoryRows.length,
       totalSuggestedFactoryQty: factoryRows.reduce((sum, row) => sum + row.suggestedFactoryQty, 0),
       rows: factoryRows,

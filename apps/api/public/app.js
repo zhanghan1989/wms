@@ -2572,14 +2572,15 @@ function renderRakutenStoreDashboard(payload) {
   renderAmazonDashboardTable("rakutenStoreFactoryRecommendationBody", factoryRows, [
     (row) => `<strong>${escapeHtml(displayText(row.skuCode))}</strong>`,
     (row) => `${renderMasterProductDetailLink(row.productId)}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
-    (row) => escapeHtml(formatMetricNumber(row.unitCount7d)),
-    (row) => escapeHtml(formatMetricNumber(row.unitCount30d)),
     (row) => escapeHtml(formatMetricNumber(row.unitCount90d)),
-    (row) => escapeHtml(formatMetricNumber(row.forecastDailyQty, 3)),
-    (row) => escapeHtml(formatMetricNumber(row.targetDemandQty)),
-    (row) => escapeHtml(formatMetricNumber(row.pendingShipmentQty)),
+    (row) => escapeHtml(formatMetricNumber(row.averageDaily90d, 3)),
     (row) => escapeHtml(formatMetricNumber(row.stockQty)),
     (row) => escapeHtml(formatMetricNumber(row.inTransitQty)),
+    (row) => escapeHtml(formatMetricNumber(row.pendingShipmentQty)),
+    (row) => escapeHtml(formatMetricNumber(row.effectiveStockQty)),
+    (row) => escapeHtml(formatMetricNumber(row.productionLogisticsDemandQty, 3)),
+    (row) => escapeHtml(formatMetricNumber(row.remainingQtyAtArrival, 3)),
+    (row) => escapeHtml(formatMetricNumber(row.targetStockQty)),
     (row) => `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
   ], "乐天渠道当前没有需要工厂备货的产品");
   renderAmazonMetricCards("rakutenStoreDashboardFulfillment", [

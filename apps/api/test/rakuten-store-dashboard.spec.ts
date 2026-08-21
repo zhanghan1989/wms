@@ -35,14 +35,15 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.fulfillment).toMatchObject({ shippedOrderCount: 1, deliveredOrderCount: 1 });
     expect(dashboard.factoryRecommendations).toMatchObject({
       channelScope: 'rakuten_all_shops', periodDays: 90,
-      productionDays: 30, transportDays: 15, safetyDays: 3, targetCoverDays: 48,
-      forecastWeights: { days7: 0.5, days30: 0.3, days90: 0.2 },
-      recommendationCount: 1, totalSuggestedFactoryQty: 47,
+      productionDays: 30, transportDays: 15, productionLogisticsDays: 45,
+      targetStockDays: 60, minimumAverageDailySalesExclusive: 0.1,
+      recommendationCount: 1, totalSuggestedFactoryQty: 10,
     });
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
-      productId: 'RB-1', unitCount7d: 13, unitCount30d: 14, unitCount90d: 14,
-      forecastDailyQty: 1.1, targetDemandQty: 53, pendingShipmentQty: 1,
-      stockQty: 4, inTransitQty: 3, suggestedFactoryQty: 47,
+      productId: 'RB-1', unitCount90d: 14, averageDaily90d: 0.156,
+      stockQty: 4, inTransitQty: 3, pendingShipmentQty: 1, effectiveStockQty: 6,
+      productionLogisticsDemandQty: 7, remainingQtyAtArrival: 0,
+      targetStockQty: 10, suggestedFactoryQty: 10,
     });
   });
 
@@ -51,18 +52,51 @@ describe('Rakuten store dashboard', () => {
       now: new Date('2026-08-21T12:00:00.000Z'),
       days: 7,
       orders: [],
-      factoryOrders: [{
-        orderId: 'other-shop-1', skuCode: 'RB-1', productName: '产品', orderQuantity: 7,
-        orderStatusText: '300', orderImportedAtRaw: '2026-08-20', dispatchMode: 'overseas',
-        shipmentNo: 'TRACK-1', trackingIsDelivered: false, salesAmount: 0,
-      }],
-      products: [{ productId: 'RB-1', productName: '产品', stockQty: 0 }],
+      factoryOrders: [
+        {
+          orderId: 'other-shop-1', skuCode: 'RB-1', productName: '产品', orderQuantity: 10,
+          orderStatusText: '300', orderImportedAtRaw: '2026-08-20', dispatchMode: 'overseas',
+          shipmentNo: 'TRACK-1', trackingIsDelivered: false, salesAmount: 0,
+        },
+        {
+          orderId: 'threshold-product', skuCode: 'RB-2', productName: '阈值产品', orderQuantity: 9,
+          orderStatusText: '300', orderImportedAtRaw: '2026-08-20', dispatchMode: 'overseas',
+          shipmentNo: 'TRACK-2', trackingIsDelivered: false, salesAmount: 0,
+        },
+      ],
+      products: [
+        { productId: 'RB-1', productName: '产品', stockQty: 0 },
+        { productId: 'RB-2', productName: '阈值产品', stockQty: 0 },
+      ],
     }) as any;
 
     expect(dashboard.summary).toMatchObject({ orderCount: 0, unitCount: 0 });
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
-      unitCount7d: 7, unitCount30d: 7, unitCount90d: 7,
-      forecastDailyQty: 0.586, targetDemandQty: 29, suggestedFactoryQty: 29,
+      unitCount90d: 10, averageDaily90d: 0.111, effectiveStockQty: 0,
+      productionLogisticsDemandQty: 5, remainingQtyAtArrival: 0,
+      targetStockQty: 7, suggestedFactoryQty: 7,
+    });
+    expect(dashboard.factoryRecommendations.rows).toHaveLength(1);
+  });
+
+  it('keeps confirmed in-transit stock and subtracts pending shipments from effective stock', () => {
+    const dashboard = buildRakutenStoreDashboard({
+      now: new Date('2026-08-21T12:00:00.000Z'),
+      days: 90,
+      orders: [],
+      factoryOrders: [{
+        orderId: 'pending-order', skuCode: 'RB-1', productName: '产品', orderQuantity: 18,
+        orderStatusText: '300', orderImportedAtRaw: '2026-08-20', dispatchMode: 'overseas',
+        shipmentNo: null, trackingIsDelivered: false, salesAmount: 0,
+      }],
+      products: [{ productId: 'RB-1', productName: '产品', stockQty: 20 }],
+      inTransit: [{ productId: 'RB-1', inTransitQty: 8 }],
+    }) as any;
+
+    expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
+      averageDaily90d: 0.2, stockQty: 20, inTransitQty: 8, pendingShipmentQty: 18,
+      effectiveStockQty: 10, productionLogisticsDemandQty: 9, remainingQtyAtArrival: 1,
+      targetStockQty: 12, suggestedFactoryQty: 11,
     });
   });
 
@@ -157,9 +191,10 @@ describe('Rakuten store dashboard', () => {
       selectedShop: { shopName: '乐天-1号店' },
       dashboard: { factoryRecommendations: { rows: [{
         skuCode: 'RB-1', productId: 'RB-1', productName: '测试产品',
-        unitCount7d: 3, unitCount30d: 10, unitCount90d: 20,
-        forecastDailyQty: 0.4, targetDemandQty: 20, pendingShipmentQty: 2,
-        stockQty: 5, inTransitQty: 4, suggestedFactoryQty: 13,
+        unitCount90d: 20, averageDaily90d: 0.222, pendingShipmentQty: 2,
+        stockQty: 5, inTransitQty: 4, effectiveStockQty: 7,
+        productionLogisticsDemandQty: 10, remainingQtyAtArrival: 0,
+        targetStockQty: 14, suggestedFactoryQty: 14,
       }] } },
     });
 
