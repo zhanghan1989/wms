@@ -10,6 +10,7 @@ describe('Rakuten store dashboard', () => {
       now: new Date('2026-08-21T12:00:00.000Z'),
       days: 7,
       products: [{ productId: 'RB-1', productName: '系统产品', stockQty: 4 }],
+      inTransit: [{ productId: 'RB-1', inTransitQty: 3 }],
       orders: [
         {
           orderId: 'current-1', skuCode: 'RB-1', productName: '乐天产品', orderQuantity: 13,
@@ -34,10 +35,11 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.fulfillment).toMatchObject({ shippedOrderCount: 1, deliveredOrderCount: 1 });
     expect(dashboard.factoryRecommendations).toMatchObject({
       periodDays: 90, minimumUnitCountExclusive: 10, recommendationCount: 1,
-      totalSuggestedFactoryQty: 10,
+      totalSuggestedFactoryQty: 7,
     });
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
-      productId: 'RB-1', unitCount90d: 14, stockQty: 4, suggestedFactoryQty: 10,
+      productId: 'RB-1', unitCount90d: 14, stockQty: 4, inTransitQty: 3,
+      suggestedFactoryQty: 7,
     });
   });
 
@@ -60,6 +62,7 @@ describe('Rakuten store dashboard', () => {
       salesAmount: '1000',
     }]);
     const productFindMany = jest.fn().mockResolvedValue([]);
+    const inTransitGroupBy = jest.fn().mockResolvedValue([]);
     const prisma = {
       rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([{
         id: 7n, shopId: 3n, shop: { id: 3n, name: shopName }, status: 1, syncOrders: true,
@@ -67,6 +70,7 @@ describe('Rakuten store dashboard', () => {
       }]) },
       $queryRaw: queryRaw,
       masterProduct: { findMany: productFindMany },
+      batchInboundItem: { groupBy: inTransitGroupBy },
       rakutenRmsSyncRun: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
     const service = new RakutenRmsApiService(
@@ -85,6 +89,18 @@ describe('Rakuten store dashboard', () => {
       where: { productId: { in: ['RB-1'] } },
       select: { productId: true, productName: true, stockQty: true },
     });
+    expect(inTransitGroupBy).toHaveBeenCalledWith(expect.objectContaining({
+      by: ['productId'],
+      where: expect.objectContaining({
+        productId: { in: ['RB-1'] },
+        status: 'pending',
+        order: {
+          domesticOrderNo: { not: '' },
+          status: { in: ['waiting_upload', 'waiting_inbound'] },
+        },
+      }),
+      _sum: { qty: true },
+    }));
     expect(result.sourceSummary.includesLegacyData).toBe(includesLegacyData);
   });
 
@@ -96,7 +112,7 @@ describe('Rakuten store dashboard', () => {
       selectedShop: { shopName: '乐天-1号店' },
       dashboard: { factoryRecommendations: { rows: [{
         skuCode: 'RB-1', productId: 'RB-1', productName: '测试产品',
-        unitCount90d: 20, stockQty: 5, suggestedFactoryQty: 15,
+        unitCount90d: 20, stockQty: 5, inTransitQty: 4, suggestedFactoryQty: 11,
       }] } },
     });
 

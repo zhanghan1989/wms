@@ -2574,6 +2574,7 @@ function renderRakutenStoreDashboard(payload) {
     (row) => `${renderMasterProductDetailLink(row.productId)}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
     (row) => escapeHtml(formatMetricNumber(row.unitCount90d)),
     (row) => escapeHtml(formatMetricNumber(row.stockQty)),
+    (row) => escapeHtml(formatMetricNumber(row.inTransitQty)),
     (row) => `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
   ], "该店铺当前没有需要工厂备货的产品");
   renderAmazonMetricCards("rakutenStoreDashboardFulfillment", [

@@ -17,6 +17,11 @@ export interface RakutenDashboardProductRow {
   stockQty: number;
 }
 
+export interface RakutenDashboardInTransitRow {
+  productId: string;
+  inTransitQty: number;
+}
+
 const CANCELLED_STATUSES = new Set(['800', '900']);
 const FACTORY_RECOMMENDATION_DAYS = 90;
 const FACTORY_RECOMMENDATION_MIN_UNITS_EXCLUSIVE = 10;
@@ -84,8 +89,9 @@ export function buildRakutenStoreDashboard(input: {
   days: number;
   orders: RakutenDashboardOrderRow[];
   products: RakutenDashboardProductRow[];
+  inTransit?: RakutenDashboardInTransitRow[];
 }): unknown {
-  const { now, days, orders, products } = input;
+  const { now, days, orders, products, inTransit = [] } = input;
   const periodMs = days * 24 * 60 * 60 * 1000;
   const periodStart = new Date(now.getTime() - periodMs);
   const previousStart = new Date(periodStart.getTime() - periodMs);
@@ -96,9 +102,13 @@ export function buildRakutenStoreDashboard(input: {
   const current = metrics(currentRows);
   const previous = metrics(previousRows);
   const productLookup = new Map(products.map((row) => [normalize(row.productId), row]));
+  const inTransitLookup = new Map(inTransit.map((row) => [
+    normalize(row.productId), nonNegative(row.inTransitQty),
+  ]));
   const factoryPeriodStart = new Date(now.getTime() - FACTORY_RECOMMENDATION_DAYS * 24 * 60 * 60 * 1000);
   const factoryMetrics = new Map<string, {
-    skuCode: string; productId: string; productName: string | null; unitCount90d: number; stockQty: number;
+    skuCode: string; productId: string; productName: string | null; unitCount90d: number;
+    stockQty: number; inTransitQty: number;
   }>();
   for (const { row, date } of datedRows) {
     if (!date || date < factoryPeriodStart || date >= now) continue;
@@ -111,13 +121,14 @@ export function buildRakutenStoreDashboard(input: {
       productName: product.productName || row.productName || null,
       unitCount90d: 0,
       stockQty: nonNegative(product.stockQty),
+      inTransitQty: inTransitLookup.get(key) ?? 0,
     };
     metric.unitCount90d += nonNegative(row.orderQuantity);
     factoryMetrics.set(key, metric);
   }
   const factoryRows = Array.from(factoryMetrics.values()).map((row) => ({
     ...row,
-    suggestedFactoryQty: Math.max(0, Math.ceil(row.unitCount90d - row.stockQty)),
+    suggestedFactoryQty: Math.max(0, Math.ceil(row.unitCount90d - row.stockQty - row.inTransitQty)),
   })).filter((row) => row.unitCount90d > FACTORY_RECOMMENDATION_MIN_UNITS_EXCLUSIVE
     && row.suggestedFactoryQty > 0)
     .sort((left, right) => right.suggestedFactoryQty - left.suggestedFactoryQty

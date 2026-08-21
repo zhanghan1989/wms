@@ -602,7 +602,7 @@
           </article>
           <article class="card amazon-store-factory-card">
             <div class="card-head">
-              <div><h3>工厂备货建议</h3><p class="muted">固定按当前店铺最近90天计算，仅展示销量超过10件且需要补货的产品；建议数量 = 90天销量 − 当前日本库存。组合商品按组成产品计算。</p></div>
+              <div><h3>工厂备货建议</h3><p class="muted">固定按当前店铺最近90天计算，仅展示销量超过10件且需要补货的产品；建议数量 = 90天销量 − 当前日本库存 − 国内单号在途数量。组合商品按组成产品计算；在途仅统计已上传国内单号且尚未入库的明细。</p></div>
               <button type="button" id="downloadRakutenStoreFactoryExcelBtn" class="compact-btn">Excel下载</button>
             </div>
             <ul class="stats overview-inline-stats">
@@ -611,7 +611,7 @@
             </ul>
             <div class="master-product-table-wrap amazon-dashboard-table-wrap">
               <table class="amazon-store-dashboard-product-table">
-                <thead><tr><th>乐天SKU</th><th>产品</th><th>近90天销量</th><th>当前日本库存</th><th>建议工厂备货</th></tr></thead>
+                <thead><tr><th>乐天SKU</th><th>产品</th><th>近90天销量</th><th>当前日本库存</th><th>国内单号在途</th><th>建议工厂备货</th></tr></thead>
                 <tbody id="rakutenStoreFactoryRecommendationBody"></tbody>
               </table>
             </div>

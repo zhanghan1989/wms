@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import {
+  BatchInboundItemStatus,
+  BatchInboundOrderStatus,
   OrderSendStatus,
   Prisma,
   RakutenOrderRecord,
@@ -211,11 +213,30 @@ export class RakutenRmsApiService {
     const productIds = Array.from(new Set(
       orders.map((row) => String(row.skuCode ?? "").trim()).filter(Boolean),
     ));
-    const [products, latestSyncRun] = await Promise.all([
+    const [products, inTransitRows, latestSyncRun] = await Promise.all([
       productIds.length
         ? this.prisma.masterProduct.findMany({
           where: { productId: { in: productIds } },
           select: { productId: true, productName: true, stockQty: true },
+        })
+        : Promise.resolve([]),
+      productIds.length
+        ? this.prisma.batchInboundItem.groupBy({
+          by: ["productId"],
+          where: {
+            productId: { in: productIds },
+            status: BatchInboundItemStatus.pending,
+            order: {
+              domesticOrderNo: { not: "" },
+              status: {
+                in: [
+                  BatchInboundOrderStatus.waiting_upload,
+                  BatchInboundOrderStatus.waiting_inbound,
+                ],
+              },
+            },
+          },
+          _sum: { qty: true },
         })
         : Promise.resolve([]),
       latestSyncRunPromise,
@@ -245,7 +266,16 @@ export class RakutenRmsApiService {
         legacyItemCount: orders.filter((row) => row.rmsConnectionId === null).length,
         includesLegacyData,
       },
-      dashboard: buildRakutenStoreDashboard({ now, days, orders, products }),
+      dashboard: buildRakutenStoreDashboard({
+        now,
+        days,
+        orders,
+        products,
+        inTransit: inTransitRows.map((row) => ({
+          productId: row.productId,
+          inTransitQty: Number(row._sum.qty ?? 0),
+        })),
+      }),
     };
   }
 
@@ -256,7 +286,7 @@ export class RakutenRmsApiService {
       selectedShop?: { shopName?: string } | null;
       dashboard?: { factoryRecommendations?: { rows?: Array<{
         skuCode?: string; productId?: string; productName?: string | null;
-        unitCount90d?: number; stockQty?: number; suggestedFactoryQty?: number;
+        unitCount90d?: number; stockQty?: number; inTransitQty?: number; suggestedFactoryQty?: number;
       }> } } | null;
     };
     if (!payload.selectedShop) throw new NotFoundException("尚无已启用的乐天店铺连接");
@@ -268,10 +298,11 @@ export class RakutenRmsApiService {
       "产品名称": row.productName ?? "",
       "近90天销量": Number(row.unitCount90d ?? 0),
       "当前日本库存": Number(row.stockQty ?? 0),
+      "国内单号在途数量": Number(row.inTransitQty ?? 0),
       "建议工厂备货数量": Number(row.suggestedFactoryQty ?? 0),
     }));
     const worksheet = XLSX.utils.json_to_sheet(data, {
-      header: ["乐天店铺", "产品ID", "乐天SKU", "产品名称", "近90天销量", "当前日本库存", "建议工厂备货数量"],
+      header: ["乐天店铺", "产品ID", "乐天SKU", "产品名称", "近90天销量", "当前日本库存", "国内单号在途数量", "建议工厂备货数量"],
     });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "乐天工厂备货建议");
