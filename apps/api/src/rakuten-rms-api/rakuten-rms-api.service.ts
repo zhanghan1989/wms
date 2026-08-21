@@ -12,6 +12,7 @@ import {
 } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
 import * as XLSX from "xlsx";
+import { parseRakutenOrderDate } from "../common/rakuten-order-date";
 import { parseId } from "../common/utils";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateRakutenRmsConnectionDto } from "./dto/create-rakuten-rms-connection.dto";
@@ -111,7 +112,7 @@ interface RakutenDashboardQueryRow {
   productName: string | null;
   orderQuantity: number | null;
   orderStatusText: string | null;
-  orderImportedAtRaw: string | null;
+  orderImportedAtRaw: Date | null;
   dispatchMode: string | null;
   shipmentNo: string | null;
   trackingIsDelivered: boolean | number;
@@ -181,7 +182,7 @@ export class RakutenRmsApiService {
         product_name AS productName,
         order_quantity AS orderQuantity,
         order_status_text AS orderStatusText,
-        order_imported_at_raw AS orderImportedAtRaw,
+        order_imported_date AS orderImportedAtRaw,
         dispatch_mode AS dispatchMode,
         shipment_no AS shipmentNo,
         tracking_is_delivered AS trackingIsDelivered,
@@ -197,13 +198,8 @@ export class RakutenRmsApiService {
         ) AS salesAmount
       FROM rakuten_order_records
       WHERE ${orderScope}
-        AND (
-          (order_imported_at_raw >= ${this.formatTokyoDateKey(analysisStart, "-")}
-            AND order_imported_at_raw < ${this.formatTokyoDateKey(analysisEndDay, "-")})
-          OR
-          (order_imported_at_raw >= ${this.formatTokyoDateKey(analysisStart, "/")}
-            AND order_imported_at_raw < ${this.formatTokyoDateKey(analysisEndDay, "/")})
-        )
+        AND order_imported_date >= ${this.formatTokyoDateKey(analysisStart, "-")}
+        AND order_imported_date < ${this.formatTokyoDateKey(analysisEndDay, "-")}
     `);
     const orders = orderRows.map((row) => ({
       ...row,
@@ -1285,6 +1281,7 @@ export class RakutenRmsApiService {
       mallOrderNo: item.orderId,
       orderStatusText: item.orderStatusText,
       orderImportedAtRaw: item.orderImportedAtRaw,
+      orderImportedDate: parseRakutenOrderDate(item.orderImportedAtRaw),
       orderRemark: item.orderRemark,
       shippingName: item.shippingName,
       shippingPostalCode: item.shippingPostalCode,
@@ -1463,6 +1460,7 @@ export class RakutenRmsApiService {
       mallOrderNo: row.mallOrderNo,
       orderStatusText: row.orderStatusText,
       orderImportedAtRaw: row.orderImportedAtRaw,
+      orderImportedDate: row.orderImportedDate?.toISOString() ?? null,
       orderRemark: row.orderRemark,
       shippingName: row.shippingName,
       shippingPostalCode: row.shippingPostalCode,
@@ -1501,6 +1499,9 @@ export class RakutenRmsApiService {
       mallOrderNo: this.snapshotNullableText(snapshot.mallOrderNo),
       orderStatusText: this.snapshotNullableText(snapshot.orderStatusText),
       orderImportedAtRaw: this.snapshotNullableText(snapshot.orderImportedAtRaw),
+      orderImportedDate:
+        this.parseSnapshotDate(snapshot.orderImportedDate)
+        ?? parseRakutenOrderDate(snapshot.orderImportedAtRaw),
       orderRemark: this.snapshotNullableText(snapshot.orderRemark),
       shippingName: this.snapshotNullableText(snapshot.shippingName),
       shippingPostalCode: this.snapshotNullableText(snapshot.shippingPostalCode),

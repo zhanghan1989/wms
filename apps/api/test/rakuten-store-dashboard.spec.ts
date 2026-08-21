@@ -81,7 +81,8 @@ describe('Rakuten store dashboard', () => {
 
     const sql = queryRaw.mock.calls[0][0];
     const queryText = sql.strings.join(' ');
-    expect(queryText).toContain('order_imported_at_raw >=');
+    expect(queryText).toContain('order_imported_date >=');
+    expect(queryText).not.toContain('order_imported_at_raw >=');
     expect(queryText).toContain('MAX_EXECUTION_TIME(15000)');
     expect(queryText).not.toContain('raw_payload AS');
     expect(queryText.includes('rms_connection_id IS NULL')).toBe(includesLegacyData);

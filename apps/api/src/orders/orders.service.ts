@@ -25,6 +25,7 @@ import { PDFDocument } from 'pdf-lib';
 import { join, resolve } from 'path';
 import { promisify } from 'util';
 import * as XLSX from 'xlsx';
+import { parseRakutenOrderDate } from '../common/rakuten-order-date';
 import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -8865,6 +8866,7 @@ export class OrdersService {
       mallOrderNo: row.mallOrderNo,
       orderStatusText: row.orderStatusText,
       orderImportedAtRaw: row.orderImportedAtRaw,
+      orderImportedDate: parseRakutenOrderDate(row.orderImportedAtRaw),
       orderRemark: row.orderRemark,
       shippingName: row.shippingName,
       shippingPostalCode: row.shippingPostalCode,

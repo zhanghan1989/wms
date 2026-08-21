@@ -925,6 +925,7 @@ model RakutenOrderRecord {
   mallOrderNo                 String?         @map("mall_order_no") @db.VarChar(128)
   orderStatusText             String?         @map("order_status_text") @db.VarChar(64)
   orderImportedAtRaw          String?         @map("order_imported_at_raw") @db.VarChar(32)
+  orderImportedDate           DateTime?       @map("order_imported_date") @db.Date
   orderRemark                 String?         @map("order_remark") @db.Text
   shippingName                String?         @map("shipping_name") @db.VarChar(128)
   shippingPostalCode          String?         @map("shipping_postal_code") @db.VarChar(32)
@@ -959,7 +960,7 @@ model RakutenOrderRecord {
 
   @@unique([rmsConnectionId, rmsItemKey], map: "uq_rakuten_rms_order_item")
   @@index([rmsConnectionId])
-  @@index([rmsConnectionId, orderImportedAtRaw], map: "idx_rakuten_orders_dashboard_scope")
+  @@index([rmsConnectionId, orderImportedDate], map: "idx_rakuten_orders_dashboard_scope")
   @@index([rmsManualOverrideAt], map: "idx_rakuten_rms_manual_override")
   @@index([rmsManualActionDetectedAt, rmsManualActionResolvedAt], map: "idx_rakuten_rms_manual_action")
   @@index([orderId])
