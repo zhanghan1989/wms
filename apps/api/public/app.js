@@ -201,6 +201,8 @@ const state = {
   masterProductExportFilterOptions: null,
   amazonStoreDashboard: null,
   amazonStoreDashboardLoading: false,
+  rakutenStoreDashboard: null,
+  rakutenStoreDashboardLoading: false,
   rakutenComboProducts: [],
   rakutenComboProductsPage: 1,
   rakutenComboProductsPageSize: 30,
@@ -2485,6 +2487,132 @@ async function loadAmazonStoreDashboard(options = {}) {
   } finally {
     state.amazonStoreDashboardLoading = false;
   }
+}
+
+function renderRakutenStoreDashboard(payload) {
+  state.rakutenStoreDashboard = payload || null;
+  const shops = Array.isArray(payload?.shops) ? payload.shops : [];
+  const selectedShop = payload?.selectedShop || null;
+  const dashboard = payload?.dashboard || null;
+  const shopSelect = $("rakutenStoreDashboardShop");
+  const currentConnectionId = String(selectedShop?.connectionId || shopSelect?.value || "");
+  if (shopSelect) {
+    shopSelect.innerHTML = shops.length
+      ? shops.map((shop) => `<option value="${escapeHtml(shop.connectionId)}">${escapeHtml(shop.shopName)}${shop.hasSyncError ? "（同步异常）" : ""}</option>`).join("")
+      : '<option value="">暂无已配置店铺</option>';
+    shopSelect.value = currentConnectionId;
+  }
+  $("rakutenStoreDashboardEmpty")?.classList.toggle("hidden", shops.length > 0);
+  $("rakutenStoreDashboardResult")?.classList.toggle("hidden", !dashboard || !selectedShop);
+  if (!dashboard || !selectedShop) {
+    $("rakutenStoreDashboardMeta").textContent = "尚无已启用的乐天 RMS API 店铺连接";
+    $("rakutenStoreDashboardIssue")?.classList.add("hidden");
+    return;
+  }
+  const period = dashboard.period || {};
+  const summary = dashboard.summary || {};
+  const comparison = dashboard.comparison || {};
+  const fulfillment = dashboard.fulfillment || {};
+  const daily = Array.isArray(dashboard.daily) ? dashboard.daily : [];
+  const topProducts = Array.isArray(dashboard.topProducts) ? dashboard.topProducts : [];
+  const sourceSummary = payload.sourceSummary || {};
+  const lastOrdersSync = selectedShop.lastOrdersSyncedAt ? formatDate(selectedShop.lastOrdersSyncedAt) : "尚未同步";
+  $("rakutenStoreDashboardMeta").textContent = `${selectedShop.shopName} / 近${period.days || payload.days || 30}天 / 订单同步 ${lastOrdersSync} / 看板生成 ${payload.generatedAt ? formatDate(payload.generatedAt) : "-"}`;
+  const issueBox = $("rakutenStoreDashboardIssue");
+  if (issueBox) {
+    issueBox.classList.toggle("hidden", !selectedShop.syncIssue);
+    issueBox.textContent = selectedShop.syncIssue?.message || "";
+  }
+  renderAmazonMetricCards("rakutenStoreDashboardSummary", [
+    { label: "总订单", value: `${formatMetricNumber(summary.orderCount)} 单` },
+    { label: "总销量", value: `${formatMetricNumber(summary.unitCount)} 件` },
+    { label: "商品销售额", value: formatAmazonStoreCurrency(summary.salesAmount, "JPY") },
+    { label: "平均客单价", value: formatAmazonStoreCurrency(summary.averageOrderValue, "JPY") },
+    { label: "待发货订单", value: `${formatMetricNumber(summary.pendingShipmentOrderCount)} 单` },
+    { label: "日本仓 / 中国仓", value: `${formatMetricNumber(summary.overseasUnitCount)} / ${formatMetricNumber(summary.chinaUnitCount)} 件` },
+  ]);
+  const comparisonBox = $("rakutenStoreDashboardComparison");
+  if (comparisonBox) {
+    comparisonBox.innerHTML = [["订单", comparison.orderCountChangePct], ["销量", comparison.unitCountChangePct], ["销售额", comparison.salesAmountChangePct]]
+      .map(([label, value]) => {
+        const number = Number(value || 0);
+        const tone = value === null || value === undefined ? "" : number > 0 ? "positive" : number < 0 ? "negative" : "";
+        return `<span class="amazon-store-dashboard-change ${tone}">${escapeHtml(label)} ${escapeHtml(formatAmazonStoreComparison(value))}</span>`;
+      }).join("");
+  }
+  const trend = $("rakutenStoreDashboardTrend");
+  if (trend) {
+    const visibleDaily = daily.slice(-30);
+    const maxSales = Math.max(...visibleDaily.map((row) => Number(row.salesAmount || 0)), 1);
+    trend.innerHTML = visibleDaily.length ? visibleDaily.map((row) => {
+      const height = Math.max(4, Math.round((Number(row.salesAmount || 0) / maxSales) * 100));
+      return `<div class="amazon-store-dashboard-day" title="${escapeHtml(row.date)} / ${formatMetricNumber(row.orderCount)}单 / ${formatMetricNumber(row.unitCount)}件 / ${escapeHtml(formatAmazonStoreCurrency(row.salesAmount, "JPY"))}">
+        <span class="amazon-store-dashboard-bar-value">${escapeHtml(formatMetricNumber(row.unitCount))}</span><span class="amazon-store-dashboard-bar" style="height:${height}%"></span><span class="amazon-store-dashboard-day-label">${escapeHtml(String(row.date || "").slice(5))}</span>
+      </div>`;
+    }).join("") : '<p class="muted">所选周期暂无乐天销售数据</p>';
+  }
+  $("rakutenStoreDashboardTrendMeta").textContent = `按日本时间显示最近 ${Math.min(daily.length, 30)} 个有销量的日期；柱高为商品销售额，数字为销量`;
+  const matchCoverage = dashboard.matchCoverage || {};
+  $("rakutenStoreDashboardProductMeta").textContent = `按商品销售额排序 / 系统产品已匹配 ${formatMetricNumber(matchCoverage.matchedCount)} / 未匹配 ${formatMetricNumber(matchCoverage.unmatchedCount)}`;
+  renderAmazonDashboardTable("rakutenStoreDashboardProductBody", topProducts.slice(0, 30), [
+    (_row, index) => escapeHtml(String(index + 1)),
+    (row) => `<strong>${escapeHtml(displayText(row.skuCode))}</strong>`,
+    (row) => `${row.productId ? renderMasterProductDetailLink(row.productId) : '<span class="amazon-dashboard-chip warning">未匹配</span>'}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
+    (row) => escapeHtml(formatMetricNumber(row.orderCount)),
+    (row) => escapeHtml(formatMetricNumber(row.unitCount)),
+    (row) => escapeHtml(formatAmazonStoreCurrency(row.salesAmount, "JPY")),
+    (row) => escapeHtml(formatMetricNumber(row.shippedUnitCount)),
+    (row) => row.stockQty === null ? '<span class="muted">未匹配</span>' : escapeHtml(formatMetricNumber(row.stockQty)),
+    (row) => row.daysOfCover === null ? '<span class="muted">-</span>' : escapeHtml(`${formatMetricNumber(row.daysOfCover, 1)}天`),
+  ], "所选周期暂无SKU销售数据");
+  const factory = dashboard.factoryRecommendations || {};
+  const factoryRows = Array.isArray(factory.rows) ? factory.rows : [];
+  setTextById("rakutenStoreFactoryRecommendationCount", formatMetricNumber(factory.recommendationCount));
+  setTextById("rakutenStoreFactorySuggestedQty", `${formatMetricNumber(factory.totalSuggestedFactoryQty)} 件`);
+  renderAmazonDashboardTable("rakutenStoreFactoryRecommendationBody", factoryRows, [
+    (row) => `<strong>${escapeHtml(displayText(row.skuCode))}</strong>`,
+    (row) => `${renderMasterProductDetailLink(row.productId)}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
+    (row) => escapeHtml(formatMetricNumber(row.unitCount90d)),
+    (row) => escapeHtml(formatMetricNumber(row.stockQty)),
+    (row) => `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
+  ], "该店铺当前没有需要工厂备货的产品");
+  renderAmazonMetricCards("rakutenStoreDashboardFulfillment", [
+    { label: "待发货订单", value: formatMetricNumber(fulfillment.pendingShipmentOrderCount) },
+    { label: "已发货订单", value: formatMetricNumber(fulfillment.shippedOrderCount) },
+    { label: "已妥投订单", value: formatMetricNumber(fulfillment.deliveredOrderCount) },
+    { label: "日本仓出库", value: `${formatMetricNumber(fulfillment.overseasUnitCount)} 件` },
+    { label: "中国仓出库", value: `${formatMetricNumber(fulfillment.chinaUnitCount)} 件` },
+  ]);
+  const latestRun = payload.latestSyncRun;
+  $("rakutenStoreDashboardSyncStatus").textContent = latestRun ? `最近任务：${displayText(latestRun.status)} / 读取 ${formatMetricNumber(latestRun.fetchedCount)} 条` : "尚无同步任务";
+  const sourceText = sourceSummary.includesLegacyData
+    ? `数据来源：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细 + 历史手动导入 ${formatMetricNumber(sourceSummary.legacyItemCount)} 条明细。`
+    : `数据来源：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细。`;
+  const licenseText = selectedShop.licenseExpiresAt ? ` RMS License 到期时间：${formatDate(selectedShop.licenseExpiresAt)}。` : "";
+  $("rakutenStoreDashboardStatusMeta").textContent = `${sourceText}${licenseText} 取消订单已排除。`;
+  hydrateResponsiveTableLabels($("rakutenDashboard"));
+}
+
+async function loadRakutenStoreDashboard(options = {}) {
+  if (!state.token || state.rakutenStoreDashboardLoading) return;
+  state.rakutenStoreDashboardLoading = true;
+  const connectionId = String(options.connectionId || $("rakutenStoreDashboardShop")?.value || state.rakutenStoreDashboard?.selectedShop?.connectionId || "").trim();
+  const days = String(options.days || $("rakutenStoreDashboardDays")?.value || state.rakutenStoreDashboard?.days || "30").trim();
+  try {
+    const query = new URLSearchParams({ days });
+    if (connectionId) query.set("connectionId", connectionId);
+    renderRakutenStoreDashboard(await request(`/rakuten-rms-api/store-dashboard?${query.toString()}`));
+  } finally {
+    state.rakutenStoreDashboardLoading = false;
+  }
+}
+
+async function downloadRakutenStoreFactoryRecommendationsExcel() {
+  const connectionId = String(state.rakutenStoreDashboard?.selectedShop?.connectionId || $("rakutenStoreDashboardShop")?.value || "").trim();
+  if (!connectionId) throw new Error("请先选择乐天店铺");
+  const endpoint = `/rakuten-rms-api/store-dashboard/factory-recommendations-excel?connectionId=${encodeURIComponent(connectionId)}`;
+  const fileName = await downloadAuthorizedFile(endpoint, {}, "乐天工厂备货建议.xlsx");
+  showToast(`已下载 ${fileName}`);
 }
 
 async function downloadAmazonStoreFactoryRecommendationsExcel() {
@@ -12974,6 +13102,8 @@ async function reloadAll() {
   if (!state.token) {
     state.amazonStoreDashboard = null;
     state.amazonStoreDashboardLoading = false;
+    state.rakutenStoreDashboard = null;
+    state.rakutenStoreDashboardLoading = false;
     clearStats();
     clearOverviewDashboard();
     $("usersBody").innerHTML = "";
@@ -13272,6 +13402,37 @@ function bindForms() {
   $("amazonStoreDashboardDays")?.addEventListener("change", async (event) => {
     try {
       await loadAmazonStoreDashboard({ days: event.currentTarget.value });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  const refreshRakutenStoreDashboard = async (button) => {
+    try {
+      await withBusyButton(button, "刷新中...", loadRakutenStoreDashboard);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  };
+  $("refreshRakutenStoreDashboardBtn")?.addEventListener("click", (event) => refreshRakutenStoreDashboard(event.currentTarget));
+  $("reloadRakutenStoreDashboardBtn")?.addEventListener("click", (event) => refreshRakutenStoreDashboard(event.currentTarget));
+  $("rakutenStoreDashboardShop")?.addEventListener("change", async (event) => {
+    try {
+      await loadRakutenStoreDashboard({ connectionId: event.currentTarget.value });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenStoreDashboardDays")?.addEventListener("change", async (event) => {
+    try {
+      await loadRakutenStoreDashboard({ days: event.currentTarget.value });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("downloadRakutenStoreFactoryExcelBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "下载中...", downloadRakutenStoreFactoryRecommendationsExcel);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -14667,6 +14828,15 @@ function bindForms() {
       await loadAmazonStoreDashboard();
     } catch (error) {
       $("amazonStoreDashboardMeta").textContent = `店铺看板读取失败：${error.message}`;
+    }
+  });
+
+  $("openRakutenDashboardPanel")?.addEventListener("click", async () => {
+    switchPanel("rakutenDashboard");
+    try {
+      await loadRakutenStoreDashboard();
+    } catch (error) {
+      $("rakutenStoreDashboardMeta").textContent = `店铺看板读取失败：${error.message}`;
     }
   });
 

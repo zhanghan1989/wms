@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
+import { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthUser } from '../common/types/auth-user.type';
@@ -17,6 +18,27 @@ export class RakutenRmsApiController {
   @Get('connections')
   async listConnections(): Promise<unknown[]> {
     return this.service.listConnections();
+  }
+
+  @Get('store-dashboard')
+  async getStoreDashboard(
+    @Query('connectionId') connectionId?: string,
+    @Query('days') days?: string,
+  ): Promise<unknown> {
+    return this.service.getStoreDashboard(connectionId, days);
+  }
+
+  @Get('store-dashboard/factory-recommendations-excel')
+  async downloadStoreFactoryRecommendationsExcel(
+    @Res() res: Response,
+    @Query('connectionId') connectionId?: string,
+  ): Promise<void> {
+    const file = await this.service.buildStoreFactoryRecommendationsExcel(connectionId);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(file.content);
   }
 
   @Post('connections')
