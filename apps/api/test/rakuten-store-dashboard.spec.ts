@@ -34,12 +34,35 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.summary).toMatchObject({ orderCount: 1, unitCount: 13, salesAmount: 15600 });
     expect(dashboard.fulfillment).toMatchObject({ shippedOrderCount: 1, deliveredOrderCount: 1 });
     expect(dashboard.factoryRecommendations).toMatchObject({
-      periodDays: 90, minimumUnitCountExclusive: 10, recommendationCount: 1,
-      totalSuggestedFactoryQty: 7,
+      channelScope: 'rakuten_all_shops', periodDays: 90,
+      productionDays: 30, transportDays: 15, safetyDays: 3, targetCoverDays: 48,
+      forecastWeights: { days7: 0.5, days30: 0.3, days90: 0.2 },
+      recommendationCount: 1, totalSuggestedFactoryQty: 47,
     });
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
-      productId: 'RB-1', unitCount90d: 14, stockQty: 4, inTransitQty: 3,
-      suggestedFactoryQty: 7,
+      productId: 'RB-1', unitCount7d: 13, unitCount30d: 14, unitCount90d: 14,
+      forecastDailyQty: 1.1, targetDemandQty: 53, pendingShipmentQty: 1,
+      stockQty: 4, inTransitQty: 3, suggestedFactoryQty: 47,
+    });
+  });
+
+  it('uses all Rakuten shop orders for factory planning while keeping store metrics selected', () => {
+    const dashboard = buildRakutenStoreDashboard({
+      now: new Date('2026-08-21T12:00:00.000Z'),
+      days: 7,
+      orders: [],
+      factoryOrders: [{
+        orderId: 'other-shop-1', skuCode: 'RB-1', productName: '产品', orderQuantity: 7,
+        orderStatusText: '300', orderImportedAtRaw: '2026-08-20', dispatchMode: 'overseas',
+        shipmentNo: 'TRACK-1', trackingIsDelivered: false, salesAmount: 0,
+      }],
+      products: [{ productId: 'RB-1', productName: '产品', stockQty: 0 }],
+    }) as any;
+
+    expect(dashboard.summary).toMatchObject({ orderCount: 0, unitCount: 0 });
+    expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
+      unitCount7d: 7, unitCount30d: 7, unitCount90d: 7,
+      forecastDailyQty: 0.586, targetDemandQty: 29, suggestedFactoryQty: 29,
     });
   });
 
@@ -63,12 +86,24 @@ describe('Rakuten store dashboard', () => {
     }]);
     const productFindMany = jest.fn().mockResolvedValue([]);
     const inTransitGroupBy = jest.fn().mockResolvedValue([]);
+    const factoryOrderFindMany = jest.fn().mockResolvedValue([{
+      rmsConnectionId: 8n, orderId: 'factory-order-1', skuCode: 'RB-1', productName: '产品',
+      orderQuantity: 1, orderStatusText: '300', orderImportedDate: new Date('2026-08-20'),
+      dispatchMode: 'overseas', shipmentNo: 'TRACK-2', trackingIsDelivered: false,
+    }]);
     const prisma = {
-      rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([{
-        id: 7n, shopId: 3n, shop: { id: 3n, name: shopName }, status: 1, syncOrders: true,
-        lastOrdersSyncedAt: null, lastSuccessfulSyncAt: null, lastSyncError: null, licenseExpiresAt: null,
-      }]) },
+      rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([
+        {
+          id: 7n, shopId: 3n, shop: { id: 3n, name: shopName }, status: 1, syncOrders: true,
+          lastOrdersSyncedAt: null, lastSuccessfulSyncAt: null, lastSyncError: null, licenseExpiresAt: null,
+        },
+        {
+          id: 8n, shopId: 4n, shop: { id: 4n, name: '另一家乐天店' }, status: 1, syncOrders: true,
+          lastOrdersSyncedAt: null, lastSuccessfulSyncAt: null, lastSyncError: null, licenseExpiresAt: null,
+        },
+      ]) },
       $queryRaw: queryRaw,
+      rakutenOrderRecord: { findMany: factoryOrderFindMany },
       masterProduct: { findMany: productFindMany },
       batchInboundItem: { groupBy: inTransitGroupBy },
       rakutenRmsSyncRun: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -86,6 +121,15 @@ describe('Rakuten store dashboard', () => {
     expect(queryText).toContain('MAX_EXECUTION_TIME(15000)');
     expect(queryText).not.toContain('raw_payload AS');
     expect(queryText.includes('rms_connection_id IS NULL')).toBe(includesLegacyData);
+    expect(factoryOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: [
+          { rmsConnectionId: { in: [7n, 8n] } },
+          { rmsConnectionId: null },
+        ],
+        orderImportedDate: expect.objectContaining({ gte: expect.any(Date), lt: expect.any(Date) }),
+      }),
+    }));
     expect(productFindMany).toHaveBeenCalledWith({
       where: { productId: { in: ['RB-1'] } },
       select: { productId: true, productName: true, stockQty: true },
@@ -113,13 +157,15 @@ describe('Rakuten store dashboard', () => {
       selectedShop: { shopName: '乐天-1号店' },
       dashboard: { factoryRecommendations: { rows: [{
         skuCode: 'RB-1', productId: 'RB-1', productName: '测试产品',
-        unitCount90d: 20, stockQty: 5, inTransitQty: 4, suggestedFactoryQty: 11,
+        unitCount7d: 3, unitCount30d: 10, unitCount90d: 20,
+        forecastDailyQty: 0.4, targetDemandQty: 20, pendingShipmentQty: 2,
+        stockQty: 5, inTransitQty: 4, suggestedFactoryQty: 13,
       }] } },
     });
 
     const file = await service.buildStoreFactoryRecommendationsExcel('7');
 
-    expect(file.fileName).toMatch(/^乐天工厂备货建议-乐天-1号店-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    expect(file.fileName).toMatch(/^乐天工厂备货建议-全部店铺-\d{4}-\d{2}-\d{2}\.xlsx$/);
     expect(file.content.length).toBeGreaterThan(100);
   });
 });

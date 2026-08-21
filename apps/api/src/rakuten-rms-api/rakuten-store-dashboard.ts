@@ -24,7 +24,13 @@ export interface RakutenDashboardInTransitRow {
 
 const CANCELLED_STATUSES = new Set(['800', '900']);
 const FACTORY_RECOMMENDATION_DAYS = 90;
-const FACTORY_RECOMMENDATION_MIN_UNITS_EXCLUSIVE = 10;
+const FACTORY_PRODUCTION_DAYS = 30;
+const FACTORY_TRANSPORT_DAYS = 15;
+const FACTORY_SAFETY_DAYS = 3;
+const FACTORY_TARGET_COVER_DAYS = FACTORY_PRODUCTION_DAYS
+  + FACTORY_TRANSPORT_DAYS
+  + FACTORY_SAFETY_DAYS;
+const FACTORY_FORECAST_WEIGHTS = { days7: 0.5, days30: 0.3, days90: 0.2 } as const;
 
 function nonNegative(value: unknown): number {
   const parsed = Number(value ?? 0);
@@ -88,10 +94,11 @@ export function buildRakutenStoreDashboard(input: {
   now: Date;
   days: number;
   orders: RakutenDashboardOrderRow[];
+  factoryOrders?: RakutenDashboardOrderRow[];
   products: RakutenDashboardProductRow[];
   inTransit?: RakutenDashboardInTransitRow[];
 }): unknown {
-  const { now, days, orders, products, inTransit = [] } = input;
+  const { now, days, orders, factoryOrders = orders, products, inTransit = [] } = input;
   const periodMs = days * 24 * 60 * 60 * 1000;
   const periodStart = new Date(now.getTime() - periodMs);
   const previousStart = new Date(periodStart.getTime() - periodMs);
@@ -106,11 +113,17 @@ export function buildRakutenStoreDashboard(input: {
     normalize(row.productId), nonNegative(row.inTransitQty),
   ]));
   const factoryPeriodStart = new Date(now.getTime() - FACTORY_RECOMMENDATION_DAYS * 24 * 60 * 60 * 1000);
+  const factory30dStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const factory7dStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const factoryMetrics = new Map<string, {
-    skuCode: string; productId: string; productName: string | null; unitCount90d: number;
-    stockQty: number; inTransitQty: number;
+    skuCode: string; productId: string; productName: string | null;
+    unitCount7d: number; unitCount30d: number; unitCount90d: number;
+    pendingShipmentQty: number; stockQty: number; inTransitQty: number;
   }>();
-  for (const { row, date } of datedRows) {
+  const factoryDatedRows = factoryOrders
+    .filter((row) => !isCancelled(row.orderStatusText))
+    .map((row) => ({ row, date: parseDate(row.orderImportedAtRaw) }));
+  for (const { row, date } of factoryDatedRows) {
     if (!date || date < factoryPeriodStart || date >= now) continue;
     const product = productLookup.get(normalize(row.skuCode));
     if (!product) continue;
@@ -119,18 +132,40 @@ export function buildRakutenStoreDashboard(input: {
       skuCode: String(row.skuCode ?? '').trim() || product.productId,
       productId: product.productId,
       productName: product.productName || row.productName || null,
+      unitCount7d: 0,
+      unitCount30d: 0,
       unitCount90d: 0,
+      pendingShipmentQty: 0,
       stockQty: nonNegative(product.stockQty),
       inTransitQty: inTransitLookup.get(key) ?? 0,
     };
-    metric.unitCount90d += nonNegative(row.orderQuantity);
+    const quantity = nonNegative(row.orderQuantity);
+    metric.unitCount90d += quantity;
+    if (date >= factory30dStart) metric.unitCount30d += quantity;
+    if (date >= factory7dStart) metric.unitCount7d += quantity;
+    if (!row.shipmentNo) metric.pendingShipmentQty += quantity;
     factoryMetrics.set(key, metric);
   }
-  const factoryRows = Array.from(factoryMetrics.values()).map((row) => ({
-    ...row,
-    suggestedFactoryQty: Math.max(0, Math.ceil(row.unitCount90d - row.stockQty - row.inTransitQty)),
-  })).filter((row) => row.unitCount90d > FACTORY_RECOMMENDATION_MIN_UNITS_EXCLUSIVE
-    && row.suggestedFactoryQty > 0)
+  const factoryRows = Array.from(factoryMetrics.values()).map((row) => {
+    const averageDaily7d = row.unitCount7d / 7;
+    const averageDaily30d = row.unitCount30d / 30;
+    const averageDaily90d = row.unitCount90d / 90;
+    const weightedDaily = averageDaily7d * FACTORY_FORECAST_WEIGHTS.days7
+      + averageDaily30d * FACTORY_FORECAST_WEIGHTS.days30
+      + averageDaily90d * FACTORY_FORECAST_WEIGHTS.days90;
+    const forecastDailyQty = Math.max(averageDaily90d, weightedDaily);
+    const targetDemandQty = Math.ceil(forecastDailyQty * FACTORY_TARGET_COVER_DAYS);
+    const suggestedFactoryQty = Math.max(
+      0,
+      targetDemandQty + row.pendingShipmentQty - row.stockQty - row.inTransitQty,
+    );
+    return {
+      ...row,
+      forecastDailyQty: Math.round(forecastDailyQty * 1000) / 1000,
+      targetDemandQty,
+      suggestedFactoryQty,
+    };
+  }).filter((row) => row.suggestedFactoryQty > 0)
     .sort((left, right) => right.suggestedFactoryQty - left.suggestedFactoryQty
       || right.unitCount90d - left.unitCount90d
       || left.productId.localeCompare(right.productId, 'en', { numeric: true }));
@@ -210,10 +245,15 @@ export function buildRakutenStoreDashboard(input: {
       chinaUnitCount: current.chinaUnitCount,
     },
     factoryRecommendations: {
+      channelScope: 'rakuten_all_shops',
       periodDays: FACTORY_RECOMMENDATION_DAYS,
       periodStart: factoryPeriodStart.toISOString(),
       periodEnd: now.toISOString(),
-      minimumUnitCountExclusive: FACTORY_RECOMMENDATION_MIN_UNITS_EXCLUSIVE,
+      productionDays: FACTORY_PRODUCTION_DAYS,
+      transportDays: FACTORY_TRANSPORT_DAYS,
+      safetyDays: FACTORY_SAFETY_DAYS,
+      targetCoverDays: FACTORY_TARGET_COVER_DAYS,
+      forecastWeights: FACTORY_FORECAST_WEIGHTS,
       recommendationCount: factoryRows.length,
       totalSuggestedFactoryQty: factoryRows.reduce((sum, row) => sum + row.suggestedFactoryQty, 0),
       rows: factoryRows,

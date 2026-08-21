@@ -2572,11 +2572,16 @@ function renderRakutenStoreDashboard(payload) {
   renderAmazonDashboardTable("rakutenStoreFactoryRecommendationBody", factoryRows, [
     (row) => `<strong>${escapeHtml(displayText(row.skuCode))}</strong>`,
     (row) => `${renderMasterProductDetailLink(row.productId)}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
+    (row) => escapeHtml(formatMetricNumber(row.unitCount7d)),
+    (row) => escapeHtml(formatMetricNumber(row.unitCount30d)),
     (row) => escapeHtml(formatMetricNumber(row.unitCount90d)),
+    (row) => escapeHtml(formatMetricNumber(row.forecastDailyQty, 3)),
+    (row) => escapeHtml(formatMetricNumber(row.targetDemandQty)),
+    (row) => escapeHtml(formatMetricNumber(row.pendingShipmentQty)),
     (row) => escapeHtml(formatMetricNumber(row.stockQty)),
     (row) => escapeHtml(formatMetricNumber(row.inTransitQty)),
     (row) => `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
-  ], "该店铺当前没有需要工厂备货的产品");
+  ], "乐天渠道当前没有需要工厂备货的产品");
   renderAmazonMetricCards("rakutenStoreDashboardFulfillment", [
     { label: "待发货订单", value: formatMetricNumber(fulfillment.pendingShipmentOrderCount) },
     { label: "已发货订单", value: formatMetricNumber(fulfillment.shippedOrderCount) },
