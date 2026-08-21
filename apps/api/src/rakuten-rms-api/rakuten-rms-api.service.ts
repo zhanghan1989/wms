@@ -318,9 +318,10 @@ export class RakutenRmsApiService {
       selectedShop?: { shopName?: string } | null;
       dashboard?: { factoryRecommendations?: { rows?: Array<{
         skuCode?: string; productId?: string; productName?: string | null;
-        unitCount7d?: number; unitCount30d?: number; unitCount90d?: number;
-        forecastDailyQty?: number; targetDemandQty?: number; pendingShipmentQty?: number;
-        stockQty?: number; inTransitQty?: number; suggestedFactoryQty?: number;
+        unitCount90d?: number; averageDaily90d?: number; pendingShipmentQty?: number;
+        stockQty?: number; inTransitQty?: number; effectiveStockQty?: number;
+        productionLogisticsDemandQty?: number; remainingQtyAtArrival?: number;
+        targetStockQty?: number; suggestedFactoryQty?: number;
       }> } } | null;
     };
     if (!payload.selectedShop) throw new NotFoundException("尚无已启用的乐天店铺连接");
@@ -330,18 +331,19 @@ export class RakutenRmsApiService {
       "产品ID": row.productId ?? "",
       "乐天SKU": row.skuCode ?? "",
       "产品名称": row.productName ?? "",
-      "近7天销量": Number(row.unitCount7d ?? 0),
-      "近30天销量": Number(row.unitCount30d ?? 0),
       "近90天销量": Number(row.unitCount90d ?? 0),
-      "预测日销量": Number(row.forecastDailyQty ?? 0),
-      "48天目标需求": Number(row.targetDemandQty ?? 0),
-      "待发货占用": Number(row.pendingShipmentQty ?? 0),
+      "90天日均销量": Number(row.averageDaily90d ?? 0),
       "当前日本库存": Number(row.stockQty ?? 0),
       "国内单号在途数量": Number(row.inTransitQty ?? 0),
+      "待发货占用": Number(row.pendingShipmentQty ?? 0),
+      "有效库存": Number(row.effectiveStockQty ?? 0),
+      "45天预计消耗": Number(row.productionLogisticsDemandQty ?? 0),
+      "预计到货剩余": Number(row.remainingQtyAtArrival ?? 0),
+      "60天目标库存": Number(row.targetStockQty ?? 0),
       "建议工厂备货数量": Number(row.suggestedFactoryQty ?? 0),
     }));
     const worksheet = XLSX.utils.json_to_sheet(data, {
-      header: ["统计范围", "产品ID", "乐天SKU", "产品名称", "近7天销量", "近30天销量", "近90天销量", "预测日销量", "48天目标需求", "待发货占用", "当前日本库存", "国内单号在途数量", "建议工厂备货数量"],
+      header: ["统计范围", "产品ID", "乐天SKU", "产品名称", "近90天销量", "90天日均销量", "当前日本库存", "国内单号在途数量", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "60天目标库存", "建议工厂备货数量"],
     });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "乐天工厂备货建议");
