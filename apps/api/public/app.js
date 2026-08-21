@@ -13408,25 +13408,22 @@ function bindForms() {
     }
   });
 
-  const refreshRakutenStoreDashboard = async (button) => {
-    try {
-      await withBusyButton(button, "刷新中...", loadRakutenStoreDashboard);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  };
-  $("refreshRakutenStoreDashboardBtn")?.addEventListener("click", (event) => refreshRakutenStoreDashboard(event.currentTarget));
-  $("reloadRakutenStoreDashboardBtn")?.addEventListener("click", (event) => refreshRakutenStoreDashboard(event.currentTarget));
   $("rakutenStoreDashboardShop")?.addEventListener("change", async (event) => {
     try {
-      await loadRakutenStoreDashboard({ connectionId: event.currentTarget.value });
+      await withGlobalLoading(
+        "正在加载中，请稍候...",
+        () => loadRakutenStoreDashboard({ connectionId: event.currentTarget.value }),
+      );
     } catch (error) {
       showToast(error.message, true);
     }
   });
   $("rakutenStoreDashboardDays")?.addEventListener("change", async (event) => {
     try {
-      await loadRakutenStoreDashboard({ days: event.currentTarget.value });
+      await withGlobalLoading(
+        "正在加载中，请稍候...",
+        () => loadRakutenStoreDashboard({ days: event.currentTarget.value }),
+      );
     } catch (error) {
       showToast(error.message, true);
     }
