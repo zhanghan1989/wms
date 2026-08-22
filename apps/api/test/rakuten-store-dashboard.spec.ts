@@ -47,6 +47,30 @@ describe('Rakuten store dashboard', () => {
     });
   });
 
+  it('returns every natural day in a 90-day sales trend and fills missing days with zero', () => {
+    const dashboard = buildRakutenStoreDashboard({
+      now: new Date('2026-08-21T12:00:00.000Z'),
+      days: 90,
+      products: [],
+      orders: [{
+        orderId: 'current-1', skuCode: 'RB-1', productName: '乐天产品', orderQuantity: 2,
+        orderStatusText: '300', orderImportedAtRaw: '2026-08-20 10:00:00', dispatchMode: 'overseas',
+        shipmentNo: 'TRACK-1', trackingIsDelivered: false, salesAmount: 2400,
+      }],
+    }) as any;
+
+    expect(dashboard.daily).toHaveLength(90);
+    expect(dashboard.daily[0]).toEqual({
+      date: '2026-05-24', orderCount: 0, unitCount: 0, salesAmount: 0,
+    });
+    expect(dashboard.daily[88]).toEqual({
+      date: '2026-08-20', orderCount: 1, unitCount: 2, salesAmount: 2400,
+    });
+    expect(dashboard.daily[89]).toEqual({
+      date: '2026-08-21', orderCount: 0, unitCount: 0, salesAmount: 0,
+    });
+  });
+
   it('uses all Rakuten shop orders for factory planning while keeping store metrics selected', () => {
     const dashboard = buildRakutenStoreDashboard({
       now: new Date('2026-08-21T12:00:00.000Z'),

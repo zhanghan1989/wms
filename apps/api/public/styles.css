@@ -650,6 +650,11 @@ button.ghost {
   background: linear-gradient(180deg, #2f9b68, #176542);
 }
 
+.amazon-store-dashboard-bar.is-zero {
+  min-height: 1px;
+  background: var(--line);
+}
+
 .amazon-store-dashboard-product-table {
   min-width: 1260px !important;
 }

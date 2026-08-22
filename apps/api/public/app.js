@@ -2542,16 +2542,18 @@ function renderRakutenStoreDashboard(payload) {
   }
   const trend = $("rakutenStoreDashboardTrend");
   if (trend) {
-    const visibleDaily = daily.slice(-30);
+    const visibleDaily = daily;
     const maxSales = Math.max(...visibleDaily.map((row) => Number(row.salesAmount || 0)), 1);
     trend.innerHTML = visibleDaily.length ? visibleDaily.map((row) => {
-      const height = Math.max(4, Math.round((Number(row.salesAmount || 0) / maxSales) * 100));
+      const salesAmount = Number(row.salesAmount || 0);
+      const height = salesAmount > 0 ? Math.max(4, Math.round((salesAmount / maxSales) * 100)) : 0;
       return `<div class="amazon-store-dashboard-day" title="${escapeHtml(row.date)} / ${formatMetricNumber(row.orderCount)}单 / ${formatMetricNumber(row.unitCount)}件 / ${escapeHtml(formatAmazonStoreCurrency(row.salesAmount, "JPY"))}">
-        <span class="amazon-store-dashboard-bar-value">${escapeHtml(formatMetricNumber(row.unitCount))}</span><span class="amazon-store-dashboard-bar" style="height:${height}%"></span><span class="amazon-store-dashboard-day-label">${escapeHtml(String(row.date || "").slice(5))}</span>
+        <span class="amazon-store-dashboard-bar-value">${escapeHtml(formatMetricNumber(row.unitCount))}</span><span class="amazon-store-dashboard-bar${salesAmount > 0 ? "" : " is-zero"}" style="height:${height}%"></span><span class="amazon-store-dashboard-day-label">${escapeHtml(String(row.date || "").slice(5))}</span>
       </div>`;
     }).join("") : '<p class="muted">所选周期暂无乐天销售数据</p>';
+    if (visibleDaily.length) trend.scrollLeft = trend.scrollWidth;
   }
-  $("rakutenStoreDashboardTrendMeta").textContent = `按日本时间显示最近 ${Math.min(daily.length, 30)} 个有销量的日期；柱高为商品销售额，数字为销量`;
+  $("rakutenStoreDashboardTrendMeta").textContent = `按日本时间显示完整 ${daily.length} 个自然日（含0销量日期）；柱高为商品销售额，数字为销量`;
   const matchCoverage = dashboard.matchCoverage || {};
   $("rakutenStoreDashboardProductMeta").textContent = `按商品销售额排序 / 系统产品已匹配 ${formatMetricNumber(matchCoverage.matchedCount)} / 未匹配 ${formatMetricNumber(matchCoverage.unmatchedCount)}`;
   renderAmazonDashboardTable("rakutenStoreDashboardProductBody", topProducts.slice(0, 30), [

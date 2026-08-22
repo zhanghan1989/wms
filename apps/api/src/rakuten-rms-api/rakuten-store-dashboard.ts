@@ -66,6 +66,14 @@ function tokyoDateKey(value: Date): string {
   return `${record.year}-${record.month}-${record.day}`;
 }
 
+function recentTokyoDateKeys(now: Date, days: number): string[] {
+  const endDate = new Date(`${tokyoDateKey(now)}T00:00:00.000Z`);
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(endDate.getTime() - (days - index - 1) * 24 * 60 * 60 * 1000);
+    return date.toISOString().slice(0, 10);
+  });
+}
+
 function percentageChange(current: number, previous: number): number | null {
   if (!previous) return current ? null : 0;
   return Math.round(((current - previous) / previous) * 1000) / 10;
@@ -219,9 +227,15 @@ export function buildRakutenStoreDashboard(input: {
       unitCountChangePct: percentageChange(current.unitCount, previous.unitCount),
       salesAmountChangePct: percentageChange(current.salesAmount, previous.salesAmount),
     },
-    daily: Array.from(dailyMap.entries()).sort(([left], [right]) => left.localeCompare(right)).map(([date, row]) => ({
-      date, orderCount: row.orderIds.size, unitCount: row.units, salesAmount: Math.round(row.salesAmount),
-    })),
+    daily: recentTokyoDateKeys(now, days).map((date) => {
+      const row = dailyMap.get(date);
+      return {
+        date,
+        orderCount: row?.orderIds.size ?? 0,
+        unitCount: row?.units ?? 0,
+        salesAmount: Math.round(row?.salesAmount ?? 0),
+      };
+    }),
     topProducts,
     matchCoverage: {
       productCount: topProducts.length,
