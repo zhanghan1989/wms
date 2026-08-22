@@ -36,14 +36,14 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.factoryRecommendations).toMatchObject({
       channelScope: 'rakuten_all_shops', periodDays: 90,
       productionDays: 30, transportDays: 15, productionLogisticsDays: 45,
-      targetStockDays: 60, minimumAverageDailySalesExclusive: 0.1,
-      recommendationCount: 1, totalSuggestedFactoryQty: 10,
+      targetStockDays: 90, minimumAverageDailySalesExclusive: 0.1,
+      recommendationCount: 1, totalSuggestedFactoryQty: 14,
     });
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
       productId: 'RB-1', unitCount90d: 14, averageDaily90d: 0.156,
       stockQty: 4, inTransitQty: 3, pendingShipmentQty: 1, effectiveStockQty: 6,
       productionLogisticsDemandQty: 7, remainingQtyAtArrival: 0,
-      targetStockQty: 10, suggestedFactoryQty: 10,
+      targetStockQty: 14, suggestedFactoryQty: 14,
     });
   });
 
@@ -98,7 +98,7 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
       unitCount90d: 10, averageDaily90d: 0.111, effectiveStockQty: 0,
       productionLogisticsDemandQty: 5, remainingQtyAtArrival: 0,
-      targetStockQty: 7, suggestedFactoryQty: 7,
+      targetStockQty: 10, suggestedFactoryQty: 10,
     });
     expect(dashboard.factoryRecommendations.rows).toHaveLength(1);
   });
@@ -120,7 +120,7 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
       averageDaily90d: 0.2, stockQty: 20, inTransitQty: 8, pendingShipmentQty: 18,
       effectiveStockQty: 10, productionLogisticsDemandQty: 9, remainingQtyAtArrival: 1,
-      targetStockQty: 12, suggestedFactoryQty: 11,
+      targetStockQty: 18, suggestedFactoryQty: 17,
     });
   });
 
@@ -218,7 +218,7 @@ describe('Rakuten store dashboard', () => {
         unitCount90d: 20, averageDaily90d: 0.222, pendingShipmentQty: 2,
         stockQty: 5, inTransitQty: 4, effectiveStockQty: 7,
         productionLogisticsDemandQty: 10, remainingQtyAtArrival: 0,
-        targetStockQty: 14, suggestedFactoryQty: 14,
+        targetStockQty: 20, suggestedFactoryQty: 20,
       }] } },
     });
 
