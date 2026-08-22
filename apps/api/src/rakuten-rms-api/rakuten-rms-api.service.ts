@@ -42,6 +42,7 @@ type SyncCounters = {
   fetched: number;
   created: number;
   updated: number;
+  unchanged: number;
   skipped: number;
   manualActions: number;
 };
@@ -339,11 +340,11 @@ export class RakutenRmsApiService {
       "有效库存": Number(row.effectiveStockQty ?? 0),
       "45天预计消耗": Number(row.productionLogisticsDemandQty ?? 0),
       "预计到货剩余": Number(row.remainingQtyAtArrival ?? 0),
-      "60天目标库存": Number(row.targetStockQty ?? 0),
+      "90天目标库存": Number(row.targetStockQty ?? 0),
       "建议工厂备货数量": Number(row.suggestedFactoryQty ?? 0),
     }));
     const worksheet = XLSX.utils.json_to_sheet(data, {
-      header: ["统计范围", "产品ID", "乐天SKU", "产品名称", "近90天销量", "90天日均销量", "当前日本库存", "国内单号在途数量", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "60天目标库存", "建议工厂备货数量"],
+      header: ["统计范围", "产品ID", "乐天SKU", "产品名称", "近90天销量", "90天日均销量", "当前日本库存", "国内单号在途数量", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "90天目标库存", "建议工厂备货数量"],
     });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "乐天工厂备货建议");
@@ -506,7 +507,8 @@ export class RakutenRmsApiService {
     const summary = {
       fetched: plans.length,
       create: plans.filter((plan) => plan.action === "create").length,
-      update: plans.filter((plan) => plan.action === "update").length,
+      update: plans.filter((plan) => plan.action === "update" && plan.changedFields.length > 0).length,
+      unchanged: plans.filter((plan) => plan.action === "update" && plan.changedFields.length === 0).length,
       claim: plans.filter((plan) => plan.action === "claim").length,
       frozen: plans.filter((plan) => plan.action === "frozen").length,
       manualAction: plans.filter((plan) => plan.action === "manual_action").length,
@@ -517,6 +519,23 @@ export class RakutenRmsApiService {
     const token = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + PREVIEW_EXPIRY_MS);
     const planDescriptors = plans.map((plan) => this.describePlan(plan));
+    const previewItems = plans
+      .map((plan) => ({
+        orderId: plan.item.orderId,
+        orderImportedAtRaw: plan.item.orderImportedAtRaw,
+        itemKey: plan.item.itemKey,
+        skuCode: plan.item.skuCode,
+        action: plan.action === "update" && plan.changedFields.length === 0 ? "unchanged" : plan.action,
+        existingId: plan.existing?.id.toString() ?? null,
+        changedFields: plan.changedFields,
+        reason: plan.reason,
+      }))
+      .sort((left, right) => {
+        const timeDifference = this.sortableOrderTime(right.orderImportedAtRaw)
+          - this.sortableOrderTime(left.orderImportedAtRaw);
+        if (timeDifference) return timeDifference;
+        return right.orderId.localeCompare(left.orderId, undefined, { numeric: true, sensitivity: "base" });
+      });
     await this.prisma.rakutenRmsSyncPreview.deleteMany({
       where: { expiresAt: { lte: new Date() } },
     });
@@ -543,15 +562,7 @@ export class RakutenRmsApiService {
       mappedItems: undefined,
       summary,
       canConfirm: conflictCount === 0,
-      items: plans.map((plan) => ({
-        orderId: plan.item.orderId,
-        itemKey: plan.item.itemKey,
-        skuCode: plan.item.skuCode,
-        action: plan.action,
-        existingId: plan.existing?.id.toString() ?? null,
-        changedFields: plan.changedFields,
-        reason: plan.reason,
-      })),
+      items: previewItems,
     };
   }
 
@@ -811,6 +822,7 @@ export class RakutenRmsApiService {
       fetched: 0,
       created: 0,
       updated: 0,
+      unchanged: 0,
       skipped: 0,
       manualActions: 0,
     };
@@ -868,6 +880,7 @@ export class RakutenRmsApiService {
           const snapshot = await this.applyOrderPlan(tx, connection, plan, now);
           snapshots.push(snapshot);
           if (plan.action === "create") counters.created += 1;
+          else if (plan.action === "update" && plan.changedFields.length === 0) counters.unchanged += 1;
           else counters.updated += 1;
         }
         const hasConflicts = conflictCount > 0;
@@ -1224,12 +1237,17 @@ export class RakutenRmsApiService {
       }
     }
     const data = await this.buildOrderWriteData(db, connection, item, existing, new Date());
+    const action = existing ? (existing.rmsConnectionId ? "update" : "claim") : "create";
     return {
-      action: existing ? (existing.rmsConnectionId ? "update" : "claim") : "create",
+      action,
       item,
       existing,
       reason: null,
-      changedFields: existing ? this.changedOrderFields(existing, data) : Object.keys(data),
+      changedFields: existing
+        ? action === "update"
+          ? this.changedBusinessOrderFields(existing, data)
+          : this.changedOrderFields(existing, data)
+        : Object.keys(data),
     };
   }
 
@@ -1408,25 +1426,17 @@ export class RakutenRmsApiService {
   }
 
   private changedBusinessOrderFields(existing: RakutenOrderRecord, data: RakutenOrderWriteData): string[] {
-    const businessFields = [
-      "itemDetailStatus",
-      "skuCode",
-      "orderQuantity",
-      "productName",
-      "orderStatusText",
-      "orderRemark",
-      "shippingName",
-      "shippingPostalCode",
-      "shippingPrefecture",
-      "shippingCity",
-      "shippingAddress",
-      "shippingPhone",
-      "deliveryMethod",
-      "deliveryDateRaw",
-      "deliveryTimeSlot",
-      "productNameExtra",
-    ] as const;
-    return businessFields.filter((key) => this.comparableValue(existing[key]) !== this.comparableValue(data[key]));
+    const syncMetadataFields = new Set([
+      "rmsConnectionId",
+      "rmsItemKey",
+      "sourceKind",
+      "sourceFileName",
+      "sourceFilePath",
+      "rawPayload",
+      "csvImportedAt",
+      "rmsLastSyncedAt",
+    ]);
+    return this.changedOrderFields(existing, data).filter((key) => !syncMetadataFields.has(key));
   }
 
   private isCancellationStatus(status: string | null): boolean {
@@ -1484,6 +1494,14 @@ export class RakutenRmsApiService {
     if (typeof value === "bigint") return value.toString();
     if (value && typeof value === "object") return JSON.stringify(value);
     return String(value ?? "");
+  }
+
+  private sortableOrderTime(value: unknown): number {
+    const source = String(value ?? "").trim();
+    if (!source) return Number.NEGATIVE_INFINITY;
+    const timestamp = new Date(source).getTime();
+    if (Number.isFinite(timestamp)) return timestamp;
+    return parseRakutenOrderDate(source)?.getTime() ?? Number.NEGATIVE_INFINITY;
   }
 
   private snapshotOrderRecord(row: RakutenOrderRecord): Record<string, unknown> {

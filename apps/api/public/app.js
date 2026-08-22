@@ -2542,16 +2542,18 @@ function renderRakutenStoreDashboard(payload) {
   }
   const trend = $("rakutenStoreDashboardTrend");
   if (trend) {
-    const visibleDaily = daily.slice(-30);
+    const visibleDaily = daily;
     const maxSales = Math.max(...visibleDaily.map((row) => Number(row.salesAmount || 0)), 1);
     trend.innerHTML = visibleDaily.length ? visibleDaily.map((row) => {
-      const height = Math.max(4, Math.round((Number(row.salesAmount || 0) / maxSales) * 100));
+      const salesAmount = Number(row.salesAmount || 0);
+      const height = salesAmount > 0 ? Math.max(4, Math.round((salesAmount / maxSales) * 100)) : 0;
       return `<div class="amazon-store-dashboard-day" title="${escapeHtml(row.date)} / ${formatMetricNumber(row.orderCount)}单 / ${formatMetricNumber(row.unitCount)}件 / ${escapeHtml(formatAmazonStoreCurrency(row.salesAmount, "JPY"))}">
-        <span class="amazon-store-dashboard-bar-value">${escapeHtml(formatMetricNumber(row.unitCount))}</span><span class="amazon-store-dashboard-bar" style="height:${height}%"></span><span class="amazon-store-dashboard-day-label">${escapeHtml(String(row.date || "").slice(5))}</span>
+        <span class="amazon-store-dashboard-bar-value">${escapeHtml(formatMetricNumber(row.unitCount))}</span><span class="amazon-store-dashboard-bar${salesAmount > 0 ? "" : " is-zero"}" style="height:${height}%"></span><span class="amazon-store-dashboard-day-label">${escapeHtml(String(row.date || "").slice(5))}</span>
       </div>`;
     }).join("") : '<p class="muted">所选周期暂无乐天销售数据</p>';
+    if (visibleDaily.length) trend.scrollLeft = trend.scrollWidth;
   }
-  $("rakutenStoreDashboardTrendMeta").textContent = `按日本时间显示最近 ${Math.min(daily.length, 30)} 个有销量的日期；柱高为商品销售额，数字为销量`;
+  $("rakutenStoreDashboardTrendMeta").textContent = `按日本时间显示完整 ${daily.length} 个自然日（含0销量日期）；柱高为商品销售额，数字为销量`;
   const matchCoverage = dashboard.matchCoverage || {};
   $("rakutenStoreDashboardProductMeta").textContent = `按商品销售额排序 / 系统产品已匹配 ${formatMetricNumber(matchCoverage.matchedCount)} / 未匹配 ${formatMetricNumber(matchCoverage.unmatchedCount)}`;
   renderAmazonDashboardTable("rakutenStoreDashboardProductBody", topProducts.slice(0, 30), [
@@ -6286,7 +6288,14 @@ function renderRakutenRmsSyncRuns() {
     rows
       .map((run) => {
         const status = String(run?.status || "");
-        const result = `取得 ${formatOverviewNumber(run?.fetchedCount)} / 新增 ${formatOverviewNumber(run?.createdCount)} / 更新 ${formatOverviewNumber(run?.updatedCount)} / 跳过 ${formatOverviewNumber(run?.skippedCount)} / 待人工通知 ${formatOverviewNumber(run?.manualActionCount)}`;
+        const unchangedCount = Math.max(
+          0,
+          Number(run?.fetchedCount || 0)
+            - Number(run?.createdCount || 0)
+            - Number(run?.updatedCount || 0)
+            - Number(run?.skippedCount || 0),
+        );
+        const result = `取得 ${formatOverviewNumber(run?.fetchedCount)} / 新增 ${formatOverviewNumber(run?.createdCount)} / 更新 ${formatOverviewNumber(run?.updatedCount)} / 无业务变化 ${formatOverviewNumber(unchangedCount)} / 跳过 ${formatOverviewNumber(run?.skippedCount)} / 待人工通知 ${formatOverviewNumber(run?.manualActionCount)}`;
         const errorMessage = String(run?.errorMessage || "").trim();
         return `<tr>
       <td>${escapeHtml(displayText(run?.startedAt ? formatDate(run.startedAt) : null))}</td>
@@ -6310,6 +6319,7 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
   const actionLabels = {
     create: "新增",
     update: "更新",
+    unchanged: "无业务变化（已同步）",
     claim: "认领CSV",
     frozen: "冻结",
     manual_action: "待日本人工通知中国",
@@ -6317,8 +6327,19 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
     ignored: "人工忽略",
     conflict: "冲突",
   };
-  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
-  const itemRows = (Array.isArray(preview.items) ? preview.items : [])
+  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，无业务变化 ${formatOverviewNumber(summary.unchanged)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
+  const itemRows = (Array.isArray(preview.items) ? [...preview.items] : [])
+    .sort((left, right) => {
+      const leftTime = new Date(String(left?.orderImportedAtRaw || "")).getTime();
+      const rightTime = new Date(String(right?.orderImportedAtRaw || "")).getTime();
+      const timeDifference = (Number.isFinite(rightTime) ? rightTime : Number.NEGATIVE_INFINITY)
+        - (Number.isFinite(leftTime) ? leftTime : Number.NEGATIVE_INFINITY);
+      if (timeDifference) return timeDifference;
+      return String(right?.orderId || "").localeCompare(String(left?.orderId || ""), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    })
     .map((item) => {
       const orderId = String(item?.orderId || "-").trim() || "-";
       const skuCode = String(item?.skuCode || "").trim();
@@ -15215,7 +15236,7 @@ function bindForms() {
       closeModal("rakutenApiImportModal");
       await Promise.all([loadOrders(), loadRakutenRmsConnections()]);
       showToast(
-        `乐天 API 导入完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，跳过 ${formatOverviewNumber(result?.skipped)}`,
+        `乐天 API 导入完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，无业务变化 ${formatOverviewNumber(result?.unchanged)}，跳过 ${formatOverviewNumber(result?.skipped)}`,
       );
     } catch (error) {
       showToast(error.message, true);
@@ -16551,7 +16572,7 @@ function bindDelegates() {
       await loadRakutenRmsConnections();
       openRakutenRmsConnectionModal($("rakutenRmsShopId").value);
       showToast(
-        `乐天同步完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}`,
+        `乐天同步完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，无业务变化 ${formatOverviewNumber(result?.unchanged)}`,
       );
     } catch (error) {
       await loadRakutenRmsSyncRuns(connectionId).catch(() => {});

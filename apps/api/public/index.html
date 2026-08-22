@@ -598,7 +598,7 @@
           </article>
           <article class="card amazon-store-factory-card">
             <div class="card-head">
-              <div><h3>工厂备货建议</h3><p class="muted">汇总全部乐天店铺计算，仅处理90天日均销量大于0.1件的产品。有效库存 = 当前日本库存＋确认在途−待发货占用；预计到货剩余 = max(0，有效库存−90天日均销量×45天生产物流时间)；建议数量 = max(0，60天目标库存−预计到货剩余)。组合商品按组成产品计算；确认在途仅统计已上传国内单号且尚未入库的明细。</p></div>
+              <div><h3>工厂备货建议</h3><p class="muted">汇总全部乐天店铺计算，仅处理90天日均销量大于0.1件的产品。有效库存 = 当前日本库存＋确认在途−待发货占用；预计到货剩余 = max(0，有效库存−90天日均销量×45天生产物流时间)；建议数量 = max(0，90天目标库存−预计到货剩余)。组合商品按组成产品计算；确认在途仅统计已上传国内单号且尚未入库的明细。</p></div>
               <button type="button" id="downloadRakutenStoreFactoryExcelBtn" class="compact-btn">Excel下载</button>
             </div>
             <ul class="stats overview-inline-stats">
@@ -607,7 +607,7 @@
             </ul>
             <div class="master-product-table-wrap amazon-dashboard-table-wrap">
               <table class="amazon-store-dashboard-product-table">
-                <thead><tr><th>乐天SKU</th><th>产品</th><th>近90天销量</th><th>90天日均</th><th>当前日本库存</th><th>确认在途</th><th>待发货占用</th><th>有效库存</th><th>45天预计消耗</th><th>预计到货剩余</th><th>60天目标库存</th><th>建议工厂备货</th></tr></thead>
+                <thead><tr><th>乐天SKU</th><th>产品</th><th>近90天销量</th><th>90天日均</th><th>当前日本库存</th><th>确认在途</th><th>待发货占用</th><th>有效库存</th><th>45天预计消耗</th><th>预计到货剩余</th><th>90天目标库存</th><th>建议工厂备货</th></tr></thead>
                 <tbody id="rakutenStoreFactoryRecommendationBody"></tbody>
               </table>
             </div>
