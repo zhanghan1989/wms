@@ -406,6 +406,80 @@ describe("Rakuten RMS API integration", () => {
     expect(plan.existing).toBe(existing);
   });
 
+  it("does not classify sync metadata refreshes as business updates", async () => {
+    const existing = {
+      id: 9n,
+      rmsConnectionId: 7n,
+      rmsItemKey: "item-1",
+      orderQuantity: 1,
+      shippingAddress: "8-1",
+      shipmentNo: null,
+      xiyaExportedAt: null,
+      rmsManualOverrideAt: null,
+      rawPayload: { version: "old" },
+      csvImportedAt: new Date("2026-08-18T00:00:00.000Z"),
+      rmsLastSyncedAt: new Date("2026-08-18T00:00:00.000Z"),
+      updatedAt: new Date("2026-08-18T00:00:00.000Z"),
+    };
+    const prisma = {
+      rakutenOrderRecord: { findUnique: jest.fn().mockResolvedValue(existing) },
+      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+    jest.spyOn(service as any, "buildOrderWriteData").mockResolvedValue({
+      orderQuantity: 1,
+      shippingAddress: "8-1",
+      rawPayload: { version: "new" },
+      csvImportedAt: new Date("2026-08-21T00:00:00.000Z"),
+      rmsLastSyncedAt: new Date("2026-08-21T00:00:00.000Z"),
+    });
+
+    const plan = await (service as any).planOrderItem(
+      prisma,
+      { id: 7n, shop: { id: 3n, name: "乐天店" } },
+      { orderId: "421951-1", itemKey: "item-1", skuCode: "9259" },
+    );
+
+    expect(plan).toMatchObject({ action: "update", changedFields: [] });
+  });
+
+  it("reports only changed business fields for an existing RMS order", async () => {
+    const existing = {
+      id: 9n,
+      rmsConnectionId: 7n,
+      rmsItemKey: "item-1",
+      orderQuantity: 1,
+      buyerEmail: "old@example.com",
+      shippingAddress: "8-1",
+      shipmentNo: null,
+      xiyaExportedAt: null,
+      rmsManualOverrideAt: null,
+      rawPayload: { version: "old" },
+      updatedAt: new Date("2026-08-18T00:00:00.000Z"),
+    };
+    const prisma = {
+      rakutenOrderRecord: { findUnique: jest.fn().mockResolvedValue(existing) },
+      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+    jest.spyOn(service as any, "buildOrderWriteData").mockResolvedValue({
+      orderQuantity: 2,
+      buyerEmail: "new@example.com",
+      shippingAddress: "8-1",
+      rawPayload: { version: "new" },
+      csvImportedAt: new Date("2026-08-21T00:00:00.000Z"),
+      rmsLastSyncedAt: new Date("2026-08-21T00:00:00.000Z"),
+    });
+
+    const plan = await (service as any).planOrderItem(
+      prisma,
+      { id: 7n, shop: { id: 3n, name: "乐天店" } },
+      { orderId: "421951-1", itemKey: "item-1", skuCode: "9259" },
+    );
+
+    expect(plan).toMatchObject({ action: "update", changedFields: ["orderQuantity", "buyerEmail"] });
+  });
+
   it("freezes an RMS order that has already entered a picking batch", async () => {
     const existing = {
       id: 9n,
@@ -635,6 +709,39 @@ describe("Rakuten RMS API integration", () => {
     });
     expect(result.canConfirm).toBe(true);
     expect(previewCreate).toHaveBeenCalled();
+  });
+
+  it("shows existing rows with no business changes as synced without an update", async () => {
+    const prisma = {
+      rakutenRmsSyncPreview: {
+        create: jest.fn().mockResolvedValue({ token: "saved" }),
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+    jest.spyOn(service as any, "loadConnection").mockResolvedValue({
+      id: 7n,
+      shop: { id: 3n, name: "乐天店" },
+    });
+    jest.spyOn(service as any, "fetchSyncItems").mockResolvedValue({
+      mappedItems: [{ orderId: "421951-1", itemKey: "item-1", skuCode: "9259" }],
+      searchedOrderCount: 1,
+      reconciledOrderCount: 0,
+      requestedOrderCount: 1,
+      truncated: false,
+    });
+    jest.spyOn(service as any, "planOrderItem").mockResolvedValue({
+      action: "update",
+      item: { orderId: "421951-1", itemKey: "item-1", skuCode: "9259" },
+      existing: { id: 9n, updatedAt: new Date("2026-08-18T00:00:00.000Z") },
+      reason: null,
+      changedFields: [],
+    });
+
+    const result = (await service.previewConnection("7")) as any;
+
+    expect(result.summary).toMatchObject({ update: 0, unchanged: 1 });
+    expect(result.items[0]).toMatchObject({ action: "unchanged", changedFields: [] });
   });
 
   it("returns every preview detail when the sync plan contains more than 100 rows", async () => {

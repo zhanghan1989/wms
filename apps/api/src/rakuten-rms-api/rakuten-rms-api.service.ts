@@ -42,6 +42,7 @@ type SyncCounters = {
   fetched: number;
   created: number;
   updated: number;
+  unchanged: number;
   skipped: number;
   manualActions: number;
 };
@@ -506,7 +507,8 @@ export class RakutenRmsApiService {
     const summary = {
       fetched: plans.length,
       create: plans.filter((plan) => plan.action === "create").length,
-      update: plans.filter((plan) => plan.action === "update").length,
+      update: plans.filter((plan) => plan.action === "update" && plan.changedFields.length > 0).length,
+      unchanged: plans.filter((plan) => plan.action === "update" && plan.changedFields.length === 0).length,
       claim: plans.filter((plan) => plan.action === "claim").length,
       frozen: plans.filter((plan) => plan.action === "frozen").length,
       manualAction: plans.filter((plan) => plan.action === "manual_action").length,
@@ -547,7 +549,7 @@ export class RakutenRmsApiService {
         orderId: plan.item.orderId,
         itemKey: plan.item.itemKey,
         skuCode: plan.item.skuCode,
-        action: plan.action,
+        action: plan.action === "update" && plan.changedFields.length === 0 ? "unchanged" : plan.action,
         existingId: plan.existing?.id.toString() ?? null,
         changedFields: plan.changedFields,
         reason: plan.reason,
@@ -811,6 +813,7 @@ export class RakutenRmsApiService {
       fetched: 0,
       created: 0,
       updated: 0,
+      unchanged: 0,
       skipped: 0,
       manualActions: 0,
     };
@@ -868,6 +871,7 @@ export class RakutenRmsApiService {
           const snapshot = await this.applyOrderPlan(tx, connection, plan, now);
           snapshots.push(snapshot);
           if (plan.action === "create") counters.created += 1;
+          else if (plan.action === "update" && plan.changedFields.length === 0) counters.unchanged += 1;
           else counters.updated += 1;
         }
         const hasConflicts = conflictCount > 0;
@@ -1224,12 +1228,17 @@ export class RakutenRmsApiService {
       }
     }
     const data = await this.buildOrderWriteData(db, connection, item, existing, new Date());
+    const action = existing ? (existing.rmsConnectionId ? "update" : "claim") : "create";
     return {
-      action: existing ? (existing.rmsConnectionId ? "update" : "claim") : "create",
+      action,
       item,
       existing,
       reason: null,
-      changedFields: existing ? this.changedOrderFields(existing, data) : Object.keys(data),
+      changedFields: existing
+        ? action === "update"
+          ? this.changedBusinessOrderFields(existing, data)
+          : this.changedOrderFields(existing, data)
+        : Object.keys(data),
     };
   }
 
@@ -1408,25 +1417,17 @@ export class RakutenRmsApiService {
   }
 
   private changedBusinessOrderFields(existing: RakutenOrderRecord, data: RakutenOrderWriteData): string[] {
-    const businessFields = [
-      "itemDetailStatus",
-      "skuCode",
-      "orderQuantity",
-      "productName",
-      "orderStatusText",
-      "orderRemark",
-      "shippingName",
-      "shippingPostalCode",
-      "shippingPrefecture",
-      "shippingCity",
-      "shippingAddress",
-      "shippingPhone",
-      "deliveryMethod",
-      "deliveryDateRaw",
-      "deliveryTimeSlot",
-      "productNameExtra",
-    ] as const;
-    return businessFields.filter((key) => this.comparableValue(existing[key]) !== this.comparableValue(data[key]));
+    const syncMetadataFields = new Set([
+      "rmsConnectionId",
+      "rmsItemKey",
+      "sourceKind",
+      "sourceFileName",
+      "sourceFilePath",
+      "rawPayload",
+      "csvImportedAt",
+      "rmsLastSyncedAt",
+    ]);
+    return this.changedOrderFields(existing, data).filter((key) => !syncMetadataFields.has(key));
   }
 
   private isCancellationStatus(status: string | null): boolean {

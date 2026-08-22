@@ -6286,7 +6286,14 @@ function renderRakutenRmsSyncRuns() {
     rows
       .map((run) => {
         const status = String(run?.status || "");
-        const result = `取得 ${formatOverviewNumber(run?.fetchedCount)} / 新增 ${formatOverviewNumber(run?.createdCount)} / 更新 ${formatOverviewNumber(run?.updatedCount)} / 跳过 ${formatOverviewNumber(run?.skippedCount)} / 待人工通知 ${formatOverviewNumber(run?.manualActionCount)}`;
+        const unchangedCount = Math.max(
+          0,
+          Number(run?.fetchedCount || 0)
+            - Number(run?.createdCount || 0)
+            - Number(run?.updatedCount || 0)
+            - Number(run?.skippedCount || 0),
+        );
+        const result = `取得 ${formatOverviewNumber(run?.fetchedCount)} / 新增 ${formatOverviewNumber(run?.createdCount)} / 更新 ${formatOverviewNumber(run?.updatedCount)} / 无业务变化 ${formatOverviewNumber(unchangedCount)} / 跳过 ${formatOverviewNumber(run?.skippedCount)} / 待人工通知 ${formatOverviewNumber(run?.manualActionCount)}`;
         const errorMessage = String(run?.errorMessage || "").trim();
         return `<tr>
       <td>${escapeHtml(displayText(run?.startedAt ? formatDate(run.startedAt) : null))}</td>
@@ -6310,6 +6317,7 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
   const actionLabels = {
     create: "新增",
     update: "更新",
+    unchanged: "无业务变化（已同步）",
     claim: "认领CSV",
     frozen: "冻结",
     manual_action: "待日本人工通知中国",
@@ -6317,7 +6325,7 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
     ignored: "人工忽略",
     conflict: "冲突",
   };
-  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
+  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，无业务变化 ${formatOverviewNumber(summary.unchanged)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
   const itemRows = (Array.isArray(preview.items) ? preview.items : [])
     .map((item) => {
       const orderId = String(item?.orderId || "-").trim() || "-";
@@ -15215,7 +15223,7 @@ function bindForms() {
       closeModal("rakutenApiImportModal");
       await Promise.all([loadOrders(), loadRakutenRmsConnections()]);
       showToast(
-        `乐天 API 导入完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，跳过 ${formatOverviewNumber(result?.skipped)}`,
+        `乐天 API 导入完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，无业务变化 ${formatOverviewNumber(result?.unchanged)}，跳过 ${formatOverviewNumber(result?.skipped)}`,
       );
     } catch (error) {
       showToast(error.message, true);
@@ -16551,7 +16559,7 @@ function bindDelegates() {
       await loadRakutenRmsConnections();
       openRakutenRmsConnectionModal($("rakutenRmsShopId").value);
       showToast(
-        `乐天同步完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}`,
+        `乐天同步完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，无业务变化 ${formatOverviewNumber(result?.unchanged)}`,
       );
     } catch (error) {
       await loadRakutenRmsSyncRuns(connectionId).catch(() => {});
