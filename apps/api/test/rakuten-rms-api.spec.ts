@@ -724,24 +724,40 @@ describe("Rakuten RMS API integration", () => {
       shop: { id: 3n, name: "乐天店" },
     });
     jest.spyOn(service as any, "fetchSyncItems").mockResolvedValue({
-      mappedItems: [{ orderId: "421951-1", itemKey: "item-1", skuCode: "9259" }],
-      searchedOrderCount: 1,
+      mappedItems: [
+        {
+          orderId: "421951-older",
+          orderImportedAtRaw: "2026-08-20T10:00:00+0900",
+          itemKey: "item-older",
+          skuCode: "9259",
+        },
+        {
+          orderId: "421951-newer",
+          orderImportedAtRaw: "2026-08-21T10:00:00+0900",
+          itemKey: "item-newer",
+          skuCode: "9259",
+        },
+      ],
+      searchedOrderCount: 2,
       reconciledOrderCount: 0,
-      requestedOrderCount: 1,
+      requestedOrderCount: 2,
       truncated: false,
     });
-    jest.spyOn(service as any, "planOrderItem").mockResolvedValue({
+    jest.spyOn(service as any, "planOrderItem").mockImplementation(async (_db, _connection, item: any) => ({
       action: "update",
-      item: { orderId: "421951-1", itemKey: "item-1", skuCode: "9259" },
+      item,
       existing: { id: 9n, updatedAt: new Date("2026-08-18T00:00:00.000Z") },
       reason: null,
       changedFields: [],
-    });
+    }));
 
     const result = (await service.previewConnection("7")) as any;
 
-    expect(result.summary).toMatchObject({ update: 0, unchanged: 1 });
-    expect(result.items[0]).toMatchObject({ action: "unchanged", changedFields: [] });
+    expect(result.summary).toMatchObject({ update: 0, unchanged: 2 });
+    expect(result.items).toMatchObject([
+      { orderId: "421951-newer", action: "unchanged", changedFields: [] },
+      { orderId: "421951-older", action: "unchanged", changedFields: [] },
+    ]);
   });
 
   it("returns every preview detail when the sync plan contains more than 100 rows", async () => {

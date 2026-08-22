@@ -6326,7 +6326,18 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
     conflict: "冲突",
   };
   const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，无业务变化 ${formatOverviewNumber(summary.unchanged)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
-  const itemRows = (Array.isArray(preview.items) ? preview.items : [])
+  const itemRows = (Array.isArray(preview.items) ? [...preview.items] : [])
+    .sort((left, right) => {
+      const leftTime = new Date(String(left?.orderImportedAtRaw || "")).getTime();
+      const rightTime = new Date(String(right?.orderImportedAtRaw || "")).getTime();
+      const timeDifference = (Number.isFinite(rightTime) ? rightTime : Number.NEGATIVE_INFINITY)
+        - (Number.isFinite(leftTime) ? leftTime : Number.NEGATIVE_INFINITY);
+      if (timeDifference) return timeDifference;
+      return String(right?.orderId || "").localeCompare(String(left?.orderId || ""), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      });
+    })
     .map((item) => {
       const orderId = String(item?.orderId || "-").trim() || "-";
       const skuCode = String(item?.skuCode || "").trim();

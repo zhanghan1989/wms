@@ -519,6 +519,23 @@ export class RakutenRmsApiService {
     const token = randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + PREVIEW_EXPIRY_MS);
     const planDescriptors = plans.map((plan) => this.describePlan(plan));
+    const previewItems = plans
+      .map((plan) => ({
+        orderId: plan.item.orderId,
+        orderImportedAtRaw: plan.item.orderImportedAtRaw,
+        itemKey: plan.item.itemKey,
+        skuCode: plan.item.skuCode,
+        action: plan.action === "update" && plan.changedFields.length === 0 ? "unchanged" : plan.action,
+        existingId: plan.existing?.id.toString() ?? null,
+        changedFields: plan.changedFields,
+        reason: plan.reason,
+      }))
+      .sort((left, right) => {
+        const timeDifference = this.sortableOrderTime(right.orderImportedAtRaw)
+          - this.sortableOrderTime(left.orderImportedAtRaw);
+        if (timeDifference) return timeDifference;
+        return right.orderId.localeCompare(left.orderId, undefined, { numeric: true, sensitivity: "base" });
+      });
     await this.prisma.rakutenRmsSyncPreview.deleteMany({
       where: { expiresAt: { lte: new Date() } },
     });
@@ -545,15 +562,7 @@ export class RakutenRmsApiService {
       mappedItems: undefined,
       summary,
       canConfirm: conflictCount === 0,
-      items: plans.map((plan) => ({
-        orderId: plan.item.orderId,
-        itemKey: plan.item.itemKey,
-        skuCode: plan.item.skuCode,
-        action: plan.action === "update" && plan.changedFields.length === 0 ? "unchanged" : plan.action,
-        existingId: plan.existing?.id.toString() ?? null,
-        changedFields: plan.changedFields,
-        reason: plan.reason,
-      })),
+      items: previewItems,
     };
   }
 
@@ -1485,6 +1494,14 @@ export class RakutenRmsApiService {
     if (typeof value === "bigint") return value.toString();
     if (value && typeof value === "object") return JSON.stringify(value);
     return String(value ?? "");
+  }
+
+  private sortableOrderTime(value: unknown): number {
+    const source = String(value ?? "").trim();
+    if (!source) return Number.NEGATIVE_INFINITY;
+    const timestamp = new Date(source).getTime();
+    if (Number.isFinite(timestamp)) return timestamp;
+    return parseRakutenOrderDate(source)?.getTime() ?? Number.NEGATIVE_INFINITY;
   }
 
   private snapshotOrderRecord(row: RakutenOrderRecord): Record<string, unknown> {
