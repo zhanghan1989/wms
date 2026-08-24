@@ -85,6 +85,7 @@ interface MappedRakutenItem {
   orderId: string;
   itemKey: string;
   skuCode: string | null;
+  comboLookupSku: string | null;
   isComboOrder: boolean;
   comboOrderSku: string | null;
   setComponentSkuCode: string | null;
@@ -1002,7 +1003,7 @@ export class RakutenRmsApiService {
   private async mapOrders(orders: RakutenJsonObject[]): Promise<MappedRakutenItem[]> {
     const baseItems = orders.flatMap((order) => this.mapOrder(order));
     const comboSkus = Array.from(
-      new Set(baseItems.map((item) => item.skuCode ?? "").filter((sku) => /^zh-/i.test(sku))),
+      new Set(baseItems.map((item) => item.comboLookupSku ?? "").filter(Boolean)),
     );
     if (!comboSkus.length) return baseItems;
     const combos = await this.prisma.rakutenComboProduct.findMany({
@@ -1020,8 +1021,8 @@ export class RakutenRmsApiService {
     const missing = comboSkus.filter((sku) => !comboMap.has(sku));
     if (missing.length) throw new BadRequestException(`以下乐天组合SKU未配置组合产品：${missing.join("、")}`);
     return baseItems.flatMap((item) => {
-      const comboSku = item.skuCode ?? "";
-      if (!/^zh-/i.test(comboSku)) return [item];
+      const comboSku = item.comboLookupSku ?? "";
+      if (!comboSku) return [item];
       const combo = comboMap.get(comboSku);
       return (combo?.items ?? []).map((component) => ({
         ...item,
@@ -1054,10 +1055,13 @@ export class RakutenRmsApiService {
       items.forEach((item, itemIndex) => {
         const itemDetailId = this.pickText(item, "itemDetailId", "ItemDetailId");
         const skuModel = this.pickObjectList(item, "SkuModelList", "skuModelList")[0] ?? {};
-        const skuCode =
-          this.pickText(skuModel, "variantId") ||
-          this.pickText(skuModel, "merchantDefinedSkuId") ||
-          this.pickText(item, "manageNumber", "skuManagementNumber", "itemNumber", "itemUrl");
+        const skuCandidates = Array.from(new Set([
+          this.pickText(skuModel, "variantId"),
+          this.pickText(skuModel, "merchantDefinedSkuId"),
+          this.pickText(item, "manageNumber", "skuManagementNumber", "itemNumber", "itemUrl"),
+        ].filter(Boolean)));
+        const skuCode = skuCandidates[0] ?? "";
+        const comboLookupSku = skuCandidates.find((candidate) => /^zh-/i.test(candidate)) ?? null;
         const quantity = Math.max(1, this.pickInt(item, "units", "quantity", "orderQuantity") ?? 1);
         const shippingName = this.combine([
           this.pickText(sender, "familyName", "lastName"),
@@ -1122,6 +1126,7 @@ export class RakutenRmsApiService {
             `${orderId}|${itemDetailId || `${packageIndex}:${itemIndex}:${skuCode || "unknown"}`}`,
           ),
           skuCode: skuCode || null,
+          comboLookupSku,
           isComboOrder: false,
           comboOrderSku: null,
           setComponentSkuCode: null,
@@ -1191,18 +1196,28 @@ export class RakutenRmsApiService {
       if (skuMatches.length === 1 && !skuMatches[0].rmsConnectionId) {
         existing = skuMatches[0];
       } else if (candidates.length > 0) {
-        return {
-          action: "conflict",
-          item,
-          existing: null,
-          reason:
-            skuMatches.length > 1
-              ? "同一订单号和SKU匹配到多条CSV记录"
-              : skuMatches.length === 1
-                ? "匹配记录已绑定其他 RMS 连接"
-                : "同一订单号已存在，但SKU不一致",
-          changedFields: [],
-        };
+        const onlySiblingApiItems =
+          skuMatches.length === 0 &&
+          candidates.every(
+            (row) => row.rmsConnectionId === connection.id && row.sourceKind === "rms_api",
+          );
+        // The current RMS order can contain multiple distinct items. During a
+        // transaction, earlier items have already been inserted and must not
+        // make a later item from the same connection look like a CSV conflict.
+        if (!onlySiblingApiItems) {
+          return {
+            action: "conflict",
+            item,
+            existing: null,
+            reason:
+              skuMatches.length > 1
+                ? "同一订单号和SKU匹配到多条CSV记录"
+                : skuMatches.length === 1
+                  ? "匹配记录已绑定其他 RMS 连接"
+                  : "同一订单号已存在，但SKU不一致",
+            changedFields: [],
+          };
+        }
       }
     }
     if (existing) {

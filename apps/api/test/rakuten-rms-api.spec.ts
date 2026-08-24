@@ -406,6 +406,44 @@ describe("Rakuten RMS API integration", () => {
     expect(plan.existing).toBe(existing);
   });
 
+  it("creates a later API item when an earlier item from the same order was just created", async () => {
+    const firstCreatedItem = {
+      id: 9n,
+      rmsConnectionId: 7n,
+      rmsItemKey: "item-1|component:9259",
+      sourceKind: "rms_api",
+      orderId: "421951-20260822-0868449346",
+      skuCode: "9259",
+      comboOrderSku: "zh-combo-1",
+      setComponentSkuCode: "zh-combo-1",
+    };
+    const prisma = {
+      rakutenOrderRecord: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([firstCreatedItem]),
+      },
+      masterProduct: { findUnique: jest.fn().mockResolvedValue({ stockQty: 0 }) },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+
+    const plan = await (service as any).planOrderItem(
+      prisma,
+      { id: 7n, shop: { id: 3n, name: "乐天-1号店" } },
+      {
+        orderId: "421951-20260822-0868449346",
+        itemKey: "item-1|component:8736",
+        skuCode: "8736",
+        comboLookupSku: "zh-combo-1",
+        isComboOrder: true,
+        comboOrderSku: "zh-combo-1",
+        setComponentSkuCode: "zh-combo-1",
+      },
+    );
+
+    expect(plan.action).toBe("create");
+    expect(plan.existing).toBeNull();
+  });
+
   it("does not classify sync metadata refreshes as business updates", async () => {
     const existing = {
       id: 9n,
@@ -988,6 +1026,36 @@ describe("Rakuten RMS API integration", () => {
       shippingAddress: "8-1",
     });
     expect(rows[0].rawPayload["送付先住所それ以降の住所"]).toBe("8-1");
+  });
+
+  it("expands a combo when Rakuten returns its zh- identifier in manageNumber", async () => {
+    const prisma = {
+      rakutenComboProduct: {
+        findMany: jest.fn().mockResolvedValue([{ comboName: "zh-combo-1", items: [
+          { productId: "9259", product: { productId: "9259", productName: "组合明细A" } },
+          { productId: "8736", product: { productId: "8736", productName: "组合明细B" } },
+        ] }]),
+      },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+
+    const rows = await (service as any).mapOrders([{
+      orderNumber: "421951-20260822-0868449346",
+      orderProgress: 300,
+      PackageModelList: [{ ItemModelList: [{
+        itemDetailId: 99,
+        manageNumber: "zh-combo-1",
+        SkuModelList: [{ variantId: "ordinary-variant", merchantDefinedSkuId: "integration-sku" }],
+        itemName: "乐天组合产品",
+        units: 1,
+      }] }],
+    }]);
+
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ skuCode: "9259", comboOrderSku: "zh-combo-1", isComboOrder: true }),
+      expect.objectContaining({ skuCode: "8736", comboOrderSku: "zh-combo-1", isComboOrder: true }),
+    ]));
   });
 
   it("requests getOrder version 7 so SKU identifiers are included", async () => {
