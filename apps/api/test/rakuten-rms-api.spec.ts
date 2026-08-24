@@ -113,6 +113,26 @@ describe("Rakuten RMS API integration", () => {
     });
   });
 
+  it("sends the order fix datetime search type when requested", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ orderNumberList: [], PaginationResponseModel: { totalPages: 1 } }),
+        { status: 200 },
+      ),
+    );
+    const client = new RakutenRmsApiClient();
+
+    await client.searchOrders("service-secret", "license-key", {
+      start: new Date("2026-08-23T18:00:00.000Z"),
+      end: new Date("2026-08-24T06:00:00.000Z"),
+      dateType: 3,
+      orderProgressList: [300],
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body));
+    expect(body).toMatchObject({ dateType: 3, orderProgressList: [300] });
+  });
+
   it("uses the dedicated proxy only when the Rakuten proxy setting is configured", async () => {
     process.env.RAKUTEN_RMS_API_PROXY_URL = "http://100.64.0.10:3128";
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
@@ -284,7 +304,7 @@ describe("Rakuten RMS API integration", () => {
     expect(client.searchOrders).toHaveBeenCalledWith(
       "service-secret",
       "license-key",
-      expect.objectContaining({ orderProgressList: [300] }),
+      expect.objectContaining({ dateType: 3, orderProgressList: [300] }),
     );
     expect(mapOrders).toHaveBeenCalledWith([{ orderNumber: "pending-order", orderProgress: 300 }]);
     expect(result).toMatchObject({
@@ -292,6 +312,35 @@ describe("Rakuten RMS API integration", () => {
       reconciledOrderCount: 0,
       requestedOrderCount: 2,
     });
+  });
+
+  it("starts six hours before the last formal sync when searching by order fix datetime", async () => {
+    const client = {
+      searchOrders: jest.fn().mockResolvedValue([]),
+      getOrders: jest.fn().mockResolvedValue([]),
+    } as unknown as RakutenRmsApiClient;
+    const service = new RakutenRmsApiService(
+      {} as PrismaService,
+      client,
+      {} as RakutenRmsApiCryptoService,
+    );
+    jest.spyOn(service as any, "decryptCredentials").mockReturnValue({
+      serviceSecret: "service-secret",
+      licenseKey: "license-key",
+    });
+
+    await (service as any).fetchSyncItems(
+      {
+        id: 7n,
+        licenseExpiresAt: null,
+        lastOrdersSyncedAt: new Date("2026-08-24T00:00:00.000Z"),
+      },
+      7,
+    );
+
+    const options = (client.searchOrders as jest.Mock).mock.calls[0][2];
+    expect(options.start.toISOString()).toBe("2026-08-23T18:00:00.000Z");
+    expect(options.dateType).toBe(3);
   });
 
   it("returns sync history without exposing encrypted connection credentials", async () => {

@@ -29,7 +29,7 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
     options: RakutenOrderSearchOptions,
   ): Promise<{ matchedOrderCount: number; sampleOrderNumber: string | null }> {
     const payload = await this.request<RakutenSearchOrderResponse>(serviceSecret, licenseKey, 'searchOrder', {
-      dateType: 1,
+      dateType: options.dateType ?? 1,
       startDatetime: this.formatRakutenDate(options.start),
       endDatetime: this.formatRakutenDate(options.end),
       ...(options.orderProgressList?.length ? { orderProgressList: options.orderProgressList } : {}),
@@ -69,7 +69,7 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
           licenseKey,
           'searchOrder',
           {
-            dateType: 1,
+            dateType: options.dateType ?? 1,
             startDatetime: this.formatRakutenDate(rangeStart),
             endDatetime: this.formatRakutenDate(rangeEnd),
             ...(options.orderProgressList?.length ? { orderProgressList: options.orderProgressList } : {}),

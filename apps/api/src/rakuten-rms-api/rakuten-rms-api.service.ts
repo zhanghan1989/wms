@@ -30,6 +30,7 @@ const RAKUTEN_SYNC_TIMEZONE = process.env.RAKUTEN_RMS_API_SYNC_TIMEZONE || "Asia
 const RAKUTEN_SCHEDULED_SYNC_ENABLED =
   String(process.env.RAKUTEN_RMS_API_SCHEDULED_SYNC_ENABLED ?? "false").toLowerCase() === "true";
 const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
+const ORDER_FIX_DATETIME_SEARCH_TYPE = 3;
 const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
 const IMPORTABLE_ORDER_PROGRESS = [PENDING_SHIPMENT_ORDER_PROGRESS];
 const CONNECTION_TEST_LOOKBACK_DAYS = 62;
@@ -982,6 +983,7 @@ export class RakutenRmsApiService {
     const searchedOrderNumbers = await this.client.searchOrders(credentials.serviceSecret, credentials.licenseKey, {
       start,
       end: now,
+      dateType: ORDER_FIX_DATETIME_SEARCH_TYPE,
       orderProgressList: IMPORTABLE_ORDER_PROGRESS,
     });
     const allOrderNumbers = Array.from(new Set(searchedOrderNumbers));
