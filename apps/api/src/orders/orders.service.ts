@@ -25,6 +25,7 @@ import { PDFDocument } from 'pdf-lib';
 import { join, resolve } from 'path';
 import { promisify } from 'util';
 import * as XLSX from 'xlsx';
+import { normalizeRakutenDeliveryTimeSlot } from '../common/rakuten-delivery-time-slot';
 import { parseRakutenOrderDate } from '../common/rakuten-order-date';
 import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9050,7 +9051,7 @@ export class OrdersService {
         rawPayload[column.header] =
           cellIndex === undefined ? null : this.normalizeCellValue(sourceRow[cellIndex]);
       }
-      rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot] = this.normalizeRakutenDeliveryTimeSlot(
+      rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot] = normalizeRakutenDeliveryTimeSlot(
         rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot],
       );
 
@@ -9519,14 +9520,6 @@ export class OrdersService {
       .replace(/\r?\n/g, ' ')
       .trim();
     return normalized ? normalized : null;
-  }
-
-  private normalizeRakutenDeliveryTimeSlot(value: string | null): string | null {
-    const normalized = String(value ?? '').normalize('NFKC').trim();
-    if (normalized === '午前中' || normalized === '1') {
-      return '0812';
-    }
-    return normalized || null;
   }
 
   private parseQuantity(value: string | null): number | null {

@@ -12,6 +12,7 @@ import {
 } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
 import * as XLSX from "xlsx";
+import { normalizeRakutenDeliveryTimeSlot } from "../common/rakuten-delivery-time-slot";
 import { parseRakutenOrderDate } from "../common/rakuten-order-date";
 import { parseId } from "../common/utils";
 import { PrismaService } from "../prisma/prisma.service";
@@ -1092,8 +1093,9 @@ export class RakutenRmsApiService {
         const deliveryMethod = this.pickText(delivery, "deliveryName", "deliveryMethod");
         const deliveryClass = this.pickText(delivery, "deliveryClass");
         const deliveryDateRaw = this.pickText(order, "deliveryDate") || this.pickText(delivery, "deliveryDate");
-        const deliveryTimeSlot =
-          this.pickText(order, "shippingTerm") || this.pickText(delivery, "deliveryTime", "deliveryTimeSlot");
+        const deliveryTimeSlot = normalizeRakutenDeliveryTimeSlot(
+          this.pickText(order, "shippingTerm") || this.pickText(delivery, "deliveryTime", "deliveryTimeSlot"),
+        );
         const orderRemark = this.pickText(order, "remarks", "memo", "orderRemarks");
         const rawPayload = this.toJson({
           注文番号: orderId,
