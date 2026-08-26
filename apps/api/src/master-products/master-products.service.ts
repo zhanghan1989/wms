@@ -160,6 +160,35 @@ const MASTER_PRODUCT_EXPORT_SELECT_FIELDS: MasterProductExportFilterKey[] = [
   'size',
 ];
 
+const MASTER_PRODUCT_EXPORT_OPTION_QUERIES: Array<
+  [MasterProductExportFilterKey, Prisma.Sql]
+> = [
+  [
+    'productType',
+    Prisma.sql`SELECT product_type AS value FROM master_products WHERE status = 1 AND product_type IS NOT NULL AND TRIM(product_type) <> '' GROUP BY product_type`,
+  ],
+  [
+    'bagBrand',
+    Prisma.sql`SELECT bag_brand AS value FROM master_products WHERE status = 1 AND bag_brand IS NOT NULL AND TRIM(bag_brand) <> '' GROUP BY bag_brand`,
+  ],
+  [
+    'color',
+    Prisma.sql`SELECT color AS value FROM master_products WHERE status = 1 AND color IS NOT NULL AND TRIM(color) <> '' GROUP BY color`,
+  ],
+  [
+    'bagType',
+    Prisma.sql`SELECT bag_type AS value FROM master_products WHERE status = 1 AND bag_type IS NOT NULL AND TRIM(bag_type) <> '' GROUP BY bag_type`,
+  ],
+  [
+    'patternType',
+    Prisma.sql`SELECT pattern_type AS value FROM master_products WHERE status = 1 AND pattern_type IS NOT NULL AND TRIM(pattern_type) <> '' GROUP BY pattern_type`,
+  ],
+  [
+    'size',
+    Prisma.sql`SELECT size AS value FROM master_products WHERE status = 1 AND size IS NOT NULL AND TRIM(size) <> '' GROUP BY size`,
+  ],
+];
+
 const MASTER_PRODUCT_COLUMN_ALIASES = {
   productId: ['productId', 'product id', '产品ID', '产品id'],
   productName: ['productName', 'product name', '产品名称'],
@@ -488,34 +517,32 @@ export class MasterProductsService {
   private async loadExportFilterOptions(): Promise<
     Record<MasterProductExportFilterKey, string[]>
   > {
-    const select = Object.fromEntries(
-      MASTER_PRODUCT_EXPORT_SELECT_FIELDS.map((field) => [field, true]),
-    ) as Prisma.MasterProductSelect;
-    const rows = await this.prisma.masterProduct.findMany({
-      where: { status: 1 },
-      select,
-    });
-    const valueSets = Object.fromEntries(
-      MASTER_PRODUCT_EXPORT_SELECT_FIELDS.map((field) => [field, new Set<string>()]),
-    ) as Record<MasterProductExportFilterKey, Set<string>>;
+    const result: Record<MasterProductExportFilterKey, string[]> = {
+      productType: [],
+      bagBrand: [],
+      color: [],
+      bagType: [],
+      zipperStyle: [],
+      buckleType: [],
+      matchingBagType: [],
+      patternType: [],
+      size: [],
+    };
 
-    for (const row of rows) {
-      for (const field of MASTER_PRODUCT_EXPORT_SELECT_FIELDS) {
-        const value = String(row[field] ?? '').trim();
-        if (value) {
-          valueSets[field].add(value);
-        }
-      }
+    // Run compact database-side grouping queries sequentially. This keeps both
+    // the database and Node.js peak memory bounded on small ECS instances.
+    for (const [field, query] of MASTER_PRODUCT_EXPORT_OPTION_QUERIES) {
+      const rows = await this.prisma.$queryRaw<Array<{ value: string | null }>>(query);
+      result[field] = Array.from(
+        new Set(
+          rows
+            .map((row) => String(row.value ?? '').trim())
+            .filter((value) => Boolean(value)),
+        ),
+      ).sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
     }
 
-    return Object.fromEntries(
-      MASTER_PRODUCT_EXPORT_SELECT_FIELDS.map((field) => [
-        field,
-        Array.from(valueSets[field]).sort((left, right) =>
-          left.localeCompare(right, 'zh-Hans-CN'),
-        ),
-      ]),
-    ) as Record<MasterProductExportFilterKey, string[]>;
+    return result;
   }
 
   async importExcel(
