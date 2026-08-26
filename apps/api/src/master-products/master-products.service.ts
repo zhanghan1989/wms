@@ -9,6 +9,7 @@ import {
 import { Cron } from '@nestjs/schedule';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import type { Writable } from 'stream';
 import { AuditAction, MasterProductSyncStatus, Prisma } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
@@ -119,6 +120,7 @@ type MasterProductExportFilterKey =
 
 const CREATE_CHUNK_SIZE = 1000;
 const UPDATE_CHUNK_SIZE = 200;
+const MASTER_PRODUCT_EXPORT_BATCH_SIZE = 500;
 const MASTER_PRODUCT_EXPORT_FILTER_CACHE_TTL_MS = 15 * 60 * 1000;
 const MASTER_PRODUCT_TEMPLATE_FILE = '产品列表.xlsx';
 const XIYA_EXPORT_URL = process.env.XIYA_EXPORT_URL || 'http://103.236.55.93/api/external/products';
@@ -147,6 +149,28 @@ const MASTER_PRODUCT_EXPORT_COLUMNS: Array<[keyof MasterProductImportRow, string
   ['yamatoPrinterName', 'Yamato打印机'],
   ['stockQty', '在库数'],
 ];
+
+const MASTER_PRODUCT_EXPORT_SELECT = {
+  id: true,
+  productId: true,
+  productName: true,
+  productType: true,
+  bagBrand: true,
+  color: true,
+  bagName: true,
+  bagType: true,
+  zipperStyle: true,
+  style: true,
+  pattern: true,
+  buckleType: true,
+  matchingBagType: true,
+  length: true,
+  width: true,
+  patternType: true,
+  size: true,
+  yamatoPrinterName: true,
+  stockQty: true,
+} satisfies Prisma.MasterProductSelect;
 
 const MASTER_PRODUCT_EXPORT_SELECT_FIELDS: MasterProductExportFilterKey[] = [
   'productType',
@@ -238,6 +262,7 @@ export class MasterProductsService {
   private readonly logger = new Logger(MasterProductsService.name);
   private xiyaSyncStarting = false;
   private masterProductSyncRunning = false;
+  private masterProductExportRunning = false;
   private masterProductExportFilterCache: {
     expiresAt: number;
     value: Record<MasterProductExportFilterKey, string[]>;
@@ -400,37 +425,121 @@ export class MasterProductsService {
       this.xiyaSyncStarting = false;
     }
   }
-  async exportExcel(filters: ExportMasterProductsDto): Promise<MasterProductExportFile> {
-    const where = this.buildMasterProductWhere(filters);
-    const rows = await this.prisma.masterProduct.findMany({
-      where,
-      orderBy: [{ stockQty: 'desc' }, { productId: 'asc' }, { id: 'asc' }],
-    });
+  async streamExportCsv(filters: ExportMasterProductsDto, output: Writable): Promise<number> {
+    if (this.masterProductExportRunning) {
+      throw new ConflictException('当前已有分类下载正在生成，请稍后再试');
+    }
 
-    const worksheet = XLSX.utils.json_to_sheet(
-      rows.map((row) => {
-        const record: Record<string, string | number> = {};
-        MASTER_PRODUCT_EXPORT_COLUMNS.forEach(([field, label]) => {
-          if (field === 'stockQty') {
-            record[label] = Number(row[field] ?? 0);
-            return;
-          }
-          record[label] = String(row[field] ?? '');
+    this.masterProductExportRunning = true;
+    try {
+      await this.writeMasterProductExportChunk(
+        output,
+        `\uFEFF${MASTER_PRODUCT_EXPORT_COLUMNS.map(([, label]) =>
+          this.escapeMasterProductCsvCell(label),
+        ).join(',')}\r\n`,
+      );
+
+      const baseWhere = this.buildMasterProductWhere(filters);
+      let cursor: { stockQty: number; productId: string; id: bigint } | null = null;
+      let totalRows = 0;
+
+      while (true) {
+        const cursorWhere: Prisma.MasterProductWhereInput | undefined = cursor
+          ? {
+              OR: [
+                { stockQty: { lt: cursor.stockQty } },
+                {
+                  stockQty: cursor.stockQty,
+                  productId: { gt: cursor.productId },
+                },
+                {
+                  stockQty: cursor.stockQty,
+                  productId: cursor.productId,
+                  id: { gt: cursor.id },
+                },
+              ],
+            }
+          : undefined;
+        const where: Prisma.MasterProductWhereInput = cursorWhere
+          ? { AND: [baseWhere ?? {}, cursorWhere] }
+          : (baseWhere ?? {});
+        const rows = await this.prisma.masterProduct.findMany({
+          where,
+          orderBy: [{ stockQty: 'desc' }, { productId: 'asc' }, { id: 'asc' }],
+          take: MASTER_PRODUCT_EXPORT_BATCH_SIZE,
+          select: MASTER_PRODUCT_EXPORT_SELECT,
         });
-        return record;
-      }),
-    );
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, '产品主表');
-    const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
-    const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
-    const fileName = `产品主表分类下载_${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}.xlsx`;
 
-    return {
-      fileName,
-      content,
-      totalRows: rows.length,
-    };
+        if (!rows.length) {
+          break;
+        }
+
+        const chunk = rows
+          .map((row) =>
+            MASTER_PRODUCT_EXPORT_COLUMNS.map(([field]) =>
+              this.escapeMasterProductCsvCell(
+                field === 'stockQty' ? Number(row[field] ?? 0) : String(row[field] ?? ''),
+              ),
+            ).join(','),
+          )
+          .join('\r\n');
+        await this.writeMasterProductExportChunk(output, `${chunk}\r\n`);
+        totalRows += rows.length;
+
+        const lastRow = rows[rows.length - 1];
+        cursor = {
+          stockQty: lastRow.stockQty,
+          productId: lastRow.productId,
+          id: lastRow.id,
+        };
+        if (rows.length < MASTER_PRODUCT_EXPORT_BATCH_SIZE) {
+          break;
+        }
+      }
+
+      return totalRows;
+    } finally {
+      this.masterProductExportRunning = false;
+    }
+  }
+
+  private escapeMasterProductCsvCell(value: string | number): string {
+    let text = String(value ?? '');
+    if (/^[=+\-@]/.test(text)) {
+      text = `'${text}`;
+    }
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  }
+
+  private async writeMasterProductExportChunk(output: Writable, chunk: string): Promise<void> {
+    if (output.destroyed) {
+      throw new Error('分类下载连接已断开');
+    }
+    if (output.write(chunk, 'utf8')) {
+      return;
+    }
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        output.off('drain', onDrain);
+        output.off('close', onClose);
+        output.off('error', onError);
+      };
+      const onDrain = () => {
+        cleanup();
+        resolve();
+      };
+      const onClose = () => {
+        cleanup();
+        reject(new Error('分类下载连接已断开'));
+      };
+      const onError = (error: Error) => {
+        cleanup();
+        reject(error);
+      };
+      output.once('drain', onDrain);
+      output.once('close', onClose);
+      output.once('error', onError);
+    });
   }
 
   async exportOverseasWarehouseStockExcel(): Promise<MasterProductExportFile> {

@@ -14485,7 +14485,7 @@ function bindForms() {
             method: "POST",
             body: JSON.stringify(payload),
           },
-          "产品主表分类下载.xlsx",
+          "产品主表分类下载.csv",
         );
       });
     } catch (error) {

@@ -91,18 +91,22 @@ export class MasterProductsController {
     @Body() payload: ExportMasterProductsDto,
     @Res() res: Response,
   ): Promise<void> {
-    const file = await this.masterProductsService.exportExcel(payload);
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+      `attachment; filename*=UTF-8''${encodeURIComponent('产品主表分类下载.csv')}`,
     );
-    res.setHeader('Content-Length', String(file.content.length));
     res.setHeader('Cache-Control', 'no-store');
-    res.status(200).send(file.content);
+    try {
+      await this.masterProductsService.streamExportCsv(payload, res);
+      res.end();
+    } catch (error) {
+      if (res.headersSent) {
+        res.destroy(error instanceof Error ? error : undefined);
+        return;
+      }
+      throw error;
+    }
   }
 
   @Get('overseas-warehouse-stock-excel')
