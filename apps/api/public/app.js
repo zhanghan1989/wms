@@ -199,6 +199,7 @@ const state = {
   masterProductSyncRecordsPageSize: 30,
   masterProductSyncRecordsHasMore: false,
   masterProductExportFilterOptions: null,
+  masterProductExportFilterOptionsRequest: null,
   amazonStoreDashboard: null,
   amazonStoreDashboardLoading: false,
   rakutenStoreDashboard: null,
@@ -7550,6 +7551,15 @@ async function loadMasterProducts({ reset = false } = {}) {
   renderMasterProductTable();
 }
 
+const MASTER_PRODUCT_EXPORT_OPTION_FIELDS = [
+  "productType",
+  "bagBrand",
+  "color",
+  "bagType",
+  "patternType",
+  "size",
+];
+
 function renderMasterProductExportOptions(field, values) {
   const select = $(`masterProductExport_${field}`);
   if (!select) return;
@@ -7563,21 +7573,50 @@ function renderMasterProductExportOptions(field, values) {
   }
 }
 
-async function loadMasterProductExportFilterOptions(force = false) {
-  if (!force && state.masterProductExportFilterOptions) {
+function renderMasterProductExportFilterOptions(options) {
+  MASTER_PRODUCT_EXPORT_OPTION_FIELDS.forEach((field) =>
+    renderMasterProductExportOptions(field, options?.[field]),
+  );
+}
+
+function setMasterProductExportFilterOptionsLoading(isLoading, failed = false) {
+  MASTER_PRODUCT_EXPORT_OPTION_FIELDS.forEach((field) => {
+    const select = $(`masterProductExport_${field}`);
+    if (!select) return;
+    select.disabled = isLoading || failed;
+    if (!state.masterProductExportFilterOptions) {
+      select.innerHTML = `<option value="">${
+        failed ? "加载失败，请重新打开" : isLoading ? "加载中..." : "全部"
+      }</option>`;
+    }
+  });
+}
+
+async function loadMasterProductExportFilterOptions() {
+  if (state.masterProductExportFilterOptions) {
+    renderMasterProductExportFilterOptions(state.masterProductExportFilterOptions);
     return state.masterProductExportFilterOptions;
   }
-  const result = await request("/master-products/export-filter-options");
-  state.masterProductExportFilterOptions = result || {};
-  [
-    "productType",
-    "bagBrand",
-    "color",
-    "bagType",
-    "patternType",
-    "size"].forEach((field) => renderMasterProductExportOptions(field, state.masterProductExportFilterOptions?.[field]),
+  if (state.masterProductExportFilterOptionsRequest) {
+    return state.masterProductExportFilterOptionsRequest;
+  }
+
+  setMasterProductExportFilterOptionsLoading(true);
+  state.masterProductExportFilterOptionsRequest = request(
+    "/master-products/export-filter-options",
   );
-  return state.masterProductExportFilterOptions;
+  try {
+    const result = await state.masterProductExportFilterOptionsRequest;
+    state.masterProductExportFilterOptions = result || {};
+    renderMasterProductExportFilterOptions(state.masterProductExportFilterOptions);
+    setMasterProductExportFilterOptionsLoading(false);
+    return state.masterProductExportFilterOptions;
+  } catch (error) {
+    setMasterProductExportFilterOptionsLoading(false, true);
+    throw error;
+  } finally {
+    state.masterProductExportFilterOptionsRequest = null;
+  }
 }
 
 function renderMasterProductDetailMeta(product) {
@@ -7951,7 +7990,7 @@ function buildMasterProductExportPayload() {
 function resetMasterProductExportForm() {
   $("masterProductExportForm")?.reset();
   if (state.masterProductExportFilterOptions) {
-    loadMasterProductExportFilterOptions(true).catch(() => {});
+    renderMasterProductExportFilterOptions(state.masterProductExportFilterOptions);
   }
 }
 
@@ -13234,6 +13273,7 @@ async function reloadAll() {
     state.masterProductSyncRecordsPage = 1;
     state.masterProductSyncRecordsHasMore = false;
     state.masterProductExportFilterOptions = null;
+    state.masterProductExportFilterOptionsRequest = null;
     state.inventorySortedSkus = [];
     state.inventoryLocations = new Map();
     state.inventoryTotalsBySku = {};
@@ -14212,9 +14252,14 @@ function bindForms() {
   });
 
   $("toggleMasterProductExportBtn").addEventListener("click", async () => {
+    const form = $("masterProductExportForm");
+    const shouldOpen = Boolean(form?.classList.contains("hidden"));
+    form?.classList.toggle("hidden");
+    if (!shouldOpen) {
+      return;
+    }
     try {
       await loadMasterProductExportFilterOptions();
-      $("masterProductExportForm")?.classList.toggle("hidden");
     } catch (error) {
       showToast(error.message, true);
     }
