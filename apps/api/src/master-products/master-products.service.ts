@@ -119,6 +119,7 @@ type MasterProductExportFilterKey =
 
 const CREATE_CHUNK_SIZE = 1000;
 const UPDATE_CHUNK_SIZE = 200;
+const MASTER_PRODUCT_EXPORT_FILTER_CACHE_TTL_MS = 15 * 60 * 1000;
 const MASTER_PRODUCT_TEMPLATE_FILE = '产品列表.xlsx';
 const XIYA_EXPORT_URL = process.env.XIYA_EXPORT_URL || 'http://103.236.55.93/api/external/products';
 const XIYA_EXPORT_API_KEY = process.env.XIYA_EXPORT_API_KEY || '';
@@ -208,6 +209,13 @@ export class MasterProductsService {
   private readonly logger = new Logger(MasterProductsService.name);
   private xiyaSyncStarting = false;
   private masterProductSyncRunning = false;
+  private masterProductExportFilterCache: {
+    expiresAt: number;
+    value: Record<MasterProductExportFilterKey, string[]>;
+  } | null = null;
+  private masterProductExportFilterRequest: Promise<
+    Record<MasterProductExportFilterKey, string[]>
+  > | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -452,33 +460,62 @@ export class MasterProductsService {
   }
 
   async getExportFilterOptions(): Promise<Record<MasterProductExportFilterKey, string[]>> {
-    const entries = await Promise.all(
-      MASTER_PRODUCT_EXPORT_SELECT_FIELDS.map(async (field) => {
-        const rows = await this.prisma.masterProduct.findMany({
-          where: {
-            status: 1,
-            [field]: {
-              not: null,
-            },
-          } as Prisma.MasterProductWhereInput,
-          select: {
-            [field]: true,
-          } as Prisma.MasterProductSelect,
-        });
+    const now = Date.now();
+    if (
+      this.masterProductExportFilterCache &&
+      this.masterProductExportFilterCache.expiresAt > now
+    ) {
+      return this.masterProductExportFilterCache.value;
+    }
 
-        const values = Array.from(
-          new Set(
-            rows
-              .map((row) => String(row[field] ?? '').trim())
-              .filter((value) => Boolean(value)),
-          ),
-        ).sort((left, right) => left.localeCompare(right, 'zh-Hans-CN'));
+    if (this.masterProductExportFilterRequest) {
+      return this.masterProductExportFilterRequest;
+    }
 
-        return [field, values] as const;
-      }),
-    );
+    this.masterProductExportFilterRequest = this.loadExportFilterOptions();
+    try {
+      const value = await this.masterProductExportFilterRequest;
+      this.masterProductExportFilterCache = {
+        expiresAt: Date.now() + MASTER_PRODUCT_EXPORT_FILTER_CACHE_TTL_MS,
+        value,
+      };
+      return value;
+    } finally {
+      this.masterProductExportFilterRequest = null;
+    }
+  }
 
-    return Object.fromEntries(entries) as Record<MasterProductExportFilterKey, string[]>;
+  private async loadExportFilterOptions(): Promise<
+    Record<MasterProductExportFilterKey, string[]>
+  > {
+    const select = Object.fromEntries(
+      MASTER_PRODUCT_EXPORT_SELECT_FIELDS.map((field) => [field, true]),
+    ) as Prisma.MasterProductSelect;
+    const rows = await this.prisma.masterProduct.findMany({
+      where: { status: 1 },
+      select,
+    });
+    const valueSets = Object.fromEntries(
+      MASTER_PRODUCT_EXPORT_SELECT_FIELDS.map((field) => [field, new Set<string>()]),
+    ) as Record<MasterProductExportFilterKey, Set<string>>;
+
+    for (const row of rows) {
+      for (const field of MASTER_PRODUCT_EXPORT_SELECT_FIELDS) {
+        const value = String(row[field] ?? '').trim();
+        if (value) {
+          valueSets[field].add(value);
+        }
+      }
+    }
+
+    return Object.fromEntries(
+      MASTER_PRODUCT_EXPORT_SELECT_FIELDS.map((field) => [
+        field,
+        Array.from(valueSets[field]).sort((left, right) =>
+          left.localeCompare(right, 'zh-Hans-CN'),
+        ),
+      ]),
+    ) as Record<MasterProductExportFilterKey, string[]>;
   }
 
   async importExcel(
@@ -1713,6 +1750,9 @@ export class MasterProductsService {
     }
 
     await this.updateExistingMasterProducts(updateRows, presentFields);
+    if (createdCount > 0 || updateRows.length > 0) {
+      this.masterProductExportFilterCache = null;
+    }
 
     return {
       createdCount,
