@@ -19,10 +19,12 @@ import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateMasterProductFbaReplenishmentDto } from './dto/create-master-product-fba-replenishment.dto';
 import { CreateMasterProductOutboundOneDto } from './dto/create-master-product-outbound-one.dto';
+import { CreateShoulderStrapPartDto } from './dto/create-shoulder-strap-part.dto';
 import { ExportMasterProductsDto } from './dto/export-master-products.dto';
 import { ManualAdjustMasterProductBoxDto } from './dto/manual-adjust-master-product-box.dto';
 import { UpdateMasterProductBomDto } from './dto/update-master-product-bom.dto';
 import { UpdateMasterProductPrintSettingsDto } from './dto/update-master-product-print-settings.dto';
+import { UpdateShoulderStrapPartDto } from './dto/update-shoulder-strap-part.dto';
 import {
   PLACEHOLDER_PRODUCT_NAME_PREFIX,
   shouldArchivePlaceholderProduct,
@@ -344,10 +346,10 @@ export class MasterProductsService {
           bomComponents: {
             orderBy: [{ position: 'asc' }, { id: 'asc' }],
             select: {
-              componentProductId: true,
+              partId: true,
               quantity: true,
-              componentProduct: {
-                select: { productName: true, stockQty: true, status: true },
+              part: {
+                select: { partCode: true, partName: true, stockQty: true, status: true },
               },
             },
           },
@@ -372,8 +374,9 @@ export class MasterProductsService {
         bomItemCount: row.bomComponents.length,
         assemblableStock: calculateProductStockAvailability(row).assemblableStock,
         bomItems: row.bomComponents.map((item) => ({
-          componentProductId: item.componentProductId,
-          componentProductName: item.componentProduct.productName,
+          partId: item.partId.toString(),
+          partCode: item.part.partCode,
+          partName: item.part.partName,
           quantity: Number(item.quantity),
         })),
       })),
@@ -382,6 +385,87 @@ export class MasterProductsService {
       pageSize,
       hasMore: page * pageSize < total,
     };
+  }
+
+  async listShoulderStrapParts(keywordRaw?: string): Promise<unknown> {
+    const keyword = String(keywordRaw ?? '').trim();
+    const rows = await this.prisma.shoulderStrapPart.findMany({
+      where: {
+        status: 1,
+        ...(keyword
+          ? { OR: [{ partCode: { contains: keyword } }, { partName: { contains: keyword } }] }
+          : {}),
+      },
+      orderBy: [{ partCode: 'asc' }, { id: 'asc' }],
+    });
+    return {
+      items: rows.map((row) => this.serializeShoulderStrapPart(row)),
+      total: rows.length,
+    };
+  }
+
+  async createShoulderStrapPart(payload: CreateShoulderStrapPartDto): Promise<unknown> {
+    const partName = this.requireShoulderStrapPartName(payload?.partName);
+    const stockQty = this.requireShoulderStrapPartStock(payload?.stockQty);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const existingCodes = await this.prisma.shoulderStrapPart.findMany({
+        where: { partCode: { startsWith: 'JD-' } },
+        select: { partCode: true },
+      });
+      const latestNumber = existingCodes.reduce((max, item) => {
+        const value = Number(String(item.partCode).match(/^JD-(\d+)$/)?.[1] ?? 0);
+        return Number.isSafeInteger(value) ? Math.max(max, value) : max;
+      }, 0);
+      const partCode = `JD-${String(latestNumber + 1).padStart(4, '0')}`;
+      try {
+        const created = await this.prisma.shoulderStrapPart.create({
+          data: { partCode, partName, stockQty },
+        });
+        return this.serializeShoulderStrapPart(created);
+      } catch (error) {
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+          throw error;
+        }
+      }
+    }
+    throw new ConflictException('零配件编号生成冲突，请重试');
+  }
+
+  async updateShoulderStrapPart(
+    partIdRaw: string,
+    payload: UpdateShoulderStrapPartDto,
+  ): Promise<unknown> {
+    const partId = this.parseShoulderStrapPartId(partIdRaw);
+    const partName = this.requireShoulderStrapPartName(payload?.partName);
+    const stockQty = this.requireShoulderStrapPartStock(payload?.stockQty);
+    const existing = await this.prisma.shoulderStrapPart.findFirst({
+      where: { id: partId, status: 1 },
+      select: { id: true },
+    });
+    if (!existing) throw new NotFoundException('未找到肩带零配件');
+    const updated = await this.prisma.shoulderStrapPart.update({
+      where: { id: partId },
+      data: { partName, stockQty },
+    });
+    return this.serializeShoulderStrapPart(updated);
+  }
+
+  async deleteShoulderStrapPart(partIdRaw: string): Promise<unknown> {
+    const partId = this.parseShoulderStrapPartId(partIdRaw);
+    const existing = await this.prisma.shoulderStrapPart.findFirst({
+      where: { id: partId, status: 1 },
+      select: { id: true, partCode: true },
+    });
+    if (!existing) throw new NotFoundException('未找到肩带零配件');
+    const bomCount = await this.prisma.masterProductBomItem.count({ where: { partId } });
+    if (bomCount > 0) {
+      throw new ConflictException(`零配件 ${existing.partCode} 已被 ${bomCount} 个 BOM 使用，请先从 BOM 中移除`);
+    }
+    await this.prisma.shoulderStrapPart.update({
+      where: { id: partId },
+      data: { status: 0 },
+    });
+    return { success: true, id: partId.toString() };
   }
 
   async exportAvailableStockForThirdParty(): Promise<AvailableStockExportResult> {
@@ -867,7 +951,7 @@ export class MasterProductsService {
       throw new BadRequestException('产品ID不能为空');
     }
 
-    const [product, skus, currentProductBoxRows, bomRows] = await Promise.all([
+    const [product, skus, currentProductBoxRows] = await Promise.all([
       this.prisma.masterProduct.findUnique({
         where: { productId },
       }),
@@ -895,21 +979,6 @@ export class MasterProductsService {
         },
         select: {
           boxId: true,
-        },
-      }),
-      this.prisma.masterProductBomItem.findMany({
-        where: { parentProductId: productId },
-        orderBy: [{ position: 'asc' }, { id: 'asc' }],
-        include: {
-          componentProduct: {
-            select: {
-              productId: true,
-              productName: true,
-              productType: true,
-              stockQty: true,
-              status: true,
-            },
-          },
         },
       }),
     ]);
@@ -1046,13 +1115,34 @@ export class MasterProductsService {
       product,
       skus: skuItems,
       boxes,
-      bomItems: bomRows.map((row) => ({
+    };
+  }
+
+  async getBom(productIdRaw: string): Promise<unknown> {
+    const productId = String(productIdRaw || '').trim();
+    if (!productId) throw new BadRequestException('产品ID不能为空');
+    const product = await this.prisma.masterProduct.findUnique({
+      where: { productId },
+      select: { productId: true, productName: true, productType: true, stockQty: true },
+    });
+    if (!product) throw new NotFoundException('未找到产品主表信息');
+    if (String(product.productType || '').trim() !== '肩带') {
+      throw new BadRequestException('仅产品类型为“肩带”的主产品可以设置 BOM');
+    }
+    const rows = await this.prisma.masterProductBomItem.findMany({
+      where: { parentProductId: productId },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+      include: { part: true },
+    });
+    return {
+      product,
+      bomItems: rows.map((row) => ({
         id: row.id.toString(),
-        componentProductId: row.componentProductId,
-        componentProductName: row.componentProduct.productName,
-        componentProductType: row.componentProduct.productType,
-        componentStockQty: Number(row.componentProduct.stockQty ?? 0),
-        componentStatus: Number(row.componentProduct.status ?? 0),
+        partId: row.partId.toString(),
+        partCode: row.part.partCode,
+        partName: row.part.partName,
+        partStockQty: Number(row.part.stockQty),
+        partStatus: Number(row.part.status),
         quantity: Number(row.quantity),
         position: Number(row.position),
       })),
@@ -1077,7 +1167,7 @@ export class MasterProductsService {
 
     const items = Array.isArray(payload?.items)
       ? payload.items.map((item) => ({
-          componentProductId: String(item?.componentProductId || '').trim(),
+          partId: this.parseShoulderStrapPartId(item?.partId),
           quantity: Number(item?.quantity),
         }))
       : [];
@@ -1086,41 +1176,35 @@ export class MasterProductsService {
     }
     const invalidItem = items.find(
       (item) =>
-        !item.componentProductId ||
         !Number.isInteger(item.quantity) ||
         item.quantity < 1 ||
         item.quantity > 9999,
     );
     if (invalidItem) {
-      throw new BadRequestException('BOM 配件产品ID不能为空，数量必须是 1 到 9999 的整数');
-    }
-    if (items.some((item) => item.componentProductId === productId)) {
-      throw new BadRequestException('主产品不能作为自己的 BOM 配件');
+      throw new BadRequestException('BOM 配件数量必须是 1 到 9999 的整数');
     }
     const seen = new Set<string>();
     const duplicate = items.find((item) => {
-      if (seen.has(item.componentProductId)) return true;
-      seen.add(item.componentProductId);
+      const key = item.partId.toString();
+      if (seen.has(key)) return true;
+      seen.add(key);
       return false;
     });
     if (duplicate) {
-      throw new BadRequestException(`配件产品ID ${duplicate.componentProductId} 重复添加`);
+      throw new BadRequestException('同一零配件不能重复添加');
     }
 
     if (items.length) {
-      const componentRows = await this.prisma.masterProduct.findMany({
-        where: {
-          productId: { in: items.map((item) => item.componentProductId) },
-          status: 1,
-        },
-        select: { productId: true },
+      const partRows = await this.prisma.shoulderStrapPart.findMany({
+        where: { id: { in: items.map((item) => item.partId) }, status: 1 },
+        select: { id: true },
       });
-      const existingIds = new Set(componentRows.map((item) => item.productId));
+      const existingIds = new Set(partRows.map((item) => item.id.toString()));
       const missingIds = items
-        .map((item) => item.componentProductId)
+        .map((item) => item.partId.toString())
         .filter((item) => !existingIds.has(item));
       if (missingIds.length) {
-        throw new BadRequestException(`配件产品不存在或已停用：${missingIds.join('、')}`);
+        throw new BadRequestException(`肩带零配件不存在或已删除：${missingIds.join('、')}`);
       }
     }
 
@@ -1130,7 +1214,7 @@ export class MasterProductsService {
         await tx.masterProductBomItem.createMany({
           data: items.map((item, index) => ({
             parentProductId: productId,
-            componentProductId: item.componentProductId,
+            partId: item.partId,
             quantity: item.quantity,
             position: index + 1,
           })),
@@ -1138,7 +1222,7 @@ export class MasterProductsService {
       }
     });
 
-    return this.detail(productId);
+    return this.getBom(productId);
   }
 
   async updatePrintSettings(
@@ -2310,6 +2394,51 @@ export class MasterProductsService {
   }
 
 
+
+  private serializeShoulderStrapPart(row: {
+    id: bigint;
+    partCode: string;
+    partName: string;
+    stockQty: number;
+    status: number;
+    createdAt: Date;
+    updatedAt: Date;
+  }): unknown {
+    return {
+      id: row.id.toString(),
+      partCode: row.partCode,
+      partName: row.partName,
+      stockQty: Number(row.stockQty),
+      status: Number(row.status),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private parseShoulderStrapPartId(value: string): bigint {
+    try {
+      const parsed = BigInt(String(value ?? '').trim());
+      if (parsed <= 0n) throw new Error('invalid');
+      return parsed;
+    } catch {
+      throw new BadRequestException('零配件 ID 无效');
+    }
+  }
+
+  private requireShoulderStrapPartName(value: unknown): string {
+    const text = String(value ?? '').trim();
+    if (!text) throw new BadRequestException('零配件名称不能为空');
+    if (text.length > 255) throw new BadRequestException('零配件名称不能超过 255 个字符');
+    return text;
+  }
+
+  private requireShoulderStrapPartStock(value: unknown): number {
+    const numeric = Number(value);
+    if (!Number.isInteger(numeric) || numeric < 0 || numeric > 999999999) {
+      throw new BadRequestException('零配件数量必须是 0 到 999999999 的整数');
+    }
+    return numeric;
+  }
 
   private normalizePositiveInt(value: string | number | undefined, fallback: number): number {
     const numeric = Number(value);

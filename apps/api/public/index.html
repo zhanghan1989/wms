@@ -734,6 +734,27 @@
           </div>
         </div>
 
+        <article class="card shoulder-strap-parts-card">
+          <div class="card-head">
+            <div>
+              <h3>肩带零配件一览</h3>
+              <p id="shoulderStrapPartSummary" class="muted">共 0 个零配件，新建编号从 JD-0001 开始自动生成。</p>
+            </div>
+            <button type="button" id="openCreateShoulderStrapPartBtn">+ 新增零配件</button>
+          </div>
+          <form id="shoulderStrapPartSearchForm" class="form-grid inventory-search-form">
+            <label><input id="shoulderStrapPartKeyword" placeholder="输入零配件编号 / 名称" /></label>
+            <button type="submit">检索</button>
+            <button type="button" id="resetShoulderStrapPartKeywordBtn" class="ghost">重置</button>
+          </form>
+          <div class="master-product-table-wrap">
+            <table class="shoulder-strap-part-table">
+              <thead><tr><th>零配件编号</th><th>零配件名称</th><th>库存数量</th><th>更新时间</th><th>操作</th></tr></thead>
+              <tbody id="shoulderStrapPartBody"></tbody>
+            </table>
+          </div>
+        </article>
+
         <article class="card">
           <div class="card-head">
             <div>
@@ -938,23 +959,6 @@
                 </div>
               </article>
             </div>
-
-            <article id="masterProductBomCard" class="card master-product-bom-card hidden">
-              <div class="master-product-bom-head">
-                <div>
-                  <h4>物料清单（BOM）</h4>
-                  <p class="muted">为该肩带设置所需配件及单件用量。</p>
-                </div>
-                <button type="button" id="addMasterProductBomItemBtn" class="ghost">+ 添加配件</button>
-              </div>
-              <form id="masterProductBomForm">
-                <datalist id="masterProductBomProductIdList"></datalist>
-                <div id="masterProductBomItems" class="master-product-bom-items"></div>
-                <div class="actions master-product-bom-actions">
-                  <button type="submit" id="saveMasterProductBomBtn">保存 BOM</button>
-                </div>
-              </form>
-            </article>
 
             <article class="card">
               <h4>箱内库存</h4>
@@ -2303,6 +2307,48 @@
             <button type="submit" id="submitMasterProductImportBtn">上传并更新</button>
             <button type="button" class="ghost" data-action="closeMasterProductImportModal">取消</button>
           </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="shoulderStrapPartModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3 id="shoulderStrapPartModalTitle">新增肩带零配件</h3>
+        <button type="button" class="ghost" data-action="closeShoulderStrapPartModal">关闭</button>
+      </div>
+      <form id="shoulderStrapPartForm" class="form-grid">
+        <input id="shoulderStrapPartEditingId" type="hidden" />
+        <label>零配件编号<input id="shoulderStrapPartCode" value="保存后自动生成" disabled /></label>
+        <label>零配件名称<input id="shoulderStrapPartName" maxlength="255" required /></label>
+        <label>库存数量<input id="shoulderStrapPartStockQty" type="number" min="0" max="999999999" step="1" required /></label>
+        <div class="modal-actions">
+          <button type="submit" id="saveShoulderStrapPartBtn">保存</button>
+          <button type="button" class="ghost" data-action="closeShoulderStrapPartModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="shoulderStrapBomModal" class="modal hidden">
+    <div class="modal-card modal-wide shoulder-strap-bom-modal-card">
+      <div class="modal-head">
+        <div>
+          <h3 id="shoulderStrapBomModalTitle">管理肩带 BOM</h3>
+          <p id="shoulderStrapBomModalSubtitle" class="muted">-</p>
+        </div>
+        <button type="button" class="ghost" data-action="closeShoulderStrapBomModal">关闭</button>
+      </div>
+      <form id="shoulderStrapBomForm">
+        <div class="master-product-bom-head">
+          <p class="muted">从独立的肩带零配件表选择配件并设置单件用量，最多 10 种。</p>
+          <button type="button" id="addShoulderStrapBomItemBtn" class="ghost">+ 添加零配件</button>
+        </div>
+        <div id="shoulderStrapBomItems" class="master-product-bom-items"></div>
+        <div class="modal-actions">
+          <button type="submit" id="saveShoulderStrapBomBtn">保存 BOM</button>
+          <button type="button" class="ghost" data-action="closeShoulderStrapBomModal">取消</button>
         </div>
       </form>
     </div>

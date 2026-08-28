@@ -63,6 +63,12 @@
 }
 .master-product-bom-actions { justify-content: flex-end; margin-top: 12px; }
 .shoulder-strap-product-table { min-width: 1120px; }
+.shoulder-strap-parts-card { margin-bottom: 16px; }
+.shoulder-strap-part-table { min-width: 720px; }
+.shoulder-strap-bom-modal-card { max-width: 980px; }
+.shoulder-strap-bom-item {
+  grid-template-columns: 36px minmax(320px, 1fr) 140px auto;
+}
 .shoulder-strap-bom-preview {
   display: flex;
   flex-wrap: wrap;

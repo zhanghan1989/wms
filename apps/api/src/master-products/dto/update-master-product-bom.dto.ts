@@ -11,7 +11,7 @@ import {
 
 export class MasterProductBomItemDto {
   @IsString()
-  componentProductId!: string;
+  partId!: string;
 
   @Type(() => Number)
   @IsInt()

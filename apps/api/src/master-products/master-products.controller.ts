@@ -2,6 +2,7 @@ import {
   Body,
   BadRequestException,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -22,10 +23,12 @@ import { AuthUser } from '../common/types/auth-user.type';
 import { ThirdPartyApiKeyGuard } from '../orders/third-party-api-key.guard';
 import { CreateMasterProductFbaReplenishmentDto } from './dto/create-master-product-fba-replenishment.dto';
 import { CreateMasterProductOutboundOneDto } from './dto/create-master-product-outbound-one.dto';
+import { CreateShoulderStrapPartDto } from './dto/create-shoulder-strap-part.dto';
 import { ExportMasterProductsDto } from './dto/export-master-products.dto';
 import { ManualAdjustMasterProductBoxDto } from './dto/manual-adjust-master-product-box.dto';
 import { UpdateMasterProductPrintSettingsDto } from './dto/update-master-product-print-settings.dto';
 import { UpdateMasterProductBomDto } from './dto/update-master-product-bom.dto';
+import { UpdateShoulderStrapPartDto } from './dto/update-shoulder-strap-part.dto';
 import { MasterProductsService } from './master-products.service';
 
 @Controller('master-products')
@@ -57,6 +60,38 @@ export class MasterProductsController {
     @Query('keyword') keyword?: string,
   ): Promise<unknown> {
     return this.masterProductsService.listShoulderStraps(page, pageSize, keyword);
+  }
+
+  @Get('shoulder-strap-parts')
+  async listShoulderStrapParts(
+    @Query('keyword') keyword?: string,
+  ): Promise<unknown> {
+    return this.masterProductsService.listShoulderStrapParts(keyword);
+  }
+
+  @Post('shoulder-strap-parts')
+  async createShoulderStrapPart(
+    @Body() payload: CreateShoulderStrapPartDto,
+  ): Promise<unknown> {
+    return this.masterProductsService.createShoulderStrapPart(payload);
+  }
+
+  @Put('shoulder-strap-parts/:partId')
+  async updateShoulderStrapPart(
+    @Param('partId') partId: string,
+    @Body() payload: UpdateShoulderStrapPartDto,
+  ): Promise<unknown> {
+    return this.masterProductsService.updateShoulderStrapPart(partId, payload);
+  }
+
+  @Delete('shoulder-strap-parts/:partId')
+  async deleteShoulderStrapPart(@Param('partId') partId: string): Promise<unknown> {
+    return this.masterProductsService.deleteShoulderStrapPart(partId);
+  }
+
+  @Get(':productId/bom')
+  async getBom(@Param('productId') productId: string): Promise<unknown> {
+    return this.masterProductsService.getBom(productId);
   }
 
   @Get(':productId/detail')

@@ -1082,7 +1082,7 @@ export class AmazonSpApiService {
               orderBy: [{ position: 'asc' }, { id: 'asc' }],
               select: {
                 quantity: true,
-                componentProduct: { select: { stockQty: true, status: true } },
+                part: { select: { stockQty: true, status: true } },
               },
             },
           },
