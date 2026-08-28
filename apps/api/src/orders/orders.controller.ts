@@ -360,6 +360,12 @@ export class OrdersController {
     return this.ordersService.confirmOverseasPickingBatch(batchId, payload, user.id);
   }
 
+  @Post('overseas-warehouse/picking-batches/:batchId/complete-work')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async completeOverseasPickingBatchWork(@Param('batchId') batchId: string): Promise<unknown> {
+    return this.ordersService.completeOverseasPickingBatchWork(batchId);
+  }
+
   @Post('overseas-warehouse/picking-batches/:batchId/scan')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async scanOverseasPickingBatchProduct(

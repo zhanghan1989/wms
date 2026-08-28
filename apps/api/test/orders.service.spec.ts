@@ -425,6 +425,96 @@ describe('OrdersService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it('blocks completing overseas batch work while a Yamato label remains unprinted', async () => {
+    const prisma = {
+      overseasPickingBatch: {
+        findUnique: jest.fn().mockResolvedValue({ id: 42n, batchNo: 'PK-42', status: 'yamato_exported' }),
+        update: jest.fn(),
+      },
+      yamatoShipmentBatch: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 16n,
+          status: 'pdf_ready',
+          pageCount: 2,
+          pages: [{ printedAt: new Date() }, { printedAt: null }],
+        }),
+      },
+    };
+    const service = new OrdersService(prisma as any);
+
+    await expect(service.completeOverseasPickingBatchWork('42')).rejects.toThrow('还有 1 张面单未打印');
+    expect(prisma.overseasPickingBatch.update).not.toHaveBeenCalled();
+  });
+
+  it('returns Yamato print progress for the picking batch status display', async () => {
+    const createdAt = new Date('2026-08-28T01:00:00.000Z');
+    const prisma = {
+      overseasPickingBatch: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 42n,
+            batchNo: 'PK-42',
+            status: 'yamato_exported',
+            orderCount: 2,
+            itemCount: 2,
+            totalQty: 2,
+            createdAt,
+            confirmedAt: createdAt,
+          },
+        ]),
+      },
+      yamatoShipmentBatch: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 16n,
+            pickingBatchId: 42n,
+            status: 'pdf_ready',
+            pageCount: 2,
+            pages: [{ printedAt: createdAt }, { printedAt: null }],
+          },
+        ]),
+      },
+    };
+    const service = new OrdersService(prisma as any);
+
+    await expect(service.listOverseasPickingBatches()).resolves.toEqual([
+      expect.objectContaining({
+        id: '42',
+        yamatoShipmentBatchStatus: 'pdf_ready',
+        yamatoPrintedPageCount: 1,
+        yamatoPendingPageCount: 1,
+      }),
+    ]);
+  });
+
+  it('persists completed status after every Yamato label has printed', async () => {
+    const prisma = {
+      overseasPickingBatch: {
+        findUnique: jest.fn().mockResolvedValue({ id: 42n, batchNo: 'PK-42', status: 'yamato_exported' }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      yamatoShipmentBatch: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 16n,
+          status: 'pdf_ready',
+          pageCount: 2,
+          pages: [{ printedAt: new Date() }, { printedAt: new Date() }],
+        }),
+      },
+    };
+    const service = new OrdersService(prisma as any);
+
+    await expect(service.completeOverseasPickingBatchWork('42')).resolves.toEqual({
+      id: '42',
+      batchNo: 'PK-42',
+      status: 'completed',
+    });
+    expect(prisma.overseasPickingBatch.update).toHaveBeenCalledWith({
+      where: { id: 42n },
+      data: { status: 'completed' },
+    });
+  });
+
   it('records an item-level SP-API exclusion when one line is deleted', async () => {
     const selected = {
       id: 1n,

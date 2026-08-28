@@ -10893,9 +10893,14 @@ function getSelectedOverseasPickingBatch() {
   return state.overseasPickingBatches.find((item) => String(item?.id || "") === targetId) || null;
 }
 
-function getOverseasPickingBatchStatusText(status) {
+function getOverseasPickingBatchStatusText(item) {
+  const status = String(item?.status || "").trim();
   if (status === "created") return "待确认";
   if (status === "picked") return "已扣库存";
+  if (status === "completed") return "作业已完成";
+  if (status === "yamato_exported" && item?.yamatoShipmentBatchStatus === "pdf_ready") {
+    return Number(item?.yamatoPrintedPageCount || 0) > 0 ? "打印面单中" : "待打印面单";
+  }
   if (status === "yamato_exported") return "已生成 Yamato";
   return displayText(status);
 }
@@ -10923,7 +10928,7 @@ function renderOverseasPickingBatchList() {
         <td><button type="button" class="inline-link-btn" data-action="openOverseasPickingBatchDetail" data-id="${escapeHtml(
           String(item.id || ""),
         )}">${escapeHtml(displayText(item.batchNo))}</button></td>
-        <td>${escapeHtml(getOverseasPickingBatchStatusText(item.status))}</td>
+        <td>${escapeHtml(getOverseasPickingBatchStatusText(item))}</td>
         <td>${escapeHtml(displayText(item.orderCount))}</td>
         <td>${escapeHtml(displayText(item.itemCount))}</td>
         <td>${escapeHtml(displayText(item.totalQty))}</td>
@@ -11668,10 +11673,12 @@ function renderYamatoShipmentBatchControls() {
   const uploadBtn = $("overseasUploadYamatoPdfBtn");
   const scanBtn = $("overseasYamatoScanSubmitBtn");
   const reprintBtn = $("overseasYamatoReprintBtn");
+  const completeBatchWorkBtn = $("overseasCompleteBatchWorkBtn");
   const scanInput = $("overseasYamatoScanInput");
   const currentBatch = getSelectedYamatoShipmentBatch();
-  const canUploadPdf = Boolean(currentBatch);
-  const canScanPrint = Boolean(currentBatch && currentBatch.status === "pdf_ready");
+  const isCompleted = String(state.selectedOverseasPickingBatchDetail?.status || "") === "completed";
+  const canUploadPdf = Boolean(currentBatch && !isCompleted);
+  const canScanPrint = Boolean(currentBatch && currentBatch.status === "pdf_ready" && !isCompleted);
 
   if (meta) {
     if (!currentBatch) {
@@ -11703,6 +11710,10 @@ function renderYamatoShipmentBatchControls() {
     reprintBtn.disabled = !canScanPrint || normalizeYamatoPrintConfig(state.yamatoPrintConfig).mode !== "agent";
     reprintBtn.textContent = "重新打印";
   }
+  if (completeBatchWorkBtn) {
+    completeBatchWorkBtn.disabled = !canScanPrint || isCompleted;
+    completeBatchWorkBtn.textContent = isCompleted ? "5.本批次作业已完成" : "5.确认完成本批次作业";
+  }
   if (scanInput) {
     scanInput.disabled = !canScanPrint;
   }
@@ -11718,6 +11729,64 @@ function renderYamatoShipmentBatchControls() {
         `当前拣货批次对应的 Yamato 批次 #${currentBatch.id} 已上传 PDF：共 ${currentBatch.pageCount} 张面单，未打印 ${currentBatch.pendingPageCount} 张，已打印 ${currentBatch.printedPageCount} 张。${getYamatoPrintModeSummary()}`;
     }
   }
+}
+
+function getIncompleteYamatoBatchWork(detail, batch) {
+  const orders = Array.isArray(detail?.orders) ? detail.orders : [];
+  const overseasOrders = orders.filter((item) => !isChinaDispatchModeValue(item.dispatchMode));
+  return {
+    pendingPageCount: getYamatoPendingPageCount(batch),
+    waitingPrintOrderCount: overseasOrders.filter((item) => item.shipmentTrackingNo && !item.yamatoPrintedAt).length,
+    pendingLabelOrderCount: overseasOrders.filter((item) => !item.shipmentTrackingNo).length,
+  };
+}
+
+async function confirmOverseasBatchWorkComplete() {
+  const detail = state.selectedOverseasPickingBatchDetail;
+  if (!detail?.id) {
+    throw new Error("请先选择一个拣货批次");
+  }
+
+  await refreshYamatoPrintStateForSelectedBatch();
+  const refreshedDetail = state.selectedOverseasPickingBatchDetail;
+  const batch = getSelectedYamatoShipmentBatch();
+  if (!batch) {
+    throw new Error("当前批次尚未生成 Yamato 面单批次，不能确认完成作业");
+  }
+  if (batch.status !== "pdf_ready") {
+    throw new Error(`Yamato 批次 #${batch.id} 尚未上传面单 PDF，不能确认完成作业`);
+  }
+
+  const incomplete = getIncompleteYamatoBatchWork(refreshedDetail, batch);
+  if (
+    incomplete.pendingPageCount > 0 ||
+    incomplete.waitingPrintOrderCount > 0 ||
+    incomplete.pendingLabelOrderCount > 0
+  ) {
+    const details = [];
+    if (incomplete.pendingPageCount > 0) {
+      details.push(`还有 ${incomplete.pendingPageCount} 张面单未打印`);
+    }
+    if (incomplete.waitingPrintOrderCount > 0) {
+      details.push(`涉及 ${incomplete.waitingPrintOrderCount} 条待打印订单`);
+    }
+    if (incomplete.pendingLabelOrderCount > 0) {
+      details.push(`另有 ${incomplete.pendingLabelOrderCount} 条订单尚未生成或上传面单`);
+    }
+    throw new Error(`本批次作业未完成：${details.join("，")}。请完成后再次确认。`);
+  }
+
+  await request(`/orders/overseas-warehouse/picking-batches/${encodeURIComponent(detail.id)}/complete-work`, {
+    method: "POST",
+  });
+  await Promise.all([loadOverseasPickingBatches(), loadOverseasPickingBatchDetail(detail.id)]);
+
+  await openActionConfirmModal(
+    "检查完成，当前批次所有面单均已打印，本批次作业已完成。",
+    "本批次作业完成",
+    "确认",
+    { showCancel: false },
+  );
 }
 
 async function loadYamatoShipmentBatches() {
@@ -15169,6 +15238,15 @@ function bindForms() {
     } catch (error) {
       showToast(error.message, true);
       focusOverseasYamatoScanInput();
+    }
+  });
+
+  $("overseasCompleteBatchWorkBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await withBusyButton(button, "检查中...", confirmOverseasBatchWorkComplete);
+    } catch (error) {
+      showToast(error.message, true);
     }
   });
 

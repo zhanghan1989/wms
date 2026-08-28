@@ -588,6 +588,8 @@ interface OverseasPickingBatchSummary {
   confirmedAt: string | null;
   yamatoShipmentBatchId: string | null;
   yamatoShipmentBatchStatus: string | null;
+  yamatoPrintedPageCount: number;
+  yamatoPendingPageCount: number;
 }
 
 interface OverseasPickingBatchDetailItem {
@@ -939,6 +941,7 @@ const OVERSEAS_PICKING_BATCH_STATUS = {
   CREATED: 'created',
   PICKED: 'picked',
   YAMATO_EXPORTED: 'yamato_exported',
+  COMPLETED: 'completed',
 } as const;
 const YAMATO_BATCH_STATUS = {
   EXCEL_EXPORTED: 'excel_exported',
@@ -1035,6 +1038,12 @@ export class OrdersService {
           id: true,
           pickingBatchId: true,
           status: true,
+          pageCount: true,
+          pages: {
+            select: {
+              printedAt: true,
+            },
+          },
         },
       }),
     ]);
@@ -1047,6 +1056,8 @@ export class OrdersService {
 
     return rows.map((row) => {
       const yamatoBatch = yamatoBatchByPickingBatchId.get(row.id.toString()) ?? null;
+      const printedPageCount = yamatoBatch?.pages.filter((page) => Boolean(page.printedAt)).length ?? 0;
+      const pageCount = Number(yamatoBatch?.pageCount ?? yamatoBatch?.pages.length ?? 0);
       return {
         id: row.id.toString(),
         batchNo: row.batchNo,
@@ -1058,8 +1069,79 @@ export class OrdersService {
         confirmedAt: row.confirmedAt ? row.confirmedAt.toISOString() : null,
         yamatoShipmentBatchId: yamatoBatch ? yamatoBatch.id.toString() : null,
         yamatoShipmentBatchStatus: yamatoBatch?.status ?? null,
+        yamatoPrintedPageCount: printedPageCount,
+        yamatoPendingPageCount: Math.max(pageCount - printedPageCount, 0),
       };
     });
+  }
+
+  async completeOverseasPickingBatchWork(batchIdRaw: string): Promise<{
+    id: string;
+    batchNo: string;
+    status: string;
+  }> {
+    const batchId = parseId(batchIdRaw, 'batchId');
+    const batch = await this.prisma.overseasPickingBatch.findUnique({
+      where: { id: batchId },
+      select: {
+        id: true,
+        batchNo: true,
+        status: true,
+      },
+    });
+    if (!batch) {
+      throw new NotFoundException(`拣货批次不存在: ${batchIdRaw}`);
+    }
+
+    const yamatoBatch = await this.prisma.yamatoShipmentBatch.findFirst({
+      where: { pickingBatchId: batch.id },
+      select: {
+        id: true,
+        status: true,
+        pageCount: true,
+        pages: {
+          select: {
+            printedAt: true,
+          },
+        },
+      },
+    });
+    if (!yamatoBatch) {
+      throw new BadRequestException('当前批次尚未生成 Yamato 面单批次，不能确认完成作业');
+    }
+    if (yamatoBatch.status !== YAMATO_BATCH_STATUS.PDF_READY) {
+      throw new BadRequestException(
+        `Yamato 批次 #${yamatoBatch.id.toString()} 尚未上传面单 PDF，不能确认完成作业`,
+      );
+    }
+
+    const printedPageCount = yamatoBatch.pages.filter((page) => Boolean(page.printedAt)).length;
+    const pageCount = Number(yamatoBatch.pageCount ?? yamatoBatch.pages.length ?? 0);
+    const pendingPageCount = Math.max(pageCount - printedPageCount, 0);
+    if (pageCount <= 0) {
+      throw new BadRequestException('当前批次没有可检查的 Yamato 面单，不能确认完成作业');
+    }
+    if (pendingPageCount > 0) {
+      throw new BadRequestException(
+        `本批次作业未完成：还有 ${pendingPageCount} 张面单未打印。请完成后再次确认。`,
+      );
+    }
+
+    if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.COMPLETED) {
+      if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED) {
+        throw new BadRequestException(`当前批次状态为 ${batch.status}，不能确认完成作业`);
+      }
+      await this.prisma.overseasPickingBatch.update({
+        where: { id: batch.id },
+        data: { status: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED },
+      });
+    }
+
+    return {
+      id: batch.id.toString(),
+      batchNo: batch.batchNo,
+      status: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED,
+    };
   }
 
   async getOverseasPickingBatchDetail(batchIdRaw: string): Promise<OverseasPickingBatchDetail> {
@@ -1376,6 +1458,14 @@ export class OrdersService {
       remark: batch.remark ?? null,
       yamatoShipmentBatchId: yamatoBatch ? yamatoBatch.id.toString() : null,
       yamatoShipmentBatchStatus: yamatoBatch?.status ?? null,
+      yamatoPrintedPageCount: yamatoBatch?.pages.filter((page) => Boolean(page.printedAt)).length ?? 0,
+      yamatoPendingPageCount: yamatoBatch
+        ? Math.max(
+            Number(yamatoBatch.pageCount ?? yamatoBatch.pages.length ?? 0) -
+              yamatoBatch.pages.filter((page) => Boolean(page.printedAt)).length,
+            0,
+          )
+        : 0,
       items: groupedDetailItems,
       orders: detailOrders,
     };
