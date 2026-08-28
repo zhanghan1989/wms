@@ -21,11 +21,13 @@ import { CreateMasterProductFbaReplenishmentDto } from './dto/create-master-prod
 import { CreateMasterProductOutboundOneDto } from './dto/create-master-product-outbound-one.dto';
 import { ExportMasterProductsDto } from './dto/export-master-products.dto';
 import { ManualAdjustMasterProductBoxDto } from './dto/manual-adjust-master-product-box.dto';
+import { UpdateMasterProductBomDto } from './dto/update-master-product-bom.dto';
 import { UpdateMasterProductPrintSettingsDto } from './dto/update-master-product-print-settings.dto';
 import {
   PLACEHOLDER_PRODUCT_NAME_PREFIX,
   shouldArchivePlaceholderProduct,
 } from './master-product-archive';
+import { calculateProductStockAvailability } from './master-product-bom-stock';
 
 export { shouldArchivePlaceholderProduct } from './master-product-archive';
 
@@ -299,6 +301,86 @@ export class MasterProductsService {
       page,
       pageSize,
       hasMore: rows.length > pageSize,
+    };
+  }
+
+  async listShoulderStraps(
+    pageRaw?: string | number,
+    pageSizeRaw?: string | number,
+    keywordRaw?: string,
+  ): Promise<MasterProductListResult & { total: number }> {
+    const page = this.normalizePositiveInt(pageRaw, 1);
+    const pageSize = Math.min(this.normalizePositiveInt(pageSizeRaw, 30), 100);
+    const keyword = String(keywordRaw ?? '').trim();
+    const where: Prisma.MasterProductWhereInput = {
+      status: 1,
+      productType: '肩带',
+      ...(keyword
+        ? {
+            OR: [
+              { productId: { contains: keyword } },
+              { productName: { contains: keyword } },
+              { color: { contains: keyword } },
+              { style: { contains: keyword } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, rows] = await this.prisma.$transaction([
+      this.prisma.masterProduct.count({ where }),
+      this.prisma.masterProduct.findMany({
+        where,
+        select: {
+          productId: true,
+          productName: true,
+          productType: true,
+          color: true,
+          style: true,
+          length: true,
+          width: true,
+          stockQty: true,
+          updatedAt: true,
+          bomComponents: {
+            orderBy: [{ position: 'asc' }, { id: 'asc' }],
+            select: {
+              componentProductId: true,
+              quantity: true,
+              componentProduct: {
+                select: { productName: true, stockQty: true, status: true },
+              },
+            },
+          },
+        },
+        orderBy: [{ updatedAt: 'desc' }, { productId: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+    return {
+      items: rows.map((row) => ({
+        productId: row.productId,
+        productName: row.productName,
+        productType: row.productType,
+        color: row.color,
+        style: row.style,
+        length: row.length,
+        width: row.width,
+        stockQty: Number(row.stockQty ?? 0),
+        updatedAt: row.updatedAt,
+        bomItemCount: row.bomComponents.length,
+        assemblableStock: calculateProductStockAvailability(row).assemblableStock,
+        bomItems: row.bomComponents.map((item) => ({
+          componentProductId: item.componentProductId,
+          componentProductName: item.componentProduct.productName,
+          quantity: Number(item.quantity),
+        })),
+      })),
+      total,
+      page,
+      pageSize,
+      hasMore: page * pageSize < total,
     };
   }
 
@@ -785,7 +867,7 @@ export class MasterProductsService {
       throw new BadRequestException('产品ID不能为空');
     }
 
-    const [product, skus, currentProductBoxRows] = await Promise.all([
+    const [product, skus, currentProductBoxRows, bomRows] = await Promise.all([
       this.prisma.masterProduct.findUnique({
         where: { productId },
       }),
@@ -813,6 +895,21 @@ export class MasterProductsService {
         },
         select: {
           boxId: true,
+        },
+      }),
+      this.prisma.masterProductBomItem.findMany({
+        where: { parentProductId: productId },
+        orderBy: [{ position: 'asc' }, { id: 'asc' }],
+        include: {
+          componentProduct: {
+            select: {
+              productId: true,
+              productName: true,
+              productType: true,
+              stockQty: true,
+              status: true,
+            },
+          },
         },
       }),
     ]);
@@ -949,7 +1046,99 @@ export class MasterProductsService {
       product,
       skus: skuItems,
       boxes,
+      bomItems: bomRows.map((row) => ({
+        id: row.id.toString(),
+        componentProductId: row.componentProductId,
+        componentProductName: row.componentProduct.productName,
+        componentProductType: row.componentProduct.productType,
+        componentStockQty: Number(row.componentProduct.stockQty ?? 0),
+        componentStatus: Number(row.componentProduct.status ?? 0),
+        quantity: Number(row.quantity),
+        position: Number(row.position),
+      })),
     };
+  }
+
+  async updateBom(
+    productIdRaw: string,
+    payload: UpdateMasterProductBomDto,
+  ): Promise<unknown> {
+    const productId = String(productIdRaw || '').trim();
+    if (!productId) throw new BadRequestException('产品ID不能为空');
+
+    const parent = await this.prisma.masterProduct.findUnique({
+      where: { productId },
+      select: { id: true, productType: true },
+    });
+    if (!parent) throw new NotFoundException('未找到产品主表信息');
+    if (String(parent.productType || '').trim() !== '肩带') {
+      throw new BadRequestException('仅产品类型为“肩带”的主产品可以设置 BOM');
+    }
+
+    const items = Array.isArray(payload?.items)
+      ? payload.items.map((item) => ({
+          componentProductId: String(item?.componentProductId || '').trim(),
+          quantity: Number(item?.quantity),
+        }))
+      : [];
+    if (items.length > 10) {
+      throw new BadRequestException('一个 BOM 最多添加 10 个配件');
+    }
+    const invalidItem = items.find(
+      (item) =>
+        !item.componentProductId ||
+        !Number.isInteger(item.quantity) ||
+        item.quantity < 1 ||
+        item.quantity > 9999,
+    );
+    if (invalidItem) {
+      throw new BadRequestException('BOM 配件产品ID不能为空，数量必须是 1 到 9999 的整数');
+    }
+    if (items.some((item) => item.componentProductId === productId)) {
+      throw new BadRequestException('主产品不能作为自己的 BOM 配件');
+    }
+    const seen = new Set<string>();
+    const duplicate = items.find((item) => {
+      if (seen.has(item.componentProductId)) return true;
+      seen.add(item.componentProductId);
+      return false;
+    });
+    if (duplicate) {
+      throw new BadRequestException(`配件产品ID ${duplicate.componentProductId} 重复添加`);
+    }
+
+    if (items.length) {
+      const componentRows = await this.prisma.masterProduct.findMany({
+        where: {
+          productId: { in: items.map((item) => item.componentProductId) },
+          status: 1,
+        },
+        select: { productId: true },
+      });
+      const existingIds = new Set(componentRows.map((item) => item.productId));
+      const missingIds = items
+        .map((item) => item.componentProductId)
+        .filter((item) => !existingIds.has(item));
+      if (missingIds.length) {
+        throw new BadRequestException(`配件产品不存在或已停用：${missingIds.join('、')}`);
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.masterProductBomItem.deleteMany({ where: { parentProductId: productId } });
+      if (items.length) {
+        await tx.masterProductBomItem.createMany({
+          data: items.map((item, index) => ({
+            parentProductId: productId,
+            componentProductId: item.componentProductId,
+            quantity: item.quantity,
+            position: index + 1,
+          })),
+        });
+      }
+    });
+
+    return this.detail(productId);
   }
 
   async updatePrintSettings(

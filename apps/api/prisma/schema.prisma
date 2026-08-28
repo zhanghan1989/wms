@@ -1268,9 +1268,28 @@ model MasterProduct {
   inboundItems      InboundOrderItem[]
   syncRecords       MasterProductSyncRecord[]
   rakutenComboItems RakutenComboProductItem[]
+  bomComponents     MasterProductBomItem[]     @relation("MasterProductBomParent")
+  usedInBoms        MasterProductBomItem[]     @relation("MasterProductBomComponent")
 
   @@index([firstStockedAt], map: "idx_master_products_first_stocked_at")
   @@map("master_products")
+}
+
+model MasterProductBomItem {
+  id                 BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  parentProductId    String        @map("parent_product_id") @db.VarChar(128)
+  componentProductId String        @map("component_product_id") @db.VarChar(128)
+  quantity           Int
+  position           Int
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+  parentProduct      MasterProduct @relation("MasterProductBomParent", fields: [parentProductId], references: [productId], onDelete: Cascade, onUpdate: Cascade)
+  componentProduct   MasterProduct @relation("MasterProductBomComponent", fields: [componentProductId], references: [productId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([parentProductId, componentProductId], map: "uq_master_product_bom_parent_component")
+  @@unique([parentProductId, position], map: "uq_master_product_bom_parent_position")
+  @@index([componentProductId], map: "idx_master_product_bom_component")
+  @@map("master_product_bom_items")
 }
 
 model RakutenComboProduct {

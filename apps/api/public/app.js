@@ -194,6 +194,8 @@ const state = {
   masterProductView: "syncRecords",
   selectedMasterProductId: "",
   selectedMasterProductDetail: null,
+  masterProductBomDraftItems: [],
+  masterProductReturnPanel: "syncRecords",
   masterProductSyncRecords: [],
   masterProductSyncRecordsPage: 1,
   masterProductSyncRecordsPageSize: 30,
@@ -213,6 +215,12 @@ const state = {
   rakutenComboProductKeyword: "",
   rakutenComboProductDraftItems: [],
   rakutenComboProductEditingId: "",
+  shoulderStrapProducts: [],
+  shoulderStrapProductsPage: 0,
+  shoulderStrapProductsPageSize: 30,
+  shoulderStrapProductsHasMore: false,
+  shoulderStrapProductsTotal: 0,
+  shoulderStrapProductKeyword: "",
   inventoryLocations: new Map(),
   inventoryTotalsBySku: {},
   inventorySortedSkus: [],
@@ -7633,6 +7641,125 @@ function renderMasterProductBoxTable(detail) {
   });
 }
 
+function isShoulderStrapMasterProduct(product) {
+  return String(product?.productType || "").trim() === "肩带";
+}
+
+function renderMasterProductBomOptions() {
+  const datalist = $("masterProductBomProductIdList");
+  if (!datalist) return;
+  const parentProductId = String(state.selectedMasterProductId || "").trim();
+  datalist.innerHTML = getKnownMasterProductsSorted()
+    .filter((item) => String(item?.productId || "").trim() !== parentProductId)
+    .map((item) => {
+      const productId = String(item?.productId || "").trim();
+      const productName = String(item?.productName || "").trim();
+      return `<option value="${escapeHtml(productId)}">${escapeHtml(productName)}</option>`;
+    })
+    .join("");
+}
+
+function renderMasterProductBomDraftItems() {
+  const container = $("masterProductBomItems");
+  if (!container) return;
+  renderMasterProductBomOptions();
+  const items = Array.isArray(state.masterProductBomDraftItems)
+    ? state.masterProductBomDraftItems
+    : [];
+  container.innerHTML = items.length
+    ? items.map((item, index) => {
+        const name = item.loading ? "查询中..." : displayText(item.componentProductName);
+        const stockText = Number.isFinite(Number(item.componentStockQty))
+          ? `配件库存：${Number(item.componentStockQty)}`
+          : "";
+        return `
+          <div class="master-product-bom-item" data-index="${index}">
+            <span class="master-product-bom-order" aria-label="顺序">${index + 1}</span>
+            <label>配件产品ID
+              <input class="master-product-bom-id-input" data-index="${index}" list="masterProductBomProductIdList" value="${escapeHtml(item.componentProductId)}" placeholder="输入配件产品ID" required />
+            </label>
+            <label>配件名称
+              <div class="master-product-bom-name"><strong>${escapeHtml(name)}</strong>${stockText ? `<small>${escapeHtml(stockText)}</small>` : ""}</div>
+            </label>
+            <label class="master-product-bom-quantity-label">单件用量
+              <input class="master-product-bom-quantity-input" data-index="${index}" type="number" inputmode="numeric" min="1" max="9999" step="1" value="${escapeHtml(String(item.quantity || 1))}" required />
+            </label>
+            <button type="button" class="tiny-btn ghost" data-action="removeMasterProductBomItem" data-index="${index}">删除</button>
+          </div>`;
+      }).join("")
+    : '<div class="master-product-bom-empty muted">尚未设置配件，点击“添加配件”开始建立 BOM。</div>';
+  const addButton = $("addMasterProductBomItemBtn");
+  if (addButton) addButton.disabled = items.length >= 10;
+}
+
+function resetMasterProductBomDraft(detail) {
+  const rows = Array.isArray(detail?.bomItems) ? detail.bomItems : [];
+  state.masterProductBomDraftItems = rows.map((item) => ({
+    componentProductId: String(item?.componentProductId || "").trim(),
+    componentProductName: String(item?.componentProductName || "").trim(),
+    componentStockQty: Number(item?.componentStockQty ?? 0),
+    quantity: Number(item?.quantity || 1),
+    loading: false,
+  }));
+  renderMasterProductBomDraftItems();
+}
+
+function addMasterProductBomDraftItem() {
+  if (state.masterProductBomDraftItems.length >= 10) {
+    showToast("一个 BOM 最多添加 10 个配件", true);
+    return;
+  }
+  state.masterProductBomDraftItems.push({
+    componentProductId: "",
+    componentProductName: "",
+    componentStockQty: null,
+    quantity: 1,
+    loading: false,
+  });
+  renderMasterProductBomDraftItems();
+}
+
+async function lookupMasterProductBomDraftItem(index) {
+  const item = state.masterProductBomDraftItems[index];
+  if (!item) return;
+  const componentProductId = String(item.componentProductId || "").trim();
+  if (!componentProductId) {
+    item.componentProductName = "";
+    item.componentStockQty = null;
+    renderMasterProductBomDraftItems();
+    return;
+  }
+  if (componentProductId === String(state.selectedMasterProductId || "").trim()) {
+    item.componentProductName = "";
+    showToast("主产品不能作为自己的 BOM 配件", true);
+    renderMasterProductBomDraftItems();
+    return;
+  }
+  item.loading = true;
+  renderMasterProductBomDraftItems();
+  try {
+    const matched = await findMasterProductByProductId(componentProductId);
+    if (!matched) throw new Error(`未找到配件产品：${componentProductId}`);
+    item.componentProductId = String(matched.productId || "").trim();
+    item.componentProductName = String(matched.productName || "").trim();
+  } catch (error) {
+    item.componentProductName = "";
+    showToast(error.message, true);
+  } finally {
+    item.loading = false;
+    renderMasterProductBomDraftItems();
+  }
+}
+
+function renderMasterProductBom(detail) {
+  const card = $("masterProductBomCard");
+  if (!card) return;
+  const visible = isShoulderStrapMasterProduct(detail?.product);
+  card.classList.toggle("hidden", !visible);
+  state.masterProductBomDraftItems = [];
+  if (visible) resetMasterProductBomDraft(detail);
+}
+
 function renderMasterProductDetail(detail) {
   state.selectedMasterProductDetail = detail || null;
   state.selectedMasterProductId = String(detail?.product?.productId || "");
@@ -7642,9 +7769,16 @@ function renderMasterProductDetail(detail) {
   $("masterProductDetailSubtitle").textContent = detail?.product?.productId
     ? `产品ID：${detail.product.productId}`
     : "-";
+  const backButton = $("masterProductBackToListBtn");
+  if (backButton) {
+    backButton.textContent = state.masterProductReturnPanel === "shoulderStrapProductManagement"
+      ? "返回肩带产品管理"
+      : "返回同步记录";
+  }
   renderMasterProductDetailMeta(detail?.product);
   renderMasterProductSkuTable(detail);
   renderMasterProductBoxTable(detail);
+  renderMasterProductBom(detail);
   resetMasterProductDetailForms();
   const printerInput = $("masterProductYamatoPrinterName");
   if (printerInput) {
@@ -7747,6 +7881,64 @@ function renderRakutenComboProductTable() {
         `,
       )
       .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
+}
+
+function renderShoulderStrapBomItems(items) {
+  if (!Array.isArray(items) || !items.length) return '<span class="muted">未设置</span>';
+  return `<div class="shoulder-strap-bom-preview">${items.map((item) => {
+    const name = String(item?.componentProductName || "").trim();
+    const productId = String(item?.componentProductId || "").trim();
+    const quantity = Number(item?.quantity || 0);
+    return `<span>${escapeHtml(name || productId)} <strong>×${escapeHtml(String(quantity))}</strong></span>`;
+  }).join("")}</div>`;
+}
+
+function renderShoulderStrapProductTable() {
+  const body = $("shoulderStrapProductBody");
+  const summary = $("shoulderStrapProductSummary");
+  const loadMoreButton = $("loadMoreShoulderStrapProductsBtn");
+  if (!body) return;
+  const rows = Array.isArray(state.shoulderStrapProducts) ? state.shoulderStrapProducts : [];
+  if (summary) {
+    summary.textContent = `共 ${state.shoulderStrapProductsTotal || 0} 个肩带产品，已显示 ${rows.length} 个`;
+  }
+  body.innerHTML = rows.length
+    ? rows.map((item) => {
+        const productId = String(item?.productId || "").trim();
+        const size = [item?.length, item?.width]
+          .map((value) => String(value || "").trim()).filter(Boolean).join(" × ");
+        const assemblable = item?.assemblableStock === null || item?.assemblableStock === undefined
+          ? '<span class="muted">未设置</span>'
+          : escapeHtml(displayText(item.assemblableStock));
+        return `<tr>
+          <td>${escapeHtml(displayText(productId))}</td><td>${escapeHtml(displayText(item?.productName))}</td>
+          <td>${escapeHtml(displayText(item?.color))}</td><td>${escapeHtml(displayText(item?.style))}</td>
+          <td>${escapeHtml(displayText(size))}</td>
+          <td class="master-product-current-cell">${escapeHtml(displayText(item?.stockQty ?? 0))}</td>
+          <td class="master-product-assemblable-cell">${assemblable}</td>
+          <td>${renderShoulderStrapBomItems(item?.bomItems)}</td>
+          <td><button type="button" class="tiny-btn" data-action="manageShoulderStrapBom" data-product-id="${escapeHtml(productId)}">管理 BOM</button></td>
+        </tr>`;
+      }).join("")
+    : '<tr><td colspan="9" class="muted">未找到肩带产品</td></tr>';
+  if (loadMoreButton) loadMoreButton.classList.toggle("hidden", !state.shoulderStrapProductsHasMore);
+}
+
+async function loadShoulderStrapProducts({ reset = false } = {}) {
+  const page = reset ? 1 : state.shoulderStrapProductsPage + 1;
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(state.shoulderStrapProductsPageSize),
+  });
+  const keyword = String(state.shoulderStrapProductKeyword || "").trim();
+  if (keyword) params.set("keyword", keyword);
+  const result = await request(`/master-products/shoulder-straps?${params.toString()}`);
+  const items = Array.isArray(result?.items) ? result.items : [];
+  state.shoulderStrapProducts = reset ? items : [...state.shoulderStrapProducts, ...items];
+  state.shoulderStrapProductsPage = Number(result?.page || page);
+  state.shoulderStrapProductsHasMore = Boolean(result?.hasMore);
+  state.shoulderStrapProductsTotal = Number(result?.total || 0);
+  renderShoulderStrapProductTable();
 }
 
 async function loadRakutenComboProducts({ reset = false } = {}) {
@@ -10763,7 +10955,7 @@ function renderOverseasOrderProcessingTable() {
   }
 
   if (!list.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="muted">暂无可归结的海外仓订单</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="muted">暂无可归结的海外仓订单</td></tr>';
     updateOverseasOrderProcessingSelectAll();
     updateOverseasCreatePickingBatchButtonState();
     return;
@@ -10800,6 +10992,7 @@ function renderOverseasOrderProcessingTable() {
         <td>${escapeHtml(displayText(item.shopName))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>
         <td>${escapeHtml(displayText(item.availableStock))}</td>
+        <td>${escapeHtml(displayText(item.assemblableStock ?? 0))}</td>
         <td>
           <button
             type="button"
@@ -14304,8 +14497,17 @@ function bindForms() {
     }
   });
 
-  $("masterProductBackToListBtn").addEventListener("click", () => {
-    setMasterProductView("syncRecords");
+  $("masterProductBackToListBtn").addEventListener("click", async () => {
+    try {
+      if (state.masterProductReturnPanel === "shoulderStrapProductManagement") {
+        switchPanel("shoulderStrapProductManagement");
+        await loadShoulderStrapProducts({ reset: true });
+        return;
+      }
+      setMasterProductView("syncRecords");
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   $("toggleMasterProductImportBtn").addEventListener("click", () => {
@@ -14557,6 +14759,65 @@ function bindForms() {
 
   $("resetMasterProductExportBtn").addEventListener("click", () => {
     resetMasterProductExportForm();
+  });
+
+  $("addMasterProductBomItemBtn")?.addEventListener("click", addMasterProductBomDraftItem);
+  $("masterProductBomItems")?.addEventListener("input", (event) => {
+    const idInput = event.target.closest(".master-product-bom-id-input");
+    if (idInput) {
+      const item = state.masterProductBomDraftItems[Number(idInput.dataset.index)];
+      if (!item) return;
+      item.componentProductId = String(idInput.value || "").trim();
+      item.componentProductName = "";
+      item.componentStockQty = null;
+      return;
+    }
+    const quantityInput = event.target.closest(".master-product-bom-quantity-input");
+    if (quantityInput) {
+      const item = state.masterProductBomDraftItems[Number(quantityInput.dataset.index)];
+      if (item) item.quantity = Number(quantityInput.value || 0);
+    }
+  });
+  $("masterProductBomItems")?.addEventListener("change", (event) => {
+    const input = event.target.closest(".master-product-bom-id-input");
+    if (!input) return;
+    lookupMasterProductBomDraftItem(Number(input.dataset.index)).catch((error) => showToast(error.message, true));
+  });
+  $("masterProductBomItems")?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action='removeMasterProductBomItem']");
+    if (!button) return;
+    state.masterProductBomDraftItems.splice(Number(button.dataset.index), 1);
+    renderMasterProductBomDraftItems();
+  });
+  $("masterProductBomForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submitButton = getSubmitButton(event.currentTarget, event);
+    try {
+      const productId = String(state.selectedMasterProductId || "").trim();
+      if (!productId || !isShoulderStrapMasterProduct(state.selectedMasterProductDetail?.product)) {
+        throw new Error("请先选择产品类型为“肩带”的主产品");
+      }
+      const items = state.masterProductBomDraftItems.map((item) => ({
+        componentProductId: String(item.componentProductId || "").trim(),
+        quantity: Number(item.quantity),
+      }));
+      if (items.some((item) => !item.componentProductId)) throw new Error("请填写所有配件产品ID");
+      if (items.some((item) => !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 9999)) {
+        throw new Error("配件单件用量必须是 1 到 9999 的整数");
+      }
+      const ids = items.map((item) => item.componentProductId);
+      if (new Set(ids).size !== ids.length) throw new Error("配件产品ID不能重复");
+      await withBusyButton(submitButton, "保存中...", async () => {
+        const detail = await request(`/master-products/${encodeURIComponent(productId)}/bom`, {
+          method: "PUT",
+          body: JSON.stringify({ items }),
+        });
+        renderMasterProductDetail(detail);
+        showToast("BOM 已保存");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
 
   $("masterProductPrintSettingsForm").addEventListener("submit", async (event) => {
@@ -14974,6 +15235,7 @@ function bindForms() {
 
   $("openMasterProductManagementPanel").addEventListener("click", async () => {
     try {
+      state.masterProductReturnPanel = "syncRecords";
       switchPanel("masterProductManagement");
       setMasterProductView("syncRecords");
       await Promise.all([
@@ -14993,6 +15255,44 @@ function bindForms() {
     } catch (error) {
       showToast(error.message, true);
     }
+  });
+
+  $("openShoulderStrapProductManagementPanel")?.addEventListener("click", async () => {
+    try {
+      switchPanel("shoulderStrapProductManagement");
+      await loadShoulderStrapProducts({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("refreshShoulderStrapProducts")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "刷新中...", () => loadShoulderStrapProducts({ reset: true }));
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("shoulderStrapProductSearchForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    state.shoulderStrapProductKeyword = String($("shoulderStrapProductKeyword")?.value || "").trim();
+    await loadShoulderStrapProducts({ reset: true });
+  });
+  $("resetShoulderStrapProductKeywordBtn")?.addEventListener("click", async () => {
+    state.shoulderStrapProductKeyword = "";
+    if ($("shoulderStrapProductKeyword")) $("shoulderStrapProductKeyword").value = "";
+    await loadShoulderStrapProducts({ reset: true });
+  });
+  $("loadMoreShoulderStrapProductsBtn")?.addEventListener("click", async (event) => {
+    await withBusyButton(event.currentTarget, "加载中...", () => loadShoulderStrapProducts({ reset: false }));
+  });
+  $("shoulderStrapProductBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='manageShoulderStrapBom']");
+    if (!button) return;
+    const productId = String(button.dataset.productId || "").trim();
+    if (!productId) return;
+    state.masterProductReturnPanel = "shoulderStrapProductManagement";
+    switchPanel("masterProductManagement");
+    await loadMasterProductDetail(productId);
   });
 
   $("openSkuManagementPanel").addEventListener("click", async () => {
@@ -15023,6 +15323,13 @@ function bindForms() {
     }
   });
   $("backToProductManagementFromRakutenComboProduct").addEventListener("click", async () => {
+    try {
+      await navigateToProductManagement();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("backToProductManagementFromShoulderStrap")?.addEventListener("click", async () => {
     try {
       await navigateToProductManagement();
     } catch (error) {

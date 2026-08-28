@@ -15,6 +15,7 @@ import * as XLSX from "xlsx";
 import { normalizeRakutenDeliveryTimeSlot } from "../common/rakuten-delivery-time-slot";
 import { parseRakutenOrderDate } from "../common/rakuten-order-date";
 import { parseId } from "../common/utils";
+import { calculateProductStockAvailability } from "../master-products/master-product-bom-stock";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateRakutenRmsConnectionDto } from "./dto/create-rakuten-rms-connection.dto";
 import { IgnoreRakutenRmsConflictsDto } from "./dto/ignore-rakuten-rms-conflicts.dto";
@@ -1345,7 +1346,8 @@ export class RakutenRmsApiService {
     existing: RakutenOrderRecord | null,
     syncedAt: Date,
   ): Promise<RakutenOrderWriteData> {
-    const dispatchMode = existing?.dispatchMode || (await this.resolveDispatchMode(db, item.skuCode));
+    const dispatchMode = existing?.dispatchMode ||
+      (await this.resolveDispatchMode(db, item.skuCode, item.orderQuantity));
     return {
       rmsConnectionId: connection.id,
       rmsItemKey: item.itemKey,
@@ -1406,14 +1408,28 @@ export class RakutenRmsApiService {
   private async resolveDispatchMode(
     db: Prisma.TransactionClient | PrismaService,
     skuCode: string | null,
+    requestedQtyRaw: number = 1,
   ): Promise<string> {
     const productId = String(skuCode ?? "").trim();
     if (!productId) return "china_no_stock";
     const product = await db.masterProduct.findUnique({
       where: { productId },
-      select: { stockQty: true },
+      select: {
+        stockQty: true,
+        productType: true,
+        bomComponents: {
+          orderBy: [{ position: "asc" }, { id: "asc" }],
+          select: {
+            quantity: true,
+            componentProduct: { select: { stockQty: true, status: true } },
+          },
+        },
+      },
     });
-    return Number(product?.stockQty ?? 0) > 0 ? "overseas" : "china_no_stock";
+    const requestedQty = Math.max(1, Number(requestedQtyRaw ?? 1));
+    return calculateProductStockAvailability(product).fulfillableStock >= requestedQty
+      ? "overseas"
+      : "china_no_stock";
   }
 
   private describePlan(plan: SyncPlan): SyncPlanDescriptor {

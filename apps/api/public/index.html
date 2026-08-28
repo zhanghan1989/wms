@@ -415,6 +415,7 @@
             <div class="product-actions-right">
               <button type="button" id="downloadOverseasWarehouseStockBtn">海外仓库存下载</button>
               <button type="button" id="openRakutenComboProductManagementPanel">乐天组合产品管理</button>
+              <button type="button" id="openShoulderStrapProductManagementPanel">肩带产品管理</button>
               <button type="button" id="openMasterProductManagementPanel">主表产品管理</button>
             </div>
           </div>
@@ -721,6 +722,47 @@
         </article>
       </section>
 
+      <section class="panel" id="shoulderStrapProductManagement">
+        <div class="panel-head">
+          <div>
+            <h2>肩带产品管理</h2>
+            <p class="muted">集中查看肩带主产品及其物料清单（BOM）。</p>
+          </div>
+          <div class="panel-tools">
+            <button type="button" id="refreshShoulderStrapProducts" class="ghost">刷新</button>
+            <button type="button" id="backToProductManagementFromShoulderStrap" class="ghost">返回产品管理</button>
+          </div>
+        </div>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>肩带产品一览</h3>
+              <p id="shoulderStrapProductSummary" class="muted">共 0 个肩带产品</p>
+            </div>
+          </div>
+          <form id="shoulderStrapProductSearchForm" class="form-grid inventory-search-form">
+            <label><input id="shoulderStrapProductKeyword" placeholder="输入产品ID / 产品名称 / 颜色 / 款式" /></label>
+            <button type="submit">检索</button>
+            <button type="button" id="resetShoulderStrapProductKeywordBtn" class="ghost">重置</button>
+          </form>
+          <div class="master-product-table-wrap">
+            <table class="shoulder-strap-product-table">
+              <thead>
+                <tr>
+                  <th>产品ID</th><th>产品名称</th><th>颜色</th><th>款式</th><th>尺寸</th>
+                  <th>库存</th><th>可组装在库数</th><th>BOM配件</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="shoulderStrapProductBody"></tbody>
+            </table>
+          </div>
+          <div class="action-row master-product-list-actions">
+            <button type="button" id="loadMoreShoulderStrapProductsBtn" class="ghost hidden">加载更多</button>
+          </div>
+        </article>
+      </section>
+
       <section class="panel" id="masterProductManagement">
         <article class="card">
           <div class="card-head">
@@ -896,6 +938,23 @@
                 </div>
               </article>
             </div>
+
+            <article id="masterProductBomCard" class="card master-product-bom-card hidden">
+              <div class="master-product-bom-head">
+                <div>
+                  <h4>物料清单（BOM）</h4>
+                  <p class="muted">为该肩带设置所需配件及单件用量。</p>
+                </div>
+                <button type="button" id="addMasterProductBomItemBtn" class="ghost">+ 添加配件</button>
+              </div>
+              <form id="masterProductBomForm">
+                <datalist id="masterProductBomProductIdList"></datalist>
+                <div id="masterProductBomItems" class="master-product-bom-items"></div>
+                <div class="actions master-product-bom-actions">
+                  <button type="submit" id="saveMasterProductBomBtn">保存 BOM</button>
+                </div>
+              </form>
+            </article>
 
             <article class="card">
               <h4>箱内库存</h4>
@@ -1073,7 +1132,7 @@
           <div class="card-head">
             <div>
               <h3>待处理订单汇总</h3>
-              <p id="overseasOrderProcessingSummary" class="muted order-import-note">自动归结当前有库存的乐天、亚马逊与手动订单。</p>
+              <p id="overseasOrderProcessingSummary" class="muted order-import-note">自动归结有成品库存或配件可组装的乐天、亚马逊与手动订单。</p>
             </div>
             <div class="action-row">
               <button id="openOverseasPickingBatchManagementBtn" type="button">批次管理</button>
@@ -1094,7 +1153,8 @@
                   <th>数量</th>
                   <th>店铺</th>
                   <th>收件人</th>
-                  <th>可用库存</th>
+                  <th>成品在库数</th>
+                  <th>可组装在库数</th>
                   <th>操作</th>
                 </tr>
               </thead>

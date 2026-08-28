@@ -9,6 +9,7 @@ import {
   Req,
   Res,
   UploadedFile,
+  Put,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -24,6 +25,7 @@ import { CreateMasterProductOutboundOneDto } from './dto/create-master-product-o
 import { ExportMasterProductsDto } from './dto/export-master-products.dto';
 import { ManualAdjustMasterProductBoxDto } from './dto/manual-adjust-master-product-box.dto';
 import { UpdateMasterProductPrintSettingsDto } from './dto/update-master-product-print-settings.dto';
+import { UpdateMasterProductBomDto } from './dto/update-master-product-bom.dto';
 import { MasterProductsService } from './master-products.service';
 
 @Controller('master-products')
@@ -46,6 +48,15 @@ export class MasterProductsController {
     @Query('pageSize') pageSize?: string,
   ): Promise<unknown> {
     return this.masterProductsService.listSyncRecords(page, pageSize);
+  }
+
+  @Get('shoulder-straps')
+  async listShoulderStraps(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('keyword') keyword?: string,
+  ): Promise<unknown> {
+    return this.masterProductsService.listShoulderStraps(page, pageSize, keyword);
   }
 
   @Get(':productId/detail')
@@ -146,6 +157,14 @@ export class MasterProductsController {
     @Body() payload: UpdateMasterProductPrintSettingsDto,
   ): Promise<unknown> {
     return this.masterProductsService.updatePrintSettings(productId, payload);
+  }
+
+  @Put(':productId/bom')
+  async updateBom(
+    @Param('productId') productId: string,
+    @Body() payload: UpdateMasterProductBomDto,
+  ): Promise<unknown> {
+    return this.masterProductsService.updateBom(productId, payload);
   }
 
   @Post(':productId/fba-replenishments')

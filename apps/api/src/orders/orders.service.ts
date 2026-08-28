@@ -28,6 +28,7 @@ import * as XLSX from 'xlsx';
 import { normalizeRakutenDeliveryTimeSlot } from '../common/rakuten-delivery-time-slot';
 import { parseRakutenOrderDate } from '../common/rakuten-order-date';
 import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
+import { calculateProductStockAvailability } from '../master-products/master-product-bom-stock';
 import { PrismaService } from '../prisma/prisma.service';
 
 const execFileAsync = promisify(execFile);
@@ -171,6 +172,7 @@ interface OrderListItem extends RakutenOrderRecord {
   resolvedProductId: string | null;
   resolvedProductName: string | null;
   availableStock: number;
+  assemblableStock: number;
   fulfillmentMode: OrderFulfillmentMode;
   trackingClearanceStatus?: RakutenTrackingClearanceStatus;
 }
@@ -345,6 +347,7 @@ type AmazonFulfillmentMode = 'overseas_warehouse' | 'xiya_api';
 
 interface AmazonEnrichedOrderListItem extends AmazonOrderListItem {
   availableStock: number;
+  assemblableStock: number;
   fulfillmentMode: AmazonFulfillmentMode;
 }
 type ManualEnrichedOrderListItem = AmazonEnrichedOrderListItem & ManualOrderXyjgFields;
@@ -494,6 +497,7 @@ interface OverseasWarehouseOrderListItem {
   shopName: string | null;
   shippingName: string | null;
   availableStock: number;
+  assemblableStock?: number;
   orderImportedAtRaw?: string | null;
   productName?: string | null;
   productNameExtra?: string | null;
@@ -3159,7 +3163,7 @@ export class OrdersService {
     const shippingCity = this.normalizeEditableText(payload.shippingCity, '市区町村', 128);
     const shippingAddress = this.normalizeEditableText(payload.shippingAddress, '地址', 5000);
     const shippingPhone = this.normalizeEditableText(payload.shippingPhone, '电话', 64);
-    const dispatchMode = await this.resolveDispatchModeForProductId(productId);
+    const dispatchMode = await this.resolveDispatchModeForProductId(productId, orderQuantity ?? 1);
     const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
     const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
     const deliveryDateRaw = this.normalizeEditableText(payload.deliveryDateRaw, 'お届け日指定', 32);
@@ -3327,7 +3331,7 @@ export class OrdersService {
     const shipAddress1 = this.normalizeEditableText(payload.shipAddress1, '地址1', 5000);
     const shipAddress2 = this.normalizeEditableText(payload.shipAddress2, '地址2', 5000);
     const shipAddress3 = this.normalizeEditableText(payload.shipAddress3, '地址3', 5000);
-    const dispatchMode = await this.resolveDispatchModeForProductId(productId);
+    const dispatchMode = await this.resolveDispatchModeForProductId(productId, quantityPurchased ?? 1);
     const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
     const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
     const shipmentNoRegisteredAt = this.resolveEditedShipmentRegisteredAt(
@@ -3455,7 +3459,7 @@ export class OrdersService {
     const shipAddress1 = this.normalizeEditableText(payload.shipAddress1, '地址1', 5000);
     const shipAddress2 = this.normalizeEditableText(payload.shipAddress2, '地址2', 5000);
     const shipAddress3 = this.normalizeEditableText(payload.shipAddress3, '地址3', 5000);
-    const dispatchMode = await this.resolveDispatchModeForProductId(productId);
+    const dispatchMode = await this.resolveDispatchModeForProductId(productId, quantityPurchased ?? 1);
     const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
     const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
     const shipmentNoRegisteredAt = this.resolveEditedShipmentRegisteredAt(
@@ -4144,7 +4148,8 @@ export class OrdersService {
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
               (includeAll ||
-                (row.availableStock > 0 && !activePickedRefs.has(`rakuten:${row.id.toString()}`))),
+                (row.availableStock + row.assemblableStock > 0 &&
+                  !activePickedRefs.has(`rakuten:${row.id.toString()}`))),
           )
           .map((row) => ({
             source: 'rakuten' as const,
@@ -4160,6 +4165,7 @@ export class OrdersService {
             shopName: row.shopName,
             shippingName: row.shippingName,
             availableStock: row.availableStock,
+            assemblableStock: row.assemblableStock,
             orderImportedAtRaw: row.orderImportedAtRaw,
             productName: row.productName,
             productNameExtra: row.productNameExtra,
@@ -4177,7 +4183,8 @@ export class OrdersService {
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
               (includeAll ||
-                (row.availableStock > 0 && !activePickedRefs.has(`amazon:${row.id.toString()}`))),
+                (row.availableStock + row.assemblableStock > 0 &&
+                  !activePickedRefs.has(`amazon:${row.id.toString()}`))),
           )
           .map((row) => ({
             source: 'amazon' as const,
@@ -4193,6 +4200,7 @@ export class OrdersService {
             shopName: row.resolvedShopName || row.shopName,
             shippingName: row.recipientName,
             availableStock: row.availableStock,
+            assemblableStock: row.assemblableStock,
             purchaseDateRaw: row.purchaseDateRaw,
             productName: row.productName,
             buyerPhoneNumber: row.buyerPhoneNumber,
@@ -4208,7 +4216,8 @@ export class OrdersService {
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
               (includeAll ||
-                (row.availableStock > 0 && !activePickedRefs.has(`manual:${row.id.toString()}`))),
+                (row.availableStock + row.assemblableStock > 0 &&
+                  !activePickedRefs.has(`manual:${row.id.toString()}`))),
           )
           .map((row) => ({
             source: 'manual' as const,
@@ -4224,6 +4233,7 @@ export class OrdersService {
             shopName: row.resolvedShopName || row.shopName,
             shippingName: row.recipientName,
             availableStock: row.availableStock,
+            assemblableStock: row.assemblableStock,
             purchaseDateRaw: row.purchaseDateRaw,
             productName: row.productName,
             buyerPhoneNumber: row.buyerPhoneNumber,
@@ -4281,7 +4291,7 @@ export class OrdersService {
       if (
         !enrichedRow ||
         enrichedRow.fulfillmentMode !== 'overseas_warehouse' ||
-        enrichedRow.availableStock <= 0 ||
+        enrichedRow.availableStock + enrichedRow.assemblableStock <= 0 ||
         activePickedRefs.has(`rakuten:${id.toString()}`)
       ) {
         throw new BadRequestException('当前订单已不在海外仓待处理范围内，无法切中国发');
@@ -4344,7 +4354,7 @@ export class OrdersService {
     if (
       !enrichedRow ||
       enrichedRow.fulfillmentMode !== 'overseas_warehouse' ||
-      enrichedRow.availableStock <= 0 ||
+      enrichedRow.availableStock + enrichedRow.assemblableStock <= 0 ||
       activePickedRefs.has(`${source}:${id.toString()}`)
     ) {
       throw new BadRequestException('当前订单已不在海外仓待处理范围内，无法切中国发');
@@ -8615,6 +8625,55 @@ export class OrdersService {
     };
   }
 
+  private async loadProductStockAvailability(productIdsRaw: string[]): Promise<
+    Map<
+      string,
+      {
+        productName: string | null;
+        finishedStock: number;
+        assemblableStock: number;
+        fulfillableStock: number;
+      }
+    >
+  > {
+    const productIds = Array.from(
+      new Set(productIdsRaw.map((value) => String(value ?? '').trim()).filter(Boolean)),
+    );
+    if (!productIds.length) return new Map();
+
+    const rows = await this.prisma.masterProduct.findMany({
+      where: { productId: { in: productIds } },
+      select: {
+        productId: true,
+        productName: true,
+        productType: true,
+        stockQty: true,
+        bomComponents: {
+          orderBy: [{ position: 'asc' }, { id: 'asc' }],
+          select: {
+            quantity: true,
+            componentProduct: { select: { stockQty: true, status: true } },
+          },
+        },
+      },
+    });
+
+    return new Map(
+      rows.map((row) => {
+        const availability = calculateProductStockAvailability(row);
+        return [
+          String(row.productId ?? '').trim(),
+          {
+            productName: row.productName ?? null,
+            finishedStock: availability.finishedStock,
+            assemblableStock: availability.assemblableStock ?? 0,
+            fulfillableStock: availability.fulfillableStock,
+          },
+        ] as const;
+      }),
+    );
+  }
+
   private async enrichOrderRows(rows: RakutenOrderRecord[]): Promise<OrderListItem[]> {
     if (!rows.length) {
       return [];
@@ -8635,41 +8694,32 @@ export class OrdersService {
         resolvedProductId: null,
         resolvedProductName: null,
         availableStock: 0,
+        assemblableStock: 0,
         fulfillmentMode: this.resolveFulfillmentModeFromDispatchMode(row.dispatchMode, 0),
       }));
     }
 
-    const productRows = await this.prisma.masterProduct.findMany({
-      where: {
-        productId: { in: lookupProductIds },
-      },
-      select: {
-        productId: true,
-        productName: true,
-        stockQty: true,
-      },
-    });
-
-    const stockQtyByProductId = new Map(
-      productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
-    );
-    const productNameByProductId = new Map(
-      productRows.map((row) => [String(row.productId ?? '').trim(), row.productName ?? null]),
-    );
+    const availabilityByProductId = await this.loadProductStockAvailability(lookupProductIds);
 
     return rows.map((row) => {
       const productId =
         String(row.skuCode ?? '').trim() ||
         String(row.setComponentSkuCode ?? '').trim() ||
         null;
-      const availableStock = productId ? (stockQtyByProductId.get(productId) ?? 0) : 0;
+      const availability = productId ? availabilityByProductId.get(productId) : null;
+      const availableStock = availability?.finishedStock ?? 0;
+      const assemblableStock = availability?.assemblableStock ?? 0;
 
       return {
         ...row,
         resolvedProductId: productId,
-        resolvedProductName: productId ? (productNameByProductId.get(productId) ?? null) : null,
+        resolvedProductName: availability?.productName ?? null,
         availableStock,
-        fulfillmentMode: this.resolveFulfillmentModeFromDispatchMode(row.dispatchMode, availableStock),
+        assemblableStock,
+        fulfillmentMode: this.resolveFulfillmentModeFromDispatchMode(
+          row.dispatchMode,
+          availableStock + assemblableStock,
+        ),
       };
     });
   }
@@ -8745,19 +8795,7 @@ export class OrdersService {
       ),
     );
 
-    const productRows = productIds.length
-      ? await this.prisma.masterProduct.findMany({
-          where: { productId: { in: productIds } },
-          select: { productId: true, productName: true, stockQty: true },
-        })
-      : [];
-
-    const stockQtyByProductId = new Map(
-      productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
-    );
-    const productNameByProductId = new Map(
-      productRows.map((row) => [String(row.productId ?? '').trim(), row.productName ?? null]),
-    );
+    const availabilityByProductId = await this.loadProductStockAvailability(productIds);
     const resolveProductId = (row: AmazonOrderRecord): string | null => {
       const skuCode = String(row.sku ?? '').trim();
       const skuMeta =
@@ -8772,7 +8810,10 @@ export class OrdersService {
         return {
           orderId: row.orderId,
           dispatchMode: this.resolveEffectiveAmazonDispatchMode(row),
-          availableStock: productId ? (stockQtyByProductId.get(productId) ?? 0) : 0,
+          availableStock: productId
+            ? (availabilityByProductId.get(productId)?.fulfillableStock ?? 0)
+            : 0,
+          requestedQty: Number(row.quantityPurchased ?? 1),
         };
       }),
     );
@@ -8784,12 +8825,16 @@ export class OrdersService {
         normalizedSkuMetaByCode.get(normalizeAmazonSkuLookupKey(skuCode)) ??
         null;
       const productId = resolveProductId(row);
-      const availableStock = productId ? (stockQtyByProductId.get(productId) ?? 0) : 0;
+      const availability = productId ? availabilityByProductId.get(productId) : null;
+      const availableStock = availability?.finishedStock ?? 0;
+      const assemblableStock = availability?.assemblableStock ?? 0;
       const orderId = String(row.orderId ?? '').trim();
       const effectiveDispatchMode = this.resolveEffectiveAmazonDispatchMode(row);
       const isChinaFulfillment =
         this.isChinaDispatchMode(effectiveDispatchMode) ||
-        (orderId ? chinaFulfillmentOrderIds.has(orderId) : availableStock <= 0);
+        (orderId
+          ? chinaFulfillmentOrderIds.has(orderId)
+          : availableStock + assemblableStock < Math.max(1, Number(row.quantityPurchased ?? 1)));
       const originalItemId = this.resolveOriginalAmazonOrderItemId(row.rawPayload, row.orderItemId);
       const observation = observations.find((item) =>
         item.orderId === orderId &&
@@ -8807,9 +8852,10 @@ export class OrdersService {
         ...row,
         shippingOrigin: isChinaFulfillment ? '中国発' : this.resolveAmazonShippingOriginFromDispatchMode(OVERSEAS_DISPATCH_MODE.OVERSEAS),
         resolvedProductId: productId,
-        resolvedProductName: productId ? (productNameByProductId.get(productId) ?? null) : null,
+        resolvedProductName: availability?.productName ?? null,
         resolvedShopName: skuMeta?.shopName ?? null,
         availableStock,
+        assemblableStock,
         fulfillmentMode: isChinaFulfillment ? 'xiya_api' : 'overseas_warehouse',
         amazonObservedOrderStatus: observedStatus,
         amazonObservedQuantityToShip: observation?.quantityToShip ?? null,
@@ -8858,7 +8904,7 @@ export class OrdersService {
   }
 
   private resolveChinaFulfillmentOrderIds(
-    rows: Array<{ orderId: string | null; dispatchMode?: string | null; availableStock: number;
+    rows: Array<{ orderId: string | null; dispatchMode?: string | null; availableStock: number; requestedQty?: number;
     }>,
   ): Set<string> {
     const orderIds = new Set<string>();
@@ -8875,7 +8921,8 @@ export class OrdersService {
       if (dispatchMode === OVERSEAS_DISPATCH_MODE.OVERSEAS) {
         return;
       }
-      if (Number(row.availableStock ?? 0) <= 0) {
+      const requestedQty = Math.max(1, Number(row.requestedQty ?? 1));
+      if (Number(row.availableStock ?? 0) < requestedQty) {
         orderIds.add(orderId);
       }
     });
@@ -8932,15 +8979,7 @@ export class OrdersService {
           .filter((productId) => productId.length > 0),
       ),
     );
-    const productRows = productIds.length
-      ? await this.prisma.masterProduct.findMany({
-          where: { productId: { in: productIds } },
-          select: { productId: true, stockQty: true },
-        })
-      : [];
-    const stockQtyByProductId = new Map(
-      productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
-    );
+    const availabilityByProductId = await this.loadProductStockAvailability(productIds);
     const importedAt = new Date();
     const createManyInput: Prisma.RakutenOrderRecordCreateManyInput[] = rowsToCreate.map((row) => ({
       rowHash: row.rowHash,
@@ -8970,8 +9009,13 @@ export class OrdersService {
       shipmentNoRegisteredAt: row.shipmentNoRegisteredAt,
       dispatchMode: (() => {
         const productId = String(row.skuCode ?? row.setComponentSkuCode ?? '').trim();
-        const stockQty = productId ? (stockQtyByProductId.get(productId) ?? 0) : 0;
-        return stockQty > 0 ? OVERSEAS_DISPATCH_MODE.OVERSEAS : OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
+        const fulfillableStock = productId
+          ? (availabilityByProductId.get(productId)?.fulfillableStock ?? 0)
+          : 0;
+        const requestedQty = Math.max(1, Number(row.orderQuantity ?? 1));
+        return fulfillableStock >= requestedQty
+          ? OVERSEAS_DISPATCH_MODE.OVERSEAS
+          : OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
       })(),
       sendStatus: row.sendStatus,
       deliveryMethod: row.deliveryMethod,
@@ -9358,22 +9402,16 @@ export class OrdersService {
       ),
     );
 
-    const productRows = productIds.length
-      ? await this.prisma.masterProduct.findMany({
-          where: { productId: { in: productIds } },
-          select: { productId: true, stockQty: true },
-        })
-      : [];
-
-    const stockQtyByProductId = new Map(
-      productRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
-    );
+    const availabilityByProductId = await this.loadProductStockAvailability(productIds);
     const chinaFulfillmentOrderIds = this.resolveChinaFulfillmentOrderIds(
       rowsToCreate.map((row) => {
         const productId = resolveSkuMeta(row.sku)?.productId;
         return {
           orderId: row.orderId,
-          availableStock: productId ? (stockQtyByProductId.get(productId) ?? 0) : 0,
+          availableStock: productId
+            ? (availabilityByProductId.get(productId)?.fulfillableStock ?? 0)
+            : 0,
+          requestedQty: Number(row.quantityPurchased ?? 1),
         };
       }),
     );
@@ -9381,9 +9419,13 @@ export class OrdersService {
     const createManyInput: Prisma.AmazonOrderRecordCreateManyInput[] = rowsToCreate.map((row) => {
       const dispatchMode = (() => {
         const productId = resolveSkuMeta(row.sku)?.productId;
-        const stockQty = productId ? (stockQtyByProductId.get(productId) ?? 0) : 0;
+        const fulfillableStock = productId
+          ? (availabilityByProductId.get(productId)?.fulfillableStock ?? 0)
+          : 0;
         const orderId = String(row.orderId ?? '').trim();
-        return (orderId ? chinaFulfillmentOrderIds.has(orderId) : stockQty <= 0)
+        return (orderId
+          ? chinaFulfillmentOrderIds.has(orderId)
+          : fulfillableStock < Math.max(1, Number(row.quantityPurchased ?? 1)))
           ? OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK
           : OVERSEAS_DISPATCH_MODE.OVERSEAS;
       })();
@@ -9699,16 +9741,17 @@ export class OrdersService {
     return parsed;
   }
 
-  private async resolveDispatchModeForProductId(productIdRaw: string | null): Promise<string> {
+  private async resolveDispatchModeForProductId(
+    productIdRaw: string | null,
+    requestedQtyRaw: number = 1,
+  ): Promise<string> {
     const productId = String(productIdRaw ?? '').trim();
     if (!productId) {
       return OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
     }
-    const product = await this.prisma.masterProduct.findUnique({
-      where: { productId },
-      select: { stockQty: true },
-    });
-    return Number(product?.stockQty ?? 0) > 0
+    const availability = (await this.loadProductStockAvailability([productId])).get(productId);
+    const requestedQty = Math.max(1, Number(requestedQtyRaw ?? 1));
+    return Number(availability?.fulfillableStock ?? 0) >= requestedQty
       ? OVERSEAS_DISPATCH_MODE.OVERSEAS
       : OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
   }
@@ -9847,7 +9890,7 @@ export class OrdersService {
     const shipAddress3 = this.normalizeEditableText(payload.shipAddress3, withField('shipAddress3'), 5000);
     const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, withField('shipmentCompany'), 128);
     const shipmentNo = this.normalizeEditableText(payload.shipmentNo, withField('shipmentNo'), 128);
-    const dispatchMode = await this.resolveDispatchModeForProductId(productId);
+    const dispatchMode = await this.resolveDispatchModeForProductId(productId, quantityPurchased);
     const now = new Date();
     const rawPayload = this.buildAmazonManualRawPayload({
       orderId,
