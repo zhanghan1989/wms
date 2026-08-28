@@ -10,6 +10,87 @@
   --shadow: 0 12px 32px rgba(13, 43, 26, 0.12);
 }
 
+.master-product-bom-card { margin-bottom: 16px; }
+.master-product-bom-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.master-product-bom-head h4,
+.master-product-bom-head p { margin: 0; }
+.master-product-bom-head p { margin-top: 5px; }
+.master-product-bom-items { display: grid; gap: 10px; }
+.master-product-bom-item {
+  display: grid;
+  grid-template-columns: 36px minmax(170px, 240px) minmax(220px, 1fr) 110px auto;
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fcfa;
+}
+.master-product-bom-order {
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #dff5ec;
+  color: var(--primary);
+  font-weight: 700;
+}
+.master-product-bom-name {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.master-product-bom-name small { color: var(--muted); white-space: nowrap; }
+.master-product-bom-empty {
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  text-align: center;
+}
+.master-product-bom-actions { justify-content: flex-end; margin-top: 12px; }
+.shoulder-strap-product-table { min-width: 1120px; }
+.shoulder-strap-bom-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 260px;
+  max-width: 560px;
+}
+.shoulder-strap-bom-preview span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border: 1px solid #cfe9df;
+  border-radius: 999px;
+  background: #f0faf6;
+  white-space: nowrap;
+}
+.shoulder-strap-bom-preview strong,
+.master-product-assemblable-cell { color: var(--primary); font-weight: 700; }
+
+@media (max-width: 900px) {
+  .master-product-bom-head { align-items: stretch; flex-direction: column; }
+  .master-product-bom-item { grid-template-columns: 32px 1fr; }
+  .master-product-bom-item label,
+  .master-product-bom-item button { grid-column: 2; }
+  .master-product-bom-order { grid-row: 1 / span 4; }
+}
+
 * {
   box-sizing: border-box;
 }

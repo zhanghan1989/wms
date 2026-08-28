@@ -17,6 +17,7 @@ import {
 import { createHash, randomBytes } from 'crypto';
 import * as XLSX from 'xlsx';
 import { parseId } from '../common/utils';
+import { calculateProductStockAvailability } from '../master-products/master-product-bom-stock';
 import { PrismaService } from '../prisma/prisma.service';
 import { AmazonSpApiClient } from './amazon-sp-api.client';
 import { AmazonSpApiCryptoService } from './amazon-sp-api-crypto.service';
@@ -1073,7 +1074,19 @@ export class AmazonSpApiService {
         sku: true,
         fbmSku: true,
         rbSku: true,
-        masterProduct: { select: { stockQty: true } },
+        masterProduct: {
+          select: {
+            stockQty: true,
+            productType: true,
+            bomComponents: {
+              orderBy: [{ position: 'asc' }, { id: 'asc' }],
+              select: {
+                quantity: true,
+                componentProduct: { select: { stockQty: true, status: true } },
+              },
+            },
+          },
+        },
       },
     });
     const availableStockBySku = new Map<string, number>();
@@ -1081,14 +1094,18 @@ export class AmazonSpApiService {
       for (const candidate of [sku.sku, sku.fbmSku, sku.rbSku]) {
         const key = this.normalizeSku(candidate);
         if (key && !availableStockBySku.has(key)) {
-          availableStockBySku.set(key, Number(sku.masterProduct?.stockQty ?? 0));
+          availableStockBySku.set(
+            key,
+            calculateProductStockAvailability(sku.masterProduct).fulfillableStock,
+          );
         }
       }
     }
     for (const order of orders) {
       const dispatchMode = (order.orderItems ?? []).some((item) => {
         const stockQty = availableStockBySku.get(this.normalizeSku(item.product?.sellerSku));
-        return stockQty === undefined || stockQty <= 0;
+        const requestedQty = Math.max(1, this.nonNegativeInt(item.quantityOrdered));
+        return stockQty === undefined || stockQty < requestedQty;
       })
         ? DISPATCH_CHINA_NO_STOCK
         : DISPATCH_OVERSEAS;
