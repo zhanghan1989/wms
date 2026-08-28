@@ -11780,13 +11780,6 @@ async function confirmOverseasBatchWorkComplete() {
     method: "POST",
   });
   await Promise.all([loadOverseasPickingBatches(), loadOverseasPickingBatchDetail(detail.id)]);
-
-  await openActionConfirmModal(
-    "检查完成，当前批次所有面单均已打印，本批次作业已完成。",
-    "本批次作业完成",
-    "确认",
-    { showCancel: false },
-  );
 }
 
 async function loadYamatoShipmentBatches() {
@@ -15244,7 +15237,15 @@ function bindForms() {
   $("overseasCompleteBatchWorkBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      await withBusyButton(button, "检查中...", confirmOverseasBatchWorkComplete);
+      await withBusyButton(button, "检查中...", async () => {
+        await withGlobalLoading("正在检查本批次面单打印状态，请稍候...", confirmOverseasBatchWorkComplete);
+        await openActionConfirmModal(
+          "检查完成，当前批次所有面单均已打印，本批次作业已完成。",
+          "本批次作业完成",
+          "确认",
+          { showCancel: false },
+        );
+      });
     } catch (error) {
       showToast(error.message, true);
     }
