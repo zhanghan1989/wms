@@ -431,6 +431,33 @@ export class MasterProductsService {
     throw new ConflictException('零配件编号生成冲突，请重试');
   }
 
+  async listShoulderStrapPartMovements(partIdRaw: string): Promise<unknown> {
+    const partId = this.parseShoulderStrapPartId(partIdRaw);
+    const part = await this.prisma.shoulderStrapPart.findUnique({ where: { id: partId } });
+    if (!part) throw new NotFoundException('未找到肩带零配件');
+    const rows = await this.prisma.shoulderStrapPartStockMovement.findMany({
+      where: { partId },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 100,
+      include: { operator: { select: { username: true } } },
+    });
+    return {
+      part: this.serializeShoulderStrapPart(part),
+      items: rows.map((row) => ({
+        id: row.id.toString(),
+        movementType: row.movementType,
+        refType: row.refType,
+        refId: row.refId.toString(),
+        productId: row.productId,
+        qtyDelta: Number(row.qtyDelta),
+        beforeQty: Number(row.beforeQty),
+        afterQty: Number(row.afterQty),
+        operatorName: row.operator.username,
+        createdAt: row.createdAt,
+      })),
+    };
+  }
+
   async updateShoulderStrapPart(
     partIdRaw: string,
     payload: UpdateShoulderStrapPartDto,

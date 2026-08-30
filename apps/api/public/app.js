@@ -7781,6 +7781,7 @@ function renderShoulderStrapPartTable() {
         <td class="master-product-current-cell">${escapeHtml(displayText(item?.stockQty ?? 0))}</td>
         <td>${escapeHtml(formatDate(item?.updatedAt))}</td>
         <td><div class="action-row compact-actions">
+          <button type="button" class="tiny-btn ghost" data-action="viewShoulderStrapPartMovements" data-id="${escapeHtml(String(item?.id || ""))}">流水</button>
           <button type="button" class="tiny-btn" data-action="editShoulderStrapPart" data-id="${escapeHtml(String(item?.id || ""))}">修改</button>
           <button type="button" class="tiny-btn danger" data-action="deleteShoulderStrapPart" data-id="${escapeHtml(String(item?.id || ""))}">删除</button>
         </div></td>
@@ -7810,6 +7811,25 @@ function openShoulderStrapPartEditor(part = null) {
   $("shoulderStrapPartModalTitle").textContent = id ? "修改肩带零配件" : "新增肩带零配件";
   openModal("shoulderStrapPartModal");
   $("shoulderStrapPartName")?.focus();
+}
+
+async function openShoulderStrapPartMovements(partId) {
+  const result = await request(`/master-products/shoulder-strap-parts/${encodeURIComponent(partId)}/movements`);
+  const part = result?.part || {};
+  const rows = Array.isArray(result?.items) ? result.items : [];
+  $("shoulderStrapPartMovementsTitle").textContent = `库存流水：${displayText(part.partCode)} - ${displayText(part.partName)}`;
+  $("shoulderStrapPartMovementsBody").innerHTML = rows.length
+    ? rows.map((item) => `<tr>
+        <td>${escapeHtml(formatDate(item.createdAt))}</td>
+        <td>${escapeHtml(displayText(item.productId))}</td>
+        <td>${escapeHtml(displayText(item.refId))}</td>
+        <td>${escapeHtml(displayText(item.beforeQty))}</td>
+        <td class="${Number(item.qtyDelta) < 0 ? "danger-text" : "master-product-current-cell"}">${escapeHtml(displayText(item.qtyDelta))}</td>
+        <td>${escapeHtml(displayText(item.afterQty))}</td>
+        <td>${escapeHtml(displayText(item.operatorName))}</td>
+      </tr>`).join("")
+    : '<tr><td colspan="7" class="muted">暂无订单扣减流水</td></tr>';
+  openModal("shoulderStrapPartMovementsModal");
 }
 
 function renderShoulderStrapBomDraftItems() {
@@ -15237,6 +15257,17 @@ function bindForms() {
     await loadShoulderStrapParts();
   });
   $("shoulderStrapPartBody")?.addEventListener("click", async (event) => {
+    const movementsButton = event.target.closest("button[data-action='viewShoulderStrapPartMovements']");
+    if (movementsButton) {
+      try {
+        await withBusyButton(movementsButton, "加载中...", () =>
+          openShoulderStrapPartMovements(String(movementsButton.dataset.id || "")),
+        );
+      } catch (error) {
+        showToast(error.message, true);
+      }
+      return;
+    }
     const editButton = event.target.closest("button[data-action='editShoulderStrapPart']");
     if (editButton) {
       const part = state.shoulderStrapParts.find((item) => String(item?.id) === String(editButton.dataset.id));
@@ -18368,6 +18399,13 @@ function bindDelegates() {
       closeModal("shoulderStrapBomModal");
       return;
     }
+    const shoulderStrapPartMovementsClose = event.target.closest(
+      "button[data-action='closeShoulderStrapPartMovementsModal']",
+    );
+    if (shoulderStrapPartMovementsClose) {
+      closeModal("shoulderStrapPartMovementsModal");
+      return;
+    }
     const createRakutenComboProductClose = event.target.closest(
       "button[data-action='closeCreateRakutenComboProductModal']",
     );
@@ -18691,6 +18729,9 @@ function bindDelegates() {
   });
   $("shoulderStrapBomModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeModal("shoulderStrapBomModal");
+  });
+  $("shoulderStrapPartMovementsModal")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) closeModal("shoulderStrapPartMovementsModal");
   });
 
   $("bulkRakutenComboProductUploadModal").addEventListener("click", (event) => {

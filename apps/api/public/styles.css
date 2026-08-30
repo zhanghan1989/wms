@@ -64,6 +64,7 @@
 .master-product-bom-actions { justify-content: flex-end; margin-top: 12px; }
 .shoulder-strap-product-table { min-width: 1120px; }
 .shoulder-strap-parts-card { margin-bottom: 16px; }
+.danger-text { color: var(--danger); font-weight: 700; }
 .shoulder-strap-part-table { min-width: 720px; }
 .shoulder-strap-bom-modal-card { max-width: 980px; }
 .shoulder-strap-bom-item {

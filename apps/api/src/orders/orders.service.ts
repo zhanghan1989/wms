@@ -702,6 +702,7 @@ interface OverseasPickingBatchItemSnapshot {
   shopName: string | null;
   shippingName: string | null;
   pickingPlanSnapshot?: OverseasPickingPlanSnapshotItem[];
+  bomSnapshot?: ShoulderStrapBomSnapshotItem[];
 }
 
 type OverseasPickingPlanSnapshotItem = {
@@ -709,6 +710,13 @@ type OverseasPickingPlanSnapshotItem = {
   boxCode: string | null;
   boxQty: number;
   pickQty: number;
+};
+
+type ShoulderStrapBomSnapshotItem = {
+  partId: string;
+  partCode: string;
+  partName: string;
+  quantity: number;
 };
 
 interface YamatoImportFileResult {
@@ -1481,6 +1489,7 @@ export class OrdersService {
   ): Promise<OverseasPickingBatchCreateResult> {
     const snapshots = await this.collectOverseasPickingBatchItemSnapshots(payload?.items);
     await this.attachOverseasPickingPlanSnapshots(snapshots);
+    await this.attachShoulderStrapBomSnapshots(snapshots);
     await this.assertOverseasPickingBatchDemandWithinStock(snapshots);
     const activeDuplicates = await this.findActiveOverseasPickingBatchDuplicates(snapshots);
     if (activeDuplicates.length) {
@@ -1513,6 +1522,7 @@ export class OrdersService {
             requestedQty: item.requestedQty,
             availableStockSnapshot: item.availableStockSnapshot,
             pickingPlanSnapshot: item.pickingPlanSnapshot ?? [],
+            bomSnapshot: item.bomSnapshot ?? [],
             shopName: item.shopName,
             shippingName: item.shippingName,
           })),
@@ -2392,6 +2402,30 @@ export class OrdersService {
           })
         : [];
       const productById = new Map(products.map((row) => [row.productId, row] as const));
+      const bomSnapshotByProductId = new Map<string, ShoulderStrapBomSnapshotItem[]>();
+      for (const item of normalizedItems) {
+        const snapshot = this.parseShoulderStrapBomSnapshot(item.bomSnapshot);
+        if (snapshot === null) continue;
+        const existing = bomSnapshotByProductId.get(item.productId);
+        if (existing && JSON.stringify(existing) !== JSON.stringify(snapshot)) {
+          throw new ConflictException(`产品 ${item.productId} 的批次 BOM 快照不一致，请重新创建批次`);
+        }
+        bomSnapshotByProductId.set(item.productId, snapshot);
+      }
+      const snapshotPartIds = Array.from(
+        new Set(
+          Array.from(bomSnapshotByProductId.values())
+            .flat()
+            .map((item) => item.partId),
+        ),
+      ).map((id) => BigInt(id));
+      const snapshotParts = snapshotPartIds.length
+        ? await tx.shoulderStrapPart.findMany({
+            where: { id: { in: snapshotPartIds } },
+            select: { id: true, partCode: true, partName: true, stockQty: true, status: true },
+          })
+        : [];
+      const snapshotPartById = new Map(snapshotParts.map((part) => [part.id.toString(), part] as const));
       const finishedDemandByProductId = new Map<string, number>();
       const componentDemandByPartId = new Map<
         string,
@@ -2401,6 +2435,7 @@ export class OrdersService {
           partName: string;
           stockQty: number;
           requiredQty: number;
+          requiredQtyByProductId: Map<string, number>;
         }
       >();
 
@@ -2413,7 +2448,20 @@ export class OrdersService {
         if (assemblyDemand <= 0) continue;
 
         const product = productById.get(productId);
-        const bomItems = product?.bomComponents ?? [];
+        const storedSnapshot = bomSnapshotByProductId.get(productId);
+        const bomItems = storedSnapshot
+          ? storedSnapshot.map((item) => ({
+              partId: BigInt(item.partId),
+              quantity: item.quantity,
+              part: snapshotPartById.get(item.partId) ?? {
+                id: BigInt(item.partId),
+                partCode: item.partCode,
+                partName: item.partName,
+                stockQty: 0,
+                status: 0,
+              },
+            }))
+          : (product?.bomComponents ?? []);
         if (String(product?.productType ?? '').trim() !== '肩带' || !bomItems.length) {
           throw new ConflictException(
             `产品 ${productId} 成品库存不足，当前成品 ${finishedStock}，需要 ${totalQty}`,
@@ -2431,6 +2479,10 @@ export class OrdersService {
           const existing = componentDemandByPartId.get(key);
           if (existing) {
             existing.requiredQty += requiredQty;
+            existing.requiredQtyByProductId.set(
+              productId,
+              (existing.requiredQtyByProductId.get(productId) ?? 0) + requiredQty,
+            );
           } else {
             componentDemandByPartId.set(key, {
               partId: item.partId,
@@ -2438,6 +2490,7 @@ export class OrdersService {
               partName: item.part.partName,
               stockQty: Number(item.part.stockQty ?? 0),
               requiredQty,
+              requiredQtyByProductId: new Map([[productId, requiredQty]]),
             });
           }
         }
@@ -2461,6 +2514,31 @@ export class OrdersService {
           throw new ConflictException(
             `零配件 ${component.partCode} 库存已发生变化，请刷新后重新确认出库`,
           );
+        }
+        const afterRow = await tx.shoulderStrapPart.findUnique({
+          where: { id: component.partId },
+          select: { stockQty: true },
+        });
+        if (!afterRow) {
+          throw new ConflictException(`零配件 ${component.partCode} 不存在，请刷新后重新确认出库`);
+        }
+        let runningQty = Number(afterRow.stockQty) + component.requiredQty;
+        for (const [productId, requiredQty] of component.requiredQtyByProductId.entries()) {
+          const nextQty = runningQty - requiredQty;
+          await tx.shoulderStrapPartStockMovement.create({
+            data: {
+              partId: component.partId,
+              movementType: 'outbound',
+              refType: 'overseas_picking_batch',
+              refId: batch.id,
+              productId,
+              qtyDelta: -requiredQty,
+              beforeQty: runningQty,
+              afterQty: nextQty,
+              operatorId,
+            },
+          });
+          runningQty = nextQty;
         }
       }
 
@@ -5653,6 +5731,43 @@ export class OrdersService {
     });
   }
 
+  private async attachShoulderStrapBomSnapshots(
+    snapshots: OverseasPickingBatchItemSnapshot[],
+  ): Promise<void> {
+    const productIds = Array.from(
+      new Set(snapshots.map((item) => String(item.productId ?? '').trim()).filter(Boolean)),
+    );
+    if (!productIds.length) return;
+    const products = await this.prisma.masterProduct.findMany({
+      where: { productId: { in: productIds }, productType: '肩带' },
+      select: {
+        productId: true,
+        bomComponents: {
+          orderBy: [{ position: 'asc' }, { id: 'asc' }],
+          select: {
+            partId: true,
+            quantity: true,
+            part: { select: { partCode: true, partName: true } },
+          },
+        },
+      },
+    });
+    const bomByProductId = new Map(
+      products.map((product) => [
+        product.productId,
+        product.bomComponents.map((item) => ({
+          partId: item.partId.toString(),
+          partCode: item.part.partCode,
+          partName: item.part.partName,
+          quantity: Number(item.quantity),
+        })),
+      ] as const),
+    );
+    snapshots.forEach((snapshot) => {
+      snapshot.bomSnapshot = bomByProductId.get(snapshot.productId) ?? [];
+    });
+  }
+
   private async loadActiveOverseasPickingBatchRefs(
     refs: Array<{ source: 'rakuten' | 'amazon' | 'manual'; sourceRecordId: bigint;
     }>,
@@ -5896,6 +6011,27 @@ export class OrdersService {
         };
       })
       .filter((item): item is OverseasPickingPlanSnapshotItem => Boolean(item));
+  }
+
+  private parseShoulderStrapBomSnapshot(value: unknown): ShoulderStrapBomSnapshotItem[] | null {
+    if (!Array.isArray(value)) return null;
+    const items: ShoulderStrapBomSnapshotItem[] = [];
+    for (const valueItem of value) {
+      if (!valueItem || typeof valueItem !== 'object') return [];
+      const row = valueItem as Record<string, unknown>;
+      const partId = String(row.partId ?? '').trim();
+      const quantity = Number(row.quantity ?? 0);
+      if (!/^\d+$/.test(partId) || !Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
+        return [];
+      }
+      items.push({
+        partId,
+        partCode: String(row.partCode ?? '').trim(),
+        partName: String(row.partName ?? '').trim(),
+        quantity,
+      });
+    }
+    return items;
   }
 
   private mergeOverseasPickingPlanSnapshots(

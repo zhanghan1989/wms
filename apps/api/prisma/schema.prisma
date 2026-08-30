@@ -178,35 +178,36 @@ enum RakutenRmsSyncStatus {
 }
 
 model User {
-  id                             BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
-  username                       String                    @unique @db.VarChar(64)
-  passwordHash                   String?                   @map("password_hash") @db.VarChar(255)
-  passwordChangedAt              DateTime?                 @map("password_changed_at")
-  mfaSecretEncrypted             String?                   @map("mfa_secret_encrypted") @db.Text
-  mfaSecretIv                    String?                   @map("mfa_secret_iv") @db.VarChar(64)
-  mfaSecretAuthTag               String?                   @map("mfa_secret_auth_tag") @db.VarChar(64)
-  mfaEnabledAt                   DateTime?                 @map("mfa_enabled_at")
+  id                             BigInt                           @id @default(autoincrement()) @db.UnsignedBigInt
+  username                       String                           @unique @db.VarChar(64)
+  passwordHash                   String?                          @map("password_hash") @db.VarChar(255)
+  passwordChangedAt              DateTime?                        @map("password_changed_at")
+  mfaSecretEncrypted             String?                          @map("mfa_secret_encrypted") @db.Text
+  mfaSecretIv                    String?                          @map("mfa_secret_iv") @db.VarChar(64)
+  mfaSecretAuthTag               String?                          @map("mfa_secret_auth_tag") @db.VarChar(64)
+  mfaEnabledAt                   DateTime?                        @map("mfa_enabled_at")
   role                           Role
-  department                     String                    @default("china_warehouse") @db.VarChar(64)
-  status                         Int                       @default(1) @db.TinyInt
-  createdAt                      DateTime                  @default(now()) @map("created_at")
-  updatedAt                      DateTime                  @updatedAt @map("updated_at")
+  department                     String                           @default("china_warehouse") @db.VarChar(64)
+  status                         Int                              @default(1) @db.TinyInt
+  createdAt                      DateTime                         @default(now()) @map("created_at")
+  updatedAt                      DateTime                         @updatedAt @map("updated_at")
   inboundOrders                  InboundOrder[]
   outboundOrders                 OutboundOrder[]
   stocktakeTasks                 StocktakeTask[]
-  createdStocktakePlannerTasks   StocktakePlannerTask[]    @relation("stocktake_planner_created_by")
-  confirmedStocktakePlannerTasks StocktakePlannerTask[]    @relation("stocktake_planner_confirmed_by")
+  createdStocktakePlannerTasks   StocktakePlannerTask[]           @relation("stocktake_planner_created_by")
+  confirmedStocktakePlannerTasks StocktakePlannerTask[]           @relation("stocktake_planner_confirmed_by")
   adjustOrders                   InventoryAdjustOrder[]
   batchInboundOrders             BatchInboundOrder[]
-  createdFbaReplenishments       FbaReplenishment[]        @relation("fba_created_by")
-  confirmedFbaReplenishments     FbaReplenishment[]        @relation("fba_confirmed_by")
-  outboundFbaReplenishments      FbaReplenishment[]        @relation("fba_outbound_by")
-  deletedFbaReplenishments       FbaReplenishment[]        @relation("fba_deleted_by")
-  productEditRequests            ProductEditRequest[]      @relation("product_edit_created_by")
+  createdFbaReplenishments       FbaReplenishment[]               @relation("fba_created_by")
+  confirmedFbaReplenishments     FbaReplenishment[]               @relation("fba_confirmed_by")
+  outboundFbaReplenishments      FbaReplenishment[]               @relation("fba_outbound_by")
+  deletedFbaReplenishments       FbaReplenishment[]               @relation("fba_deleted_by")
+  productEditRequests            ProductEditRequest[]             @relation("product_edit_created_by")
   stockMovements                 StockMovement[]
   auditLogs                      OperationAuditLog[]
   masterProductSyncRecords       MasterProductSyncRecord[]
   amazonSpApiOAuthStates         AmazonSpApiOAuthState[]
+  shoulderStrapPartMovements     ShoulderStrapPartStockMovement[]
 
   @@map("users")
 }
@@ -897,7 +898,7 @@ model BackupRecord {
 }
 
 model RakutenOrderRecord {
-  id                          BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  id                             BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   rmsConnectionId                BigInt?               @map("rms_connection_id") @db.UnsignedBigInt
   rmsItemKey                     String?               @map("rms_item_key") @db.VarChar(191)
   sourceKind                     String                @default("csv") @map("source_kind") @db.VarChar(16)
@@ -911,51 +912,51 @@ model RakutenOrderRecord {
   rmsManualActionDetectedAt      DateTime?             @map("rms_manual_action_detected_at")
   rmsManualActionResolvedAt      DateTime?             @map("rms_manual_action_resolved_at")
   rmsManualActionResolvedBy      String?               @map("rms_manual_action_resolved_by") @db.VarChar(64)
-  rowHash                     String          @unique @map("row_hash") @db.Char(40)
-  orderId                     String?         @map("order_id") @db.VarChar(64)
-  itemDetailStatus            String?         @map("item_detail_status") @db.VarChar(64)
-  skuCode                     String?         @map("sku_code") @db.VarChar(128)
-  isComboOrder                Boolean         @default(false) @map("is_combo_order")
-  comboOrderSku               String?         @map("combo_order_sku") @db.VarChar(128)
-  setComponentSkuCode         String?         @map("set_component_sku_code") @db.VarChar(128)
-  orderQuantity               Int?            @map("order_quantity")
-  productName                 String?         @map("product_name") @db.Text
-  mallName                    String?         @map("mall_name") @db.VarChar(128)
-  shopName                    String?         @map("shop_name") @db.VarChar(128)
-  mallOrderNo                 String?         @map("mall_order_no") @db.VarChar(128)
-  orderStatusText             String?         @map("order_status_text") @db.VarChar(64)
-  orderImportedAtRaw          String?         @map("order_imported_at_raw") @db.VarChar(32)
-  orderImportedDate           DateTime?       @map("order_imported_date") @db.Date
-  orderRemark                 String?         @map("order_remark") @db.Text
-  shippingName                String?         @map("shipping_name") @db.VarChar(128)
-  shippingPostalCode          String?         @map("shipping_postal_code") @db.VarChar(32)
-  shippingPrefecture          String?         @map("shipping_prefecture") @db.VarChar(64)
-  shippingCity                String?         @map("shipping_city") @db.VarChar(128)
-  shippingAddress             String?         @map("shipping_address") @db.Text
-  shippingPhone               String?         @map("shipping_phone") @db.VarChar(64)
-  shipmentCompany             String?         @map("shipment_company") @db.VarChar(128)
-  shipmentNo                  String?         @map("shipment_no") @db.VarChar(128)
-  shipmentNoRegisteredAt      DateTime?       @map("shipment_no_registered_at")
-  trackingStatusLabel         String?         @map("tracking_status_label") @db.VarChar(128)
-  trackingHasCustomsClearance Boolean         @default(false) @map("tracking_has_customs_clearance")
-  trackingIsDelivered         Boolean         @default(false) @map("tracking_is_delivered")
-  trackingStatusOccurredAt    DateTime?       @map("tracking_status_occurred_at")
-  trackingCheckedAt           DateTime?       @map("tracking_checked_at")
-  trackingError               String?         @map("tracking_error") @db.Text
-  dispatchMode                String?         @map("dispatch_mode") @db.VarChar(32)
-  xiyaExportedAt              DateTime?       @map("xiya_exported_at")
-  sendStatus                  OrderSendStatus @default(unsent) @map("send_status")
-  deliveryMethod              String?         @map("delivery_method") @db.VarChar(128)
-  deliveryDateRaw             String?         @map("delivery_date_raw") @db.VarChar(32)
-  deliveryTimeSlot            String?         @map("delivery_time_slot") @db.VarChar(64)
-  shipmentRequestNo           String?         @map("shipment_request_no") @db.VarChar(128)
-  productNameExtra            String?         @map("product_name_extra") @db.Text
-  sourceFileName              String?         @map("source_file_name") @db.VarChar(255)
-  sourceFilePath              String?         @map("source_file_path") @db.VarChar(512)
-  rawPayload                  Json?           @map("raw_payload")
-  csvImportedAt               DateTime        @default(now()) @map("csv_imported_at")
-  createdAt                   DateTime        @default(now()) @map("created_at")
-  updatedAt                   DateTime        @updatedAt @map("updated_at")
+  rowHash                        String                @unique @map("row_hash") @db.Char(40)
+  orderId                        String?               @map("order_id") @db.VarChar(64)
+  itemDetailStatus               String?               @map("item_detail_status") @db.VarChar(64)
+  skuCode                        String?               @map("sku_code") @db.VarChar(128)
+  isComboOrder                   Boolean               @default(false) @map("is_combo_order")
+  comboOrderSku                  String?               @map("combo_order_sku") @db.VarChar(128)
+  setComponentSkuCode            String?               @map("set_component_sku_code") @db.VarChar(128)
+  orderQuantity                  Int?                  @map("order_quantity")
+  productName                    String?               @map("product_name") @db.Text
+  mallName                       String?               @map("mall_name") @db.VarChar(128)
+  shopName                       String?               @map("shop_name") @db.VarChar(128)
+  mallOrderNo                    String?               @map("mall_order_no") @db.VarChar(128)
+  orderStatusText                String?               @map("order_status_text") @db.VarChar(64)
+  orderImportedAtRaw             String?               @map("order_imported_at_raw") @db.VarChar(32)
+  orderImportedDate              DateTime?             @map("order_imported_date") @db.Date
+  orderRemark                    String?               @map("order_remark") @db.Text
+  shippingName                   String?               @map("shipping_name") @db.VarChar(128)
+  shippingPostalCode             String?               @map("shipping_postal_code") @db.VarChar(32)
+  shippingPrefecture             String?               @map("shipping_prefecture") @db.VarChar(64)
+  shippingCity                   String?               @map("shipping_city") @db.VarChar(128)
+  shippingAddress                String?               @map("shipping_address") @db.Text
+  shippingPhone                  String?               @map("shipping_phone") @db.VarChar(64)
+  shipmentCompany                String?               @map("shipment_company") @db.VarChar(128)
+  shipmentNo                     String?               @map("shipment_no") @db.VarChar(128)
+  shipmentNoRegisteredAt         DateTime?             @map("shipment_no_registered_at")
+  trackingStatusLabel            String?               @map("tracking_status_label") @db.VarChar(128)
+  trackingHasCustomsClearance    Boolean               @default(false) @map("tracking_has_customs_clearance")
+  trackingIsDelivered            Boolean               @default(false) @map("tracking_is_delivered")
+  trackingStatusOccurredAt       DateTime?             @map("tracking_status_occurred_at")
+  trackingCheckedAt              DateTime?             @map("tracking_checked_at")
+  trackingError                  String?               @map("tracking_error") @db.Text
+  dispatchMode                   String?               @map("dispatch_mode") @db.VarChar(32)
+  xiyaExportedAt                 DateTime?             @map("xiya_exported_at")
+  sendStatus                     OrderSendStatus       @default(unsent) @map("send_status")
+  deliveryMethod                 String?               @map("delivery_method") @db.VarChar(128)
+  deliveryDateRaw                String?               @map("delivery_date_raw") @db.VarChar(32)
+  deliveryTimeSlot               String?               @map("delivery_time_slot") @db.VarChar(64)
+  shipmentRequestNo              String?               @map("shipment_request_no") @db.VarChar(128)
+  productNameExtra               String?               @map("product_name_extra") @db.Text
+  sourceFileName                 String?               @map("source_file_name") @db.VarChar(255)
+  sourceFilePath                 String?               @map("source_file_path") @db.VarChar(512)
+  rawPayload                     Json?                 @map("raw_payload")
+  csvImportedAt                  DateTime              @default(now()) @map("csv_imported_at")
+  createdAt                      DateTime              @default(now()) @map("created_at")
+  updatedAt                      DateTime              @updatedAt @map("updated_at")
   rmsConnection                  RakutenRmsConnection? @relation(fields: [rmsConnectionId], references: [id], onDelete: SetNull)
 
   @@unique([rmsConnectionId, rmsItemKey], map: "uq_rakuten_rms_order_item")
@@ -1044,15 +1045,15 @@ model AmazonOrderRecord {
 }
 
 model AmazonOrderSyncExclusion {
-  id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  spApiConnectionId BigInt?  @map("sp_api_connection_id") @db.UnsignedBigInt
-  orderId           String   @map("order_id") @db.VarChar(64)
-  orderItemId       String?  @map("order_item_id") @db.VarChar(64)
-  reason            String   @default("user_delete") @db.VarChar(64)
-  isActive          Boolean  @default(true) @map("is_active")
-  createdBy         BigInt?  @map("created_by") @db.UnsignedBigInt
-  createdAt         DateTime @default(now()) @map("created_at")
-  restoredBy        BigInt?  @map("restored_by") @db.UnsignedBigInt
+  id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  spApiConnectionId BigInt?   @map("sp_api_connection_id") @db.UnsignedBigInt
+  orderId           String    @map("order_id") @db.VarChar(64)
+  orderItemId       String?   @map("order_item_id") @db.VarChar(64)
+  reason            String    @default("user_delete") @db.VarChar(64)
+  isActive          Boolean   @default(true) @map("is_active")
+  createdBy         BigInt?   @map("created_by") @db.UnsignedBigInt
+  createdAt         DateTime  @default(now()) @map("created_at")
+  restoredBy        BigInt?   @map("restored_by") @db.UnsignedBigInt
   restoredAt        DateTime? @map("restored_at")
 
   @@index([isActive, spApiConnectionId, orderId, orderItemId], map: "idx_amz_order_exclusion_lookup")
@@ -1178,6 +1179,7 @@ model OverseasPickingBatchItem {
   actualQty              Int?                 @map("actual_qty")
   availableStockSnapshot Int                  @default(0) @map("available_stock_snapshot")
   pickingPlanSnapshot    Json?                @map("picking_plan_snapshot")
+  bomSnapshot            Json?                @map("bom_snapshot")
   dispatchMode           String               @default("overseas") @map("dispatch_mode") @db.VarChar(32)
   shopName               String?              @map("shop_name") @db.VarChar(128)
   shippingName           String?              @map("shipping_name") @db.VarChar(255)
@@ -1268,21 +1270,22 @@ model MasterProduct {
   inboundItems      InboundOrderItem[]
   syncRecords       MasterProductSyncRecord[]
   rakutenComboItems RakutenComboProductItem[]
-  bomComponents     MasterProductBomItem[]     @relation("MasterProductBomParent")
+  bomComponents     MasterProductBomItem[]      @relation("MasterProductBomParent")
 
   @@index([firstStockedAt], map: "idx_master_products_first_stocked_at")
   @@map("master_products")
 }
 
 model ShoulderStrapPart {
-  id        BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
-  partCode  String                 @unique @map("part_code") @db.VarChar(128)
-  partName  String                 @map("part_name") @db.VarChar(255)
-  stockQty  Int                    @default(0) @map("stock_qty")
-  status    Int                    @default(1) @db.TinyInt
-  createdAt DateTime               @default(now()) @map("created_at")
-  updatedAt DateTime               @updatedAt @map("updated_at")
-  bomItems  MasterProductBomItem[]
+  id             BigInt                           @id @default(autoincrement()) @db.UnsignedBigInt
+  partCode       String                           @unique @map("part_code") @db.VarChar(128)
+  partName       String                           @map("part_name") @db.VarChar(255)
+  stockQty       Int                              @default(0) @map("stock_qty")
+  status         Int                              @default(1) @db.TinyInt
+  createdAt      DateTime                         @default(now()) @map("created_at")
+  updatedAt      DateTime                         @updatedAt @map("updated_at")
+  bomItems       MasterProductBomItem[]
+  stockMovements ShoulderStrapPartStockMovement[]
 
   @@index([status, partCode], map: "idx_shoulder_strap_parts_status_code")
   @@map("shoulder_strap_parts")
@@ -1303,6 +1306,27 @@ model MasterProductBomItem {
   @@unique([parentProductId, position], map: "uq_master_product_bom_parent_position")
   @@index([partId], map: "idx_master_product_bom_part")
   @@map("master_product_bom_items")
+}
+
+model ShoulderStrapPartStockMovement {
+  id           BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  partId       BigInt            @map("part_id") @db.UnsignedBigInt
+  movementType String            @map("movement_type") @db.VarChar(32)
+  refType      String            @map("ref_type") @db.VarChar(32)
+  refId        BigInt            @map("ref_id") @db.UnsignedBigInt
+  productId    String?           @map("product_id") @db.VarChar(128)
+  qtyDelta     Int               @map("qty_delta")
+  beforeQty    Int               @map("before_qty")
+  afterQty     Int               @map("after_qty")
+  operatorId   BigInt            @map("operator_id") @db.UnsignedBigInt
+  createdAt    DateTime          @default(now()) @map("created_at")
+  part         ShoulderStrapPart @relation(fields: [partId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  operator     User              @relation(fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([partId, createdAt], map: "idx_shoulder_part_movements_part_created")
+  @@index([refType, refId], map: "idx_shoulder_part_movements_ref")
+  @@index([productId, createdAt], map: "idx_shoulder_part_movements_product_created")
+  @@map("shoulder_strap_part_stock_movements")
 }
 
 model RakutenComboProduct {

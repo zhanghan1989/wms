@@ -438,6 +438,9 @@ describe('OrdersService', () => {
         requestedQty: 2,
         actualQty: 2,
         dispatchMode: 'overseas',
+        bomSnapshot: [{
+          partId: '7', partCode: 'JD-0007', partName: '龙虾扣', quantity: 3,
+        }],
       }],
     };
     const partUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
@@ -454,14 +457,21 @@ describe('OrdersService', () => {
           productId: 'STRAP-1',
           productType: '肩带',
           bomComponents: [{
-            partId: 7n,
-            quantity: 3,
-            part: { id: 7n, partCode: 'JD-0007', partName: '龙虾扣', stockQty: 10, status: 1 },
+            partId: 99n,
+            quantity: 100,
+            part: { id: 99n, partCode: 'JD-0099', partName: '修改后的配件', stockQty: 100, status: 1 },
           }],
         }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      shoulderStrapPart: { updateMany: partUpdateMany },
+      shoulderStrapPart: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 7n, partCode: 'JD-0007', partName: '龙虾扣', stockQty: 10, status: 1 },
+        ]),
+        updateMany: partUpdateMany,
+        findUnique: jest.fn().mockResolvedValue({ stockQty: 4 }),
+      },
+      shoulderStrapPartStockMovement: { create: jest.fn().mockResolvedValue({}) },
       stockMovement: { create: jest.fn() },
       overseasPickingBatch: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -482,6 +492,17 @@ describe('OrdersService', () => {
     expect(partUpdateMany).toHaveBeenCalledWith({
       where: { id: 7n, status: 1, stockQty: { gte: 6 } },
       data: { stockQty: { decrement: 6 } },
+    });
+    expect(tx.shoulderStrapPartStockMovement.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        partId: 7n,
+        refType: 'overseas_picking_batch',
+        refId: 42n,
+        productId: 'STRAP-1',
+        qtyDelta: -6,
+        beforeQty: 10,
+        afterQty: 4,
+      }),
     });
   });
 
@@ -522,7 +543,11 @@ describe('OrdersService', () => {
         }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      shoulderStrapPart: { updateMany: partUpdateMany },
+      shoulderStrapPart: {
+        updateMany: partUpdateMany,
+        findUnique: jest.fn().mockResolvedValue({ stockQty: 10 }),
+      },
+      shoulderStrapPartStockMovement: { create: jest.fn().mockResolvedValue({}) },
       stockMovement: { create: stockMovementCreate },
       overseasPickingBatch: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -548,6 +573,9 @@ describe('OrdersService', () => {
     expect(partUpdateMany).toHaveBeenCalledWith({
       where: { id: 8n, status: 1, stockQty: { gte: 2 } },
       data: { stockQty: { decrement: 2 } },
+    });
+    expect(tx.shoulderStrapPartStockMovement.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ beforeQty: 12, qtyDelta: -2, afterQty: 10 }),
     });
   });
 
@@ -576,6 +604,33 @@ describe('OrdersService', () => {
       { productId: 'STRAP-A', requestedQty: 1 },
       { productId: 'STRAP-B', requestedQty: 1 },
     ])).rejects.toThrow('共用扣件）库存 1，需要 2');
+  });
+
+  it('stores the shoulder strap BOM configuration on a new picking batch item', async () => {
+    const service = new OrdersService({
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([{
+          productId: 'STRAP-SNAPSHOT',
+          bomComponents: [{
+            partId: 11n,
+            quantity: 2,
+            part: { partCode: 'JD-0011', partName: '快照配件' },
+          }],
+        }]),
+      },
+    } as any);
+    const snapshots = [{ productId: 'STRAP-SNAPSHOT' }];
+
+    await (service as any).attachShoulderStrapBomSnapshots(snapshots);
+
+    expect(snapshots[0]).toMatchObject({
+      bomSnapshot: [{
+        partId: '11',
+        partCode: 'JD-0011',
+        partName: '快照配件',
+        quantity: 2,
+      }],
+    });
   });
 
   it('blocks completing overseas batch work while a Yamato label remains unprinted', async () => {

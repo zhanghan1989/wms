@@ -76,6 +76,11 @@ export class MasterProductsController {
     return this.masterProductsService.createShoulderStrapPart(payload);
   }
 
+  @Get('shoulder-strap-parts/:partId/movements')
+  async listShoulderStrapPartMovements(@Param('partId') partId: string): Promise<unknown> {
+    return this.masterProductsService.listShoulderStrapPartMovements(partId);
+  }
+
   @Put('shoulder-strap-parts/:partId')
   async updateShoulderStrapPart(
     @Param('partId') partId: string,
