@@ -218,6 +218,7 @@ const state = {
   shoulderStrapProductsPage: 0,
   shoulderStrapProductsPageSize: 30,
   shoulderStrapProductsHasMore: false,
+  shoulderStrapProductsLoading: false,
   shoulderStrapProductsTotal: 0,
   shoulderStrapProductKeyword: "",
   shoulderStrapParts: [],
@@ -381,6 +382,7 @@ let dataBackupLoadObserver = null;
 let shelfManageLoadObserver = null;
 let boxManageLoadObserver = null;
 let rakutenComboProductLoadObserver = null;
+let shoulderStrapProductLoadObserver = null;
 let responsiveTableLabelObserver = null;
 let responsiveTableLabelFrame = 0;
 let skuProductLookupToken = 0;
@@ -7896,7 +7898,6 @@ function renderShoulderStrapBomItems(items) {
 function renderShoulderStrapProductTable() {
   const body = $("shoulderStrapProductBody");
   const summary = $("shoulderStrapProductSummary");
-  const loadMoreButton = $("loadMoreShoulderStrapProductsBtn");
   if (!body) return;
   const rows = Array.isArray(state.shoulderStrapProducts) ? state.shoulderStrapProducts : [];
   if (summary) {
@@ -7921,10 +7922,10 @@ function renderShoulderStrapProductTable() {
         </tr>`;
       }).join("")
     : '<tr><td colspan="9" class="muted">未找到肩带产品</td></tr>';
-  if (loadMoreButton) loadMoreButton.classList.toggle("hidden", !state.shoulderStrapProductsHasMore);
 }
 
 async function loadShoulderStrapProducts({ reset = false } = {}) {
+  if (state.shoulderStrapProductsLoading) return;
   const page = reset ? 1 : state.shoulderStrapProductsPage + 1;
   const params = new URLSearchParams({
     page: String(page),
@@ -7932,13 +7933,51 @@ async function loadShoulderStrapProducts({ reset = false } = {}) {
   });
   const keyword = String(state.shoulderStrapProductKeyword || "").trim();
   if (keyword) params.set("keyword", keyword);
-  const result = await request(`/master-products/shoulder-straps?${params.toString()}`);
-  const items = Array.isArray(result?.items) ? result.items : [];
-  state.shoulderStrapProducts = reset ? items : [...state.shoulderStrapProducts, ...items];
-  state.shoulderStrapProductsPage = Number(result?.page || page);
-  state.shoulderStrapProductsHasMore = Boolean(result?.hasMore);
-  state.shoulderStrapProductsTotal = Number(result?.total || 0);
-  renderShoulderStrapProductTable();
+  state.shoulderStrapProductsLoading = true;
+  try {
+    const result = await request(`/master-products/shoulder-straps?${params.toString()}`);
+    const items = Array.isArray(result?.items) ? result.items : [];
+    state.shoulderStrapProducts = reset ? items : [...state.shoulderStrapProducts, ...items];
+    state.shoulderStrapProductsPage = Number(result?.page || page);
+    state.shoulderStrapProductsHasMore = Boolean(result?.hasMore);
+    state.shoulderStrapProductsTotal = Number(result?.total || 0);
+    renderShoulderStrapProductTable();
+    requestAnimationFrame(() => maybeAutoLoadShoulderStrapProducts());
+  } finally {
+    state.shoulderStrapProductsLoading = false;
+  }
+}
+
+function loadMoreShoulderStrapProductsIfNeeded() {
+  const panel = $("shoulderStrapProductManagement");
+  if (!panel || !panel.classList.contains("active")) return;
+  if (state.shoulderStrapProductsLoading || !state.shoulderStrapProductsHasMore) return;
+  loadShoulderStrapProducts({ reset: false }).catch((error) => showToast(error.message, true));
+}
+
+function maybeAutoLoadShoulderStrapProducts() {
+  const panel = $("shoulderStrapProductManagement");
+  if (!panel || !panel.classList.contains("active")) return;
+  const tableWrap = $("shoulderStrapProductTableWrap");
+  if (!tableWrap || state.shoulderStrapProductsLoading || !state.shoulderStrapProductsHasMore) return;
+  const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
+  if (currentBottom < tableWrap.scrollHeight - 120) return;
+  loadMoreShoulderStrapProductsIfNeeded();
+}
+
+function setupShoulderStrapProductLoadObserver() {
+  if (shoulderStrapProductLoadObserver) shoulderStrapProductLoadObserver.disconnect();
+  if (typeof IntersectionObserver !== "function") return;
+  const tableWrap = $("shoulderStrapProductTableWrap");
+  const sentinel = $("shoulderStrapProductLoadSentinel");
+  if (!tableWrap || !sentinel) return;
+  shoulderStrapProductLoadObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadMoreShoulderStrapProductsIfNeeded();
+    },
+    { root: tableWrap, rootMargin: "0px 0px 160px 0px", threshold: 0.01 },
+  );
+  shoulderStrapProductLoadObserver.observe(sentinel);
 }
 
 async function loadRakutenComboProducts({ reset = false } = {}) {
@@ -15225,9 +15264,6 @@ function bindForms() {
     if ($("shoulderStrapProductKeyword")) $("shoulderStrapProductKeyword").value = "";
     await loadShoulderStrapProducts({ reset: true });
   });
-  $("loadMoreShoulderStrapProductsBtn")?.addEventListener("click", async (event) => {
-    await withBusyButton(event.currentTarget, "加载中...", () => loadShoulderStrapProducts({ reset: false }));
-  });
   $("shoulderStrapProductBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action='manageShoulderStrapBom']");
     if (!button) return;
@@ -18943,6 +18979,7 @@ function bindScrollLoad() {
     loadMoreSkuManagementIfNeeded();
     loadMoreProductEditRequestsIfNeeded();
     loadMoreRakutenComboProductsIfNeeded();
+    loadMoreShoulderStrapProductsIfNeeded();
     loadMoreUsersIfNeeded();
     loadMoreAuditIfNeeded();
   });
@@ -18966,6 +19003,11 @@ function bindScrollLoad() {
     rakutenComboProductTableWrap.addEventListener("scroll", () => {
       maybeAutoLoadRakutenComboProducts();
     });
+  }
+
+  const shoulderStrapProductTableWrap = $("shoulderStrapProductTableWrap");
+  if (shoulderStrapProductTableWrap) {
+    shoulderStrapProductTableWrap.addEventListener("scroll", maybeAutoLoadShoulderStrapProducts);
   }
 
   const amazonOrdersTableWrap = $("amazonOrdersTableWrap");
@@ -19141,6 +19183,7 @@ setupFbaReplenishmentLoadObserver();
 setupStocktakePlannerLoadObserver();
 setupDataBackupLoadObserver();
 setupRakutenComboProductLoadObserver();
+setupShoulderStrapProductLoadObserver();
 setupResponsiveTableLabels();
 ensureOverseasWarehouseQueryUi();
 renderStocktakePlanner();
