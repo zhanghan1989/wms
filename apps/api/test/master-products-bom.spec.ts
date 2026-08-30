@@ -82,4 +82,24 @@ describe('master product BOM', () => {
     await expect(service.deleteShoulderStrapPart('3')).rejects.toBeInstanceOf(ConflictException);
     expect(update).not.toHaveBeenCalled();
   });
+
+  it('rejects stale shoulder strap part stock edits', async () => {
+    const updateMany = jest.fn().mockResolvedValue({ count: 0 });
+    const service = new MasterProductsService({
+      shoulderStrapPart: {
+        findFirst: jest.fn().mockResolvedValue({ id: 4n }),
+        updateMany,
+      },
+    } as never, {} as never);
+
+    await expect(service.updateShoulderStrapPart('4', {
+      partName: '旧页面中的名称',
+      stockQty: 20,
+      updatedAt: '2026-08-28T00:00:00.000Z',
+    })).rejects.toBeInstanceOf(ConflictException);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: 4n, status: 1, updatedAt: new Date('2026-08-28T00:00:00.000Z') },
+      data: { partName: '旧页面中的名称', stockQty: 20 },
+    });
+  });
 });

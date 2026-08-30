@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsInt, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsISO8601, IsInt, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class UpdateShoulderStrapPartDto {
   @IsString()
@@ -12,4 +12,7 @@ export class UpdateShoulderStrapPartDto {
   @Min(0)
   @Max(999999999)
   stockQty!: number;
+
+  @IsISO8601()
+  updatedAt!: string;
 }

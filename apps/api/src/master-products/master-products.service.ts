@@ -443,10 +443,20 @@ export class MasterProductsService {
       select: { id: true },
     });
     if (!existing) throw new NotFoundException('未找到肩带零配件');
-    const updated = await this.prisma.shoulderStrapPart.update({
-      where: { id: partId },
+    const expectedUpdatedAt = new Date(payload.updatedAt);
+    const result = await this.prisma.shoulderStrapPart.updateMany({
+      where: {
+        id: partId,
+        status: 1,
+        updatedAt: expectedUpdatedAt,
+      },
       data: { partName, stockQty },
     });
+    if (Number(result.count ?? 0) !== 1) {
+      throw new ConflictException('零配件库存已被订单或其他用户修改，请刷新后重试');
+    }
+    const updated = await this.prisma.shoulderStrapPart.findUnique({ where: { id: partId } });
+    if (!updated) throw new NotFoundException('未找到肩带零配件');
     return this.serializeShoulderStrapPart(updated);
   }
 
@@ -1209,6 +1219,9 @@ export class MasterProductsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT product_id FROM master_products WHERE product_id = ${productId} FOR UPDATE`,
+      );
       await tx.masterProductBomItem.deleteMany({ where: { parentProductId: productId } });
       if (items.length) {
         await tx.masterProductBomItem.createMany({

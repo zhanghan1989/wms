@@ -7803,6 +7803,7 @@ function openShoulderStrapPartEditor(part = null) {
   $("shoulderStrapPartForm")?.reset();
   const id = String(part?.id || "");
   $("shoulderStrapPartEditingId").value = id;
+  $("shoulderStrapPartUpdatedAt").value = id ? String(part?.updatedAt || "") : "";
   $("shoulderStrapPartCode").value = id ? String(part?.partCode || "") : "保存后自动生成";
   $("shoulderStrapPartName").value = String(part?.partName || "");
   $("shoulderStrapPartStockQty").value = String(part?.stockQty ?? 0);
@@ -15263,6 +15264,7 @@ function bindForms() {
     const payload = {
       partName: String($("shoulderStrapPartName")?.value || "").trim(),
       stockQty: Number($("shoulderStrapPartStockQty")?.value),
+      ...(id ? { updatedAt: String($("shoulderStrapPartUpdatedAt")?.value || "") } : {}),
     };
     try {
       await withBusyButton(submitButton, "保存中...", () => request(

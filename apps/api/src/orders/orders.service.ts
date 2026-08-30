@@ -2340,6 +2340,11 @@ export class OrdersService {
       });
 
       const productIds = Array.from(demandByProductId.keys());
+      if (productIds.length) {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT product_id FROM master_products WHERE product_id IN (${Prisma.join(productIds)}) FOR UPDATE`,
+        );
+      }
       const inventoryRows = productIds.length
         ? await tx.masterProductBoxInventory.findMany({
             where: {
@@ -2361,17 +2366,109 @@ export class OrdersService {
         }
       });
 
+      const products = productIds.length
+        ? await tx.masterProduct.findMany({
+            where: { productId: { in: productIds } },
+            select: {
+              productId: true,
+              productType: true,
+              bomComponents: {
+                orderBy: [{ position: 'asc' }, { id: 'asc' }],
+                select: {
+                  partId: true,
+                  quantity: true,
+                  part: {
+                    select: {
+                      id: true,
+                      partCode: true,
+                      partName: true,
+                      stockQty: true,
+                      status: true,
+                    },
+                  },
+                },
+              },
+            },
+          })
+        : [];
+      const productById = new Map(products.map((row) => [row.productId, row] as const));
+      const finishedDemandByProductId = new Map<string, number>();
+      const componentDemandByPartId = new Map<
+        string,
+        {
+          partId: bigint;
+          partCode: string;
+          partName: string;
+          stockQty: number;
+          requiredQty: number;
+        }
+      >();
+
       for (const [productId, totalQty] of demandByProductId.entries()) {
         const rows = inventoryRowsByProductId.get(productId) ?? [];
-        const available = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
-        if (available < totalQty) {
-          throw new ConflictException(`产品 ${productId} 库存不足，当前可用 ${available}，需要 ${totalQty}`);
+        const finishedStock = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
+        const finishedDemand = Math.min(finishedStock, totalQty);
+        const assemblyDemand = totalQty - finishedDemand;
+        finishedDemandByProductId.set(productId, finishedDemand);
+        if (assemblyDemand <= 0) continue;
+
+        const product = productById.get(productId);
+        const bomItems = product?.bomComponents ?? [];
+        if (String(product?.productType ?? '').trim() !== '肩带' || !bomItems.length) {
+          throw new ConflictException(
+            `产品 ${productId} 成品库存不足，当前成品 ${finishedStock}，需要 ${totalQty}`,
+          );
+        }
+        const inactivePart = bomItems.find((item) => Number(item.part.status) !== 1);
+        if (inactivePart) {
+          throw new ConflictException(
+            `肩带 ${productId} 的零配件 ${inactivePart.part.partCode} 已停用，无法组装出库`,
+          );
+        }
+        for (const item of bomItems) {
+          const requiredQty = Number(item.quantity) * assemblyDemand;
+          const key = item.partId.toString();
+          const existing = componentDemandByPartId.get(key);
+          if (existing) {
+            existing.requiredQty += requiredQty;
+          } else {
+            componentDemandByPartId.set(key, {
+              partId: item.partId,
+              partCode: item.part.partCode,
+              partName: item.part.partName,
+              stockQty: Number(item.part.stockQty ?? 0),
+              requiredQty,
+            });
+          }
+        }
+      }
+
+      for (const component of componentDemandByPartId.values()) {
+        if (component.stockQty < component.requiredQty) {
+          throw new ConflictException(
+            `零配件 ${component.partCode}（${component.partName}）库存不足，当前 ${component.stockQty}，需要 ${component.requiredQty}`,
+          );
+        }
+        const updated = await tx.shoulderStrapPart.updateMany({
+          where: {
+            id: component.partId,
+            status: 1,
+            stockQty: { gte: component.requiredQty },
+          },
+          data: { stockQty: { decrement: component.requiredQty } },
+        });
+        if (Number(updated.count ?? 0) !== 1) {
+          throw new ConflictException(
+            `零配件 ${component.partCode} 库存已发生变化，请刷新后重新确认出库`,
+          );
         }
       }
 
       for (const item of normalizedItems) {
-        const qty = item.actualQty;
         if (item.dispatchMode !== OVERSEAS_DISPATCH_MODE.OVERSEAS) continue;
+        const remainingFinishedDemand = finishedDemandByProductId.get(item.productId) ?? 0;
+        const qty = Math.min(item.actualQty, remainingFinishedDemand);
+        finishedDemandByProductId.set(item.productId, remainingFinishedDemand - qty);
         if (qty <= 0) continue;
         const allocations = this.allocateOverseasPickingQtyAcrossBoxes(
           inventoryRowsByProductId.get(item.productId) ?? [],
@@ -2380,17 +2477,19 @@ export class OrdersService {
         );
 
         for (const allocation of allocations) {
-          await tx.masterProductBoxInventory.update({
+          const updated = await tx.masterProductBoxInventory.updateMany({
             where: {
-              boxId_productId: {
-                boxId: allocation.boxId,
-                productId: item.productId,
-              },
+              boxId: allocation.boxId,
+              productId: item.productId,
+              qty: { gte: allocation.qty },
             },
-            data: {
-              qty: allocation.nextQty,
-            },
+            data: { qty: { decrement: allocation.qty } },
           });
+          if (Number(updated.count ?? 0) !== 1) {
+            throw new ConflictException(
+              `产品 ${item.productId} 的箱内库存已发生变化，请刷新后重新确认出库`,
+            );
+          }
           await tx.stockMovement.create({
             data: {
               movementType: 'outbound',
@@ -5392,28 +5491,70 @@ export class OrdersService {
     if (!productIds.length) {
       return;
     }
-    const stockRows = await this.prisma.masterProduct.findMany({
-      where: {
-        productId: {
-          in: productIds,
-        },
-      },
+    const products = await this.prisma.masterProduct.findMany({
+      where: { productId: { in: productIds } },
       select: {
         productId: true,
+        productType: true,
         stockQty: true,
+        bomComponents: {
+          select: {
+            partId: true,
+            quantity: true,
+            part: {
+              select: { partCode: true, partName: true, stockQty: true, status: true },
+            },
+          },
+        },
       },
     });
-    const stockByProductId = new Map(stockRows.map((row) => [String(row.productId ?? '').trim(), Number(row.stockQty ?? 0)]),
-    );
-    const shortageTexts = productIds
-      .map((productId) => {
-        const requestedQty = demandByProductId.get(productId) ?? 0;
-        const stockQty = stockByProductId.get(productId) ?? 0;
-        const shortageQty = requestedQty - stockQty;
-        if (shortageQty <= 0) return null;
-        return `产品 ${productId} 待拣 ${requestedQty}，库存 ${stockQty}，需要踢出 ${shortageQty}`;
-      })
-      .filter((item): item is string => Boolean(item));
+    const productById = new Map(products.map((row) => [row.productId, row] as const));
+    const shortageTexts: string[] = [];
+    const componentDemandByPartId = new Map<
+      string,
+      { partCode: string; partName: string; stockQty: number; status: number; requiredQty: number }
+    >();
+
+    for (const productId of productIds) {
+      const requestedQty = demandByProductId.get(productId) ?? 0;
+      const product = productById.get(productId);
+      const finishedStock = Number(product?.stockQty ?? 0);
+      const assemblyDemand = Math.max(requestedQty - finishedStock, 0);
+      if (assemblyDemand <= 0) continue;
+      const bomItems = product?.bomComponents ?? [];
+      if (String(product?.productType ?? '').trim() !== '肩带' || !bomItems.length) {
+        shortageTexts.push(
+          `产品 ${productId} 待拣 ${requestedQty}，成品库存 ${finishedStock}，需要踢出 ${assemblyDemand}`,
+        );
+        continue;
+      }
+      for (const item of bomItems) {
+        const key = item.partId.toString();
+        const requiredQty = Number(item.quantity) * assemblyDemand;
+        const existing = componentDemandByPartId.get(key);
+        if (existing) {
+          existing.requiredQty += requiredQty;
+        } else {
+          componentDemandByPartId.set(key, {
+            partCode: item.part.partCode,
+            partName: item.part.partName,
+            stockQty: Number(item.part.stockQty ?? 0),
+            status: Number(item.part.status),
+            requiredQty,
+          });
+        }
+      }
+    }
+
+    for (const component of componentDemandByPartId.values()) {
+      if (component.status !== 1) {
+        shortageTexts.push(`零配件 ${component.partCode}（${component.partName}）已停用`);
+      } else if (component.stockQty < component.requiredQty) {
+        shortageTexts.push(
+          `零配件 ${component.partCode}（${component.partName}）库存 ${component.stockQty}，需要 ${component.requiredQty}`,
+        );
+      }
+    }
     if (shortageTexts.length) {
       throw new ConflictException(`批次待拣数量超过库存：${shortageTexts.join('；')}`);
     }
@@ -5709,9 +5850,9 @@ export class OrdersService {
     rows: Array<{ boxId: bigint; qty: number | null; productId: string }>,
     requestedQty: number,
     productId: string,
-  ): Array<{ boxId: bigint; qty: number; nextQty: number }> {
+  ): Array<{ boxId: bigint; qty: number }> {
     let remaining = requestedQty;
-    const allocations: Array<{ boxId: bigint; qty: number; nextQty: number }> = [];
+    const allocations: Array<{ boxId: bigint; qty: number }> = [];
 
     for (const row of rows) {
       const currentQty = Number(row.qty ?? 0);
@@ -5722,7 +5863,6 @@ export class OrdersService {
       allocations.push({
         boxId: row.boxId,
         qty: allocateQty,
-        nextQty: Number(row.qty ?? 0),
       });
     }
 

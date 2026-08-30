@@ -425,6 +425,159 @@ describe('OrdersService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
+  it('deducts shoulder strap parts when a picked order has no finished stock', async () => {
+    const confirmedAt = new Date('2026-08-28T10:00:00.000Z');
+    const batch = {
+      id: 42n,
+      batchNo: 'PK-42',
+      status: 'created',
+      confirmedAt: null,
+      items: [{
+        id: 1n,
+        productId: 'STRAP-1',
+        requestedQty: 2,
+        actualQty: 2,
+        dispatchMode: 'overseas',
+      }],
+    };
+    const partUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const boxUpdate = jest.fn();
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      masterProductBoxInventory: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: boxUpdate,
+        aggregate: jest.fn().mockResolvedValue({ _sum: { qty: 0 } }),
+      },
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([{
+          productId: 'STRAP-1',
+          productType: '肩带',
+          bomComponents: [{
+            partId: 7n,
+            quantity: 3,
+            part: { id: 7n, partCode: 'JD-0007', partName: '龙虾扣', stockQty: 10, status: 1 },
+          }],
+        }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      shoulderStrapPart: { updateMany: partUpdateMany },
+      stockMovement: { create: jest.fn() },
+      overseasPickingBatch: { update: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      overseasPickingBatch: {
+        findUnique: jest.fn()
+          .mockResolvedValueOnce(batch)
+          .mockResolvedValueOnce({ id: 42n, batchNo: 'PK-42', status: 'picked', confirmedAt }),
+      },
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
+    };
+    const service = new OrdersService(prisma as any);
+
+    await service.confirmOverseasPickingBatch('42', { items: [] }, 9n);
+
+    expect(boxUpdate).not.toHaveBeenCalled();
+    expect(tx.stockMovement.create).not.toHaveBeenCalled();
+    expect(partUpdateMany).toHaveBeenCalledWith({
+      where: { id: 7n, status: 1, stockQty: { gte: 6 } },
+      data: { stockQty: { decrement: 6 } },
+    });
+  });
+
+  it('uses finished stock first and parts only for the remaining shoulder strap quantity', async () => {
+    const confirmedAt = new Date('2026-08-28T10:00:00.000Z');
+    const batch = {
+      id: 43n,
+      batchNo: 'PK-43',
+      status: 'created',
+      confirmedAt: null,
+      items: [{
+        id: 2n,
+        productId: 'STRAP-2',
+        requestedQty: 2,
+        actualQty: 2,
+        dispatchMode: 'overseas',
+      }],
+    };
+    const partUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const boxUpdate = jest.fn().mockResolvedValue({ count: 1 });
+    const stockMovementCreate = jest.fn().mockResolvedValue({});
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      masterProductBoxInventory: {
+        findMany: jest.fn().mockResolvedValue([{ boxId: 4n, productId: 'STRAP-2', qty: 1 }]),
+        updateMany: boxUpdate,
+        aggregate: jest.fn().mockResolvedValue({ _sum: { qty: 0 } }),
+      },
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([{
+          productId: 'STRAP-2',
+          productType: '肩带',
+          bomComponents: [{
+            partId: 8n,
+            quantity: 2,
+            part: { id: 8n, partCode: 'JD-0008', partName: '肩带布', stockQty: 12, status: 1 },
+          }],
+        }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+      shoulderStrapPart: { updateMany: partUpdateMany },
+      stockMovement: { create: stockMovementCreate },
+      overseasPickingBatch: { update: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      overseasPickingBatch: {
+        findUnique: jest.fn()
+          .mockResolvedValueOnce(batch)
+          .mockResolvedValueOnce({ id: 43n, batchNo: 'PK-43', status: 'picked', confirmedAt }),
+      },
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
+    };
+    const service = new OrdersService(prisma as any);
+
+    await service.confirmOverseasPickingBatch('43', { items: [] }, 9n);
+
+    expect(boxUpdate).toHaveBeenCalledWith({
+      where: { boxId: 4n, productId: 'STRAP-2', qty: { gte: 1 } },
+      data: { qty: { decrement: 1 } },
+    });
+    expect(stockMovementCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ productId: 'STRAP-2', qtyDelta: -1 }),
+    });
+    expect(partUpdateMany).toHaveBeenCalledWith({
+      where: { id: 8n, status: 1, stockQty: { gte: 2 } },
+      data: { stockQty: { decrement: 2 } },
+    });
+  });
+
+  it('aggregates shared component demand when validating a picking batch', async () => {
+    const sharedPart = { partCode: 'JD-0009', partName: '共用扣件', stockQty: 1, status: 1 };
+    const service = new OrdersService({
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            productId: 'STRAP-A',
+            productType: '肩带',
+            stockQty: 0,
+            bomComponents: [{ partId: 9n, quantity: 1, part: sharedPart }],
+          },
+          {
+            productId: 'STRAP-B',
+            productType: '肩带',
+            stockQty: 0,
+            bomComponents: [{ partId: 9n, quantity: 1, part: sharedPart }],
+          },
+        ]),
+      },
+    } as any);
+
+    await expect((service as any).assertOverseasPickingBatchDemandWithinStock([
+      { productId: 'STRAP-A', requestedQty: 1 },
+      { productId: 'STRAP-B', requestedQty: 1 },
+    ])).rejects.toThrow('共用扣件）库存 1，需要 2');
+  });
+
   it('blocks completing overseas batch work while a Yamato label remains unprinted', async () => {
     const prisma = {
       overseasPickingBatch: {
