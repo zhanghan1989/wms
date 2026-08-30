@@ -173,6 +173,7 @@ interface OrderListItem extends RakutenOrderRecord {
   resolvedProductName: string | null;
   availableStock: number;
   assemblableStock: number;
+  assemblableStockApplicable: boolean;
   fulfillmentMode: OrderFulfillmentMode;
   trackingClearanceStatus?: RakutenTrackingClearanceStatus;
 }
@@ -348,6 +349,7 @@ type AmazonFulfillmentMode = 'overseas_warehouse' | 'xiya_api';
 interface AmazonEnrichedOrderListItem extends AmazonOrderListItem {
   availableStock: number;
   assemblableStock: number;
+  assemblableStockApplicable: boolean;
   fulfillmentMode: AmazonFulfillmentMode;
 }
 type ManualEnrichedOrderListItem = AmazonEnrichedOrderListItem & ManualOrderXyjgFields;
@@ -498,6 +500,7 @@ interface OverseasWarehouseOrderListItem {
   shippingName: string | null;
   availableStock: number;
   assemblableStock?: number;
+  assemblableStockApplicable?: boolean;
   orderImportedAtRaw?: string | null;
   productName?: string | null;
   productNameExtra?: string | null;
@@ -4357,6 +4360,7 @@ export class OrdersService {
             shippingName: row.shippingName,
             availableStock: row.availableStock,
             assemblableStock: row.assemblableStock,
+            assemblableStockApplicable: row.assemblableStockApplicable,
             orderImportedAtRaw: row.orderImportedAtRaw,
             productName: row.productName,
             productNameExtra: row.productNameExtra,
@@ -4392,6 +4396,7 @@ export class OrdersService {
             shippingName: row.recipientName,
             availableStock: row.availableStock,
             assemblableStock: row.assemblableStock,
+            assemblableStockApplicable: row.assemblableStockApplicable,
             purchaseDateRaw: row.purchaseDateRaw,
             productName: row.productName,
             buyerPhoneNumber: row.buyerPhoneNumber,
@@ -4425,6 +4430,7 @@ export class OrdersService {
             shippingName: row.recipientName,
             availableStock: row.availableStock,
             assemblableStock: row.assemblableStock,
+            assemblableStockApplicable: row.assemblableStockApplicable,
             purchaseDateRaw: row.purchaseDateRaw,
             productName: row.productName,
             buyerPhoneNumber: row.buyerPhoneNumber,
@@ -8999,6 +9005,7 @@ export class OrdersService {
         productName: string | null;
         finishedStock: number;
         assemblableStock: number;
+        assemblableStockApplicable: boolean;
         fulfillableStock: number;
       }
     >
@@ -9034,6 +9041,7 @@ export class OrdersService {
             productName: row.productName ?? null,
             finishedStock: availability.finishedStock,
             assemblableStock: availability.assemblableStock ?? 0,
+            assemblableStockApplicable: String(row.productType ?? '').trim() === '肩带',
             fulfillableStock: availability.fulfillableStock,
           },
         ] as const;
@@ -9062,6 +9070,7 @@ export class OrdersService {
         resolvedProductName: null,
         availableStock: 0,
         assemblableStock: 0,
+        assemblableStockApplicable: false,
         fulfillmentMode: this.resolveFulfillmentModeFromDispatchMode(row.dispatchMode, 0),
       }));
     }
@@ -9083,6 +9092,7 @@ export class OrdersService {
         resolvedProductName: availability?.productName ?? null,
         availableStock,
         assemblableStock,
+        assemblableStockApplicable: availability?.assemblableStockApplicable ?? false,
         fulfillmentMode: this.resolveFulfillmentModeFromDispatchMode(
           row.dispatchMode,
           availableStock + assemblableStock,
@@ -9223,6 +9233,7 @@ export class OrdersService {
         resolvedShopName: skuMeta?.shopName ?? null,
         availableStock,
         assemblableStock,
+        assemblableStockApplicable: availability?.assemblableStockApplicable ?? false,
         fulfillmentMode: isChinaFulfillment ? 'xiya_api' : 'overseas_warehouse',
         amazonObservedOrderStatus: observedStatus,
         amazonObservedQuantityToShip: observation?.quantityToShip ?? null,

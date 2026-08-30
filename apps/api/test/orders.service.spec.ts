@@ -349,7 +349,9 @@ describe('OrdersService', () => {
       amazonOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
       manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
       masterProduct: {
-        findMany: jest.fn().mockResolvedValue([{ productId: 'P-1', productName: '已处理产品', stockQty: 0 }]),
+        findMany: jest.fn().mockResolvedValue([{
+          productId: 'P-1', productName: '已处理产品', productType: '普通产品', stockQty: 0,
+        }]),
       },
     };
     const service = new OrdersService(prisma as any);
@@ -358,7 +360,42 @@ describe('OrdersService', () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.orderId).toBe('ORDER-DONE');
+    expect(rows[0]?.assemblableStockApplicable).toBe(false);
     expect(rakutenFindMany.mock.calls[0]?.[0]?.where).not.toHaveProperty('sendStatus');
+  });
+
+  it('marks assemblable stock as applicable only to shoulder strap products', async () => {
+    const service = new OrdersService({
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            productId: 'STRAP-1',
+            productName: '肩带一',
+            productType: '肩带',
+            stockQty: 0,
+            bomComponents: [],
+          },
+          {
+            productId: 'NORMAL-1',
+            productName: '普通产品一',
+            productType: '普通产品',
+            stockQty: 3,
+            bomComponents: [],
+          },
+        ]),
+      },
+    } as any);
+
+    const availability = await (service as any).loadProductStockAvailability(['STRAP-1', 'NORMAL-1']);
+
+    expect(availability.get('STRAP-1')).toMatchObject({
+      assemblableStock: 0,
+      assemblableStockApplicable: true,
+    });
+    expect(availability.get('NORMAL-1')).toMatchObject({
+      assemblableStock: 0,
+      assemblableStockApplicable: false,
+    });
   });
 
   it('exports every overseas order returned by the unbounded order query', async () => {

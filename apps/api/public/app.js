@@ -11031,7 +11031,11 @@ function renderOverseasOrderProcessingTable() {
         <td>${escapeHtml(displayText(item.shopName))}</td>
         <td>${escapeHtml(displayText(item.shippingName))}</td>
         <td>${escapeHtml(displayText(item.availableStock))}</td>
-        <td>${escapeHtml(displayText(item.assemblableStock ?? 0))}</td>
+        <td>${
+          item.assemblableStockApplicable
+            ? escapeHtml(displayText(item.assemblableStock ?? 0))
+            : '<span class="muted">-</span>'
+        }</td>
         <td>
           <button
             type="button"
