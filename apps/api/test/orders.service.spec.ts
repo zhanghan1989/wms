@@ -761,6 +761,57 @@ describe('OrdersService', () => {
     expect(prisma.overseasPickingBatch.update).not.toHaveBeenCalled();
   });
 
+  it('builds the assembly part confirmation list for a Yamato label', async () => {
+    const prisma = {
+      overseasPickingBatchItem: {
+        findMany: jest.fn().mockResolvedValue([{
+          productId: 'STRAP-LABEL',
+          requestedQty: 2,
+          actualQty: 2,
+          pickingPlanSnapshot: [{ shelfCode: 'S1', boxCode: 'B1', boxQty: 1, pickQty: 1 }],
+          bomSnapshot: [
+            { partId: '21', partCode: 'JD-0021', partName: '肩带扣', quantity: 2 },
+            { partId: '22', partCode: 'JD-0022', partName: '肩带布', quantity: 1 },
+          ],
+        }]),
+      },
+      shoulderStrapPart: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 21n, partCode: 'JD-0021', partName: '肩带扣', stockQty: 8 },
+          { id: 22n, partCode: 'JD-0022', partName: '肩带布', stockQty: 5 },
+        ]),
+      },
+    };
+    const service = new OrdersService(prisma as any);
+
+    const parts = await (service as any).buildYamatoShipmentPageAssemblyPartDetails(
+      42n,
+      { orderId: 'ORDER-STRAP', productIds: ['STRAP-LABEL'] },
+    );
+
+    expect(parts).toEqual([
+      { partId: '21', partCode: 'JD-0021', partName: '肩带扣', requiredQty: 2, stockQty: 8 },
+      { partId: '22', partCode: 'JD-0022', partName: '肩带布', requiredQty: 1, stockQty: 5 },
+    ]);
+  });
+
+  it('blocks Yamato label output until every assembly part is confirmed', () => {
+    const service = new OrdersService({} as any);
+    const parts = [
+      { partId: '21', partCode: 'JD-0021', partName: '肩带扣', requiredQty: 2, stockQty: 8 },
+      { partId: '22', partCode: 'JD-0022', partName: '肩带布', requiredQty: 1, stockQty: 5 },
+    ];
+
+    expect(() => (service as any).assertYamatoAssemblyPartsConfirmed(
+      { productId: 'STRAP-LABEL', confirmedAssemblyPartIds: ['21'] },
+      parts,
+    )).toThrow('请先确认全部零配件：JD-0022');
+    expect(() => (service as any).assertYamatoAssemblyPartsConfirmed(
+      { productId: 'STRAP-LABEL', confirmedAssemblyPartIds: ['21', '22'] },
+      parts,
+    )).not.toThrow();
+  });
+
   it('returns Yamato print progress for the picking batch status display', async () => {
     const createdAt = new Date('2026-08-28T01:00:00.000Z');
     const prisma = {

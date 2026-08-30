@@ -511,7 +511,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async printYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string },
+    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyPartIds?: string[] },
     @Res() res: Response,
   ): Promise<void> {
     const file = await this.ordersService.printYamatoShipmentLabelByProductId(batchId, payload);
@@ -534,7 +534,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async previewYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string },
+    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyPartIds?: string[] },
   ): Promise<unknown> {
     return this.ordersService.previewYamatoShipmentLabelByProductId(batchId, payload);
   }
@@ -543,7 +543,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async directPrintYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string },
+    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyPartIds?: string[] },
   ): Promise<unknown> {
     return this.ordersService.directPrintYamatoShipmentLabelByProductId(batchId, payload);
   }
@@ -552,7 +552,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async queueYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string },
+    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyPartIds?: string[] },
   ): Promise<unknown> {
     return this.ordersService.queueYamatoShipmentLabelByProductId(batchId, payload);
   }
@@ -561,7 +561,7 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async requeueYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string },
+    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyPartIds?: string[] },
   ): Promise<unknown> {
     return this.ordersService.requeueYamatoShipmentLabelByProductId(batchId, payload);
   }

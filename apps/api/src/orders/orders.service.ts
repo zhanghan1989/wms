@@ -828,6 +828,14 @@ interface YamatoShipmentPageProductDetail {
   quantity: number;
 }
 
+interface YamatoShipmentPageAssemblyPartDetail {
+  partId: string;
+  partCode: string;
+  partName: string;
+  requiredQty: number;
+  stockQty: number;
+}
+
 interface YamatoShipmentPagePreviewResult {
   batchId: string;
   pageNo: number;
@@ -838,6 +846,7 @@ interface YamatoShipmentPagePreviewResult {
   itemSummary: string | null;
   recipientName: string | null;
   products: YamatoShipmentPageProductDetail[];
+  assemblyParts: YamatoShipmentPageAssemblyPartDetail[];
   remainingMatchCount: number;
 }
 
@@ -858,6 +867,7 @@ interface YamatoShipmentPrintByProductPayload {
   productId?: string;
   pageNo?: string | number;
   acceptActivePrintJob?: boolean;
+  confirmedAssemblyPartIds?: Array<string | number>;
 }
 
 interface ParsedPdfPageText {
@@ -6710,6 +6720,10 @@ export class OrdersService {
       payload,
     );
     const productIds = this.getBatchPageProductIds(targetPage);
+    const assemblyParts = await this.buildYamatoShipmentPageAssemblyPartDetails(
+      batch.pickingBatchId,
+      targetPage,
+    );
     return {
       batchId: batch.id.toString(),
       pageNo: targetPage.pageNo,
@@ -6720,6 +6734,7 @@ export class OrdersService {
       itemSummary: targetPage.itemSummary ?? null,
       recipientName: targetPage.recipientName ?? null,
       products: await this.buildYamatoShipmentPageProductDetails(targetPage),
+      assemblyParts,
       remainingMatchCount: Math.max(printablePages.length - 1, 0),
     };
   }
@@ -6937,6 +6952,11 @@ export class OrdersService {
       payload,
       options,
     );
+    const assemblyParts = await this.buildYamatoShipmentPageAssemblyPartDetails(
+      batch.pickingBatchId,
+      targetPage,
+    );
+    this.assertYamatoAssemblyPartsConfirmed(payload, assemblyParts);
 
     const pdfFilePath = batch.pdfFilePath;
     if (!pdfFilePath) {
@@ -7391,6 +7411,93 @@ export class OrdersService {
       productName: productNameById.get(item.productId) ?? null,
       quantity: item.quantity,
     }));
+  }
+
+  private async buildYamatoShipmentPageAssemblyPartDetails(
+    pickingBatchId: bigint | null,
+    page: Pick<YamatoShipmentBatchPage, 'orderId' | 'productIds'>,
+  ): Promise<YamatoShipmentPageAssemblyPartDetail[]> {
+    const orderId = String(page.orderId ?? '').trim();
+    const productIds = this.getBatchPageProductIds(page);
+    if (!pickingBatchId || !orderId || !productIds.length) return [];
+
+    const items = await this.prisma.overseasPickingBatchItem.findMany({
+      where: {
+        batchId: pickingBatchId,
+        orderId,
+        productId: { in: productIds },
+        OR: [{ dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
+      },
+      select: {
+        productId: true,
+        requestedQty: true,
+        actualQty: true,
+        pickingPlanSnapshot: true,
+        bomSnapshot: true,
+      },
+    });
+    const requiredByPartId = new Map<
+      string,
+      { partId: string; partCode: string; partName: string; requiredQty: number }
+    >();
+    items.forEach((item) => {
+      const requestedQty = Math.max(0, Number(item.actualQty ?? item.requestedQty ?? 0));
+      const finishedQty = this.parseOverseasPickingPlanSnapshot(item.pickingPlanSnapshot)
+        .reduce((sum, plan) => sum + Number(plan.pickQty ?? 0), 0);
+      const assemblyQty = Math.max(requestedQty - finishedQty, 0);
+      if (assemblyQty <= 0) return;
+      const bomItems = this.parseShoulderStrapBomSnapshot(item.bomSnapshot) ?? [];
+      bomItems.forEach((part) => {
+        const requiredQty = Number(part.quantity) * assemblyQty;
+        const existing = requiredByPartId.get(part.partId);
+        if (existing) {
+          existing.requiredQty += requiredQty;
+        } else {
+          requiredByPartId.set(part.partId, {
+            partId: part.partId,
+            partCode: part.partCode,
+            partName: part.partName,
+            requiredQty,
+          });
+        }
+      });
+    });
+    const partIds = Array.from(requiredByPartId.keys()).map((id) => BigInt(id));
+    const liveParts = partIds.length
+      ? await this.prisma.shoulderStrapPart.findMany({
+          where: { id: { in: partIds } },
+          select: { id: true, partCode: true, partName: true, stockQty: true },
+        })
+      : [];
+    const livePartById = new Map(liveParts.map((part) => [part.id.toString(), part] as const));
+    return Array.from(requiredByPartId.values()).map((part) => {
+      const livePart = livePartById.get(part.partId);
+      return {
+        partId: part.partId,
+        partCode: livePart?.partCode ?? part.partCode,
+        partName: livePart?.partName ?? part.partName,
+        requiredQty: part.requiredQty,
+        stockQty: Number(livePart?.stockQty ?? 0),
+      };
+    });
+  }
+
+  private assertYamatoAssemblyPartsConfirmed(
+    payload: YamatoShipmentPrintByProductPayload,
+    assemblyParts: YamatoShipmentPageAssemblyPartDetail[],
+  ): void {
+    if (!assemblyParts.length) return;
+    const confirmedPartIds = new Set(
+      (Array.isArray(payload.confirmedAssemblyPartIds) ? payload.confirmedAssemblyPartIds : [])
+        .map((id) => String(id ?? '').trim())
+        .filter(Boolean),
+    );
+    const missingParts = assemblyParts.filter((part) => !confirmedPartIds.has(part.partId));
+    if (missingParts.length) {
+      throw new BadRequestException(
+        `该面单包含组装肩带，请先确认全部零配件：${missingParts.map((part) => part.partCode).join('、')}`,
+      );
+    }
   }
 
   private parseYamatoItemSummaryProductQuantities(

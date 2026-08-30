@@ -2474,11 +2474,11 @@
   <div id="yamatoMergedScanModal" class="modal hidden">
     <div class="modal-card modal-wide">
       <div class="modal-head">
-        <h3>合并面单扫码确认</h3>
-        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前合并面单打印</button>
+        <h3>面单产品与组装确认</h3>
+        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前面单打印</button>
       </div>
       <p id="yamatoMergedScanSummary" class="muted">该面单包含多个产品，请扫齐后再打印。</p>
-      <div class="action-row overseas-scan-row">
+      <div id="yamatoMergedScanInputRow" class="action-row overseas-scan-row">
         <input id="yamatoMergedScanInput" type="text" inputmode="text" autocomplete="off" placeholder="继续扫描该面单内剩余产品ID" />
       </div>
       <div class="master-product-table-wrap yamato-merged-scan-table-wrap">
@@ -2494,9 +2494,27 @@
           <tbody id="yamatoMergedScanBody"></tbody>
         </table>
       </div>
+      <div id="yamatoAssemblyPartSection" class="hidden">
+        <h4>组装肩带零配件确认</h4>
+        <p class="muted">请核对每项零配件，全部确认后才能打印面单。</p>
+        <div class="master-product-table-wrap yamato-merged-scan-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>零配件编号</th>
+                <th>零配件名称</th>
+                <th>所需数量</th>
+                <th>库存数量</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="yamatoAssemblyPartBody"></tbody>
+          </table>
+        </div>
+      </div>
       <div class="modal-actions modal-actions-split">
-        <span id="yamatoMergedScanHint" class="muted">扫齐所有产品后会自动打印面单。</span>
-        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前合并面单打印</button>
+        <span id="yamatoMergedScanHint" class="muted">扫齐产品并确认全部组装配件后会自动打印面单。</span>
+        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前面单打印</button>
       </div>
     </div>
   </div>
