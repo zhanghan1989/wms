@@ -63,10 +63,8 @@ export class MasterProductsController {
   }
 
   @Get('shoulder-strap-parts')
-  async listShoulderStrapParts(
-    @Query('keyword') keyword?: string,
-  ): Promise<unknown> {
-    return this.masterProductsService.listShoulderStrapParts(keyword);
+  async listShoulderStrapParts(): Promise<unknown> {
+    return this.masterProductsService.listShoulderStrapParts();
   }
 
   @Post('shoulder-strap-parts')

@@ -387,15 +387,9 @@ export class MasterProductsService {
     };
   }
 
-  async listShoulderStrapParts(keywordRaw?: string): Promise<unknown> {
-    const keyword = String(keywordRaw ?? '').trim();
+  async listShoulderStrapParts(): Promise<unknown> {
     const rows = await this.prisma.shoulderStrapPart.findMany({
-      where: {
-        status: 1,
-        ...(keyword
-          ? { OR: [{ partCode: { contains: keyword } }, { partName: { contains: keyword } }] }
-          : {}),
-      },
+      where: { status: 1 },
       orderBy: [{ partCode: 'asc' }, { id: 'asc' }],
     });
     return {

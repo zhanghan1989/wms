@@ -221,7 +221,6 @@ const state = {
   shoulderStrapProductsTotal: 0,
   shoulderStrapProductKeyword: "",
   shoulderStrapParts: [],
-  shoulderStrapPartKeyword: "",
   shoulderStrapBomProduct: null,
   shoulderStrapBomDraftItems: [],
   inventoryLocations: new Map(),
@@ -7790,11 +7789,7 @@ function renderShoulderStrapPartTable() {
 }
 
 async function loadShoulderStrapParts() {
-  const params = new URLSearchParams();
-  const keyword = String(state.shoulderStrapPartKeyword || "").trim();
-  if (keyword) params.set("keyword", keyword);
-  const suffix = params.toString() ? `?${params.toString()}` : "";
-  const result = await request(`/master-products/shoulder-strap-parts${suffix}`);
+  const result = await request("/master-products/shoulder-strap-parts");
   state.shoulderStrapParts = Array.isArray(result?.items) ? result.items : [];
   renderShoulderStrapPartTable();
   return state.shoulderStrapParts;
@@ -15246,16 +15241,6 @@ function bindForms() {
   });
 
   $("openCreateShoulderStrapPartBtn")?.addEventListener("click", () => openShoulderStrapPartEditor());
-  $("shoulderStrapPartSearchForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    state.shoulderStrapPartKeyword = String($("shoulderStrapPartKeyword")?.value || "").trim();
-    await loadShoulderStrapParts();
-  });
-  $("resetShoulderStrapPartKeywordBtn")?.addEventListener("click", async () => {
-    state.shoulderStrapPartKeyword = "";
-    if ($("shoulderStrapPartKeyword")) $("shoulderStrapPartKeyword").value = "";
-    await loadShoulderStrapParts();
-  });
   $("shoulderStrapPartBody")?.addEventListener("click", async (event) => {
     const movementsButton = event.target.closest("button[data-action='viewShoulderStrapPartMovements']");
     if (movementsButton) {
