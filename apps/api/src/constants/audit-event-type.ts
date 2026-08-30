@@ -40,6 +40,13 @@ export const AuditEventType = {
   INVENTORY_ADJUST_CREATED: 'inventory_adjust_created',
   INVENTORY_ADJUST_CONFIRMED: 'inventory_adjust_confirmed',
   INVENTORY_ADJUST_VOIDED: 'inventory_adjust_voided',
+  RAKUTEN_MAIL_RETRIED: 'rakuten_mail_retried',
+  RAKUTEN_MAIL_CANCELLED: 'rakuten_mail_cancelled',
+  RAKUTEN_MAIL_MARKED_SENT: 'rakuten_mail_marked_sent',
+  RAKUTEN_MAIL_TEMPLATE_SAVED: 'rakuten_mail_template_saved',
+  RAKUTEN_MAIL_TEMPLATE_ACTIVATED: 'rakuten_mail_template_activated',
+  RAKUTEN_SHIPPING_RETRIED: 'rakuten_shipping_retried',
+  RAKUTEN_AUTOMATION_CIRCUIT_RESET: 'rakuten_automation_circuit_reset',
 } as const;
 
 export type AuditEventTypeValue = (typeof AuditEventType)[keyof typeof AuditEventType];

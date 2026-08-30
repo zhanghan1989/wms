@@ -949,6 +949,255 @@ button.ghost {
   word-break: break-all;
 }
 
+.rakuten-mail-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.rakuten-mail-stat {
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+}
+
+.rakuten-mail-stat strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 24px;
+  color: var(--accent);
+}
+
+.rakuten-mail-filters {
+  align-items: end;
+}
+
+.rakuten-automation-run-filters {
+  align-items: end;
+  margin: 14px 0 16px;
+}
+
+.rakuten-run-status {
+  display: inline-flex;
+  padding: 5px 9px;
+  border-radius: 999px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.rakuten-run-success {
+  color: #08734e;
+  background: #e8f7f0;
+}
+
+.rakuten-run-partial {
+  color: #8a5a00;
+  background: #fff4d6;
+}
+
+.rakuten-run-failed {
+  color: #a52d2d;
+  background: #fde9e9;
+}
+
+.rakuten-run-running {
+  color: #315f91;
+  background: #e9f2fb;
+}
+
+.rakuten-health-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0 16px;
+}
+
+.rakuten-health-summary-item,
+.rakuten-health-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.rakuten-health-healthy {
+  color: #08734e;
+  background: #e8f7f0;
+}
+
+.rakuten-health-warning {
+  color: #8a5a00;
+  background: #fff4d6;
+}
+
+.rakuten-health-critical {
+  color: #a52d2d;
+  background: #fde9e9;
+}
+
+.rakuten-health-disabled {
+  color: var(--muted);
+  background: #eef2ef;
+}
+
+.rakuten-health-alerts {
+  min-width: 220px;
+  max-width: 360px;
+  white-space: normal;
+}
+
+.rakuten-mail-template-card > .card-head {
+  align-items: end;
+}
+
+.rakuten-mail-template-card > .card-head label {
+  min-width: 240px;
+}
+
+.rakuten-mail-template-layout {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.rakuten-mail-template-events {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rakuten-mail-template-events button {
+  width: 100%;
+  text-align: left;
+  background: #f8fcfa;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.rakuten-mail-template-events button.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.rakuten-mail-template-editor {
+  min-width: 0;
+}
+
+.rakuten-mail-template-editor form > label {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.rakuten-mail-template-body {
+  width: 100%;
+  min-height: 390px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.55;
+}
+
+.rakuten-mail-template-variables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.rakuten-mail-template-variables button {
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.rakuten-mail-template-actions {
+  align-items: end;
+  margin-top: 14px;
+}
+
+.rakuten-mail-template-actions label {
+  min-width: min(320px, 100%);
+}
+
+.rakuten-mail-template-preview {
+  margin: 18px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfdfc;
+}
+
+.rakuten-mail-table-wrap td {
+  max-width: 260px;
+}
+
+.rakuten-mail-table-wrap td:nth-child(6),
+.rakuten-mail-table-wrap td:nth-child(9) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rakuten-mail-pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.rakuten-mail-detail-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 20px;
+  margin-bottom: 16px;
+}
+
+.rakuten-mail-detail-meta > div {
+  overflow-wrap: anywhere;
+}
+
+.rakuten-mail-body {
+  max-height: 52vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8faf9;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  line-height: 1.7;
+}
+
+@media (max-width: 900px) {
+  .rakuten-mail-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rakuten-mail-detail-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .rakuten-mail-template-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .rakuten-mail-template-events {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .rakuten-mail-template-events button {
+    width: auto;
+    min-width: max-content;
+  }
+}
+
 .rakuten-order-detail-grid {
   grid-template-columns: repeat(2, minmax(240px, 1fr));
   margin-bottom: 0;

@@ -107,18 +107,35 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
     return orders;
   }
 
+  async updateOrderShipping(
+    serviceSecret: string,
+    licenseKey: string,
+    orderNumber: string,
+    BasketidModelList: unknown[],
+  ): Promise<RakutenJsonObject> {
+    const payload = await this.request<RakutenJsonObject>(
+      serviceSecret,
+      licenseKey,
+      'updateOrderShipping',
+      { orderNumber, BasketidModelList },
+    );
+    this.assertNoApiErrors(Array.isArray(payload.MessageModelList) ? payload.MessageModelList as RakutenMessage[] : []);
+    return payload;
+  }
+
   private async request<T extends RakutenJsonObject>(
     serviceSecret: string,
     licenseKey: string,
-    operation: 'searchOrder' | 'getOrder',
+    operation: 'searchOrder' | 'getOrder' | 'updateOrderShipping',
     body: RakutenJsonObject,
   ): Promise<T> {
     const authorization = Buffer.from(`${serviceSecret}:${licenseKey}`, 'utf8').toString('base64');
     const url = `${RAKUTEN_API_BASE_URL}/${operation}/`;
     const dispatcher = this.getProxyDispatcher();
+    const maxAttempts = operation === 'updateOrderShipping' ? 1 : 3;
     let lastResponse: Response | null = null;
     let lastNetworkError: unknown = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       let response: Response;
       try {
         const requestInit: RequestInit & { dispatcher?: Dispatcher } = {
@@ -136,7 +153,7 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
         response = await fetch(url, requestInit);
       } catch (error) {
         lastNetworkError = error;
-        if (attempt < 2) {
+        if (attempt + 1 < maxAttempts) {
           await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 250));
           continue;
         }

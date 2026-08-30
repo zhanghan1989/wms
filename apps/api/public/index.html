@@ -188,6 +188,7 @@
         </button>
         <button type="button" id="openAmazonDashboardPanel">亚马逊店铺看板</button>
         <button type="button" id="openRakutenDashboardPanel">乐天店铺看板</button>
+        <button type="button" id="openRakutenMailManagementPanel">乐天邮件管理</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -1964,6 +1965,184 @@
         </article>
       </section>
 
+      <section class="panel" id="rakutenMailManagement">
+        <div class="panel-head">
+          <div>
+            <h2>乐天邮件管理</h2>
+            <p class="muted">查看乐天匿名邮件的待发送、成功、失败及取消记录。已发送邮件仅供追溯，无法撤回。</p>
+          </div>
+          <button id="refreshRakutenMailsBtn" type="button" class="ghost">刷新</button>
+        </div>
+        <div id="rakutenMailStats" class="rakuten-mail-stats"></div>
+        <article class="card rakuten-automation-health-card">
+          <div class="card-head">
+            <div>
+              <h3>自动化健康监控</h3>
+              <p id="rakutenAutomationHealthMeta" class="muted">正在检查各店铺的配置和任务积压情况...</p>
+            </div>
+            <button id="refreshRakutenAutomationHealthBtn" type="button" class="ghost">刷新健康状态</button>
+          </div>
+          <div id="rakutenAutomationHealthSummary" class="rakuten-health-summary"></div>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr><th>健康状态</th><th>店铺</th><th>启用功能</th><th>SMTP</th><th>License</th><th>任务状态</th><th>最近成功</th><th>异常说明</th><th>操作</th></tr>
+              </thead>
+              <tbody id="rakutenAutomationHealthBody">
+                <tr><td colspan="9" class="muted">正在读取健康状态...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+        <article class="card rakuten-automation-runs-card">
+          <div class="card-head">
+            <div>
+              <h3>自动化运行记录</h3>
+              <p class="muted">每次定时或手动执行都会按店铺保存结果；单个阶段异常不会阻止其他阶段和店铺继续运行。</p>
+            </div>
+            <button id="refreshRakutenAutomationRunsBtn" type="button" class="ghost">刷新运行记录</button>
+          </div>
+          <form id="rakutenAutomationRunFilterForm" class="form-grid compact rakuten-automation-run-filters">
+            <label>店铺<select id="rakutenAutomationRunConnectionFilter"><option value="">全部店铺</option></select></label>
+            <label>结果
+              <select id="rakutenAutomationRunStatusFilter">
+                <option value="">全部结果</option>
+                <option value="running">运行中</option>
+                <option value="success">成功</option>
+                <option value="partial">部分成功</option>
+                <option value="failed">失败</option>
+              </select>
+            </label>
+            <div class="actions">
+              <button type="submit">检索</button>
+              <button id="resetRakutenAutomationRunFiltersBtn" type="button" class="ghost">重置</button>
+            </div>
+          </form>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr><th>开始时间</th><th>店铺</th><th>触发方式</th><th>结果</th><th>单号回传</th><th>邮件</th><th>耗时</th><th>错误</th></tr>
+              </thead>
+              <tbody id="rakutenAutomationRunsBody">
+                <tr><td colspan="8" class="muted">正在读取运行记录...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="rakuten-mail-pagination">
+            <button id="rakutenAutomationRunsPrevBtn" type="button" class="ghost">上一页</button>
+            <span id="rakutenAutomationRunsPageSummary" class="muted">第 1 页</span>
+            <button id="rakutenAutomationRunsNextBtn" type="button" class="ghost">下一页</button>
+          </div>
+        </article>
+        <article class="card rakuten-mail-template-card">
+          <div class="card-head">
+            <div>
+              <h3>邮件模板管理</h3>
+              <p class="muted">模板按店铺独立管理。保存会生成并启用新版本；待发送邮件使用发送时的启用版本。</p>
+            </div>
+            <label>模板店铺
+              <select id="rakutenMailTemplateConnection"><option value="">请选择乐天店铺</option></select>
+            </label>
+          </div>
+          <div class="rakuten-mail-template-layout">
+            <div id="rakutenMailTemplateEventNav" class="rakuten-mail-template-events"></div>
+            <div class="rakuten-mail-template-editor">
+              <form id="rakutenMailTemplateForm">
+                <div class="modal-head">
+                  <div>
+                    <h4 id="rakutenMailTemplateTitle">请选择邮件类型</h4>
+                    <p id="rakutenMailTemplateVersionMeta" class="muted"></p>
+                  </div>
+                </div>
+                <label>邮件主题
+                  <input id="rakutenMailTemplateSubject" maxlength="255" autocomplete="off" />
+                </label>
+                <label>邮件正文
+                  <textarea id="rakutenMailTemplateBody" class="rakuten-mail-template-body" maxlength="50000"></textarea>
+                </label>
+                <div>
+                  <span class="muted">可用变量（点击插入正文）：</span>
+                  <div id="rakutenMailTemplateVariables" class="rakuten-mail-template-variables"></div>
+                </div>
+                <div class="action-row rakuten-mail-template-actions">
+                  <label>预览订单号<input id="rakutenMailTemplatePreviewOrder" autocomplete="off" placeholder="留空则使用该店铺最新订单" /></label>
+                  <button id="previewRakutenMailTemplateBtn" type="button" class="ghost">预览</button>
+                  <button id="saveRakutenMailTemplateBtn" type="submit">保存并启用新版本</button>
+                  <button id="restoreRakutenMailDefaultBtn" type="button" class="ghost">恢复系统默认</button>
+                </div>
+              </form>
+              <div id="rakutenMailTemplatePreview" class="rakuten-mail-template-preview hidden">
+                <div class="modal-head"><h4>渲染预览</h4><span id="rakutenMailTemplatePreviewMeta" class="muted"></span></div>
+                <strong id="rakutenMailTemplatePreviewSubject"></strong>
+                <pre id="rakutenMailTemplatePreviewBody" class="rakuten-mail-body"></pre>
+              </div>
+              <div class="modal-head"><h4>版本历史</h4><button id="refreshRakutenMailTemplateHistoryBtn" type="button" class="ghost">刷新</button></div>
+              <div class="manage-table-scroll">
+                <table>
+                  <thead><tr><th>版本</th><th>状态</th><th>创建人</th><th>创建时间</th><th>操作</th></tr></thead>
+                  <tbody id="rakutenMailTemplateHistoryBody"><tr><td colspan="5" class="muted">请选择店铺和邮件类型</td></tr></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </article>
+        <article class="card">
+          <form id="rakutenMailFilterForm" class="form-grid compact rakuten-mail-filters">
+            <label>店铺<select id="rakutenMailConnectionFilter"><option value="">全部店铺</option></select></label>
+            <label>状态
+              <select id="rakutenMailStatusFilter">
+                <option value="">全部状态</option>
+                <option value="pending">待处理</option>
+                <option value="processing">发送中</option>
+                <option value="sent">已发送</option>
+                <option value="failed">失败</option>
+                <option value="dead_letter">需人工处理</option>
+                <option value="uncertain">发送结果待确认</option>
+                <option value="cancelled">已取消</option>
+              </select>
+            </label>
+            <label>邮件类型
+              <select id="rakutenMailEventFilter">
+                <option value="">全部类型</option>
+                <option value="new_order">新規</option>
+                <option value="japan_shipped">日本発</option>
+                <option value="china_delay">中国発1</option>
+                <option value="china_customs">中国発2</option>
+                <option value="mixed_partial">日中発1</option>
+                <option value="mixed_customs">日中発2</option>
+              </select>
+            </label>
+            <label>订单号<input id="rakutenMailOrderFilter" autocomplete="off" placeholder="支持部分订单号" /></label>
+            <label>开始日期<input id="rakutenMailDateFromFilter" type="date" /></label>
+            <label>结束日期<input id="rakutenMailDateToFilter" type="date" /></label>
+            <div class="actions">
+              <button type="submit">检索</button>
+              <button id="resetRakutenMailFiltersBtn" type="button" class="ghost">重置</button>
+            </div>
+          </form>
+        </article>
+        <article class="card">
+          <div class="master-product-table-wrap rakuten-mail-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>创建时间</th><th>店铺</th><th>订单号</th><th>邮件类型</th><th>收件人</th>
+                  <th>标题</th><th>状态</th><th>尝试/下次</th><th>错误</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="rakutenMailManagementBody">
+                <tr><td colspan="10" class="muted">正在读取邮件记录...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="rakuten-mail-pagination">
+            <button id="rakutenMailPrevBtn" type="button" class="ghost">上一页</button>
+            <span id="rakutenMailPageSummary" class="muted">第 1 页</span>
+            <button id="rakutenMailNextBtn" type="button" class="ghost">下一页</button>
+          </div>
+        </article>
+      </section>
+
       <section class="panel" id="users">
         <div class="panel-head">
           <h2>用户管理</h2>
@@ -2915,6 +3094,22 @@
     </div>
   </div>
 
+  <div id="rakutenMailDetailModal" class="modal hidden">
+    <div class="modal-card modal-wide rakuten-mail-detail-card">
+      <div class="modal-head">
+        <h3>乐天邮件详情</h3>
+        <button type="button" class="ghost" data-action="closeRakutenMailDetailModal">关闭</button>
+      </div>
+      <div id="rakutenMailDetailMeta" class="rakuten-mail-detail-meta"></div>
+      <div id="rakutenMailDetailWarning" class="muted hidden"></div>
+      <h4>邮件正文</h4>
+      <pre id="rakutenMailDetailBody" class="rakuten-mail-body">正在读取...</pre>
+      <div class="modal-actions">
+        <button type="button" class="ghost" data-action="closeRakutenMailDetailModal">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <div id="rakutenRmsConnectionModal" class="modal hidden">
       <div class="modal-card modal-wide">
         <div class="modal-head">
@@ -2937,6 +3132,16 @@
               >licenseKey<input id="rakutenRmsLicenseKey" type="password" maxlength="2048" autocomplete="new-password"
             /></label>
             <label>License到期日<input id="rakutenRmsLicenseExpiresAt" type="date" /></label>
+            <label>乐天 SMTP AUTH ID<input id="rakutenRmsSmtpAuthId" maxlength="128" autocomplete="off" /></label>
+            <label
+              >乐天 SMTP AUTH 密码<input
+                id="rakutenRmsSmtpAuthPassword"
+                type="password"
+                maxlength="512"
+                autocomplete="new-password"
+            /></label>
+            <label>RMS登记发件邮箱<input id="rakutenRmsSmtpFromAddress" type="email" maxlength="255" placeholder="dgaz@createbetter.co.jp" /></label>
+            <label>发件人名称<input id="rakutenRmsSmtpFromName" maxlength="128" placeholder="DGAZ楽天市場店" /></label>
             <label
               >连接状态
               <select id="rakutenRmsStatus">
@@ -2947,8 +3152,10 @@
           </div>
           <div class="checkbox-row">
             <label><input id="rakutenRmsSyncOrders" type="checkbox" checked /> 允许定时同步此店铺的乐天订单</label>
+            <label><input id="rakutenRmsAutoShippingEnabled" type="checkbox" /> 自动通过乐天 API 回传快递单号</label>
+            <label><input id="rakutenRmsMailNotificationsEnabled" type="checkbox" /> 使用乐天匿名邮件自动通知买家</label>
           </div>
-          <p class="muted">新建连接时必须填写 serviceSecret 和 licenseKey；保存后系统只显示连接状态，不会回显凭证。</p>
+          <p class="muted">新建连接时必须填写 serviceSecret 和 licenseKey；API及SMTP密码均加密保存且不会回显。启用自动回传前，还需要在 RMS WEB API 中授权 updateOrderShipping。原“回传单号CSV”按钮继续保留，和自动回传互不影响。</p>
           <p id="rakutenRmsConnectionMeta" class="muted">尚未连接。</p>
           <div id="rakutenRmsSyncPreview" class="muted">正式同步前必须先生成预览并人工确认。</div>
           <div class="manage-table-scroll">
@@ -2969,12 +3176,36 @@
               </tbody>
             </table>
           </div>
+          <div class="modal-head">
+            <h4>自动回传／邮件异常</h4>
+            <button id="rakutenRmsAutomationRefreshBtn" type="button" class="ghost hidden">刷新状态</button>
+          </div>
+          <p id="rakutenRmsAutomationSummary" class="muted">保存连接后显示自动任务状态。</p>
+          <div class="manage-table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>类型</th>
+                  <th>订单号</th>
+                  <th>状态/事件</th>
+                  <th>尝试</th>
+                  <th>原因</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="rakutenRmsAutomationIssuesBody">
+                <tr><td colspan="6" class="muted">暂无记录</td></tr>
+              </tbody>
+            </table>
+          </div>
           <div class="modal-actions modal-actions-split">
             <div>
               <button id="rakutenRmsSaveBtn" type="submit">保存连接</button>
               <button id="rakutenRmsTestBtn" type="button" class="ghost hidden">测试连接</button>
+              <button id="rakutenRmsSmtpTestBtn" type="button" class="ghost hidden">测试乐天SMTP</button>
               <button id="rakutenRmsPreviewBtn" type="button" class="ghost hidden">预览同步</button>
               <button id="rakutenRmsSyncBtn" type="button" class="hidden">确认正式同步</button>
+              <button id="rakutenRmsAutomationRunBtn" type="button" class="ghost hidden">立即运行自动回传/邮件</button>
             </div>
             <button type="button" class="ghost" data-action="closeRakutenRmsConnectionModal">取消</button>
           </div>

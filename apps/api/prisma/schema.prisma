@@ -140,6 +140,13 @@ enum AuditEventType {
   inventory_adjust_created
   inventory_adjust_confirmed
   inventory_adjust_voided
+  rakuten_mail_retried
+  rakuten_mail_cancelled
+  rakuten_mail_marked_sent
+  rakuten_mail_template_saved
+  rakuten_mail_template_activated
+  rakuten_shipping_retried
+  rakuten_automation_circuit_reset
 }
 
 enum MasterProductSyncStatus {
@@ -177,6 +184,38 @@ enum RakutenRmsSyncStatus {
   failed
 }
 
+enum RakutenOrderMailEvent {
+  new_order
+  japan_shipped
+  china_delay
+  china_customs
+  mixed_partial
+  mixed_customs
+}
+
+enum RakutenAutomationStatus {
+  pending
+  processing
+  sent
+  failed
+  skipped
+  cancelled
+  uncertain
+  dead_letter
+}
+
+enum RakutenAutomationRunStatus {
+  running
+  success
+  partial
+  failed
+}
+
+enum RakutenAutomationRunTrigger {
+  scheduled
+  manual
+}
+
 model User {
   id                             BigInt                           @id @default(autoincrement()) @db.UnsignedBigInt
   username                       String                           @unique @db.VarChar(64)
@@ -208,6 +247,7 @@ model User {
   masterProductSyncRecords       MasterProductSyncRecord[]
   amazonSpApiOAuthStates         AmazonSpApiOAuthState[]
   shoulderStrapPartMovements     ShoulderStrapPartStockMovement[]
+  rakutenMailTemplateVersions    RakutenMailTemplateVersion[]
 
   @@map("users")
 }
@@ -337,29 +377,140 @@ model Shop {
 }
 
 model RakutenRmsConnection {
-  id                     BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
-  shopId                 BigInt                  @unique @map("shop_id") @db.UnsignedBigInt
-  encryptedServiceSecret String                  @map("encrypted_service_secret") @db.Text
-  serviceSecretIv        String                  @map("service_secret_iv") @db.VarChar(64)
-  serviceSecretAuthTag   String                  @map("service_secret_auth_tag") @db.VarChar(64)
-  encryptedLicenseKey    String                  @map("encrypted_license_key") @db.Text
-  licenseKeyIv           String                  @map("license_key_iv") @db.VarChar(64)
-  licenseKeyAuthTag      String                  @map("license_key_auth_tag") @db.VarChar(64)
-  licenseExpiresAt       DateTime?               @map("license_expires_at")
-  status                 Int                     @default(1) @db.TinyInt
-  syncOrders             Boolean                 @default(true) @map("sync_orders")
-  lastOrdersSyncedAt     DateTime?               @map("last_orders_synced_at")
-  lastSuccessfulSyncAt   DateTime?               @map("last_successful_sync_at")
-  lastSyncError          String?                 @map("last_sync_error") @db.Text
-  createdAt              DateTime                @default(now()) @map("created_at")
-  updatedAt              DateTime                @updatedAt @map("updated_at")
-  shop                   Shop                    @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  syncRuns               RakutenRmsSyncRun[]
-  syncPreviews           RakutenRmsSyncPreview[]
-  orderRecords           RakutenOrderRecord[]
+  id                       BigInt                       @id @default(autoincrement()) @db.UnsignedBigInt
+  shopId                   BigInt                       @unique @map("shop_id") @db.UnsignedBigInt
+  encryptedServiceSecret   String                       @map("encrypted_service_secret") @db.Text
+  serviceSecretIv          String                       @map("service_secret_iv") @db.VarChar(64)
+  serviceSecretAuthTag     String                       @map("service_secret_auth_tag") @db.VarChar(64)
+  encryptedLicenseKey      String                       @map("encrypted_license_key") @db.Text
+  licenseKeyIv             String                       @map("license_key_iv") @db.VarChar(64)
+  licenseKeyAuthTag        String                       @map("license_key_auth_tag") @db.VarChar(64)
+  smtpAuthId               String?                      @map("smtp_auth_id") @db.VarChar(128)
+  encryptedSmtpPassword    String?                      @map("encrypted_smtp_password") @db.Text
+  smtpPasswordIv           String?                      @map("smtp_password_iv") @db.VarChar(64)
+  smtpPasswordAuthTag      String?                      @map("smtp_password_auth_tag") @db.VarChar(64)
+  smtpFromAddress          String?                      @map("smtp_from_address") @db.VarChar(255)
+  smtpFromName             String?                      @map("smtp_from_name") @db.VarChar(128)
+  mailNotificationsEnabled Boolean                      @default(false) @map("mail_notifications_enabled")
+  autoShippingEnabled      Boolean                      @default(false) @map("auto_shipping_enabled")
+  automationLockToken      String?                      @map("automation_lock_token") @db.VarChar(64)
+  automationLockedAt       DateTime?                    @map("automation_locked_at")
+  shippingCircuitOpenedAt  DateTime?                    @map("shipping_circuit_opened_at")
+  shippingCircuitReason    String?                      @map("shipping_circuit_reason") @db.Text
+  mailCircuitOpenedAt      DateTime?                    @map("mail_circuit_opened_at")
+  mailCircuitReason        String?                      @map("mail_circuit_reason") @db.Text
+  licenseExpiresAt         DateTime?                    @map("license_expires_at")
+  status                   Int                          @default(1) @db.TinyInt
+  syncOrders               Boolean                      @default(true) @map("sync_orders")
+  lastOrdersSyncedAt       DateTime?                    @map("last_orders_synced_at")
+  lastSuccessfulSyncAt     DateTime?                    @map("last_successful_sync_at")
+  lastSyncError            String?                      @map("last_sync_error") @db.Text
+  createdAt                DateTime                     @default(now()) @map("created_at")
+  updatedAt                DateTime                     @updatedAt @map("updated_at")
+  shop                     Shop                         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  syncRuns                 RakutenRmsSyncRun[]
+  syncPreviews             RakutenRmsSyncPreview[]
+  orderRecords             RakutenOrderRecord[]
+  orderMails               RakutenOrderMail[]
+  shippingReports          RakutenOrderShippingReport[]
+  mailTemplateVersions     RakutenMailTemplateVersion[]
+  automationRuns           RakutenAutomationRun[]
 
   @@index([status])
+  @@index([automationLockedAt], map: "idx_rakuten_connection_automation_lock")
   @@map("rakuten_rms_connections")
+}
+
+model RakutenAutomationRun {
+  id              BigInt                      @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId    BigInt                      @map("connection_id") @db.UnsignedBigInt
+  trigger         RakutenAutomationRunTrigger
+  status          RakutenAutomationRunStatus  @default(running)
+  shippingSent    Int                         @default(0) @map("shipping_sent")
+  shippingSkipped Int                         @default(0) @map("shipping_skipped")
+  shippingFailed  Int                         @default(0) @map("shipping_failed")
+  mailSent        Int                         @default(0) @map("mail_sent")
+  mailFailed      Int                         @default(0) @map("mail_failed")
+  mailBlocked     Int                         @default(0) @map("mail_blocked")
+  errorMessage    String?                     @map("error_message") @db.Text
+  startedAt       DateTime                    @default(now()) @map("started_at")
+  finishedAt      DateTime?                   @map("finished_at")
+  connection      RakutenRmsConnection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, startedAt], map: "idx_rakuten_automation_run_connection")
+  @@index([status, startedAt], map: "idx_rakuten_automation_run_status")
+  @@map("rakuten_automation_runs")
+}
+
+model RakutenMailTemplateVersion {
+  id              BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId    BigInt                @map("connection_id") @db.UnsignedBigInt
+  event           RakutenOrderMailEvent
+  version         Int
+  subjectTemplate String                @map("subject_template") @db.VarChar(255)
+  bodyTemplate    String                @map("body_template") @db.Text
+  isActive        Boolean               @default(false) @map("is_active")
+  createdBy       BigInt?               @map("created_by") @db.UnsignedBigInt
+  createdAt       DateTime              @default(now()) @map("created_at")
+  activatedAt     DateTime?             @map("activated_at")
+  connection      RakutenRmsConnection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  creator         User?                 @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@unique([connectionId, event, version], map: "uq_rakuten_mail_template_version")
+  @@index([connectionId, event, isActive], map: "idx_rakuten_mail_template_active")
+  @@map("rakuten_mail_template_versions")
+}
+
+model RakutenOrderMail {
+  id              BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId    BigInt                  @map("connection_id") @db.UnsignedBigInt
+  orderId         String                  @map("order_id") @db.VarChar(64)
+  event           RakutenOrderMailEvent
+  status          RakutenAutomationStatus @default(pending)
+  recipient       String?                 @db.VarChar(255)
+  subject         String?                 @db.VarChar(255)
+  body            String?                 @db.Text
+  smtpMessageId   String?                 @map("smtp_message_id") @db.VarChar(512)
+  sendStartedAt   DateTime?               @map("send_started_at")
+  resolvedAt      DateTime?               @map("resolved_at")
+  resolvedBy      BigInt?                 @map("resolved_by") @db.UnsignedBigInt
+  resolutionNote  String?                 @map("resolution_note") @db.VarChar(255)
+  attempts        Int                     @default(0)
+  nextAttemptAt   DateTime?               @map("next_attempt_at")
+  sentAt          DateTime?               @map("sent_at")
+  lastError       String?                 @map("last_error") @db.Text
+  failureCategory String?                 @map("failure_category") @db.VarChar(32)
+  deadLetteredAt  DateTime?               @map("dead_lettered_at")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+  connection      RakutenRmsConnection    @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, orderId, event], map: "uq_rakuten_order_mail_event")
+  @@index([status, nextAttemptAt], map: "idx_rakuten_order_mail_pending")
+  @@map("rakuten_order_mails")
+}
+
+model RakutenOrderShippingReport {
+  id              BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId    BigInt                  @map("connection_id") @db.UnsignedBigInt
+  orderId         String                  @map("order_id") @db.VarChar(64)
+  fulfillmentType String                  @map("fulfillment_type") @db.VarChar(16)
+  fingerprint     String                  @db.Char(40)
+  status          RakutenAutomationStatus @default(pending)
+  attempts        Int                     @default(0)
+  nextAttemptAt   DateTime?               @map("next_attempt_at")
+  reportedAt      DateTime?               @map("reported_at")
+  lastError       String?                 @map("last_error") @db.Text
+  failureCategory String?                 @map("failure_category") @db.VarChar(32)
+  deadLetteredAt  DateTime?               @map("dead_lettered_at")
+  responsePayload Json?                   @map("response_payload")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+  connection      RakutenRmsConnection    @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, orderId], map: "uq_rakuten_order_shipping_report")
+  @@index([status, nextAttemptAt], map: "idx_rakuten_shipping_report_pending")
+  @@map("rakuten_order_shipping_reports")
 }
 
 model RakutenRmsSyncRun {
@@ -928,6 +1079,7 @@ model RakutenOrderRecord {
   orderImportedAtRaw             String?               @map("order_imported_at_raw") @db.VarChar(32)
   orderImportedDate              DateTime?             @map("order_imported_date") @db.Date
   orderRemark                    String?               @map("order_remark") @db.Text
+  buyerEmail                     String?               @map("buyer_email") @db.VarChar(255)
   shippingName                   String?               @map("shipping_name") @db.VarChar(128)
   shippingPostalCode             String?               @map("shipping_postal_code") @db.VarChar(32)
   shippingPrefecture             String?               @map("shipping_prefecture") @db.VarChar(64)

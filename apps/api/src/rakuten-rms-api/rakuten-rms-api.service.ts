@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import { Cron } from "@nestjs/schedule";
 import {
   BatchInboundItemStatus,
@@ -24,6 +24,7 @@ import { SyncRakutenRmsConnectionDto } from "./dto/sync-rakuten-rms-connection.d
 import { UpdateRakutenRmsConnectionDto } from "./dto/update-rakuten-rms-connection.dto";
 import { RakutenRmsApiClient } from "./rakuten-rms-api.client";
 import { RakutenRmsApiCryptoService } from "./rakuten-rms-api-crypto.service";
+import { RakutenRmsAutomationService } from "./rakuten-rms-automation.service";
 import { RakutenJsonObject } from "./rakuten-rms-api.types";
 import { buildRakutenStoreDashboard } from "./rakuten-store-dashboard";
 
@@ -99,6 +100,7 @@ interface MappedRakutenItem {
   orderStatusText: string | null;
   orderImportedAtRaw: string | null;
   orderRemark: string | null;
+  buyerEmail: string | null;
   shippingName: string | null;
   shippingPostalCode: string | null;
   shippingPrefecture: string | null;
@@ -134,6 +136,7 @@ export class RakutenRmsApiService {
     private readonly prisma: PrismaService,
     private readonly client: RakutenRmsApiClient,
     private readonly crypto: RakutenRmsApiCryptoService,
+    @Optional() private readonly automation?: RakutenRmsAutomationService,
   ) {}
 
   async listConnections(): Promise<unknown[]> {
@@ -377,8 +380,17 @@ export class RakutenRmsApiService {
       where: { shopId },
     });
     if (existing) throw new ConflictException("该店铺已经配置乐天 RMS API 连接");
+    if (
+      payload.mailNotificationsEnabled &&
+      (!String(payload.smtpAuthId ?? '').trim() ||
+        !payload.smtpAuthPassword ||
+        !String(payload.smtpFromAddress ?? '').trim())
+    ) {
+      throw new BadRequestException('启用乐天邮件通知前必须填写 SMTP AUTH ID、密码和RMS登记发件邮箱');
+    }
     const serviceSecret = this.crypto.encrypt(payload.serviceSecret.trim());
     const licenseKey = this.crypto.encrypt(payload.licenseKey.trim());
+    const smtpPassword = payload.smtpAuthPassword ? this.crypto.encrypt(payload.smtpAuthPassword) : null;
     const created = await this.prisma.rakutenRmsConnection.create({
       data: {
         shopId,
@@ -388,6 +400,18 @@ export class RakutenRmsApiService {
         encryptedLicenseKey: licenseKey.encryptedValue,
         licenseKeyIv: licenseKey.iv,
         licenseKeyAuthTag: licenseKey.authTag,
+        smtpAuthId: this.optionalText(payload.smtpAuthId),
+        ...(smtpPassword
+          ? {
+              encryptedSmtpPassword: smtpPassword.encryptedValue,
+              smtpPasswordIv: smtpPassword.iv,
+              smtpPasswordAuthTag: smtpPassword.authTag,
+            }
+          : {}),
+        smtpFromAddress: this.optionalText(payload.smtpFromAddress),
+        smtpFromName: this.optionalText(payload.smtpFromName),
+        mailNotificationsEnabled: payload.mailNotificationsEnabled ?? false,
+        autoShippingEnabled: payload.autoShippingEnabled ?? false,
         licenseExpiresAt: this.parseOptionalDate(payload.licenseExpiresAt),
         status: payload.status ?? 1,
         syncOrders: payload.syncOrders ?? true,
@@ -403,8 +427,17 @@ export class RakutenRmsApiService {
       where: { id },
     });
     if (!current) throw new NotFoundException("乐天 RMS API 连接不存在");
+    if (
+      payload.mailNotificationsEnabled === true &&
+      (!String(payload.smtpAuthId ?? current.smtpAuthId ?? '').trim() ||
+        !(payload.smtpAuthPassword || current.encryptedSmtpPassword) ||
+        !String(payload.smtpFromAddress ?? current.smtpFromAddress ?? '').trim())
+    ) {
+      throw new BadRequestException('启用乐天邮件通知前必须填写 SMTP AUTH ID、密码和RMS登记发件邮箱');
+    }
     const serviceSecret = payload.serviceSecret ? this.crypto.encrypt(payload.serviceSecret.trim()) : null;
     const licenseKey = payload.licenseKey ? this.crypto.encrypt(payload.licenseKey.trim()) : null;
+    const smtpPassword = payload.smtpAuthPassword ? this.crypto.encrypt(payload.smtpAuthPassword) : null;
     const updated = await this.prisma.rakutenRmsConnection.update({
       where: { id },
       data: {
@@ -422,6 +455,30 @@ export class RakutenRmsApiService {
               licenseKeyAuthTag: licenseKey.authTag,
               lastSyncError: null,
             }
+          : {}),
+        ...(serviceSecret || licenseKey
+          ? { shippingCircuitOpenedAt: null, shippingCircuitReason: null }
+          : {}),
+        ...(payload.smtpAuthId !== undefined ? { smtpAuthId: this.optionalText(payload.smtpAuthId) } : {}),
+        ...(smtpPassword
+          ? {
+              encryptedSmtpPassword: smtpPassword.encryptedValue,
+              smtpPasswordIv: smtpPassword.iv,
+              smtpPasswordAuthTag: smtpPassword.authTag,
+            }
+          : {}),
+        ...(payload.smtpFromAddress !== undefined
+          ? { smtpFromAddress: this.optionalText(payload.smtpFromAddress) }
+          : {}),
+        ...(payload.smtpFromName !== undefined ? { smtpFromName: this.optionalText(payload.smtpFromName) } : {}),
+        ...(payload.smtpAuthId !== undefined || smtpPassword || payload.smtpFromAddress !== undefined
+          ? { mailCircuitOpenedAt: null, mailCircuitReason: null }
+          : {}),
+        ...(payload.mailNotificationsEnabled !== undefined
+          ? { mailNotificationsEnabled: payload.mailNotificationsEnabled }
+          : {}),
+        ...(payload.autoShippingEnabled !== undefined
+          ? { autoShippingEnabled: payload.autoShippingEnabled }
           : {}),
         ...(payload.licenseExpiresAt !== undefined
           ? {
@@ -449,6 +506,10 @@ export class RakutenRmsApiService {
     if (sampleOrderNumber) {
       await this.client.getOrders(credentials.serviceSecret, credentials.licenseKey, [sampleOrderNumber]);
     }
+    await this.prisma.rakutenRmsConnection.update({
+      where: { id: connection.id },
+      data: { shippingCircuitOpenedAt: null, shippingCircuitReason: null },
+    });
     return {
       ok: true,
       matchedOrderCount: probe.matchedOrderCount,
@@ -840,6 +901,7 @@ export class RakutenRmsApiService {
       const finishedAt = new Date();
       const changes = await this.prisma.$transaction(async (tx) => {
         const snapshots: SyncChangeSnapshot[] = [];
+        const createdOrderIds = new Set<string>();
         if (input.previewToken) {
           const consumed = await tx.rakutenRmsSyncPreview.updateMany({
             where: {
@@ -886,6 +948,10 @@ export class RakutenRmsApiService {
           if (plan.action === "create") counters.created += 1;
           else if (plan.action === "update" && plan.changedFields.length === 0) counters.unchanged += 1;
           else counters.updated += 1;
+          if (plan.action === "create") createdOrderIds.add(item.orderId);
+        }
+        if (connection.mailNotificationsEnabled) {
+          await this.automation?.enqueueNewOrderMails(tx, connection.id, createdOrderIds);
         }
         const hasConflicts = conflictCount > 0;
         const incompleteByLimit = Boolean(input.truncated);
@@ -1045,6 +1111,10 @@ export class RakutenRmsApiService {
     if (!orderId) return [];
     const packages = this.pickObjectList(order, "PackageModelList", "packageModelList");
     const normalizedPackages = packages.length ? packages : [order];
+    const orderer = this.pickObject(order, "OrdererModel", "ordererModel") ?? {};
+    const buyerEmail =
+      this.pickText(orderer, "emailAddress", "mailAddress", "email") ||
+      this.pickText(order, "emailAddress", "mailAddress", "email");
     const result: MappedRakutenItem[] = [];
     normalizedPackages.forEach((pkg, packageIndex) => {
       const sender =
@@ -1142,6 +1212,7 @@ export class RakutenRmsApiService {
           orderStatusText: orderStatusText || null,
           orderImportedAtRaw: orderImportedAtRaw || null,
           orderRemark: orderRemark || null,
+          buyerEmail: buyerEmail || null,
           shippingName: shippingName || null,
           shippingPostalCode: shippingPostalCode || null,
           shippingPrefecture: shippingPrefecture || null,
@@ -1367,6 +1438,7 @@ export class RakutenRmsApiService {
       orderImportedAtRaw: item.orderImportedAtRaw,
       orderImportedDate: parseRakutenOrderDate(item.orderImportedAtRaw),
       orderRemark: item.orderRemark,
+      buyerEmail: item.buyerEmail,
       shippingName: item.shippingName,
       shippingPostalCode: item.shippingPostalCode,
       shippingPrefecture: item.shippingPrefecture,
@@ -1682,6 +1754,12 @@ export class RakutenRmsApiService {
       shop: { id: row.shop.id.toString(), name: row.shop.name },
       status: row.status,
       syncOrders: row.syncOrders,
+      smtpAuthId: row.smtpAuthId,
+      smtpPasswordConfigured: Boolean(row.encryptedSmtpPassword),
+      smtpFromAddress: row.smtpFromAddress,
+      smtpFromName: row.smtpFromName,
+      mailNotificationsEnabled: row.mailNotificationsEnabled,
+      autoShippingEnabled: row.autoShippingEnabled,
       licenseExpiresAt: row.licenseExpiresAt?.toISOString() ?? null,
       renewalDue,
       lastOrdersSyncedAt: row.lastOrdersSyncedAt?.toISOString() ?? null,
@@ -1762,6 +1840,11 @@ export class RakutenRmsApiService {
 
   private toJson(value: unknown): Prisma.InputJsonValue {
     return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  }
+
+  private optionalText(value: string | undefined): string | null {
+    const text = String(value ?? '').trim();
+    return text || null;
   }
 
   private parseOptionalDate(value: string | undefined): Date | null {

@@ -30,6 +30,8 @@ describe("Rakuten RMS API integration", () => {
       RakutenRmsApiController.prototype.rollbackSyncRun,
       RakutenRmsApiController.prototype.syncAllConnections,
       RakutenRmsApiController.prototype.listSyncRuns,
+      RakutenRmsApiController.prototype.runAutomation,
+      RakutenRmsApiController.prototype.getAutomationSummary,
     ];
 
     expect(Reflect.getMetadata(ROLES_KEY, RakutenRmsApiController)).toBeUndefined();
@@ -248,6 +250,7 @@ describe("Rakuten RMS API integration", () => {
     const prisma = {
       rakutenRmsConnection: {
         findUnique: jest.fn().mockResolvedValue(connection),
+        update: jest.fn().mockResolvedValue({}),
       },
     } as unknown as PrismaService;
     const client = {
@@ -271,6 +274,10 @@ describe("Rakuten RMS API integration", () => {
     );
     expect((client.probeOrders as jest.Mock).mock.calls[0][2].orderProgressList).toBeUndefined();
     expect(client.getOrders).toHaveBeenCalledWith("service-secret", "license-key", ["421951-1"]);
+    expect((prisma.rakutenRmsConnection.update as jest.Mock)).toHaveBeenCalledWith({
+      where: { id: 7n },
+      data: { shippingCircuitOpenedAt: null, shippingCircuitReason: null },
+    });
     expect(result.testedOperations).toEqual({
       searchOrder: true,
       getOrder: true,
@@ -1107,6 +1114,63 @@ describe("Rakuten RMS API integration", () => {
     ]));
   });
 
+  it("claims each matching CSV component after expanding an RMS combo", async () => {
+    const manuallyImportedRows = ["9259", "8736"].map((skuCode, index) => ({
+      id: BigInt(index + 1),
+      rmsConnectionId: null,
+      rmsItemKey: null,
+      sourceKind: "csv",
+      orderId: "421951-20260822-0868449346",
+      shopName: "乐天-1号店",
+      skuCode,
+      comboOrderSku: "zh-combo-1",
+      setComponentSkuCode: "zh-combo-1",
+      dispatchMode: "overseas",
+      shipmentNo: null,
+      xiyaExportedAt: null,
+      rmsManualOverrideAt: null,
+      rawPayload: {},
+      updatedAt: new Date("2026-08-24T00:00:00.000Z"),
+    }));
+    const prisma = {
+      rakutenComboProduct: {
+        findMany: jest.fn().mockResolvedValue([{
+          comboName: "zh-combo-1",
+          items: [
+            { productId: "9259", product: { productId: "9259", productName: "组合明细A" } },
+            { productId: "8736", product: { productId: "8736", productName: "组合明细B" } },
+          ],
+        }]),
+      },
+      rakutenOrderRecord: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue(manuallyImportedRows),
+      },
+      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+    const rows = await (service as any).mapOrders([{
+      orderNumber: "421951-20260822-0868449346",
+      orderProgress: 300,
+      PackageModelList: [{ ItemModelList: [{
+        itemDetailId: 99,
+        manageNumber: "zh-combo-1",
+        SkuModelList: [{ variantId: "ordinary-variant", merchantDefinedSkuId: "integration-sku" }],
+        itemName: "乐天组合产品",
+        units: 1,
+      }] }],
+    }]);
+
+    const plans = await Promise.all(rows.map((item: any) => (service as any).planOrderItem(
+      prisma,
+      { id: 7n, shop: { id: 3n, name: "乐天-1号店" } },
+      item,
+    )));
+
+    expect(plans.map((plan: any) => plan.action)).toEqual(["claim", "claim"]);
+    expect(plans.map((plan: any) => plan.existing.id)).toEqual([1n, 2n]);
+  });
+
   it("requests getOrder version 7 so SKU identifiers are included", async () => {
     const fetchMock = jest
       .spyOn(global, "fetch")
@@ -1117,6 +1181,35 @@ describe("Rakuten RMS API integration", () => {
     expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({
       orderNumberList: ["421951-1"],
       version: 7,
+    });
+  });
+
+  it("posts automatic shipment data to updateOrderShipping without retrying the mutation", async () => {
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ MessageModelList: [{ messageType: "INFO", messageCode: "OK" }] }), {
+        status: 200,
+      }),
+    );
+    const client = new RakutenRmsApiClient();
+    const baskets = [{
+      basketId: 1,
+      ShippingModelList: [{
+        shippingNumber: "390853178660",
+        deliveryCompany: "1001",
+        shippingDate: "2026-08-21",
+        shippingDeleteFlag: 0,
+      }],
+    }];
+
+    await client.updateOrderShipping("service-secret", "license-key", "421951-ORDER", baskets);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.rms.rakuten.co.jp/es/2.0/order/updateOrderShipping/",
+    );
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body))).toEqual({
+      orderNumber: "421951-ORDER",
+      BasketidModelList: baskets,
     });
   });
 });

@@ -179,6 +179,28 @@ const state = {
   rakutenRmsConnections: [],
   rakutenRmsSyncRuns: [],
   rakutenRmsSyncRunsLoading: false,
+  rakutenRmsAutomationStatus: null,
+  rakutenRmsAutomationStatusLoading: false,
+  rakutenMails: [],
+  rakutenMailStats: {},
+  rakutenMailPage: 1,
+  rakutenMailPageSize: 30,
+  rakutenMailTotal: 0,
+  rakutenMailLoading: false,
+  rakutenMailDetail: null,
+  rakutenMailTemplates: [],
+  rakutenMailTemplateVariables: [],
+  rakutenMailTemplateEvent: "new_order",
+  rakutenMailTemplateHistory: [],
+  rakutenMailTemplatePreview: null,
+  rakutenMailTemplateLoading: false,
+  rakutenAutomationHealth: null,
+  rakutenAutomationHealthLoading: false,
+  rakutenAutomationRuns: [],
+  rakutenAutomationRunsPage: 1,
+  rakutenAutomationRunsPageSize: 30,
+  rakutenAutomationRunsTotal: 0,
+  rakutenAutomationRunsLoading: false,
   rakutenRmsSyncPreview: null,
   rakutenApiImportPreview: null,
   skuEditRequests: [],
@@ -2354,6 +2376,7 @@ function renderAmazonStoreDashboard(payload) {
   const comparison = dashboard.comparison || {};
   const inventory = dashboard.inventory || {};
   const topProducts = Array.isArray(dashboard.topProducts) ? dashboard.topProducts : [];
+  const sourceSummary = payload.sourceSummary || {};
   const daily = Array.isArray(dashboard.daily) ? dashboard.daily : [];
   const currency = period.currency || "JPY";
   const generatedAt = payload.generatedAt ? formatDate(payload.generatedAt) : "-";
@@ -6280,6 +6303,7 @@ async function loadAmazonSpApiConnections() {
 async function loadRakutenRmsConnections() {
   state.rakutenRmsConnections = (await request("/rakuten-rms-api/connections")) || [];
   renderShopsTable();
+  renderRakutenMailConnectionFilter();
   return state.rakutenRmsConnections;
 }
 
@@ -6319,6 +6343,566 @@ function renderRakutenRmsSyncRuns() {
     </tr>`;
       })
       .join("") || '<tr><td colspan="5" class="muted">暂无同步记录</td></tr>';
+}
+
+function renderRakutenRmsAutomationStatus() {
+  const body = $("rakutenRmsAutomationIssuesBody");
+  const summary = $("rakutenRmsAutomationSummary");
+  if (!body || !summary) return;
+  if (state.rakutenRmsAutomationStatusLoading) {
+    summary.textContent = "正在读取自动任务状态...";
+    body.innerHTML = '<tr><td colspan="6" class="muted">正在读取...</td></tr>';
+    return;
+  }
+  const status = state.rakutenRmsAutomationStatus;
+  if (!status) {
+    summary.textContent = "保存连接后显示自动任务状态。";
+    body.innerHTML = '<tr><td colspan="6" class="muted">暂无记录</td></tr>';
+    return;
+  }
+  const shipping = status.shipping || {};
+  const mail = status.mail || {};
+  const circuitText = [
+    status?.circuits?.shipping?.open ? "自动回传已暂停" : "",
+    status?.circuits?.mail?.open ? "邮件发送已暂停" : "",
+  ].filter(Boolean).join("；");
+  summary.textContent = `回传：待处理 ${Number(shipping.pending || 0)}，成功 ${Number(shipping.sent || 0)}，跳过 ${Number(shipping.skipped || 0)}，失败 ${Number(shipping.failed || 0)}，需人工处理 ${Number(shipping.dead_letter || 0)}；邮件：待处理 ${Number(mail.pending || 0)}，成功 ${Number(mail.sent || 0)}，失败 ${Number(mail.failed || 0)}，需人工处理 ${Number(mail.dead_letter || 0)}，发送结果待确认 ${Number(mail.uncertain || 0)}${circuitText ? `；${circuitText}` : ""}${status.running ? "；当前任务运行中" : ""}`;
+  const eventLabels = {
+    new_order: "新規",
+    japan_shipped: "日本発",
+    china_delay: "中国発1",
+    china_customs: "中国発2",
+    mixed_partial: "日中発1",
+    mixed_customs: "日中発2",
+  };
+  const issues = Array.isArray(status.issues) ? status.issues : [];
+  body.innerHTML = issues.map((item) => {
+    const kind = item?.kind === "mail" ? "mail" : "shipping";
+    const label = kind === "mail" ? "邮件" : "回传";
+    const stateLabel = item?.status === "skipped"
+      ? "已跳过"
+      : item?.status === "failed"
+        ? "失败"
+        : item?.status === "dead_letter"
+          ? "需人工处理"
+          : item?.status === "uncertain" ? "发送结果待确认" : displayText(item?.status);
+    const eventLabel = kind === "mail" ? eventLabels[item?.event] || displayText(item?.event) : stateLabel;
+    const reason = String(item?.lastError || "").trim();
+    return `<tr>
+      <td>${label}</td>
+      <td>${escapeHtml(displayText(item?.orderId))}</td>
+      <td>${escapeHtml(eventLabel)}</td>
+      <td>${formatOverviewNumber(item?.attempts)}</td>
+      <td title="${escapeHtml(reason)}">${escapeHtml(reason || "-")}</td>
+      <td>${item?.status === "uncertain"
+        ? `<button type="button" class="tiny-btn" data-action="openRakutenUncertainMail" data-kind="${kind}" data-id="${escapeHtml(item?.id)}">去邮件管理确认</button>`
+        : `<button type="button" class="tiny-btn" data-action="retryRakutenAutomationJob" data-kind="${kind}" data-id="${escapeHtml(item?.id)}">重试</button>`}</td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="6" class="muted">当前没有失败或跳过任务</td></tr>';
+}
+
+async function loadRakutenRmsAutomationStatus(connectionId) {
+  const normalizedId = String(connectionId || "").trim();
+  if (!normalizedId) {
+    state.rakutenRmsAutomationStatus = null;
+    state.rakutenRmsAutomationStatusLoading = false;
+    renderRakutenRmsAutomationStatus();
+    return null;
+  }
+  state.rakutenRmsAutomationStatusLoading = true;
+  renderRakutenRmsAutomationStatus();
+  try {
+    const result = await request(`/rakuten-rms-api/connections/${normalizedId}/automation/status`);
+    if (String($("rakutenRmsConnectionId")?.value || "") !== normalizedId) return null;
+    state.rakutenRmsAutomationStatus = result || null;
+    return result;
+  } finally {
+    if (String($("rakutenRmsConnectionId")?.value || "") === normalizedId) {
+      state.rakutenRmsAutomationStatusLoading = false;
+      renderRakutenRmsAutomationStatus();
+    }
+  }
+}
+
+const RAKUTEN_MAIL_EVENT_LABELS = {
+  new_order: "新規",
+  japan_shipped: "日本発",
+  china_delay: "中国発1",
+  china_customs: "中国発2",
+  mixed_partial: "日中発1",
+  mixed_customs: "日中発2",
+};
+
+const RAKUTEN_MAIL_STATUS_LABELS = {
+  pending: "待处理",
+  processing: "发送中",
+  sent: "已发送",
+  failed: "失败",
+  dead_letter: "需人工处理",
+  uncertain: "发送结果待确认",
+  cancelled: "已取消",
+  skipped: "已跳过",
+};
+
+const RAKUTEN_FAILURE_CATEGORY_LABELS = {
+  authentication: "认证或授权错误",
+  recipient: "收件地址错误",
+  configuration: "配置错误",
+  validation: "数据校验错误",
+  rate_limit: "远端限流",
+  temporary_remote: "临时网络或远端错误",
+  unknown: "未分类临时错误",
+  max_attempts: "已达到自动重试上限",
+  prerequisite: "前置邮件需人工处理",
+  smtp_uncertain: "SMTP发送结果不确定",
+};
+
+function renderRakutenMailConnectionFilter() {
+  const options = state.rakutenRmsConnections
+    .map((connection) => {
+      const id = String(connection?.id || "");
+      const name = connection?.shop?.name || connection?.shopName || `连接 ${id}`;
+      return `<option value="${escapeHtml(id)}">${escapeHtml(name)}</option>`;
+    })
+    .join("");
+  const filter = $("rakutenMailConnectionFilter");
+  if (filter) {
+    const selected = String(filter.value || "");
+    filter.innerHTML = '<option value="">全部店铺</option>' + options;
+    filter.value = selected;
+  }
+  const runFilter = $("rakutenAutomationRunConnectionFilter");
+  if (runFilter) {
+    const selected = String(runFilter.value || "");
+    runFilter.innerHTML = '<option value="">全部店铺</option>' + options;
+    runFilter.value = selected;
+  }
+  const templateSelect = $("rakutenMailTemplateConnection");
+  if (templateSelect) {
+    const selected = String(templateSelect.value || "");
+    templateSelect.innerHTML = '<option value="">请选择乐天店铺</option>' + options;
+    templateSelect.value = selected || String(state.rakutenRmsConnections[0]?.id || "");
+  }
+}
+
+function renderRakutenMailStats() {
+  const node = $("rakutenMailStats");
+  if (!node) return;
+  const stats = state.rakutenMailStats || {};
+  const entries = [
+    ["全部", Object.values(stats).reduce((sum, value) => sum + Number(value || 0), 0)],
+    ["待处理", stats.pending],
+    ["已发送", stats.sent],
+    ["失败", stats.failed],
+    ["需人工处理", stats.dead_letter],
+    ["待确认", stats.uncertain],
+    ["已取消", stats.cancelled],
+  ];
+  node.innerHTML = entries.map(([label, value]) =>
+    `<div class="rakuten-mail-stat"><span class="muted">${escapeHtml(label)}</span><strong>${formatOverviewNumber(value || 0)}</strong></div>`,
+  ).join("");
+}
+
+function renderRakutenAutomationHealth() {
+  const body = $("rakutenAutomationHealthBody");
+  const summaryNode = $("rakutenAutomationHealthSummary");
+  const meta = $("rakutenAutomationHealthMeta");
+  if (!body || !summaryNode || !meta) return;
+  if (state.rakutenAutomationHealthLoading) {
+    meta.textContent = "正在检查各店铺的配置和任务积压情况...";
+    body.innerHTML = '<tr><td colspan="9" class="muted">正在读取健康状态...</td></tr>';
+    return;
+  }
+  const health = state.rakutenAutomationHealth || {};
+  const rows = Array.isArray(health.items) ? health.items : [];
+  const summary = health.summary || {};
+  const labels = { healthy: "正常", warning: "警告", critical: "严重", disabled: "未启用" };
+  summaryNode.innerHTML = ["healthy", "warning", "critical", "disabled"].map((status) =>
+    `<span class="rakuten-health-summary-item rakuten-health-${status}">${labels[status]} ${formatOverviewNumber(summary[status] || 0)}</span>`,
+  ).join("");
+  meta.textContent = `检查时间：${formatDate(health.checkedAt)}；积压判定：待处理超过 ${formatOverviewNumber(health.staleThresholdMinutes || 30)} 分钟${health.running ? "；自动任务当前运行中" : ""}`;
+  body.innerHTML = rows.map((item) => {
+    const status = String(item?.health || "healthy");
+    const features = item?.features || {};
+    const enabledFeatures = [
+      features.syncOrders ? "订单同步" : "",
+      features.autoShipping ? "自动回传" : "",
+      features.mailNotifications ? "邮件通知" : "",
+    ].filter(Boolean).join(" / ") || "未启用自动化";
+    const shipping = item?.shipping || {};
+    const mail = item?.mail || {};
+    const taskText = `${item?.running ? "运行中；" : ""}回传 待${Number(shipping.pending || 0)} 失${Number(shipping.failed || 0)} 人工${Number(shipping.dead_letter || 0)}；邮件 待${Number(mail.pending || 0)} 失${Number(mail.failed || 0)} 人工${Number(mail.dead_letter || 0)} 确认${Number(mail.uncertain || 0)}`;
+    const latestSuccessValues = [item?.lastSuccessAt?.shipping, item?.lastSuccessAt?.mail]
+      .filter(Boolean)
+      .map((value) => new Date(value))
+      .filter((value) => !Number.isNaN(value.getTime()));
+    const latestSuccess = latestSuccessValues.length
+      ? new Date(Math.max(...latestSuccessValues.map((value) => value.getTime())))
+      : null;
+    const licenseText = item?.licenseExpiresAt
+      ? `${String(item.licenseExpiresAt).slice(0, 10)}（${Number(item.licenseDaysRemaining) < 0 ? "已到期" : `剩${formatOverviewNumber(item.licenseDaysRemaining)}天`}）`
+      : "未登记";
+    const alerts = Array.isArray(item?.alerts) ? item.alerts : [];
+    const circuits = item?.circuits || {};
+    const mailStatus = Number(mail.uncertain || 0) > 0
+      ? "uncertain"
+      : Number(mail.dead_letter || 0) > 0
+        ? "dead_letter"
+        : Number(mail.failed || 0) > 0
+          ? "failed"
+          : Number(item?.stale?.mail || 0) > 0 ? "pending" : "";
+    return `<tr>
+      <td data-label="健康状态"><span class="rakuten-health-badge rakuten-health-${escapeHtml(status)}">${escapeHtml(labels[status] || status)}</span></td>
+      <td data-label="店铺">${escapeHtml(displayText(item?.shop?.name))}</td>
+      <td data-label="启用功能">${escapeHtml(enabledFeatures)}</td>
+      <td data-label="SMTP">${features.smtpReady ? "完整" : features.mailNotifications ? "配置不完整" : "未启用"}</td>
+      <td data-label="License">${escapeHtml(licenseText)}</td>
+      <td data-label="任务状态">${escapeHtml(taskText)}</td>
+      <td data-label="最近成功">${escapeHtml(formatDate(latestSuccess))}</td>
+      <td data-label="异常说明" class="rakuten-health-alerts">${alerts.length ? alerts.map((alert) => `• ${escapeHtml(alert)}`).join("<br>") : "-"}</td>
+      <td data-label="操作">
+        ${mailStatus ? `<button type="button" class="tiny-btn" data-action="filterRakutenHealthMail" data-connection-id="${escapeHtml(item?.connectionId)}" data-status="${mailStatus}">查看邮件</button>` : ""}
+        ${circuits?.shipping?.open ? `<button type="button" class="tiny-btn danger" data-action="resetRakutenHealthCircuit" data-connection-id="${escapeHtml(item?.connectionId)}" data-kind="shipping">恢复回传</button>` : ""}
+        ${circuits?.mail?.open ? `<button type="button" class="tiny-btn danger" data-action="resetRakutenHealthCircuit" data-connection-id="${escapeHtml(item?.connectionId)}" data-kind="mail">恢复邮件</button>` : ""}
+        <button type="button" class="tiny-btn ghost" data-action="openRakutenHealthConnection" data-shop-id="${escapeHtml(item?.shop?.id)}">连接设置</button>
+      </td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="9" class="muted">暂无乐天连接</td></tr>';
+}
+
+async function loadRakutenAutomationHealth() {
+  state.rakutenAutomationHealthLoading = true;
+  renderRakutenAutomationHealth();
+  try {
+    state.rakutenAutomationHealth = await request("/rakuten-rms-api/automation/health") || null;
+    return state.rakutenAutomationHealth;
+  } finally {
+    state.rakutenAutomationHealthLoading = false;
+    renderRakutenAutomationHealth();
+  }
+}
+
+function renderRakutenAutomationRuns() {
+  const body = $("rakutenAutomationRunsBody");
+  if (!body) return;
+  const totalPages = Math.max(1, Math.ceil(state.rakutenAutomationRunsTotal / state.rakutenAutomationRunsPageSize));
+  const pageSummary = $("rakutenAutomationRunsPageSummary");
+  if (pageSummary) {
+    pageSummary.textContent = `第 ${state.rakutenAutomationRunsPage} / ${totalPages} 页，共 ${formatOverviewNumber(state.rakutenAutomationRunsTotal)} 次`;
+  }
+  if ($("rakutenAutomationRunsPrevBtn")) {
+    $("rakutenAutomationRunsPrevBtn").disabled = state.rakutenAutomationRunsLoading || state.rakutenAutomationRunsPage <= 1;
+  }
+  if ($("rakutenAutomationRunsNextBtn")) {
+    $("rakutenAutomationRunsNextBtn").disabled = state.rakutenAutomationRunsLoading || state.rakutenAutomationRunsPage >= totalPages;
+  }
+  if (state.rakutenAutomationRunsLoading) {
+    body.innerHTML = '<tr><td colspan="8" class="muted">正在读取运行记录...</td></tr>';
+    return;
+  }
+  const statusLabels = { running: "运行中", success: "成功", partial: "部分成功", failed: "失败" };
+  const triggerLabels = { scheduled: "定时", manual: "手动" };
+  body.innerHTML = state.rakutenAutomationRuns.map((run) => {
+    const startedAt = run?.startedAt ? new Date(run.startedAt) : null;
+    const finishedAt = run?.finishedAt ? new Date(run.finishedAt) : null;
+    const durationMs = startedAt && finishedAt && !Number.isNaN(startedAt.getTime()) && !Number.isNaN(finishedAt.getTime())
+      ? Math.max(0, finishedAt.getTime() - startedAt.getTime())
+      : null;
+    const duration = durationMs === null ? "-" : durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}秒`;
+    const error = String(run?.errorMessage || "").trim();
+    const status = String(run?.status || "");
+    return `<tr>
+      <td data-label="开始时间">${escapeHtml(formatDate(run?.startedAt))}</td>
+      <td data-label="店铺">${escapeHtml(displayText(run?.connection?.shop?.name))}</td>
+      <td data-label="触发方式">${escapeHtml(triggerLabels[run?.trigger] || displayText(run?.trigger))}</td>
+      <td data-label="结果"><span class="rakuten-run-status rakuten-run-${escapeHtml(status)}">${escapeHtml(statusLabels[status] || displayText(status))}</span></td>
+      <td data-label="单号回传">成功 ${formatOverviewNumber(run?.shippingSent)} / 跳过 ${formatOverviewNumber(run?.shippingSkipped)} / 失败 ${formatOverviewNumber(run?.shippingFailed)}</td>
+      <td data-label="邮件">成功 ${formatOverviewNumber(run?.mailSent)} / 失败 ${formatOverviewNumber(run?.mailFailed)} / 等待 ${formatOverviewNumber(run?.mailBlocked)}</td>
+      <td data-label="耗时">${escapeHtml(duration)}</td>
+      <td data-label="错误" title="${escapeHtml(error)}">${escapeHtml(error || "-")}</td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="8" class="muted">暂无自动化运行记录</td></tr>';
+}
+
+function rakutenAutomationRunFilterQuery() {
+  const params = new URLSearchParams({
+    page: String(state.rakutenAutomationRunsPage),
+    pageSize: String(state.rakutenAutomationRunsPageSize),
+  });
+  const connectionId = String($("rakutenAutomationRunConnectionFilter")?.value || "").trim();
+  const status = String($("rakutenAutomationRunStatusFilter")?.value || "").trim();
+  if (connectionId) params.set("connectionId", connectionId);
+  if (status) params.set("status", status);
+  return params.toString();
+}
+
+async function loadRakutenAutomationRuns({ reset = false } = {}) {
+  if (reset) state.rakutenAutomationRunsPage = 1;
+  state.rakutenAutomationRunsLoading = true;
+  renderRakutenAutomationRuns();
+  try {
+    const result = await request(`/rakuten-rms-api/automation/runs?${rakutenAutomationRunFilterQuery()}`) || {};
+    state.rakutenAutomationRuns = Array.isArray(result.items) ? result.items : [];
+    state.rakutenAutomationRunsTotal = Number(result.total || 0);
+    state.rakutenAutomationRunsPage = Number(result.page || state.rakutenAutomationRunsPage);
+    state.rakutenAutomationRunsPageSize = Number(result.pageSize || state.rakutenAutomationRunsPageSize);
+  } finally {
+    state.rakutenAutomationRunsLoading = false;
+    renderRakutenAutomationRuns();
+  }
+}
+
+function renderRakutenMails() {
+  const body = $("rakutenMailManagementBody");
+  if (!body) return;
+  renderRakutenMailStats();
+  const pageSummary = $("rakutenMailPageSummary");
+  const totalPages = Math.max(1, Math.ceil(state.rakutenMailTotal / state.rakutenMailPageSize));
+  if (pageSummary) {
+    pageSummary.textContent = `第 ${state.rakutenMailPage} / ${totalPages} 页，共 ${formatOverviewNumber(state.rakutenMailTotal)} 条`;
+  }
+  if ($("rakutenMailPrevBtn")) $("rakutenMailPrevBtn").disabled = state.rakutenMailLoading || state.rakutenMailPage <= 1;
+  if ($("rakutenMailNextBtn")) $("rakutenMailNextBtn").disabled = state.rakutenMailLoading || state.rakutenMailPage >= totalPages;
+  if (state.rakutenMailLoading) {
+    body.innerHTML = '<tr><td colspan="10" class="muted">正在读取邮件记录...</td></tr>';
+    return;
+  }
+  body.innerHTML = state.rakutenMails.map((mail) => {
+    const connection = mail?.connection || {};
+    const status = String(mail?.status || "");
+    const error = String(mail?.lastError || "").trim();
+    const recipient = String(mail?.recipient || "").trim();
+    const subject = String(mail?.subject || "").trim();
+    const canRetry = status === "failed" || status === "dead_letter" || status === "cancelled" || status === "uncertain";
+    const canCancel = status === "pending" || status === "failed" || status === "dead_letter" || status === "uncertain";
+    const canMarkSent = status === "uncertain";
+    const nextAttempt = mail?.nextAttemptAt ? formatDate(mail.nextAttemptAt) : "-";
+    return `<tr>
+      <td data-label="创建时间">${escapeHtml(formatDate(mail?.createdAt))}</td>
+      <td data-label="店铺">${escapeHtml(displayText(connection?.shop?.name))}</td>
+      <td data-label="订单号">${escapeHtml(displayText(mail?.orderId))}</td>
+      <td data-label="邮件类型">${escapeHtml(RAKUTEN_MAIL_EVENT_LABELS[mail?.event] || displayText(mail?.event))}</td>
+      <td data-label="收件人" title="${escapeHtml(recipient)}">${escapeHtml(recipient || "-")}</td>
+      <td data-label="标题" title="${escapeHtml(subject)}">${escapeHtml(subject || "-")}</td>
+      <td data-label="状态">${escapeHtml(RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status))}</td>
+      <td data-label="尝试/下次">${formatOverviewNumber(mail?.attempts)} / ${escapeHtml(nextAttempt)}</td>
+      <td data-label="错误" title="${escapeHtml(error)}">${escapeHtml(error || "-")}</td>
+      <td data-label="操作">
+        <button type="button" class="tiny-btn ghost" data-action="viewRakutenMail" data-id="${escapeHtml(mail?.id)}">查看</button>
+        ${canRetry ? `<button type="button" class="tiny-btn" data-action="retryRakutenMail" data-id="${escapeHtml(mail?.id)}">${status === "uncertain" ? "确认重发" : status === "dead_letter" ? "处理后重试" : "重试"}</button>` : ""}
+        ${canMarkSent ? `<button type="button" class="tiny-btn" data-action="markRakutenMailSent" data-id="${escapeHtml(mail?.id)}">确认已发送</button>` : ""}
+        ${canCancel ? `<button type="button" class="tiny-btn danger" data-action="cancelRakutenMail" data-id="${escapeHtml(mail?.id)}">取消</button>` : ""}
+      </td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="10" class="muted">没有符合条件的邮件记录</td></tr>';
+}
+
+function rakutenMailFilterQuery() {
+  const params = new URLSearchParams({
+    page: String(state.rakutenMailPage),
+    pageSize: String(state.rakutenMailPageSize),
+  });
+  const fields = [
+    ["connectionId", "rakutenMailConnectionFilter"],
+    ["status", "rakutenMailStatusFilter"],
+    ["event", "rakutenMailEventFilter"],
+    ["orderId", "rakutenMailOrderFilter"],
+    ["dateFrom", "rakutenMailDateFromFilter"],
+    ["dateTo", "rakutenMailDateToFilter"],
+  ];
+  fields.forEach(([key, id]) => {
+    const value = String($(id)?.value || "").trim();
+    if (value) params.set(key, value);
+  });
+  return params.toString();
+}
+
+async function loadRakutenMails({ reset = false } = {}) {
+  if (reset) state.rakutenMailPage = 1;
+  state.rakutenMailLoading = true;
+  renderRakutenMails();
+  try {
+    const result = await request(`/rakuten-rms-api/mails?${rakutenMailFilterQuery()}`) || {};
+    state.rakutenMails = Array.isArray(result.items) ? result.items : [];
+    state.rakutenMailStats = result.stats || {};
+    state.rakutenMailTotal = Number(result.total || 0);
+    state.rakutenMailPage = Number(result.page || state.rakutenMailPage);
+    state.rakutenMailPageSize = Number(result.pageSize || state.rakutenMailPageSize);
+  } finally {
+    state.rakutenMailLoading = false;
+    renderRakutenMails();
+  }
+}
+
+function renderRakutenMailDetail(mail) {
+  const meta = $("rakutenMailDetailMeta");
+  const warning = $("rakutenMailDetailWarning");
+  const body = $("rakutenMailDetailBody");
+  if (!meta || !warning || !body) return;
+  const status = RAKUTEN_MAIL_STATUS_LABELS[mail?.status] || displayText(mail?.status);
+  const event = RAKUTEN_MAIL_EVENT_LABELS[mail?.event] || displayText(mail?.event);
+  const values = [
+    ["店铺", mail?.connection?.shop?.name], ["订单号", mail?.orderId], ["邮件类型", event],
+    ["状态", status], ["收件人", mail?.recipient], ["标题", mail?.subject],
+    ["创建时间", formatDate(mail?.createdAt)], ["发送时间", formatDate(mail?.sentAt)],
+    ["尝试次数", mail?.attempts], ["失败分类", RAKUTEN_FAILURE_CATEGORY_LABELS[mail?.failureCategory] || mail?.failureCategory],
+    ["转人工时间", formatDate(mail?.deadLetteredAt)], ["SMTP Message-ID", mail?.smtpMessageId],
+    ["发送开始时间", formatDate(mail?.sendStartedAt)], ["人工处理时间", formatDate(mail?.resolvedAt)],
+    ["人工处理说明", mail?.resolutionNote], ["最后错误", mail?.lastError],
+  ];
+  meta.innerHTML = values.map(([label, value]) =>
+    `<div><span class="muted">${escapeHtml(label)}：</span>${escapeHtml(displayText(value))}</div>`,
+  ).join("");
+  warning.textContent = mail?.previewError ? `当前无法生成正文预览：${mail.previewError}` : "";
+  warning.classList.toggle("hidden", !mail?.previewError);
+  body.textContent = String(mail?.body || "暂无可显示的邮件正文");
+}
+
+async function openRakutenMailDetail(id) {
+  state.rakutenMailDetail = null;
+  $("rakutenMailDetailMeta").innerHTML = '<div class="muted">正在读取邮件详情...</div>';
+  $("rakutenMailDetailBody").textContent = "正在读取...";
+  $("rakutenMailDetailWarning").classList.add("hidden");
+  openModal("rakutenMailDetailModal");
+  const mail = await request(`/rakuten-rms-api/mails/${encodeURIComponent(id)}`);
+  state.rakutenMailDetail = mail;
+  renderRakutenMailDetail(mail);
+}
+
+function currentRakutenMailTemplate() {
+  return state.rakutenMailTemplates.find((template) =>
+    template?.event === state.rakutenMailTemplateEvent) || null;
+}
+
+function renderRakutenMailTemplateEditor({ hydrate = false } = {}) {
+  const connectionId = String($("rakutenMailTemplateConnection")?.value || "");
+  const nav = $("rakutenMailTemplateEventNav");
+  const subject = $("rakutenMailTemplateSubject");
+  const body = $("rakutenMailTemplateBody");
+  const template = currentRakutenMailTemplate();
+  if (nav) {
+    nav.innerHTML = Object.entries(RAKUTEN_MAIL_EVENT_LABELS).map(([event, label]) =>
+      `<button type="button" class="${event === state.rakutenMailTemplateEvent ? "active" : ""}" data-action="selectRakutenMailTemplateEvent" data-event="${escapeHtml(event)}">${escapeHtml(label)}</button>`,
+    ).join("");
+  }
+  const disabled = !connectionId || state.rakutenMailTemplateLoading || !template;
+  [subject, body, $("rakutenMailTemplatePreviewOrder"), $("previewRakutenMailTemplateBtn"),
+    $("saveRakutenMailTemplateBtn"), $("restoreRakutenMailDefaultBtn")]
+    .forEach((node) => { if (node) node.disabled = disabled; });
+  if ($("rakutenMailTemplateTitle")) {
+    $("rakutenMailTemplateTitle").textContent = template
+      ? `${RAKUTEN_MAIL_EVENT_LABELS[state.rakutenMailTemplateEvent] || state.rakutenMailTemplateEvent} 模板`
+      : "请选择邮件类型";
+  }
+  if ($("rakutenMailTemplateVersionMeta")) {
+    $("rakutenMailTemplateVersionMeta").textContent = state.rakutenMailTemplateLoading
+      ? "正在读取模板..."
+      : template
+        ? `当前启用：${template.isSystemDefault ? "系统默认" : `版本 ${template.version}`}`
+        : "请选择已配置乐天连接的店铺";
+  }
+  if (hydrate) {
+    if (subject) subject.value = String(template?.subjectTemplate || "");
+    if (body) body.value = String(template?.bodyTemplate || "");
+    state.rakutenMailTemplatePreview = null;
+  }
+  const variables = $("rakutenMailTemplateVariables");
+  if (variables) {
+    variables.innerHTML = state.rakutenMailTemplateVariables.map((variable) =>
+      `<button type="button" class="tiny-btn ghost" data-action="insertRakutenMailTemplateVariable" data-key="${escapeHtml(variable?.key)}" title="${escapeHtml(variable?.label)}">{{${escapeHtml(variable?.key)}}} · ${escapeHtml(variable?.label)}</button>`,
+    ).join("") || '<span class="muted">读取模板后显示变量</span>';
+  }
+  renderRakutenMailTemplateHistory();
+  renderRakutenMailTemplatePreview();
+}
+
+function renderRakutenMailTemplateHistory() {
+  const body = $("rakutenMailTemplateHistoryBody");
+  if (!body) return;
+  const rows = Array.isArray(state.rakutenMailTemplateHistory) ? state.rakutenMailTemplateHistory : [];
+  body.innerHTML = rows.map((version) => {
+    const versionNumber = Number(version?.version || 0);
+    const label = version?.isSystemDefault ? "系统默认" : `版本 ${versionNumber}`;
+    const active = Boolean(version?.isActive);
+    return `<tr>
+      <td data-label="版本">${escapeHtml(label)}</td>
+      <td data-label="状态">${active ? "启用中" : "历史版本"}</td>
+      <td data-label="创建人">${escapeHtml(displayText(version?.creator?.username))}</td>
+      <td data-label="创建时间">${escapeHtml(formatDate(version?.createdAt))}</td>
+      <td data-label="操作">
+        <button type="button" class="tiny-btn ghost" data-action="viewRakutenMailTemplateVersion" data-version="${versionNumber}">查看</button>
+        ${active ? "" : `<button type="button" class="tiny-btn" data-action="activateRakutenMailTemplateVersion" data-version="${versionNumber}">启用</button>`}
+      </td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="5" class="muted">暂无模板版本</td></tr>';
+}
+
+function renderRakutenMailTemplatePreview() {
+  const preview = state.rakutenMailTemplatePreview;
+  const node = $("rakutenMailTemplatePreview");
+  if (!node) return;
+  node.classList.toggle("hidden", !preview);
+  if (!preview) return;
+  $("rakutenMailTemplatePreviewMeta").textContent = `订单 ${displayText(preview.orderId)} / 收件人 ${displayText(preview.recipient)}`;
+  $("rakutenMailTemplatePreviewSubject").textContent = String(preview.subject || "");
+  $("rakutenMailTemplatePreviewBody").textContent = String(preview.body || "");
+}
+
+async function loadRakutenMailTemplateHistory() {
+  const connectionId = String($("rakutenMailTemplateConnection")?.value || "");
+  const event = state.rakutenMailTemplateEvent;
+  if (!connectionId || !event) {
+    state.rakutenMailTemplateHistory = [];
+    renderRakutenMailTemplateHistory();
+    return;
+  }
+  const result = await request(`/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/mail-templates/${encodeURIComponent(event)}/history`) || {};
+  state.rakutenMailTemplateHistory = Array.isArray(result.versions) ? result.versions : [];
+  renderRakutenMailTemplateHistory();
+}
+
+async function loadRakutenMailTemplates({ hydrate = true } = {}) {
+  const connectionId = String($("rakutenMailTemplateConnection")?.value || "");
+  if (!connectionId) {
+    state.rakutenMailTemplates = [];
+    state.rakutenMailTemplateVariables = [];
+    state.rakutenMailTemplateHistory = [];
+    renderRakutenMailTemplateEditor({ hydrate: true });
+    return;
+  }
+  state.rakutenMailTemplateLoading = true;
+  renderRakutenMailTemplateEditor();
+  try {
+    const result = await request(`/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/mail-templates`) || {};
+    state.rakutenMailTemplates = Array.isArray(result.templates) ? result.templates : [];
+    state.rakutenMailTemplateVariables = Array.isArray(result.variables) ? result.variables : [];
+    await loadRakutenMailTemplateHistory();
+  } finally {
+    state.rakutenMailTemplateLoading = false;
+    renderRakutenMailTemplateEditor({ hydrate });
+  }
+}
+
+function loadRakutenMailTemplateVersionDraft(versionRaw) {
+  const version = Number(versionRaw || 0);
+  const target = state.rakutenMailTemplateHistory.find((item) => Number(item?.version || 0) === version);
+  if (!target) throw new Error("模板版本不存在，请刷新后重试");
+  $("rakutenMailTemplateSubject").value = String(target.subjectTemplate || "");
+  $("rakutenMailTemplateBody").value = String(target.bodyTemplate || "");
+  $("rakutenMailTemplateVersionMeta").textContent = `${target.isSystemDefault ? "系统默认" : `版本 ${version}`}（当前编辑区内容，保存后会生成新版本）`;
+  state.rakutenMailTemplatePreview = null;
+  renderRakutenMailTemplatePreview();
+}
+
+function insertRakutenMailTemplateVariable(key) {
+  const textarea = $("rakutenMailTemplateBody");
+  if (!textarea || textarea.disabled) return;
+  const token = `{{${key}}}`;
+  const start = Number(textarea.selectionStart ?? textarea.value.length);
+  const end = Number(textarea.selectionEnd ?? start);
+  textarea.value = textarea.value.slice(0, start) + token + textarea.value.slice(end);
+  textarea.focus();
+  textarea.setSelectionRange(start + token.length, start + token.length);
 }
 
 function renderRakutenSyncPreview(node, confirmButton, preview, context) {
@@ -6532,10 +7116,24 @@ function openRakutenRmsConnectionModal(shopId) {
   $("rakutenRmsLicenseExpiresAt").value = connection?.licenseExpiresAt
     ? String(connection.licenseExpiresAt).slice(0, 10)
     : "";
+  $("rakutenRmsSmtpAuthId").value = connection?.smtpAuthId || "";
+  $("rakutenRmsSmtpAuthPassword").value = "";
+  $("rakutenRmsSmtpFromAddress").value = connection?.smtpFromAddress || "dgaz@createbetter.co.jp";
+  $("rakutenRmsSmtpFromName").value = connection?.smtpFromName || "DGAZ楽天市場店";
   $("rakutenRmsStatus").value = String(connection?.status ?? 1);
   $("rakutenRmsSyncOrders").checked = connection?.syncOrders !== false;
+  $("rakutenRmsAutoShippingEnabled").checked = connection?.autoShippingEnabled === true;
+  $("rakutenRmsMailNotificationsEnabled").checked = connection?.mailNotificationsEnabled === true;
   $("rakutenRmsTestBtn").classList.toggle("hidden", !connection);
+  $("rakutenRmsSmtpTestBtn").classList.toggle("hidden", !connection || connection.smtpPasswordConfigured !== true);
+  $("rakutenRmsAutomationRefreshBtn").classList.toggle("hidden", !connection);
   $("rakutenRmsPreviewBtn").classList.toggle("hidden", !connection || Number(connection.status) !== 1);
+  $("rakutenRmsAutomationRunBtn").classList.toggle(
+    "hidden",
+    !connection ||
+      Number(connection.status) !== 1 ||
+      (connection.autoShippingEnabled !== true && connection.mailNotificationsEnabled !== true),
+  );
   state.rakutenRmsSyncPreview = null;
   renderRakutenRmsSyncPreview();
   $("rakutenRmsConnectionTitle").textContent = `${shop.name} / 乐天 RMS API连接`;
@@ -6547,9 +7145,13 @@ function openRakutenRmsConnectionModal(shopId) {
   state.rakutenRmsSyncRuns = [];
   state.rakutenRmsSyncRunsLoading = false;
   renderRakutenRmsSyncRuns();
+  state.rakutenRmsAutomationStatus = null;
+  state.rakutenRmsAutomationStatusLoading = false;
+  renderRakutenRmsAutomationStatus();
   openModal("rakutenRmsConnectionModal");
   if (connection) {
     loadRakutenRmsSyncRuns(connection.id).catch((error) => showToast(error.message, true));
+    loadRakutenRmsAutomationStatus(connection.id).catch((error) => showToast(error.message, true));
   }
 }
 
@@ -16712,6 +17314,339 @@ function bindDelegates() {
       }
     });
   }
+  $("openRakutenMailManagementPanel")?.addEventListener("click", async () => {
+    try {
+      switchPanel("rakutenMailManagement");
+      await loadRakutenRmsConnections();
+      await Promise.all([
+        loadRakutenMails({ reset: true }),
+        loadRakutenMailTemplates(),
+        loadRakutenAutomationHealth(),
+        loadRakutenAutomationRuns({ reset: true }),
+      ]);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("refreshRakutenAutomationHealthBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "检查中...", loadRakutenAutomationHealth);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenAutomationHealthBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    try {
+      if (button.dataset.action === "filterRakutenHealthMail") {
+        $("rakutenMailConnectionFilter").value = String(button.dataset.connectionId || "");
+        $("rakutenMailStatusFilter").value = String(button.dataset.status || "");
+        await loadRakutenMails({ reset: true });
+        $("rakutenMailFilterForm")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (button.dataset.action === "openRakutenHealthConnection") {
+        openRakutenRmsConnectionModal(String(button.dataset.shopId || ""));
+        return;
+      }
+      if (button.dataset.action === "resetRakutenHealthCircuit") {
+        const connectionId = String(button.dataset.connectionId || "");
+        const kind = String(button.dataset.kind || "");
+        const label = kind === "shipping" ? "自动回传" : "邮件发送";
+        const ok = await openActionConfirmModal(
+          `请先确认${label}的认证或配置问题已经修复。恢复后，待处理任务会在下一轮继续执行。`,
+          `恢复${label}`,
+          "确认恢复",
+        );
+        if (!ok) return;
+        await withBusyButton(button, "处理中...", () => request(
+          `/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/automation/circuits/${encodeURIComponent(kind)}/reset`,
+          { method: "POST", body: "{}" },
+        ));
+        showToast(`${label}已恢复`);
+        await loadRakutenAutomationHealth();
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("refreshRakutenAutomationRunsBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "刷新中...", () => loadRakutenAutomationRuns());
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenAutomationRunFilterForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await loadRakutenAutomationRuns({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("resetRakutenAutomationRunFiltersBtn")?.addEventListener("click", async () => {
+    if ($("rakutenAutomationRunConnectionFilter")) $("rakutenAutomationRunConnectionFilter").value = "";
+    if ($("rakutenAutomationRunStatusFilter")) $("rakutenAutomationRunStatusFilter").value = "";
+    try {
+      await loadRakutenAutomationRuns({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenAutomationRunsPrevBtn")?.addEventListener("click", async () => {
+    if (state.rakutenAutomationRunsPage <= 1 || state.rakutenAutomationRunsLoading) return;
+    state.rakutenAutomationRunsPage -= 1;
+    try {
+      await loadRakutenAutomationRuns();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenAutomationRunsNextBtn")?.addEventListener("click", async () => {
+    const totalPages = Math.max(1, Math.ceil(state.rakutenAutomationRunsTotal / state.rakutenAutomationRunsPageSize));
+    if (state.rakutenAutomationRunsPage >= totalPages || state.rakutenAutomationRunsLoading) return;
+    state.rakutenAutomationRunsPage += 1;
+    try {
+      await loadRakutenAutomationRuns();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailTemplateConnection")?.addEventListener("change", async () => {
+    try {
+      await loadRakutenMailTemplates();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailTemplateEventNav")?.addEventListener("click", async (event) => {
+    const button = event.target.closest('[data-action="selectRakutenMailTemplateEvent"]');
+    if (!button) return;
+    state.rakutenMailTemplateEvent = String(button.dataset.event || "new_order");
+    state.rakutenMailTemplatePreview = null;
+    renderRakutenMailTemplateEditor({ hydrate: true });
+    try {
+      await loadRakutenMailTemplateHistory();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailTemplateVariables")?.addEventListener("click", (event) => {
+    const button = event.target.closest('[data-action="insertRakutenMailTemplateVariable"]');
+    if (!button) return;
+    insertRakutenMailTemplateVariable(String(button.dataset.key || ""));
+  });
+  $("rakutenMailTemplateForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const connectionId = String($("rakutenMailTemplateConnection")?.value || "");
+    if (!connectionId) return showToast("请先选择模板店铺", true);
+    const button = getSubmitButton(event.currentTarget, event) || $("saveRakutenMailTemplateBtn");
+    try {
+      await withBusyButton(button, "保存中...", () => request(
+        `/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/mail-templates/${encodeURIComponent(state.rakutenMailTemplateEvent)}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            subjectTemplate: $("rakutenMailTemplateSubject").value,
+            bodyTemplate: $("rakutenMailTemplateBody").value,
+          }),
+        },
+      ));
+      showToast("模板新版本已保存并启用");
+      await loadRakutenMailTemplates();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("previewRakutenMailTemplateBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String($("rakutenMailTemplateConnection")?.value || "");
+    if (!connectionId) return showToast("请先选择模板店铺", true);
+    try {
+      const result = await withBusyButton(event.currentTarget, "预览中...", () => request(
+        `/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/mail-templates/${encodeURIComponent(state.rakutenMailTemplateEvent)}/preview`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            subjectTemplate: $("rakutenMailTemplateSubject").value,
+            bodyTemplate: $("rakutenMailTemplateBody").value,
+            orderId: $("rakutenMailTemplatePreviewOrder").value,
+          }),
+        },
+      ));
+      state.rakutenMailTemplatePreview = result || null;
+      renderRakutenMailTemplatePreview();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("restoreRakutenMailDefaultBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String($("rakutenMailTemplateConnection")?.value || "");
+    if (!connectionId) return showToast("请先选择模板店铺", true);
+    const ok = await openActionConfirmModal(
+      "确认恢复系统默认模板？历史版本会继续保留，之后仍可重新启用。",
+      "恢复系统默认模板",
+      "确认恢复",
+    );
+    if (!ok) return;
+    try {
+      await withBusyButton(event.currentTarget, "处理中...", () => request(
+        `/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/mail-templates/${encodeURIComponent(state.rakutenMailTemplateEvent)}/versions/0/activate`,
+        { method: "POST" },
+      ));
+      showToast("已恢复系统默认模板");
+      await loadRakutenMailTemplates();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("refreshRakutenMailTemplateHistoryBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "刷新中...", loadRakutenMailTemplateHistory);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailTemplateHistoryBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const version = String(button.dataset.version || "0");
+    if (button.dataset.action === "viewRakutenMailTemplateVersion") {
+      try {
+        loadRakutenMailTemplateVersionDraft(version);
+      } catch (error) {
+        showToast(error.message, true);
+      }
+      return;
+    }
+    if (button.dataset.action !== "activateRakutenMailTemplateVersion") return;
+    const connectionId = String($("rakutenMailTemplateConnection")?.value || "");
+    const ok = await openActionConfirmModal(
+      `确认启用${Number(version) === 0 ? "系统默认模板" : `版本 ${version}`}？`,
+      "切换启用模板",
+      "确认启用",
+    );
+    if (!ok) return;
+    try {
+      await withBusyButton(button, "处理中...", () => request(
+        `/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/mail-templates/${encodeURIComponent(state.rakutenMailTemplateEvent)}/versions/${encodeURIComponent(version)}/activate`,
+        { method: "POST" },
+      ));
+      showToast("启用模板已切换");
+      await loadRakutenMailTemplates();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("refreshRakutenMailsBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "刷新中...", () => loadRakutenMails());
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailFilterForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await loadRakutenMails({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("resetRakutenMailFiltersBtn")?.addEventListener("click", async () => {
+    [
+      "rakutenMailConnectionFilter", "rakutenMailStatusFilter", "rakutenMailEventFilter",
+      "rakutenMailOrderFilter", "rakutenMailDateFromFilter", "rakutenMailDateToFilter",
+    ].forEach((id) => { if ($(id)) $(id).value = ""; });
+    try {
+      await loadRakutenMails({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailPrevBtn")?.addEventListener("click", async () => {
+    if (state.rakutenMailPage <= 1 || state.rakutenMailLoading) return;
+    state.rakutenMailPage -= 1;
+    try {
+      await loadRakutenMails();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailNextBtn")?.addEventListener("click", async () => {
+    const totalPages = Math.max(1, Math.ceil(state.rakutenMailTotal / state.rakutenMailPageSize));
+    if (state.rakutenMailPage >= totalPages || state.rakutenMailLoading) return;
+    state.rakutenMailPage += 1;
+    try {
+      await loadRakutenMails();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailManagementBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const id = String(button.dataset.id || "");
+    if (!id) return;
+    const row = state.rakutenMails.find((mail) => String(mail?.id || "") === id);
+    const isUncertain = row?.status === "uncertain";
+    const isDeadLetter = row?.status === "dead_letter";
+    try {
+      if (button.dataset.action === "viewRakutenMail") {
+        await openRakutenMailDetail(id);
+        return;
+      }
+      if (button.dataset.action === "retryRakutenMail") {
+        const ok = await openActionConfirmModal(
+          isUncertain
+            ? "该邮件可能已经送达。确认重发可能导致买家收到重复邮件，请先通过乐天记录或买家反馈核实。仍然确认重新发送吗？"
+            : isDeadLetter
+              ? "该邮件因不可自动恢复的错误或达到重试上限而停止。请确认已经修正收件地址、SMTP或模板等原因，再恢复自动发送。"
+              : "确认将该邮件恢复为待处理？自动任务会重新发送。",
+          isUncertain ? "确认重新发送" : isDeadLetter ? "确认问题已处理" : "确认重试邮件",
+          isUncertain ? "仍然重发" : isDeadLetter ? "已处理并重试" : "确认重试",
+        );
+        if (!ok) return;
+        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(id)}/retry`, { method: "POST" }));
+        showToast("邮件已恢复为待处理");
+        await Promise.all([loadRakutenMails(), loadRakutenAutomationHealth()]);
+        return;
+      }
+      if (button.dataset.action === "markRakutenMailSent") {
+        const ok = await openActionConfirmModal(
+          "仅在已经核实邮件已送达，或确认无需再次发送时执行。标记后该任务不会再自动发送。",
+          "确认邮件发送结果",
+          "确认已发送",
+        );
+        if (!ok) return;
+        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(id)}/mark-sent`, { method: "POST" }));
+        showToast("邮件已人工确认并标记为已发送");
+        await Promise.all([loadRakutenMails(), loadRakutenAutomationHealth()]);
+        return;
+      }
+      if (button.dataset.action === "cancelRakutenMail") {
+        const ok = await openActionConfirmModal(
+          isUncertain
+            ? "取消只会阻止系统再次发送，无法撤回可能已经送达的邮件。确认停止后续重发吗？"
+            : "确认取消该邮件？尚未发送的依赖邮件也会一并取消；已发送的邮件不会被撤回。",
+          "确认取消邮件",
+          "确认取消",
+        );
+        if (!ok) return;
+        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(id)}/cancel`, { method: "POST" }));
+        showToast("邮件任务已取消");
+        await Promise.all([loadRakutenMails(), loadRakutenAutomationHealth()]);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("rakutenMailDetailModal")?.addEventListener("click", (event) => {
+    if (event.target.closest('[data-action="closeRakutenMailDetailModal"]')) {
+      closeModal("rakutenMailDetailModal");
+    }
+  });
   $("stocktakePlannerBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
@@ -17059,6 +17994,10 @@ function bindDelegates() {
     const serviceSecret = String($("rakutenRmsServiceSecret").value || "").trim();
     const licenseKey = String($("rakutenRmsLicenseKey").value || "").trim();
     const expiresOn = String($("rakutenRmsLicenseExpiresAt").value || "").trim();
+    const smtpAuthId = String($("rakutenRmsSmtpAuthId").value || "").trim();
+    const smtpAuthPassword = String($("rakutenRmsSmtpAuthPassword").value || "");
+    const smtpFromAddress = String($("rakutenRmsSmtpFromAddress").value || "").trim();
+    const smtpFromName = String($("rakutenRmsSmtpFromName").value || "").trim();
     if (!connectionId && (!serviceSecret || !licenseKey)) {
       showToast("新建乐天连接时必须填写 serviceSecret 和 licenseKey", true);
       return;
@@ -17068,8 +18007,14 @@ function bindDelegates() {
       ...(serviceSecret ? { serviceSecret } : {}),
       ...(licenseKey ? { licenseKey } : {}),
       ...(expiresOn ? { licenseExpiresAt: `${expiresOn}T23:59:59+09:00` } : {}),
+      ...(smtpAuthId ? { smtpAuthId } : {}),
+      ...(smtpAuthPassword ? { smtpAuthPassword } : {}),
+      ...(smtpFromAddress ? { smtpFromAddress } : {}),
+      ...(smtpFromName ? { smtpFromName } : {}),
       status: Number($("rakutenRmsStatus").value),
       syncOrders: $("rakutenRmsSyncOrders").checked,
+      autoShippingEnabled: $("rakutenRmsAutoShippingEnabled").checked,
+      mailNotificationsEnabled: $("rakutenRmsMailNotificationsEnabled").checked,
     };
     try {
       await request(connectionId ? `/rakuten-rms-api/connections/${connectionId}` : "/rakuten-rms-api/connections", {
@@ -17100,6 +18045,97 @@ function bindDelegates() {
           ? `乐天连接测试成功，searchOrder / getOrder 均可用，近62天匹配 ${formatOverviewNumber(result?.matchedOrderCount)} 个订单`
           : `searchOrder 测试成功；近62天无订单，暂时无法验证 getOrder 权限`,
       );
+      await loadRakutenRmsAutomationStatus(connectionId);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsAutomationRunBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
+    if (!connectionId) return;
+    try {
+      const result = await withBusyButton(event.currentTarget, "运行中...", () =>
+        request(`/rakuten-rms-api/connections/${connectionId}/automation/run`, { method: "POST", body: "{}" }),
+      );
+      if (result?.alreadyRunning) {
+        showToast("当前已有乐天自动任务正在运行，请稍后查看结果");
+        return;
+      }
+      const shippingSent = Number(result?.shipping?.sent || 0);
+      const shippingSkipped = Number(result?.shipping?.skipped || 0);
+      const shippingFailed = Number(result?.shipping?.failed || 0);
+      const mailSent = Number(result?.mail?.sent || 0);
+      const mailFailed = Number(result?.mail?.failed || 0);
+      const mailBlocked = Number(result?.mail?.blocked || 0);
+      const connectionRuns = Array.isArray(result?.connectionRuns) ? result.connectionRuns : [];
+      const hasFailure = shippingFailed > 0 || mailFailed > 0 || connectionRuns.some((run) => run?.status === "failed");
+      showToast(
+        `当前店铺自动任务：回传成功 ${shippingSent}，跳过 ${shippingSkipped}，失败 ${shippingFailed}；邮件成功 ${mailSent}，失败 ${mailFailed}，等待前置邮件 ${mailBlocked}`,
+        hasFailure,
+      );
+      await loadRakutenRmsAutomationStatus(connectionId);
+      if ($("rakutenAutomationRunsBody")) {
+        await Promise.all([loadRakutenAutomationRuns({ reset: true }), loadRakutenAutomationHealth()]);
+      }
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsSmtpTestBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
+    if (!connectionId) return;
+    try {
+      const result = await withBusyButton(event.currentTarget, "测试中...", () =>
+        request(`/rakuten-rms-api/connections/${connectionId}/smtp/test`, { method: "POST", body: "{}" }),
+      );
+      showToast(`乐天SMTP认证成功：${result?.fromAddress || "-"}（未发送测试邮件）`);
+      await loadRakutenRmsAutomationStatus(connectionId);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsAutomationRefreshBtn")?.addEventListener("click", async (event) => {
+    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
+    if (!connectionId) return;
+    try {
+      await withBusyButton(event.currentTarget, "刷新中...", () => loadRakutenRmsAutomationStatus(connectionId));
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsAutomationIssuesBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action]");
+    if (!button) return;
+    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
+    const kind = String(button.dataset.kind || "").trim();
+    const id = String(button.dataset.id || "").trim();
+    if (!connectionId || !kind || !id) return;
+    if (button.dataset.action === "openRakutenUncertainMail") {
+      closeModal("rakutenRmsConnectionModal");
+      switchPanel("rakutenMailManagement");
+      $("rakutenMailConnectionFilter").value = connectionId;
+      $("rakutenMailStatusFilter").value = "uncertain";
+      try {
+        await loadRakutenMails({ reset: true });
+      } catch (error) {
+        showToast(error.message, true);
+      }
+      return;
+    }
+    if (button.dataset.action !== "retryRakutenAutomationJob") return;
+    try {
+      await withBusyButton(button, "处理中...", () =>
+        request(`/rakuten-rms-api/connections/${connectionId}/automation/retry`, {
+          method: "POST",
+          body: JSON.stringify({ kind, id }),
+        }),
+      );
+      showToast("任务已重新加入待处理队列");
+      await loadRakutenRmsAutomationStatus(connectionId);
     } catch (error) {
       showToast(error.message, true);
     }
