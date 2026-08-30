@@ -7908,9 +7908,7 @@ function renderShoulderStrapProductTable() {
         const productId = String(item?.productId || "").trim();
         const size = [item?.length, item?.width]
           .map((value) => String(value || "").trim()).filter(Boolean).join(" × ");
-        const assemblable = item?.assemblableStock === null || item?.assemblableStock === undefined
-          ? '<span class="muted">未设置</span>'
-          : escapeHtml(displayText(item.assemblableStock));
+        const assemblable = escapeHtml(displayText(item?.assemblableStock ?? 0));
         return `<tr>
           <td>${escapeHtml(displayText(productId))}</td><td>${escapeHtml(displayText(item?.productName))}</td>
           <td>${escapeHtml(displayText(item?.color))}</td><td>${escapeHtml(displayText(item?.style))}</td>
