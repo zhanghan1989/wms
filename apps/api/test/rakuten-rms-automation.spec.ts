@@ -75,10 +75,31 @@ describe('Rakuten RMS shipping and mail automation', () => {
     sourceFileName: 'Rakuten RMS API',
     sourceFilePath: 'rms-api:7',
     rawPayload: { rmsPackage: { basketId: 1 } },
-    csvImportedAt: new Date('2026-08-21T00:00:00Z'),
-    createdAt: new Date('2026-08-21T00:00:00Z'),
-    updatedAt: new Date('2026-08-21T00:00:00Z'),
+    csvImportedAt: new Date('2026-09-01T00:00:00Z'),
+    createdAt: new Date('2026-09-01T00:00:00Z'),
+    updatedAt: new Date('2026-09-01T00:00:00Z'),
     ...overrides,
+  });
+
+  it('queues new-order mail only for orders first imported from September 1, 2026 JST', async () => {
+    const createMany = jest.fn().mockResolvedValue({ count: 1 });
+    const db = {
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([
+          { rmsConnectionId: 7n, orderId: 'OLD-ORDER', createdAt: new Date('2026-08-31T14:59:59Z') },
+          { rmsConnectionId: 7n, orderId: 'OLD-ORDER', createdAt: new Date('2026-09-01T00:00:00Z') },
+          { rmsConnectionId: 7n, orderId: 'NEW-ORDER', createdAt: new Date('2026-08-31T15:00:00Z') },
+        ]),
+      },
+      rakutenOrderMail: { createMany },
+    } as any;
+
+    await service.enqueueNewOrderMails(db, 7n, ['OLD-ORDER', 'NEW-ORDER']);
+
+    expect(createMany).toHaveBeenCalledWith({
+      data: [{ connectionId: 7n, orderId: 'NEW-ORDER', event: RakutenOrderMailEvent.new_order }],
+      skipDuplicates: true,
+    });
   });
 
   it('renders the new-order sheet with the actual buyer instead of workbook sample data', () => {
@@ -995,6 +1016,13 @@ describe('Rakuten RMS shipping and mail automation', () => {
     };
     const prisma = {
       rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([connection]) },
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([{
+          rmsConnectionId: 7n,
+          orderId: '421951-ORDER',
+          createdAt: new Date('2026-09-01T00:00:00Z'),
+        }]),
+      },
       rakutenOrderShippingReport: {
         findMany: jest.fn().mockResolvedValue([{
           id: 91n,
@@ -1104,6 +1132,12 @@ describe('Rakuten RMS shipping and mail automation', () => {
       connection,
     };
     const prisma = {
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([
+          { rmsConnectionId: 7n, orderId: '421951-SHIPPING', createdAt: new Date('2026-09-01T00:00:00Z') },
+          { rmsConnectionId: 7n, orderId: '421951-MAIL', createdAt: new Date('2026-09-01T00:00:00Z') },
+        ]),
+      },
       rakutenOrderShippingReport: { findMany: jest.fn().mockResolvedValue([shippingRow]) },
       rakutenOrderMail: { findMany: jest.fn().mockResolvedValue([mailRow]) },
       rakutenAutomationRun: {

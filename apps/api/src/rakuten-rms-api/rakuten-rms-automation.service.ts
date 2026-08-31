@@ -30,6 +30,8 @@ const STALE_PROCESSING_MS = 30 * 60 * 1000;
 const AUTOMATION_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
 const CHINA_MODES = new Set(['china_pending', 'china_no_stock']);
+// 2026-09-01 00:00:00 Asia/Tokyo. Automation applies only to orders first imported after this instant.
+const AUTOMATION_ORDER_IMPORT_CUTOFF = new Date('2026-08-31T15:00:00.000Z');
 
 type FulfillmentType = 'japan' | 'china' | 'mixed';
 type ConnectionWithShop = RakutenRmsConnection & { shop: { id: bigint; name: string } };
@@ -151,8 +153,15 @@ export class RakutenRmsAutomationService {
   ): Promise<void> {
     const uniqueOrderIds = Array.from(new Set(Array.from(orderIds).map((value) => value.trim()).filter(Boolean)));
     if (!uniqueOrderIds.length) return;
+    const eligibleKeys = await this.loadEligibleAutomationOrderKeys(
+      uniqueOrderIds.map((orderId) => ({ connectionId, orderId })),
+      db,
+    );
+    const eligibleOrderIds = uniqueOrderIds.filter((orderId) =>
+      eligibleKeys.has(this.automationOrderKey(connectionId, orderId)));
+    if (!eligibleOrderIds.length) return;
     await db.rakutenOrderMail.createMany({
-      data: uniqueOrderIds.map((orderId) => ({
+      data: eligibleOrderIds.map((orderId) => ({
         connectionId,
         orderId,
         event: RakutenOrderMailEvent.new_order,
@@ -901,9 +910,17 @@ export class RakutenRmsAutomationService {
         include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
       }),
     ]);
+    const eligibleKeys = await this.loadEligibleAutomationOrderKeys([
+      ...shippingRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
+      ...mailRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
+    ]);
+    const eligibleShippingRows = shippingRows.filter((row) =>
+      eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
+    const eligibleMailRows = mailRows.filter((row) =>
+      eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
     const items: Array<Record<string, unknown>> = [];
     const now = new Date();
-    for (const row of shippingRows) {
+    for (const row of eligibleShippingRows) {
       const blockedReason = row.connection.shippingCircuitOpenedAt
         ? `单号回传已暂停：${row.connection.shippingCircuitReason || '请先恢复回传功能'}`
         : row.status === RakutenAutomationStatus.dead_letter
@@ -932,7 +949,7 @@ export class RakutenRmsAutomationService {
         blockedReason,
       });
     }
-    for (const row of mailRows) {
+    for (const row of eligibleMailRows) {
       let blockedReason: string | null = row.connection.mailCircuitOpenedAt
         ? `邮件发送已暂停：${row.connection.mailCircuitReason || '请先恢复邮件功能'}`
         : row.status === RakutenAutomationStatus.uncertain
@@ -1016,6 +1033,15 @@ export class RakutenRmsAutomationService {
     ]);
     if (shippingRows.length !== shippingIds.length || mailRows.length !== mailIds.length) {
       throw new BadRequestException('部分任务已不存在，请刷新清单');
+    }
+    const eligibleKeys = await this.loadEligibleAutomationOrderKeys([
+      ...shippingRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
+      ...mailRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
+    ]);
+    const ineligibleRow = [...shippingRows, ...mailRows].find((row) =>
+      !eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
+    if (ineligibleRow) {
+      throw new BadRequestException(`订单 ${ineligibleRow.orderId} 在2026年9月1日前导入，不适用单号回传和邮件发送功能`);
     }
     const now = new Date();
     for (const row of shippingRows) {
@@ -1599,6 +1625,14 @@ export class RakutenRmsAutomationService {
         AND reports.order_id = records.order_id
       WHERE records.rms_connection_id = ${connection.id}
         AND records.source_kind = 'rms_api'
+        AND records.created_at >= ${AUTOMATION_ORDER_IMPORT_CUTOFF}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM rakuten_order_records older_records
+          WHERE older_records.rms_connection_id = records.rms_connection_id
+            AND older_records.order_id = records.order_id
+            AND older_records.created_at < ${AUTOMATION_ORDER_IMPORT_CUTOFF}
+        )
         AND records.order_id IS NOT NULL
         AND records.shipment_no IS NOT NULL
         AND records.shipment_no <> ''
@@ -1660,6 +1694,11 @@ export class RakutenRmsAutomationService {
       if (claimed.count !== 1) continue;
       try {
         const orderRows = await this.loadOrderRows(report.connectionId, report.orderId);
+        if (!this.isAutomationEligibleOrder(orderRows)) {
+          await this.markShippingSkipped(report.id, '订单在2026年9月1日前导入，不适用自动单号回传');
+          counts.skipped += 1;
+          continue;
+        }
         const fulfillmentType = report.fulfillmentType as FulfillmentType;
         const selectedRows = fulfillmentType === 'china'
           ? orderRows.filter((row) => this.isChina(row))
@@ -1769,6 +1808,14 @@ export class RakutenRmsAutomationService {
         AND mails.event IN ('china_customs', 'mixed_customs')
       WHERE records.rms_connection_id = ${connection.id}
         AND records.order_id IS NOT NULL
+        AND records.created_at >= ${AUTOMATION_ORDER_IMPORT_CUTOFF}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM rakuten_order_records older_records
+          WHERE older_records.rms_connection_id = records.rms_connection_id
+            AND older_records.order_id = records.order_id
+            AND older_records.created_at < ${AUTOMATION_ORDER_IMPORT_CUTOFF}
+        )
         AND records.dispatch_mode IN ('china_pending', 'china_no_stock')
         AND records.tracking_has_customs_clearance = TRUE
         AND mails.id IS NULL
@@ -1879,6 +1926,20 @@ export class RakutenRmsAutomationService {
       let smtpAccepted = false;
       try {
         const rows = await this.loadOrderRows(mail.connectionId, mail.orderId);
+        if (!this.isAutomationEligibleOrder(rows)) {
+          await this.prisma.rakutenOrderMail.update({
+            where: { id: mail.id },
+            data: {
+              status: RakutenAutomationStatus.cancelled,
+              nextAttemptAt: null,
+              lastError: '订单在2026年9月1日前导入，不适用邮件发送功能',
+              failureCategory: null,
+              deadLetteredAt: null,
+            },
+          });
+          counts.blocked += 1;
+          continue;
+        }
         const recipient = this.resolveRecipient(rows);
         if (!recipient) throw new Error('乐天订单没有返回可用的买家匿名邮箱');
         const smtp = this.decryptSmtpCredentials(mail.connection);
@@ -2454,6 +2515,41 @@ export class RakutenRmsAutomationService {
     }).formatToParts(date);
     const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? '';
     return `${part('year')}-${part('month')}-${part('day')}`;
+  }
+
+  private automationOrderKey(connectionId: bigint, orderId: string): string {
+    return `${connectionId.toString()}:${orderId}`;
+  }
+
+  private isAutomationEligibleOrder(rows: Array<Pick<RakutenOrderRecord, 'createdAt'>>): boolean {
+    return rows.length > 0 && rows.every((row) => row.createdAt >= AUTOMATION_ORDER_IMPORT_CUTOFF);
+  }
+
+  private async loadEligibleAutomationOrderKeys(
+    refs: Array<{ connectionId: bigint; orderId: string }>,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<Set<string>> {
+    const uniqueRefs = Array.from(new Map(refs.map((ref) => [
+      this.automationOrderKey(ref.connectionId, ref.orderId),
+      ref,
+    ])).values());
+    if (!uniqueRefs.length) return new Set();
+    const records = await db.rakutenOrderRecord.findMany({
+      where: {
+        OR: uniqueRefs.map((ref) => ({ rmsConnectionId: ref.connectionId, orderId: ref.orderId })),
+      },
+      select: { rmsConnectionId: true, orderId: true, createdAt: true },
+    });
+    const earliestByOrder = new Map<string, Date>();
+    for (const record of records) {
+      if (!record.rmsConnectionId || !record.orderId) continue;
+      const key = this.automationOrderKey(record.rmsConnectionId, record.orderId);
+      const earliest = earliestByOrder.get(key);
+      if (!earliest || record.createdAt < earliest) earliestByOrder.set(key, record.createdAt);
+    }
+    return new Set(Array.from(earliestByOrder.entries())
+      .filter(([, createdAt]) => createdAt >= AUTOMATION_ORDER_IMPORT_CUTOFF)
+      .map(([key]) => key));
   }
 
   private async loadOrderRows(connectionId: bigint, orderId: string): Promise<RakutenOrderRecord[]> {

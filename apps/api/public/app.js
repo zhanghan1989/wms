@@ -7088,8 +7088,8 @@ async function openRakutenManualAutomationWorklist(kind, button) {
   setTextById(
     "rakutenManualAutomationDescription",
     isShipping
-      ? "这里只整理当前需要人工确认的单号回传任务。打开清单不会向乐天回传单号。"
-      : "这里只整理当前需要人工确认的邮件任务。打开清单不会向买家发送邮件。",
+      ? "仅适用于日本时间2026年9月1日起导入WMS的订单。这里只整理当前需要人工确认的单号回传任务；打开清单不会向乐天回传单号。"
+      : "仅适用于日本时间2026年9月1日起导入WMS的订单。这里只整理当前需要人工确认的邮件任务；打开清单不会向买家发送邮件。",
   );
   openModal("rakutenManualAutomationModal");
   await withBusyButton(button, "整理中...", () => loadRakutenManualAutomationActions(requestedKind));
