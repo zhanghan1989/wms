@@ -1194,4 +1194,111 @@ describe('Rakuten RMS shipping and mail automation', () => {
       results: [{ shipping: { sent: 1 }, mail: { sent: 1 }, status: RakutenAutomationRunStatus.success }],
     });
   });
+
+  it('keeps shop templates isolated when manually sending a cross-shop batch', async () => {
+    const connections = [
+      {
+        id: 7n,
+        status: 1,
+        autoShippingEnabled: false,
+        mailNotificationsEnabled: true,
+        shippingCircuitOpenedAt: null,
+        mailCircuitOpenedAt: null,
+        shop: { id: 3n, name: '乐天1号店' },
+      },
+      {
+        id: 8n,
+        status: 1,
+        autoShippingEnabled: false,
+        mailNotificationsEnabled: true,
+        shippingCircuitOpenedAt: null,
+        mailCircuitOpenedAt: null,
+        shop: { id: 4n, name: '乐天2号店' },
+      },
+    ];
+    const mailRows = connections.map((connection, index) => ({
+      id: BigInt(92 + index),
+      connectionId: connection.id,
+      orderId: `ORDER-${index + 1}`,
+      event: RakutenOrderMailEvent.new_order,
+      status: RakutenAutomationStatus.pending,
+      nextAttemptAt: null,
+      connection,
+    }));
+    const findTemplate = jest.fn().mockImplementation(({ where }: any) => ({
+      subjectTemplate: where.connectionId === 7n
+        ? '1号店 {{order_number}}'
+        : '2号店 {{order_number}}',
+      bodyTemplate: where.connectionId === 7n ? '1号店正文' : '2号店正文',
+    }));
+    const prisma = {
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue(mailRows.map((row) => ({
+          rmsConnectionId: row.connectionId,
+          orderId: row.orderId,
+          createdAt: new Date('2026-09-01T00:00:00Z'),
+        }))),
+      },
+      rakutenOrderShippingReport: { findMany: jest.fn().mockResolvedValue([]) },
+      rakutenOrderMail: { findMany: jest.fn().mockResolvedValue(mailRows) },
+      rakutenMailTemplateVersion: { findFirst: findTemplate },
+      rakutenAutomationRun: {
+        create: jest.fn()
+          .mockResolvedValueOnce({ id: 501n })
+          .mockResolvedValueOnce({ id: 502n }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'acquireConnectionLock').mockResolvedValue(true);
+    jest.spyOn(scopedService as any, 'startConnectionLockHeartbeat').mockReturnValue({});
+    jest.spyOn(scopedService as any, 'releaseConnectionLock').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'processShippingReports')
+      .mockResolvedValue({ sent: 0, skipped: 0, failed: 0 });
+    const renderedSubjects = new Map<string, string>();
+    const processMails = jest.spyOn(scopedService as any, 'processMails')
+      .mockImplementation(async (...args: unknown[]) => {
+        const connectionId = args[0] as bigint;
+        const selectedIds = args[1] as bigint[];
+        const row = mailRows.find((item) => item.connectionId === connectionId);
+        expect(selectedIds).toEqual(row ? [row.id] : []);
+        if (!row) throw new Error('test mail row is missing');
+        const rendered = await (scopedService as any).renderConfiguredMail(
+          connectionId,
+          row.event,
+          [makeRow({
+            rmsConnectionId: connectionId,
+            orderId: row.orderId,
+            mallOrderNo: row.orderId,
+          })],
+        );
+        renderedSubjects.set(connectionId.toString(), rendered.subject);
+        return { sent: 1, failed: 0, blocked: 0 };
+      });
+
+    const result = await scopedService.executeManualActions([
+      { kind: 'mail', id: '92' },
+      { kind: 'mail', id: '93' },
+    ]) as any;
+
+    expect(processMails).toHaveBeenNthCalledWith(1, 7n, [92n]);
+    expect(processMails).toHaveBeenNthCalledWith(2, 8n, [93n]);
+    expect(findTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { connectionId: 7n, event: RakutenOrderMailEvent.new_order, isActive: true },
+    }));
+    expect(findTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { connectionId: 8n, event: RakutenOrderMailEvent.new_order, isActive: true },
+    }));
+    expect(renderedSubjects).toEqual(new Map([
+      ['7', '1号店 ORDER-1'],
+      ['8', '2号店 ORDER-2'],
+    ]));
+    expect(result).toMatchObject({
+      executed: 2,
+      results: [
+        { connectionId: '7', shopName: '乐天1号店', mail: { sent: 1 } },
+        { connectionId: '8', shopName: '乐天2号店', mail: { sent: 1 } },
+      ],
+    });
+  });
 });
