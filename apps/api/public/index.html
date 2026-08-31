@@ -188,7 +188,6 @@
         </button>
         <button type="button" id="openAmazonDashboardPanel">亚马逊店铺看板</button>
         <button type="button" id="openRakutenDashboardPanel">乐天店铺看板</button>
-        <button type="button" id="openRakutenMailManagementPanel">乐天邮件管理</button>
         <button type="button" id="openFbaReplenishmentPanel" class="btn-with-badge">
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
@@ -1970,17 +1969,20 @@
       <section class="panel" id="rakutenMailManagement">
         <div class="panel-head">
           <div>
-            <h2>乐天邮件管理</h2>
+            <h2 id="rakutenMailManagementTitle">乐天邮件管理</h2>
             <p class="muted">查看乐天匿名邮件的待发送、成功、失败及取消记录。已发送邮件仅供追溯，无法撤回。</p>
           </div>
-          <button id="refreshRakutenMailsBtn" type="button" class="ghost">刷新</button>
+          <div class="action-row">
+            <button id="backToRakutenShopManagementBtn" type="button" class="ghost">返回店铺管理</button>
+            <button id="refreshRakutenMailsBtn" type="button" class="ghost">刷新</button>
+          </div>
         </div>
         <div id="rakutenMailStats" class="rakuten-mail-stats"></div>
         <article class="card rakuten-automation-health-card">
           <div class="card-head">
             <div>
               <h3>自动化健康监控</h3>
-              <p id="rakutenAutomationHealthMeta" class="muted">正在检查各店铺的配置和任务积压情况...</p>
+              <p id="rakutenAutomationHealthMeta" class="muted">正在检查当前店铺的配置和任务积压情况...</p>
             </div>
             <button id="refreshRakutenAutomationHealthBtn" type="button" class="ghost">刷新健康状态</button>
           </div>
