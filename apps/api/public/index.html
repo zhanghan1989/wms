@@ -3195,15 +3195,20 @@
               </select>
             </label>
           </div>
-          <div class="checkbox-row">
-            <label><input id="rakutenRmsSyncOrders" type="checkbox" checked /> 允许定时同步此店铺的乐天订单</label>
-            <label><input id="rakutenRmsAutoShippingEnabled" type="checkbox" /> 自动通过乐天 API 回传快递单号</label>
-            <label><input id="rakutenRmsMailNotificationsEnabled" type="checkbox" /> 使用乐天匿名邮件自动通知买家</label>
-          </div>
-          <p class="muted">新建连接时必须填写 serviceSecret 和 licenseKey；API及SMTP密码均加密保存且不会回显。启用回传前，还需要在 RMS WEB API 中授权 updateOrderShipping。当前定时执行已暂停，请分别从“单号回传”或“邮件发送”清单人工确认。原“回传单号CSV”按钮继续保留。</p>
+          <fieldset class="rakuten-rms-feature-settings">
+            <legend>功能启用范围</legend>
+            <div class="checkbox-row">
+              <label><input id="rakutenRmsSyncOrders" type="checkbox" checked /> 允许导入此店铺的乐天订单</label>
+              <label><input id="rakutenRmsAutoShippingEnabled" type="checkbox" /> 允许通过乐天 API 回传快递单号</label>
+              <label><input id="rakutenRmsMailNotificationsEnabled" type="checkbox" /> 允许使用乐天匿名邮件通知买家</label>
+            </div>
+            <p class="muted rakuten-rms-feature-hint">当前三项均由人工按钮执行，暂不自动运行；保留启用状态用于控制对应清单和后续自动化。</p>
+          </fieldset>
+          <p class="muted rakuten-rms-credential-hint">新建连接时必须填写 serviceSecret 和 licenseKey；API及SMTP密码均加密保存且不会回显。使用单号回传前，还需要在 RMS WEB API 中授权 updateOrderShipping。原“回传单号CSV”按钮继续保留。</p>
           <p id="rakutenRmsConnectionMeta" class="muted">尚未连接。</p>
           <div id="rakutenRmsSyncPreview" class="muted">正式同步前必须先生成预览并人工确认。</div>
-          <div class="manage-table-scroll">
+          <h4 class="rakuten-rms-sync-runs-title">同步记录（可回滚）</h4>
+          <div class="manage-table-scroll rakuten-rms-sync-runs-scroll" tabindex="0" aria-label="同步记录，可纵向滚动">
             <table>
               <thead>
                 <tr>
