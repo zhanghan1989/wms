@@ -105,4 +105,77 @@ describe('Amazon SP-API integration primitives', () => {
     expect(String(fetchMock.mock.calls[1][0])).toContain('nextToken=page-2');
     expect(String(fetchMock.mock.calls[1][0])).toContain('marketplaceIds=A1VC38T7YXB528');
   });
+
+  it('retries throttled order requests up to a successful response', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ errors: [{ message: 'throttled' }] }), {
+        status: 429,
+        headers: { 'retry-after': '0' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ orders: [{ orderId: '503-1' }] }), {
+        status: 200,
+      }));
+    const client = new AmazonSpApiClient();
+
+    const rows = await client.searchOrders({
+      accessToken: 'access-token',
+      region: 'FE',
+      marketplaceIds: ['A1VC38T7YXB528'],
+      fulfilledBy: 'MERCHANT',
+      lastUpdatedAfter: new Date('2026-08-01T00:00:00.000Z'),
+      includeRecipient: false,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(rows).toEqual([{ orderId: '503-1' }]);
+  });
+
+  it('stops when Amazon repeats the same order pagination token', async () => {
+    jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        orders: [{ orderId: '503-1' }],
+        pagination: { nextToken: 'same-token' },
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        orders: [{ orderId: '503-2' }],
+        pagination: { nextToken: 'same-token' },
+      }), { status: 200 }));
+    const client = new AmazonSpApiClient();
+
+    await expect(client.searchOrders({
+      accessToken: 'access-token',
+      region: 'FE',
+      marketplaceIds: ['A1VC38T7YXB528'],
+      fulfilledBy: 'MERCHANT',
+      lastUpdatedAfter: new Date('2026-08-01T00:00:00.000Z'),
+      includeRecipient: false,
+    })).rejects.toThrow('分页令牌重复');
+  });
+
+  it('parses both seconds and HTTP-date Retry-After headers', () => {
+    const client = new AmazonSpApiClient();
+    jest.spyOn(Date, 'now').mockReturnValue(new Date('2026-08-31T00:00:00.000Z').getTime());
+
+    expect((client as any).retryAfterMilliseconds('2')).toBe(2000);
+    expect((client as any).retryAfterMilliseconds('Mon, 31 Aug 2026 00:00:03 GMT')).toBe(3000);
+  });
+
+  it('includes the Amazon request id in terminal API errors', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      errors: [{ message: 'forbidden' }],
+    }), {
+      status: 403,
+      headers: { 'x-amzn-requestid': 'request-123' },
+    }));
+    const client = new AmazonSpApiClient();
+
+    await expect(client.searchOrders({
+      accessToken: 'access-token',
+      region: 'FE',
+      marketplaceIds: ['A1VC38T7YXB528'],
+      fulfilledBy: 'MERCHANT',
+      lastUpdatedAfter: new Date('2026-08-01T00:00:00.000Z'),
+      includeRecipient: false,
+    })).rejects.toThrow('request-123');
+  });
 });

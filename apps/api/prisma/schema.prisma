@@ -579,6 +579,8 @@ model AmazonSpApiConnection {
   syncFbmOrders          Boolean                  @default(true) @map("sync_fbm_orders")
   syncFbaOrders          Boolean                  @default(true) @map("sync_fba_orders")
   syncFbaInventory       Boolean                  @default(true) @map("sync_fba_inventory")
+  syncLockToken          String?                  @map("sync_lock_token") @db.VarChar(64)
+  syncLockedAt           DateTime?                @map("sync_locked_at")
   lastOrdersSyncedAt     DateTime?                @map("last_orders_synced_at")
   lastInventorySyncedAt  DateTime?                @map("last_inventory_synced_at")
   lastSuccessfulSyncAt   DateTime?                @map("last_successful_sync_at")
@@ -593,6 +595,7 @@ model AmazonSpApiConnection {
 
   @@index([status])
   @@index([sellerId])
+  @@index([syncLockedAt], map: "idx_amazon_connection_sync_lock")
   @@map("amazon_sp_api_connections")
 }
 
@@ -623,12 +626,17 @@ model AmazonSpApiSyncRun {
   id           BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId BigInt                @map("connection_id") @db.UnsignedBigInt
   syncType     AmazonSpApiSyncType   @map("sync_type")
+  trigger      String                @default("manual") @db.VarChar(16)
   status       AmazonSpApiSyncStatus @default(running)
   startedAt    DateTime              @default(now()) @map("started_at")
   finishedAt   DateTime?             @map("finished_at")
   fetchedCount Int                   @default(0) @map("fetched_count")
   createdCount Int                   @default(0) @map("created_count")
   updatedCount Int                   @default(0) @map("updated_count")
+  unchangedCount Int                 @default(0) @map("unchanged_count")
+  frozenCount    Int                 @default(0) @map("frozen_count")
+  excludedCount  Int                 @default(0) @map("excluded_count")
+  conflictCount  Int                 @default(0) @map("conflict_count")
   errorMessage String?               @map("error_message") @db.Text
   connection   AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 

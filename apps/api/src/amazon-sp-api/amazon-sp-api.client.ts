@@ -1,4 +1,4 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
   AmazonFulfilledBy,
   AmazonInventoryResponse,
@@ -13,9 +13,14 @@ const REGION_ENDPOINTS: Record<AmazonSpApiRegion, string> = {
   EU: 'https://sellingpartnerapi-eu.amazon.com',
   FE: 'https://sellingpartnerapi-fe.amazon.com',
 };
+const MAX_REQUEST_ATTEMPTS = 3;
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RETRY_DELAY_MS = 30_000;
 
 @Injectable()
 export class AmazonSpApiClient {
+  private readonly logger = new Logger(AmazonSpApiClient.name);
+
   async exchangeAuthorizationCode(code: string, redirectUri: string): Promise<{
     refreshToken: string;
     accessToken: string;
@@ -91,7 +96,25 @@ export class AmazonSpApiClient {
     includeRecipient: boolean;
   }): Promise<AmazonOrderPayload[]> {
     const rows: AmazonOrderPayload[] = [];
+    await this.forEachOrderPage(options, (page) => {
+      rows.push(...page);
+    });
+    return rows;
+  }
+
+  async forEachOrderPage(
+    options: {
+      accessToken: string;
+      region: AmazonSpApiRegion;
+      marketplaceIds: string[];
+      fulfilledBy: AmazonFulfilledBy;
+      lastUpdatedAfter: Date;
+      includeRecipient: boolean;
+    },
+    onPage: (orders: AmazonOrderPayload[]) => Promise<void> | void,
+  ): Promise<void> {
     let paginationToken: string | undefined;
+    const seenTokens = new Set<string>();
     do {
       const params = new URLSearchParams({
         marketplaceIds: options.marketplaceIds.join(','),
@@ -108,10 +131,14 @@ export class AmazonSpApiClient {
         options.region,
         `/orders/2026-01-01/orders?${params.toString()}`,
       );
-      rows.push(...(payload.orders ?? []));
-      paginationToken = payload.pagination?.nextToken;
+      await onPage(payload.orders ?? []);
+      const nextToken = payload.pagination?.nextToken;
+      if (nextToken && seenTokens.has(nextToken)) {
+        throw new ServiceUnavailableException('Amazon SP-API订单分页令牌重复，已停止拉取以避免死循环');
+      }
+      if (nextToken) seenTokens.add(nextToken);
+      paginationToken = nextToken;
     } while (paginationToken);
-    return rows;
   }
 
   async getInventorySummaries(options: {
@@ -121,6 +148,7 @@ export class AmazonSpApiClient {
   }): Promise<AmazonInventorySummaryPayload[]> {
     const rows: AmazonInventorySummaryPayload[] = [];
     let nextToken: string | undefined;
+    const seenTokens = new Set<string>();
     do {
       const params = new URLSearchParams({
         details: 'true',
@@ -135,7 +163,12 @@ export class AmazonSpApiClient {
         `/fba/inventory/v1/summaries?${params.toString()}`,
       );
       rows.push(...(response.payload?.inventorySummaries ?? []));
-      nextToken = response.pagination?.nextToken ?? response.payload?.pagination?.nextToken;
+      const responseNextToken = response.pagination?.nextToken ?? response.payload?.pagination?.nextToken;
+      if (responseNextToken && seenTokens.has(responseNextToken)) {
+        throw new ServiceUnavailableException('Amazon SP-API库存分页令牌重复，已停止拉取以避免死循环');
+      }
+      if (responseNextToken) seenTokens.add(responseNextToken);
+      nextToken = responseNextToken;
     } while (nextToken);
     return rows;
   }
@@ -146,30 +179,94 @@ export class AmazonSpApiClient {
     path: string,
   ): Promise<T> {
     const endpoint = REGION_ENDPOINTS[region];
-    let response = await fetch(`${endpoint}${path}`, {
-      headers: {
-        accept: 'application/json',
-        'x-amz-access-token': accessToken,
-        'user-agent': '001-wms-amazon-sync/1.0',
-      },
-    });
-    if (response.status === 429 || response.status >= 500) {
-      const retryAfterSeconds = Math.min(Number(response.headers.get('retry-after') ?? 1) || 1, 5);
-      await new Promise((resolve) => setTimeout(resolve, retryAfterSeconds * 1000));
-      response = await fetch(`${endpoint}${path}`, {
-        headers: {
-          accept: 'application/json',
-          'x-amz-access-token': accessToken,
-          'user-agent': '001-wms-amazon-sync/1.0',
-        },
-      });
+    const requestUrl = `${endpoint}${path}`;
+    let lastNetworkError: unknown;
+    for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await fetch(requestUrl, {
+          signal: AbortSignal.timeout(this.requestTimeoutMs()),
+          headers: {
+            accept: 'application/json',
+            'x-amz-access-token': accessToken,
+            'user-agent': '001-wms-amazon-sync/1.0',
+          },
+        });
+        const payload = await this.readJson(response);
+        const requestId = this.responseRequestId(response);
+        const retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+        if (!response.ok && retryable && attempt < MAX_REQUEST_ATTEMPTS) {
+          this.logger.warn(
+            `Amazon SP-API retry ${attempt}/${MAX_REQUEST_ATTEMPTS - 1}: HTTP ${response.status}${
+              requestId ? ` requestId=${requestId}` : ''
+            } path=${path}`,
+          );
+          await this.waitBeforeRetry(response, attempt);
+          continue;
+        }
+        if (!response.ok) {
+          const message = this.extractErrorMessage(payload);
+          throw new ServiceUnavailableException(
+            `Amazon SP-API请求失败（HTTP ${response.status}${requestId ? `，Request ID ${requestId}` : ''}）：${message}`,
+          );
+        }
+        return payload as T;
+      } catch (error) {
+        if (error instanceof ServiceUnavailableException) throw error;
+        lastNetworkError = error;
+        if (attempt < MAX_REQUEST_ATTEMPTS) {
+          this.logger.warn(
+            `Amazon SP-API network retry ${attempt}/${MAX_REQUEST_ATTEMPTS - 1}: path=${path} error=${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          await this.delay(this.withJitter(Math.min(250 * 2 ** (attempt - 1), 1000)));
+          continue;
+        }
+      }
     }
-    const payload = await this.readJson(response);
-    if (!response.ok) {
-      const message = this.extractErrorMessage(payload);
-      throw new ServiceUnavailableException(`Amazon SP-API请求失败（HTTP ${response.status}）：${message}`);
+    const details = lastNetworkError instanceof Error ? lastNetworkError.message : String(lastNetworkError ?? '未知错误');
+    throw new ServiceUnavailableException(`无法连接 Amazon SP-API（网络或TLS错误）：${details}`);
+  }
+
+  private async waitBeforeRetry(response: Response, attempt: number): Promise<void> {
+    const retryAfterMs = this.retryAfterMilliseconds(response.headers.get('retry-after'));
+    const fallbackMs = this.withJitter(Math.min(250 * 2 ** (attempt - 1), 1000));
+    await this.delay(retryAfterMs ?? fallbackMs);
+  }
+
+  private retryAfterMilliseconds(value: string | null): number | null {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return null;
+    const seconds = Number(normalized);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
     }
-    return payload as T;
+    const retryAt = Date.parse(normalized);
+    if (!Number.isFinite(retryAt)) return null;
+    return Math.min(Math.max(0, retryAt - Date.now()), MAX_RETRY_DELAY_MS);
+  }
+
+  private withJitter(milliseconds: number): number {
+    return Math.round(milliseconds * (0.8 + Math.random() * 0.4));
+  }
+
+  private responseRequestId(response: Response): string {
+    return String(
+      response.headers.get('x-amzn-requestid')
+      ?? response.headers.get('x-amz-request-id')
+      ?? '',
+    ).trim();
+  }
+
+  private requestTimeoutMs(): number {
+    const configured = Number(process.env.AMAZON_SP_API_REQUEST_TIMEOUT_MS ?? DEFAULT_REQUEST_TIMEOUT_MS);
+    return Number.isFinite(configured) && configured >= 1000
+      ? Math.min(configured, 120_000)
+      : DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+
+  private async delay(milliseconds: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
   private async readJson(response: Response): Promise<unknown> {

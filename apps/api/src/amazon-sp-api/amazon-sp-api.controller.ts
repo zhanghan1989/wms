@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Param, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -66,7 +66,11 @@ export class AmazonSpApiController {
   }
 
   @Post('sync-all')
-  async syncAllConnections(): Promise<unknown> {
+  @Roles(Role.admin)
+  async syncAllConnections(@CurrentUser() user: AuthUser): Promise<unknown> {
+    if (String(user.username ?? '').trim() !== 'admin') {
+      throw new ForbiddenException('仅用户名为 admin 的账号可以执行 Amazon API 订单拉取');
+    }
     return this.service.syncAllConnections();
   }
 

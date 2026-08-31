@@ -14,7 +14,7 @@ import {
   Prisma,
   ShopPlatform,
 } from '@prisma/client';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import * as XLSX from 'xlsx';
 import { parseId } from '../common/utils';
 import { calculateProductStockAvailability } from '../master-products/master-product-bom-stock';
@@ -34,6 +34,8 @@ const AMAZON_SCHEDULED_SYNC_ENABLED =
   String(process.env.AMAZON_SP_API_SCHEDULED_SYNC_ENABLED ?? 'false').toLowerCase() === 'true';
 const DEFAULT_LOOKBACK_DAYS = 90;
 const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
+const SYNC_LOCK_STALE_MS = 30 * 60 * 1000;
+const SYNC_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 const DISPATCH_OVERSEAS = 'overseas';
 const DISPATCH_CHINA_NO_STOCK = 'china_no_stock';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -67,8 +69,20 @@ interface SyncCounters {
   fetched: number;
   created: number;
   updated: number;
+  unchanged: number;
   frozen: number;
   excluded: number;
+  conflicts: number;
+}
+
+interface FbmPageContext {
+  exclusions: Array<{
+    spApiConnectionId: bigint | null;
+    orderId: string;
+    orderItemId: string | null;
+  }>;
+  candidatesByOrderId: Map<string, AmazonOrderRecord[]>;
+  pickedRecordIds: Set<string>;
 }
 
 interface AmazonSyncResult {
@@ -78,10 +92,14 @@ interface AmazonSyncResult {
   fetchedCount: number;
   createdCount: number;
   updatedCount: number;
+  unchangedCount: number;
   frozenCount: number;
   excludedCount: number;
+  conflictCount: number;
   errors: string[];
 }
+
+type AmazonSyncTrigger = 'manual' | 'scheduled';
 
 interface AmazonAllConnectionsSyncResult {
   connectionCount: number;
@@ -92,8 +110,10 @@ interface AmazonAllConnectionsSyncResult {
   fetchedCount: number;
   createdCount: number;
   updatedCount: number;
+  unchangedCount: number;
   frozenCount: number;
   excludedCount: number;
+  conflictCount: number;
   results: Array<{
     connectionId: string;
     shopName: string;
@@ -101,8 +121,10 @@ interface AmazonAllConnectionsSyncResult {
     fetchedCount: number;
     createdCount: number;
     updatedCount: number;
+    unchangedCount: number;
     frozenCount: number;
     excludedCount: number;
+    conflictCount: number;
     errors: string[];
   }>;
 }
@@ -298,7 +320,12 @@ export class AmazonSpApiService {
     if (this.runningConnections.has(key)) {
       throw new ConflictException('该店铺的Amazon同步任务正在运行');
     }
+    const lockToken = randomUUID();
+    if (!(await this.acquireConnectionLock(connection.id, lockToken))) {
+      throw new ConflictException('该店铺的Amazon同步任务正在运行');
+    }
     this.runningConnections.add(key);
+    const heartbeat = this.startConnectionLockHeartbeat(connection.id, lockToken);
     try {
       const result = await this.runSync(
         connection,
@@ -310,11 +337,16 @@ export class AmazonSpApiService {
       }
       return result;
     } finally {
+      clearInterval(heartbeat);
       this.runningConnections.delete(key);
+      await this.releaseConnectionLock(connection.id, lockToken);
     }
   }
 
-  async syncAllConnections(bypassCooldown = false): Promise<AmazonAllConnectionsSyncResult> {
+  async syncAllConnections(
+    bypassCooldown = false,
+    trigger: AmazonSyncTrigger = 'manual',
+  ): Promise<AmazonAllConnectionsSyncResult> {
     const now = Date.now();
     if (!bypassCooldown && now - this.lastAllSyncStartedAt < 60_000) {
       throw new ConflictException('订单拉取操作过于频繁，请在60秒后重试');
@@ -334,8 +366,10 @@ export class AmazonSpApiService {
       fetchedCount: 0,
       createdCount: 0,
       updatedCount: 0,
+      unchangedCount: 0,
       frozenCount: 0,
       excludedCount: 0,
+      conflictCount: 0,
       results: [],
     };
     for (const connection of connections) {
@@ -349,18 +383,40 @@ export class AmazonSpApiService {
           fetchedCount: 0,
           createdCount: 0,
           updatedCount: 0,
+          unchangedCount: 0,
           frozenCount: 0,
           excludedCount: 0,
+          conflictCount: 0,
+          errors: ['该店铺已有Amazon同步任务正在运行'],
+        });
+        continue;
+      }
+      const lockToken = randomUUID();
+      if (!(await this.acquireConnectionLock(connection.id, lockToken))) {
+        summary.skippedCount += 1;
+        summary.results.push({
+          connectionId,
+          shopName: connection.shop.name,
+          status: 'skipped',
+          fetchedCount: 0,
+          createdCount: 0,
+          updatedCount: 0,
+          unchangedCount: 0,
+          frozenCount: 0,
+          excludedCount: 0,
+          conflictCount: 0,
           errors: ['该店铺已有Amazon同步任务正在运行'],
         });
         continue;
       }
       this.runningConnections.add(connectionId);
+      const heartbeat = this.startConnectionLockHeartbeat(connection.id, lockToken);
       try {
         const result = await this.runSync(
           connection,
           AmazonSpApiSyncType.full,
           DEFAULT_LOOKBACK_DAYS,
+          trigger,
         );
         summary.completedCount += 1;
         if (result.status === AmazonSpApiSyncStatus.partial) summary.partialCount += 1;
@@ -368,8 +424,10 @@ export class AmazonSpApiService {
         summary.fetchedCount += result.fetchedCount;
         summary.createdCount += result.createdCount;
         summary.updatedCount += result.updatedCount;
+        summary.unchangedCount += result.unchangedCount ?? 0;
         summary.frozenCount += result.frozenCount ?? 0;
         summary.excludedCount += result.excludedCount ?? 0;
+        summary.conflictCount += result.conflictCount ?? 0;
         summary.results.push({
           connectionId,
           shopName: connection.shop.name,
@@ -377,8 +435,10 @@ export class AmazonSpApiService {
           fetchedCount: result.fetchedCount,
           createdCount: result.createdCount,
           updatedCount: result.updatedCount,
+          unchangedCount: result.unchangedCount ?? 0,
           frozenCount: result.frozenCount ?? 0,
           excludedCount: result.excludedCount ?? 0,
+          conflictCount: result.conflictCount ?? 0,
           errors: result.errors,
         });
       } catch (error) {
@@ -391,12 +451,16 @@ export class AmazonSpApiService {
           fetchedCount: 0,
           createdCount: 0,
           updatedCount: 0,
+          unchangedCount: 0,
           frozenCount: 0,
           excludedCount: 0,
+          conflictCount: 0,
           errors: [this.errorMessage(error)],
         });
       } finally {
+        clearInterval(heartbeat);
         this.runningConnections.delete(connectionId);
+        await this.releaseConnectionLock(connection.id, lockToken);
       }
     }
     await this.materializeDashboardSnapshotIfComplete();
@@ -423,6 +487,11 @@ export class AmazonSpApiService {
       fetchedCount: row.fetchedCount,
       createdCount: row.createdCount,
       updatedCount: row.updatedCount,
+      unchangedCount: row.unchangedCount,
+      frozenCount: row.frozenCount,
+      excludedCount: row.excludedCount,
+      conflictCount: row.conflictCount,
+      trigger: row.trigger,
       errorMessage: row.errorMessage,
     }));
   }
@@ -585,6 +654,11 @@ export class AmazonSpApiService {
           fetchedCount: true,
           createdCount: true,
           updatedCount: true,
+          unchangedCount: true,
+          frozenCount: true,
+          excludedCount: true,
+          conflictCount: true,
+          trigger: true,
           errorMessage: true,
         },
       }),
@@ -675,6 +749,11 @@ export class AmazonSpApiService {
             fetchedCount: latestRun.fetchedCount,
             createdCount: latestRun.createdCount,
             updatedCount: latestRun.updatedCount,
+            unchangedCount: latestRun.unchangedCount,
+            frozenCount: latestRun.frozenCount,
+            excludedCount: latestRun.excludedCount,
+            conflictCount: latestRun.conflictCount,
+            trigger: latestRun.trigger,
             hasError: Boolean(latestRun.errorMessage),
           }
         : null,
@@ -760,7 +839,7 @@ export class AmazonSpApiService {
   async runScheduledSync(): Promise<void> {
     if (!AMAZON_SCHEDULED_SYNC_ENABLED) return;
     try {
-      const result = await this.syncAllConnections(true);
+      const result = await this.syncAllConnections(true, 'scheduled');
       for (const row of result.results) {
         if (row.errors.length) {
           this.logger.error(
@@ -937,11 +1016,20 @@ export class AmazonSpApiService {
     connection: AmazonSpApiConnection,
     syncType: AmazonSpApiSyncType,
     lookbackDays: number,
+    trigger: AmazonSyncTrigger = 'manual',
   ): Promise<AmazonSyncResult> {
     const run = await this.prisma.amazonSpApiSyncRun.create({
-      data: { connectionId: connection.id, syncType },
+      data: { connectionId: connection.id, syncType, trigger },
     });
-    const counters: SyncCounters = { fetched: 0, created: 0, updated: 0, frozen: 0, excluded: 0 };
+    const counters: SyncCounters = {
+      fetched: 0,
+      created: 0,
+      updated: 0,
+      unchanged: 0,
+      frozen: 0,
+      excluded: 0,
+      conflicts: 0,
+    };
     const errors: string[] = [];
     const now = new Date();
     try {
@@ -958,7 +1046,19 @@ export class AmazonSpApiService {
           && connection.syncFbmOrders) {
         attemptedOrderSync = true;
         try {
-          this.addCounters(counters, await this.syncFbmOrders(connection, accessToken, region, marketplaceIds, orderWatermark));
+          const fbmCounters = await this.syncFbmOrders(
+            connection,
+            accessToken,
+            region,
+            marketplaceIds,
+            orderWatermark,
+          );
+          this.addCounters(counters, fbmCounters);
+          if (fbmCounters.conflicts > 0) {
+            errors.push(
+              `FBM订单：${fbmCounters.conflicts} 条订单明细存在严格匹配冲突，已保留待重试记录并推进主同步水位`,
+            );
+          }
         } catch (error) {
           orderSyncSuccessful = false;
           errors.push(`FBM订单：${this.errorMessage(error)}`);
@@ -1003,6 +1103,10 @@ export class AmazonSpApiService {
             fetchedCount: counters.fetched,
             createdCount: counters.created,
             updatedCount: counters.updated,
+            unchangedCount: counters.unchanged,
+            frozenCount: counters.frozen,
+            excludedCount: counters.excluded,
+            conflictCount: counters.conflicts,
             errorMessage: errors.length ? errors.join('\n').slice(0, 10000) : null,
           },
         }),
@@ -1023,8 +1127,10 @@ export class AmazonSpApiService {
         fetchedCount: counters.fetched,
         createdCount: counters.created,
         updatedCount: counters.updated,
+        unchangedCount: counters.unchanged,
         frozenCount: counters.frozen,
         excludedCount: counters.excluded,
+        conflictCount: counters.conflicts,
         errors,
       };
     } catch (error) {
@@ -1038,6 +1144,10 @@ export class AmazonSpApiService {
             fetchedCount: counters.fetched,
             createdCount: counters.created,
             updatedCount: counters.updated,
+            unchangedCount: counters.unchanged,
+            frozenCount: counters.frozen,
+            excludedCount: counters.excluded,
+            conflictCount: counters.conflicts,
             errorMessage: message.slice(0, 10000),
           },
         }),
@@ -1058,15 +1168,7 @@ export class AmazonSpApiService {
     lastUpdatedAfter: Date,
   ): Promise<SyncCounters> {
     const includeRecipient = String(process.env.AMAZON_SP_API_INCLUDE_RECIPIENT ?? 'false').toLowerCase() === 'true';
-    const orders = await this.client.searchOrders({
-      accessToken,
-      region,
-      marketplaceIds,
-      fulfilledBy: 'MERCHANT',
-      lastUpdatedAfter,
-      includeRecipient,
-    });
-    const counters: SyncCounters = { fetched: 0, created: 0, updated: 0, frozen: 0, excluded: 0 };
+    const counters = this.emptySyncCounters();
     const shop = await this.prisma.shop.findUnique({ where: { id: connection.shopId }, select: { name: true } });
     const shopSkus = await this.prisma.sku.findMany({
       where: { status: 1, shop: shop?.name ?? '', productId: { not: null } },
@@ -1101,27 +1203,150 @@ export class AmazonSpApiService {
         }
       }
     }
-    for (const order of orders) {
-      const dispatchMode = (order.orderItems ?? []).some((item) => {
+    const currentItemKeys = new Set<string>();
+    await this.client.forEachOrderPage({
+      accessToken,
+      region,
+      marketplaceIds,
+      fulfilledBy: 'MERCHANT',
+      lastUpdatedAfter,
+      includeRecipient,
+    }, async (orders) => {
+      const context = await this.loadFbmPageContext(connection.id, orders);
+      for (const order of orders) {
+        const dispatchMode = (order.orderItems ?? []).some((item) => {
+          const stockQty = availableStockBySku.get(this.normalizeSku(item.product?.sellerSku));
+          const requestedQty = Math.max(1, this.nonNegativeInt(item.quantityOrdered));
+          return stockQty === undefined || stockQty < requestedQty;
+        })
+          ? DISPATCH_CHINA_NO_STOCK
+          : DISPATCH_OVERSEAS;
+        for (const item of order.orderItems ?? []) {
+          currentItemKeys.add(this.amazonOrderItemKey(order.orderId, item.orderItemId));
+          counters.fetched += 1;
+          const result = await this.upsertFbmOrderItem(
+            connection,
+            shop?.name ?? null,
+            order,
+            item,
+            dispatchMode,
+            context,
+          );
+          if (result) counters[result] += 1;
+        }
+      }
+    });
+    this.addCounters(
+      counters,
+      await this.retryStoredFbmConflicts(
+        connection,
+        shop?.name ?? null,
+        availableStockBySku,
+        currentItemKeys,
+      ),
+    );
+    return counters;
+  }
+
+  private async retryStoredFbmConflicts(
+    connection: AmazonSpApiConnection,
+    shopName: string | null,
+    availableStockBySku: Map<string, number>,
+    currentItemKeys: Set<string>,
+  ): Promise<SyncCounters> {
+    const counters = this.emptySyncCounters();
+    const observations = await this.prisma.amazonOrderSyncObservation.findMany({
+      where: { spApiConnectionId: connection.id, freezeReason: 'matching_conflict' },
+      orderBy: { updatedAt: 'asc' },
+      take: 200,
+      select: { orderId: true, orderItemId: true, rawPayload: true },
+    });
+    for (const observation of observations) {
+      if (currentItemKeys.has(this.amazonOrderItemKey(observation.orderId, observation.orderItemId))) continue;
+      const payload = this.readObservedAmazonOrder(observation.rawPayload);
+      if (!payload) continue;
+      const dispatchMode = (payload.order.orderItems ?? [payload.item]).some((item) => {
         const stockQty = availableStockBySku.get(this.normalizeSku(item.product?.sellerSku));
         const requestedQty = Math.max(1, this.nonNegativeInt(item.quantityOrdered));
         return stockQty === undefined || stockQty < requestedQty;
       })
         ? DISPATCH_CHINA_NO_STOCK
         : DISPATCH_OVERSEAS;
-      for (const item of order.orderItems ?? []) {
-        counters.fetched += 1;
-        const result = await this.upsertFbmOrderItem(
-          connection,
-          shop?.name ?? null,
-          order,
-          item,
-          dispatchMode,
-        );
-        if (result) counters[result] += 1;
-      }
+      const result = await this.upsertFbmOrderItem(
+        connection,
+        shopName,
+        payload.order,
+        payload.item,
+        dispatchMode,
+      );
+      if (result) counters[result] += 1;
     }
     return counters;
+  }
+
+  private readObservedAmazonOrder(
+    rawPayload: Prisma.JsonValue | null,
+  ): { order: AmazonOrderPayload; item: AmazonOrderItemPayload } | null {
+    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return null;
+    const order = (rawPayload as Prisma.JsonObject).order;
+    const item = (rawPayload as Prisma.JsonObject).item;
+    if (!order || typeof order !== 'object' || Array.isArray(order)) return null;
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    if (!String((order as Prisma.JsonObject).orderId ?? '').trim()) return null;
+    if (!String((item as Prisma.JsonObject).orderItemId ?? '').trim()) return null;
+    return {
+      order: order as unknown as AmazonOrderPayload,
+      item: item as unknown as AmazonOrderItemPayload,
+    };
+  }
+
+  private amazonOrderItemKey(orderId: unknown, orderItemId: unknown): string {
+    return `${String(orderId ?? '').trim()}\u0000${String(orderItemId ?? '').trim()}`;
+  }
+
+  private async loadFbmPageContext(
+    connectionId: bigint,
+    orders: AmazonOrderPayload[],
+  ): Promise<FbmPageContext> {
+    const orderIds = Array.from(new Set(orders.map((order) => String(order.orderId ?? '').trim()).filter(Boolean)));
+    if (!orderIds.length) {
+      return { exclusions: [], candidatesByOrderId: new Map(), pickedRecordIds: new Set() };
+    }
+    const [exclusions, candidates] = await Promise.all([
+      this.prisma.amazonOrderSyncExclusion.findMany({
+        where: {
+          isActive: true,
+          orderId: { in: orderIds },
+          OR: [{ spApiConnectionId: connectionId }, { spApiConnectionId: null }],
+        },
+        select: { spApiConnectionId: true, orderId: true, orderItemId: true },
+      }),
+      this.prisma.amazonOrderRecord.findMany({
+        where: {
+          orderId: { in: orderIds },
+          OR: [{ spApiConnectionId: connectionId }, { spApiConnectionId: null }],
+        },
+        orderBy: { id: 'asc' },
+      }),
+    ]);
+    const candidatesByOrderId = new Map<string, AmazonOrderRecord[]>();
+    for (const candidate of candidates) {
+      const orderId = String(candidate.orderId ?? '').trim();
+      const rows = candidatesByOrderId.get(orderId) ?? [];
+      rows.push(candidate);
+      candidatesByOrderId.set(orderId, rows);
+    }
+    const pickedRows = candidates.length
+      ? await this.prisma.overseasPickingBatchItem.findMany({
+          where: { source: 'amazon', sourceRecordId: { in: candidates.map((row) => row.id) } },
+          select: { sourceRecordId: true },
+        })
+      : [];
+    return {
+      exclusions,
+      candidatesByOrderId,
+      pickedRecordIds: new Set(pickedRows.map((row) => row.sourceRecordId.toString())),
+    };
   }
 
   private async upsertFbmOrderItem(
@@ -1130,43 +1355,38 @@ export class AmazonSpApiService {
     order: AmazonOrderPayload,
     item: AmazonOrderItemPayload,
     dispatchMode: string,
-  ): Promise<'created' | 'updated' | 'frozen' | 'excluded' | null> {
+    context?: FbmPageContext,
+  ): Promise<'created' | 'updated' | 'unchanged' | 'frozen' | 'excluded' | 'conflicts' | null> {
     const address = order.recipient?.deliveryAddress;
     const fulfillment = order.fulfillment;
     const itemFulfillment = item.fulfillment;
-    const excluded = await this.prisma.amazonOrderSyncExclusion.findFirst({
-      where: {
-        isActive: true,
-        orderId: order.orderId,
-        AND: [
-          {
-            OR: [
-              { spApiConnectionId: connection.id },
-              { spApiConnectionId: null },
+    const excluded = context
+      ? context.exclusions.some((row) =>
+          row.orderId === order.orderId
+          && (row.spApiConnectionId === null || row.spApiConnectionId === connection.id)
+          && (row.orderItemId === null || row.orderItemId === item.orderItemId))
+      : await this.prisma.amazonOrderSyncExclusion.findFirst({
+          where: {
+            isActive: true,
+            orderId: order.orderId,
+            AND: [
+              { OR: [{ spApiConnectionId: connection.id }, { spApiConnectionId: null }] },
+              { OR: [{ orderItemId: item.orderItemId }, { orderItemId: null }] },
             ],
           },
-          {
-            OR: [
-              { orderItemId: item.orderItemId },
-              { orderItemId: null },
-            ],
-          },
-        ],
-      },
-      select: { id: true },
-    });
+          select: { id: true },
+        });
     if (excluded) return 'excluded';
-    const candidates = await this.prisma.amazonOrderRecord.findMany({
-      where: {
-        orderId: order.orderId,
-        OR: [
-          { spApiConnectionId: connection.id },
-          { spApiConnectionId: null },
-        ],
-      },
-      orderBy: { id: 'asc' },
-    });
-    const existing = this.selectExistingFbmOrderItem(candidates, connection.id, item);
+    const candidates = context?.candidatesByOrderId.get(order.orderId)
+      ?? await this.prisma.amazonOrderRecord.findMany({
+        where: {
+          orderId: order.orderId,
+          OR: [{ spApiConnectionId: connection.id }, { spApiConnectionId: null }],
+        },
+        orderBy: { id: 'asc' },
+      });
+    const match = this.resolveFbmOrderMatch(candidates, connection.id, item);
+    const existing = match.existing;
     const orderStatus = String(fulfillment?.fulfillmentStatus ?? '').trim();
     const quantityOrdered = this.nonNegativeInt(item.quantityOrdered);
     const quantityShipped = this.nonNegativeInt(itemFulfillment?.quantityFulfilled);
@@ -1175,11 +1395,10 @@ export class AmazonSpApiService {
       : itemFulfillment?.quantityUnfulfilled === undefined
         ? Math.max(0, quantityOrdered - quantityShipped)
         : this.nonNegativeInt(itemFulfillment.quantityUnfulfilled);
-    const manualOrderExists = candidates.some((candidate) => candidate.sourceKind !== 'sp_api');
-    const freezeReason = manualOrderExists
-      ? 'manual_import'
+    const freezeReason = match.conflictReason
+      ? 'matching_conflict'
       : existing
-        ? this.resolveExistingFbmFreezeReason(existing)
+        ? await this.resolveExistingFbmFreezeReason(existing, context?.pickedRecordIds)
         : null;
     await this.recordFbmObservation(connection.id, order, item, {
       orderStatus: orderStatus || null,
@@ -1188,7 +1407,13 @@ export class AmazonSpApiService {
       quantityToShip,
       freezeReason,
     });
-    if (manualOrderExists || freezeReason) return 'frozen';
+    if (match.conflictReason) {
+      this.logger.warn(
+        `Amazon FBM order matching conflict: connection=${connection.id.toString()} order=${order.orderId} item=${item.orderItemId} reason=${match.conflictReason}`,
+      );
+      return 'conflicts';
+    }
+    if (freezeReason) return 'frozen';
     if (!existing && !['UNSHIPPED', 'PARTIALLY_SHIPPED'].includes(orderStatus)) return null;
     const manualOverrides = this.readManualOverrideFields(existing?.rawPayload ?? null);
     const mayUpdate = (field: string): boolean => !manualOverrides.has(field);
@@ -1235,30 +1460,52 @@ export class AmazonSpApiService {
       sourceFileName: 'Amazon SP-API Orders v2026-01-01',
       sourceFilePath: `sp-api:${connection.id.toString()}`,
       rawPayload: this.mergeSpApiRawPayload(existing?.rawPayload ?? null, order, item),
-      csvImportedAt: new Date(),
     } satisfies Prisma.AmazonOrderRecordUncheckedUpdateInput;
 
     if (existing) {
+      if (
+        existing.amazonLastUpdatedAt &&
+        lastUpdatedAt &&
+        lastUpdatedAt.getTime() < existing.amazonLastUpdatedAt.getTime()
+      ) {
+        return 'unchanged';
+      }
+      const changedFields = this.changedAmazonFields(existing, data);
+      if (changedFields.length === 0) return 'unchanged';
       await this.prisma.amazonOrderRecord.update({ where: { id: existing.id }, data });
       return 'updated';
     }
-    await this.prisma.amazonOrderRecord.create({
+    const created = await this.prisma.amazonOrderRecord.create({
       data: {
         ...data,
+        csvImportedAt: new Date(),
         rowHash: createHash('sha1')
           .update(`${connection.id.toString()}|${order.orderId}|${item.orderItemId}`)
           .digest('hex'),
       },
     });
+    if (context && created?.id) {
+      const rows = context.candidatesByOrderId.get(order.orderId) ?? [];
+      rows.push(created);
+      context.candidatesByOrderId.set(order.orderId, rows);
+    }
     return 'created';
   }
 
-  private selectExistingFbmOrderItem(
+  selectExistingFbmOrderItem(
     candidates: AmazonOrderRecord[],
     connectionId: bigint,
     item: AmazonOrderItemPayload,
   ): AmazonOrderRecord | null {
-    if (candidates.length === 0) return null;
+    return this.resolveFbmOrderMatch(candidates, connectionId, item).existing;
+  }
+
+  private resolveFbmOrderMatch(
+    candidates: AmazonOrderRecord[],
+    connectionId: bigint,
+    item: AmazonOrderItemPayload,
+  ): { existing: AmazonOrderRecord | null; conflictReason: string | null } {
+    if (candidates.length === 0) return { existing: null, conflictReason: null };
     const incomingItemId = String(item.orderItemId ?? '').trim();
     const incomingSku = this.normalizeSku(item.product?.sellerSku);
     const exact = candidates.filter((candidate) => {
@@ -1266,26 +1513,67 @@ export class AmazonSpApiService {
       const originalItemId = this.getOriginalAmazonOrderItemId(candidate.rawPayload);
       return Boolean(incomingItemId && (currentItemId === incomingItemId || originalItemId === incomingItemId));
     });
-    const skuMatches = candidates.filter(
-      (candidate) => Boolean(incomingSku && this.normalizeSku(candidate.sku) === incomingSku),
+    if (exact.length > 1) {
+      return { existing: null, conflictReason: '同一订单明细 ID 匹配到多条系统记录' };
+    }
+    if (exact.length === 1) return { existing: exact[0], conflictReason: null };
+    const skuMatches = candidates.filter((candidate) => {
+      if (!incomingSku || this.normalizeSku(candidate.sku) !== incomingSku) return false;
+      const candidateItemId = String(candidate.orderItemId ?? '').trim()
+        || this.getOriginalAmazonOrderItemId(candidate.rawPayload);
+      return !incomingItemId || !candidateItemId;
+    });
+    if (skuMatches.length > 1) {
+      return { existing: null, conflictReason: '同一订单号和 SKU 匹配到多条系统记录' };
+    }
+    if (skuMatches.length === 1) return { existing: skuMatches[0], conflictReason: null };
+    const onlySiblingApiItems = candidates.every(
+      (candidate) => candidate.spApiConnectionId === connectionId && candidate.sourceKind === 'sp_api',
     );
-    const matches = exact.length > 0 ? exact : skuMatches.length > 0 ? skuMatches : candidates.length === 1 ? candidates : [];
-    if (matches.length === 0) return null;
-    return [...matches].sort((left, right) => {
-      const score = (candidate: AmazonOrderRecord): number =>
-        (String(candidate.shipmentNo ?? '').trim() ? 400 : 0) +
-        (candidate.xiyaExportedAt ? 300 : 0) +
-        (candidate.sourceKind !== 'sp_api' ? 200 : 0) +
-        (candidate.spApiConnectionId === connectionId ? 10 : 0);
-      return score(right) - score(left) || Number(left.id - right.id);
-    })[0];
+    return onlySiblingApiItems
+      ? { existing: null, conflictReason: null }
+      : { existing: null, conflictReason: '同一订单号已存在，但订单明细 ID 和 SKU 均不一致' };
   }
 
-  private resolveExistingFbmFreezeReason(existing: AmazonOrderRecord): string | null {
-    if (existing.sourceKind !== 'sp_api') return 'manual_import';
+  private async resolveExistingFbmFreezeReason(
+    existing: AmazonOrderRecord,
+    pickedRecordIds?: Set<string>,
+  ): Promise<string | null> {
     if (String(existing.shipmentNo ?? '').trim()) return 'tracking_registered';
+    if (existing.xiyaExportedAt) return 'xiya_exported';
     if (this.readManualOverrideFields(existing.rawPayload).size > 0) return 'manual_edit';
+    if (String(existing.sourceFilePath ?? '').startsWith('manual:')) return 'manual_created';
+    if (pickedRecordIds) return pickedRecordIds.has(existing.id.toString()) ? 'picking_started' : null;
+    const pickingStore = (this.prisma as PrismaService & {
+      overseasPickingBatchItem?: PrismaService['overseasPickingBatchItem'];
+    }).overseasPickingBatchItem;
+    if (pickingStore) {
+      const pickingItem = await pickingStore.findFirst({
+        where: { source: 'amazon', sourceRecordId: existing.id },
+        select: { id: true },
+      });
+      if (pickingItem) return 'picking_started';
+    }
     return null;
+  }
+
+  private changedAmazonFields(
+    existing: AmazonOrderRecord,
+    data: Prisma.AmazonOrderRecordUncheckedUpdateInput,
+  ): string[] {
+    return Object.entries(data)
+      .filter(
+        ([key, value]) =>
+          this.comparableValue(existing[key as keyof AmazonOrderRecord]) !== this.comparableValue(value),
+      )
+      .map(([key]) => key);
+  }
+
+  private comparableValue(value: unknown): string {
+    if (value instanceof Date) return value.toISOString();
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
   }
 
   private async recordFbmObservation(
@@ -1349,27 +1637,39 @@ export class AmazonSpApiService {
     marketplaceIds: string[],
     lastUpdatedAfter: Date,
   ): Promise<SyncCounters> {
-    const orders = await this.client.searchOrders({
+    const counters = this.emptySyncCounters();
+    await this.client.forEachOrderPage({
       accessToken,
       region,
       marketplaceIds,
       fulfilledBy: 'AMAZON',
       lastUpdatedAfter,
       includeRecipient: false,
-    });
-    const counters: SyncCounters = { fetched: 0, created: 0, updated: 0, frozen: 0, excluded: 0 };
-    for (const order of orders) {
-      for (const item of order.orderItems ?? []) {
+    }, async (orders) => {
+      const pageItems = orders.flatMap((order) =>
+        (order.orderItems ?? []).map((item) => ({ order, item })));
+      const existingRows = pageItems.length
+        ? await this.prisma.amazonFbaOrderItem.findMany({
+            where: {
+              connectionId: connection.id,
+              OR: pageItems.map(({ order, item }) => ({
+                amazonOrderId: order.orderId,
+                amazonOrderItemId: item.orderItemId,
+              })),
+            },
+            select: { amazonOrderId: true, amazonOrderItemId: true },
+          })
+        : [];
+      const existingKeys = new Set(existingRows.map((row) =>
+        this.amazonOrderItemKey(row.amazonOrderId, row.amazonOrderItemId)));
+      for (const { order, item } of pageItems) {
         counters.fetched += 1;
         const key = {
           connectionId: connection.id,
           amazonOrderId: order.orderId,
           amazonOrderItemId: item.orderItemId,
         };
-        const existing = await this.prisma.amazonFbaOrderItem.findUnique({
-          where: { connectionId_amazonOrderId_amazonOrderItemId: key },
-          select: { id: true },
-        });
+        const exists = existingKeys.has(this.amazonOrderItemKey(order.orderId, item.orderItemId));
         const proceeds = item.proceeds?.proceedsTotal;
         const itemSubtotal = item.proceeds?.breakdowns?.find((row) => row.type === 'ITEM')?.subtotal;
         const money = proceeds ?? itemSubtotal ?? item.product?.price?.unitPrice ?? item.product?.price?.listingPrice;
@@ -1409,9 +1709,9 @@ export class AmazonSpApiService {
             rawPayload: JSON.parse(JSON.stringify({ order, item })) as Prisma.InputJsonValue,
           },
         });
-        counters[existing ? 'updated' : 'created'] += 1;
+        counters[exists ? 'updated' : 'created'] += 1;
       }
-    }
+    });
     return counters;
   }
 
@@ -1422,7 +1722,7 @@ export class AmazonSpApiService {
     marketplaceIds: string[],
     snapshotAt: Date,
   ): Promise<SyncCounters> {
-    const counters: SyncCounters = { fetched: 0, created: 0, updated: 0, frozen: 0, excluded: 0 };
+    const counters = this.emptySyncCounters();
     for (const marketplaceId of marketplaceIds) {
       const rows = await this.client.getInventorySummaries({ accessToken, region, marketplaceId });
       const currentSellerSkus: string[] = [];
@@ -1644,8 +1944,71 @@ export class AmazonSpApiService {
     target.fetched += value.fetched;
     target.created += value.created;
     target.updated += value.updated;
+    target.unchanged += value.unchanged;
     target.frozen += value.frozen;
     target.excluded += value.excluded;
+    target.conflicts += value.conflicts;
+  }
+
+  private async acquireConnectionLock(connectionId: bigint, lockToken: string): Promise<boolean> {
+    const staleBefore = new Date(Date.now() - SYNC_LOCK_STALE_MS);
+    const result = await this.prisma.amazonSpApiConnection.updateMany({
+      where: {
+        id: connectionId,
+        OR: [
+          { syncLockToken: null },
+          { syncLockedAt: null },
+          { syncLockedAt: { lt: staleBefore } },
+        ],
+      },
+      data: { syncLockToken: lockToken, syncLockedAt: new Date() },
+    });
+    return result.count === 1;
+  }
+
+  private startConnectionLockHeartbeat(
+    connectionId: bigint,
+    lockToken: string,
+  ): ReturnType<typeof setInterval> {
+    return setInterval(() => {
+      void this.prisma.amazonSpApiConnection.updateMany({
+        where: { id: connectionId, syncLockToken: lockToken },
+        data: { syncLockedAt: new Date() },
+      }).then((result) => {
+        if (result.count !== 1) {
+          this.logger.error(`Amazon sync lock lost for connection ${connectionId.toString()}`);
+        }
+      }).catch((error) => {
+        this.logger.error(
+          `Amazon sync lock heartbeat failed for connection ${connectionId.toString()}: ${this.errorMessage(error)}`,
+        );
+      });
+    }, SYNC_LOCK_HEARTBEAT_MS);
+  }
+
+  private async releaseConnectionLock(connectionId: bigint, lockToken: string): Promise<void> {
+    try {
+      await this.prisma.amazonSpApiConnection.updateMany({
+        where: { id: connectionId, syncLockToken: lockToken },
+        data: { syncLockToken: null, syncLockedAt: null },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Amazon sync lock release failed for connection ${connectionId.toString()}: ${this.errorMessage(error)}`,
+      );
+    }
+  }
+
+  private emptySyncCounters(): SyncCounters {
+    return {
+      fetched: 0,
+      created: 0,
+      updated: 0,
+      unchanged: 0,
+      frozen: 0,
+      excluded: 0,
+      conflicts: 0,
+    };
   }
 
   private nonNegativeInt(value: unknown): number {

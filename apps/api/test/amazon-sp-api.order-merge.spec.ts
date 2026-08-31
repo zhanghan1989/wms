@@ -67,17 +67,18 @@ describe('Amazon SP-API FBM order reconciliation', () => {
     ...overrides,
   });
 
-  it('prefers the operational legacy row over an SP-API duplicate', () => {
+  it('reports a strict conflict instead of choosing between duplicate matches', () => {
     const legacy = record({ id: 10n, shipmentNo: '3907-4858-4225' });
     const duplicate = record({ id: 20n, spApiConnectionId: 3n, sourceKind: 'sp_api' });
 
-    const selected = (service as any).selectExistingFbmOrderItem(
+    const match = (service as any).resolveFbmOrderMatch(
       [duplicate, legacy],
       3n,
       { orderItemId: 'item-1', product: { sellerSku: 'SKU-1' } },
     );
 
-    expect(selected.id).toBe(10n);
+    expect(match.existing).toBeNull();
+    expect(match.conflictReason).toContain('匹配到多条');
   });
 
   it('matches an edited line by the original Amazon order item id in raw payload', () => {
@@ -93,6 +94,24 @@ describe('Amazon SP-API FBM order reconciliation', () => {
     );
 
     expect(selected.id).toBe(1n);
+  });
+
+  it('does not merge different Amazon order items that share the same SKU', () => {
+    const existingApiItem = record({
+      id: 10n,
+      spApiConnectionId: 3n,
+      sourceKind: 'sp_api',
+      orderItemId: 'item-1',
+      sku: 'SKU-1',
+    });
+
+    const match = (service as any).resolveFbmOrderMatch(
+      [existingApiItem],
+      3n,
+      { orderItemId: 'item-2', product: { sellerSku: 'SKU-1' } },
+    );
+
+    expect(match).toEqual({ existing: null, conflictReason: null });
   });
 
   it('keeps manual override metadata when refreshing the raw Amazon payload', () => {
@@ -158,8 +177,9 @@ describe('Amazon SP-API FBM order reconciliation', () => {
   });
 
   it.each([
-    ['a manually imported order', record({ sourceKind: 'file' })],
     ['an order with a tracking number', record({ sourceKind: 'sp_api', shipmentNo: 'TRACK-1' })],
+    ['an order exported to Xiya', record({ sourceKind: 'sp_api', xiyaExportedAt: new Date('2026-08-07T00:00:00Z') })],
+    ['a manually created order', record({ sourceKind: 'file', sourceFilePath: 'manual:amazon-order' })],
   ])('does not update %s', async (_label, existing) => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
@@ -195,6 +215,135 @@ describe('Amazon SP-API FBM order reconciliation', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it('claims an untouched CSV row when order item id matches exactly', async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      amazonOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue(null) },
+      amazonOrderSyncObservation: { upsert: jest.fn().mockResolvedValue({}) },
+      amazonOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([record({ sourceKind: 'file' })]),
+        update,
+      },
+    };
+    const testService = new AmazonSpApiService(
+      prisma as unknown as PrismaService,
+      {} as AmazonSpApiClient,
+      {} as AmazonSpApiCryptoService,
+    );
+
+    const result = await (testService as any).upsertFbmOrderItem(
+      { id: 3n },
+      'Arcdiary',
+      { orderId: '503-1', fulfillment: { fulfillmentStatus: 'UNSHIPPED' } },
+      { orderItemId: 'item-1', quantityOrdered: 1, product: { sellerSku: 'SKU-1' } },
+      'overseas',
+    );
+
+    expect(result).toBe('updated');
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ spApiConnectionId: 3n, sourceKind: 'sp_api' }),
+    }));
+  });
+
+  it('does not let an older Amazon event overwrite a newer stored state', async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      amazonOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue(null) },
+      amazonOrderSyncObservation: { upsert: jest.fn().mockResolvedValue({}) },
+      amazonOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([
+          record({
+            spApiConnectionId: 3n,
+            sourceKind: 'sp_api',
+            amazonLastUpdatedAt: new Date('2026-08-08T10:00:00Z'),
+          }),
+        ]),
+        update,
+      },
+    };
+    const testService = new AmazonSpApiService(
+      prisma as unknown as PrismaService,
+      {} as AmazonSpApiClient,
+      {} as AmazonSpApiCryptoService,
+    );
+
+    const result = await (testService as any).upsertFbmOrderItem(
+      { id: 3n },
+      'Arcdiary',
+      {
+        orderId: '503-1',
+        lastUpdatedTime: '2026-08-08T09:00:00Z',
+        fulfillment: { fulfillmentStatus: 'UNSHIPPED' },
+      },
+      { orderItemId: 'item-1', quantityOrdered: 1, product: { sellerSku: 'SKU-1' } },
+      'overseas',
+    );
+
+    expect(result).toBe('unchanged');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('does not write an unchanged Amazon event back to the database', async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      amazonOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue(null) },
+      amazonOrderSyncObservation: { upsert: jest.fn().mockResolvedValue({}) },
+      amazonOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([
+          record({ spApiConnectionId: 3n, sourceKind: 'sp_api' }),
+        ]),
+        update,
+      },
+      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const testService = new AmazonSpApiService(
+      prisma as unknown as PrismaService,
+      {} as AmazonSpApiClient,
+      {} as AmazonSpApiCryptoService,
+    );
+    jest.spyOn(testService as any, 'changedAmazonFields').mockReturnValue([]);
+
+    const result = await (testService as any).upsertFbmOrderItem(
+      { id: 3n },
+      'Arcdiary',
+      { orderId: '503-1', fulfillment: { fulfillmentStatus: 'UNSHIPPED' } },
+      { orderItemId: 'item-1', quantityOrdered: 1, product: { sellerSku: 'SKU-1' } },
+      'overseas',
+    );
+
+    expect(result).toBe('unchanged');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('freezes an order that has entered an overseas picking batch', async () => {
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      amazonOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue(null) },
+      amazonOrderSyncObservation: { upsert: jest.fn().mockResolvedValue({}) },
+      amazonOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([record({ spApiConnectionId: 3n, sourceKind: 'sp_api' })]),
+        update,
+      },
+      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue({ id: 99n }) },
+    };
+    const testService = new AmazonSpApiService(
+      prisma as unknown as PrismaService,
+      {} as AmazonSpApiClient,
+      {} as AmazonSpApiCryptoService,
+    );
+
+    const result = await (testService as any).upsertFbmOrderItem(
+      { id: 3n },
+      'Arcdiary',
+      { orderId: '503-1', fulfillment: { fulfillmentStatus: 'UNSHIPPED' } },
+      { orderItemId: 'item-1', quantityOrdered: 1, product: { sellerSku: 'SKU-1' } },
+      'overseas',
+    );
+
+    expect(result).toBe('frozen');
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it('does not create another line when the same order number was imported manually first', async () => {
     const create = jest.fn().mockResolvedValue({});
     const prisma = {
@@ -221,7 +370,40 @@ describe('Amazon SP-API FBM order reconciliation', () => {
       'overseas',
     );
 
-    expect(result).toBe('frozen');
+    expect(result).toBe('conflicts');
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('retries a stored matching conflict that was not returned in the current API window', async () => {
+    const prisma = {
+      amazonOrderSyncObservation: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            orderId: '503-1',
+            orderItemId: 'item-1',
+            rawPayload: {
+              order: { orderId: '503-1', fulfillment: { fulfillmentStatus: 'UNSHIPPED' } },
+              item: { orderItemId: 'item-1', quantityOrdered: 1, product: { sellerSku: 'SKU-1' } },
+            },
+          },
+        ]),
+      },
+    };
+    const testService = new AmazonSpApiService(
+      prisma as unknown as PrismaService,
+      {} as AmazonSpApiClient,
+      {} as AmazonSpApiCryptoService,
+    );
+    const upsert = jest.spyOn(testService as any, 'upsertFbmOrderItem').mockResolvedValue('updated');
+
+    const counters = await (testService as any).retryStoredFbmConflicts(
+      { id: 3n },
+      'Arcdiary',
+      new Map([['SKU-1', 10]]),
+      new Set(),
+    );
+
+    expect(counters.updated).toBe(1);
+    expect(upsert).toHaveBeenCalledTimes(1);
   });
 });
