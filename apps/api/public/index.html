@@ -3206,7 +3206,6 @@
           </fieldset>
           <p class="muted rakuten-rms-credential-hint">新建连接时必须填写 serviceSecret 和 licenseKey；API及SMTP密码均加密保存且不会回显。使用单号回传前，还需要在 RMS WEB API 中授权 updateOrderShipping。原“回传单号CSV”按钮继续保留。</p>
           <p id="rakutenRmsConnectionMeta" class="muted">尚未连接。</p>
-          <div id="rakutenRmsSyncPreview" class="muted">正式同步前必须先生成预览并人工确认。</div>
           <h4 class="rakuten-rms-sync-runs-title">同步记录（可回滚）</h4>
           <div class="manage-table-scroll rakuten-rms-sync-runs-scroll" tabindex="0" aria-label="同步记录，可纵向滚动">
             <table>
@@ -3226,37 +3225,11 @@
               </tbody>
             </table>
           </div>
-          <div class="modal-head">
-            <h4>自动回传／邮件异常</h4>
-            <button id="rakutenRmsAutomationRefreshBtn" type="button" class="ghost hidden">刷新状态</button>
-          </div>
-          <p id="rakutenRmsAutomationSummary" class="muted">保存连接后显示自动任务状态。</p>
-          <div class="manage-table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>类型</th>
-                  <th>订单号</th>
-                  <th>状态/事件</th>
-                  <th>尝试</th>
-                  <th>原因</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody id="rakutenRmsAutomationIssuesBody">
-                <tr><td colspan="6" class="muted">暂无记录</td></tr>
-              </tbody>
-            </table>
-          </div>
           <div class="modal-actions modal-actions-split">
             <div>
               <button id="rakutenRmsSaveBtn" type="submit">保存连接</button>
               <button id="rakutenRmsTestBtn" type="button" class="ghost hidden">测试连接</button>
               <button id="rakutenRmsSmtpTestBtn" type="button" class="ghost hidden">测试乐天SMTP</button>
-              <button id="rakutenRmsPreviewBtn" type="button" class="ghost hidden">预览同步</button>
-              <button id="rakutenRmsSyncBtn" type="button" class="hidden">确认正式同步</button>
-              <button id="rakutenRmsShippingQueueBtn" type="button" class="ghost hidden">打开单号回传清单</button>
-              <button id="rakutenRmsMailQueueBtn" type="button" class="ghost hidden">打开邮件发送清单</button>
             </div>
             <button type="button" class="ghost" data-action="closeRakutenRmsConnectionModal">取消</button>
           </div>

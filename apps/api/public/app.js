@@ -179,8 +179,6 @@ const state = {
   rakutenRmsConnections: [],
   rakutenRmsSyncRuns: [],
   rakutenRmsSyncRunsLoading: false,
-  rakutenRmsAutomationStatus: null,
-  rakutenRmsAutomationStatusLoading: false,
   rakutenMails: [],
   rakutenMailStats: {},
   rakutenMailPage: 1,
@@ -204,7 +202,6 @@ const state = {
   rakutenAutomationRunsPageSize: 30,
   rakutenAutomationRunsTotal: 0,
   rakutenAutomationRunsLoading: false,
-  rakutenRmsSyncPreview: null,
   rakutenApiImportPreview: null,
   rakutenManualAutomationKind: "shipping",
   rakutenManualAutomationItems: [],
@@ -6412,85 +6409,6 @@ function renderRakutenRmsSyncRuns() {
       .join("") || '<tr><td colspan="5" class="muted">暂无同步记录</td></tr>';
 }
 
-function renderRakutenRmsAutomationStatus() {
-  const body = $("rakutenRmsAutomationIssuesBody");
-  const summary = $("rakutenRmsAutomationSummary");
-  if (!body || !summary) return;
-  if (state.rakutenRmsAutomationStatusLoading) {
-    summary.textContent = "正在读取自动任务状态...";
-    body.innerHTML = '<tr><td colspan="6" class="muted">正在读取...</td></tr>';
-    return;
-  }
-  const status = state.rakutenRmsAutomationStatus;
-  if (!status) {
-    summary.textContent = "保存连接后显示自动任务状态。";
-    body.innerHTML = '<tr><td colspan="6" class="muted">暂无记录</td></tr>';
-    return;
-  }
-  const shipping = status.shipping || {};
-  const mail = status.mail || {};
-  const circuitText = [
-    status?.circuits?.shipping?.open ? "自动回传已暂停" : "",
-    status?.circuits?.mail?.open ? "邮件发送已暂停" : "",
-  ].filter(Boolean).join("；");
-  summary.textContent = `回传：待处理 ${Number(shipping.pending || 0)}，成功 ${Number(shipping.sent || 0)}，跳过 ${Number(shipping.skipped || 0)}，失败 ${Number(shipping.failed || 0)}，需人工处理 ${Number(shipping.dead_letter || 0)}；邮件：待处理 ${Number(mail.pending || 0)}，成功 ${Number(mail.sent || 0)}，失败 ${Number(mail.failed || 0)}，需人工处理 ${Number(mail.dead_letter || 0)}，发送结果待确认 ${Number(mail.uncertain || 0)}${circuitText ? `；${circuitText}` : ""}${status.running ? "；当前任务运行中" : ""}`;
-  const eventLabels = {
-    new_order: "新規",
-    japan_shipped: "日本発",
-    china_delay: "中国発1",
-    china_customs: "中国発2",
-    mixed_partial: "日中発1",
-    mixed_customs: "日中発2",
-  };
-  const issues = Array.isArray(status.issues) ? status.issues : [];
-  body.innerHTML = issues.map((item) => {
-    const kind = item?.kind === "mail" ? "mail" : "shipping";
-    const label = kind === "mail" ? "邮件" : "回传";
-    const stateLabel = item?.status === "skipped"
-      ? "已跳过"
-      : item?.status === "failed"
-        ? "失败"
-        : item?.status === "dead_letter"
-          ? "需人工处理"
-          : item?.status === "uncertain" ? "发送结果待确认" : displayText(item?.status);
-    const eventLabel = kind === "mail" ? eventLabels[item?.event] || displayText(item?.event) : stateLabel;
-    const reason = String(item?.lastError || "").trim();
-    return `<tr>
-      <td>${label}</td>
-      <td>${escapeHtml(displayText(item?.orderId))}</td>
-      <td>${escapeHtml(eventLabel)}</td>
-      <td>${formatOverviewNumber(item?.attempts)}</td>
-      <td title="${escapeHtml(reason)}">${escapeHtml(reason || "-")}</td>
-      <td>${item?.status === "uncertain"
-        ? `<button type="button" class="tiny-btn" data-action="openRakutenUncertainMail" data-kind="${kind}" data-id="${escapeHtml(item?.id)}">去邮件管理确认</button>`
-        : `<button type="button" class="tiny-btn" data-action="retryRakutenAutomationJob" data-kind="${kind}" data-id="${escapeHtml(item?.id)}">重试</button>`}</td>
-    </tr>`;
-  }).join("") || '<tr><td colspan="6" class="muted">当前没有失败或跳过任务</td></tr>';
-}
-
-async function loadRakutenRmsAutomationStatus(connectionId) {
-  const normalizedId = String(connectionId || "").trim();
-  if (!normalizedId) {
-    state.rakutenRmsAutomationStatus = null;
-    state.rakutenRmsAutomationStatusLoading = false;
-    renderRakutenRmsAutomationStatus();
-    return null;
-  }
-  state.rakutenRmsAutomationStatusLoading = true;
-  renderRakutenRmsAutomationStatus();
-  try {
-    const result = await request(`/rakuten-rms-api/connections/${normalizedId}/automation/status`);
-    if (String($("rakutenRmsConnectionId")?.value || "") !== normalizedId) return null;
-    state.rakutenRmsAutomationStatus = result || null;
-    return result;
-  } finally {
-    if (String($("rakutenRmsConnectionId")?.value || "") === normalizedId) {
-      state.rakutenRmsAutomationStatusLoading = false;
-      renderRakutenRmsAutomationStatus();
-    }
-  }
-}
-
 const RAKUTEN_MAIL_EVENT_LABELS = {
   new_order: "新規",
   japan_shipped: "日本発",
@@ -7079,15 +6997,6 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
   confirmButton.classList.toggle("hidden", !preview.canConfirm);
 }
 
-function renderRakutenRmsSyncPreview() {
-  renderRakutenSyncPreview(
-    $("rakutenRmsSyncPreview"),
-    $("rakutenRmsSyncBtn"),
-    state.rakutenRmsSyncPreview,
-    "connection",
-  );
-}
-
 function renderRakutenApiImportPreview() {
   renderRakutenSyncPreview(
     $("rakutenApiImportPreview"),
@@ -7259,12 +7168,9 @@ async function openRakutenApiImportModal() {
   openModal("rakutenApiImportModal");
 }
 
-async function ignoreRakutenRmsPreviewConflicts(button, context) {
-  const apiImport = context === "api-import";
-  const connectionId = apiImport
-    ? String(getSelectedRakutenApiImportConnection()?.id || "").trim()
-    : String($("rakutenRmsConnectionId")?.value || "").trim();
-  const preview = apiImport ? state.rakutenApiImportPreview : state.rakutenRmsSyncPreview;
+async function ignoreRakutenRmsPreviewConflicts(button) {
+  const connectionId = String(getSelectedRakutenApiImportConnection()?.id || "").trim();
+  const preview = state.rakutenApiImportPreview;
   const previewToken = String(preview?.previewToken || "").trim();
   const orderId = String(button.dataset.orderId || "").trim();
   const itemKey = String(button.dataset.itemKey || "").trim();
@@ -7298,13 +7204,8 @@ async function ignoreRakutenRmsPreviewConflicts(button, context) {
     method: "POST",
     body: "{}",
   });
-  if (apiImport) {
-    state.rakutenApiImportPreview = refreshedPreview;
-    renderRakutenApiImportPreview();
-  } else {
-    state.rakutenRmsSyncPreview = refreshedPreview;
-    renderRakutenRmsSyncPreview();
-  }
+  state.rakutenApiImportPreview = refreshedPreview;
+  renderRakutenApiImportPreview();
   showToast(`订单 ${orderId} 的该条冲突明细已人工忽略，预览已刷新`);
 }
 
@@ -7353,22 +7254,6 @@ function openRakutenRmsConnectionModal(shopId) {
   $("rakutenRmsMailNotificationsEnabled").checked = connection?.mailNotificationsEnabled === true;
   $("rakutenRmsTestBtn").classList.toggle("hidden", !connection);
   $("rakutenRmsSmtpTestBtn").classList.toggle("hidden", !connection || connection.smtpPasswordConfigured !== true);
-  $("rakutenRmsAutomationRefreshBtn").classList.toggle("hidden", !connection);
-  $("rakutenRmsPreviewBtn").classList.toggle("hidden", !connection || Number(connection.status) !== 1);
-  $("rakutenRmsShippingQueueBtn").classList.toggle(
-    "hidden",
-    !connection ||
-      Number(connection.status) !== 1 ||
-      connection.autoShippingEnabled !== true,
-  );
-  $("rakutenRmsMailQueueBtn").classList.toggle(
-    "hidden",
-    !connection ||
-      Number(connection.status) !== 1 ||
-      connection.mailNotificationsEnabled !== true,
-  );
-  state.rakutenRmsSyncPreview = null;
-  renderRakutenRmsSyncPreview();
   $("rakutenRmsConnectionTitle").textContent = `${shop.name} / 乐天 RMS API连接`;
   $("rakutenRmsConnectionMeta").textContent = connection
     ? `License到期：${connection.licenseExpiresAt ? formatDate(connection.licenseExpiresAt) : "未登记"} / 最后成功：${
@@ -7378,13 +7263,9 @@ function openRakutenRmsConnectionModal(shopId) {
   state.rakutenRmsSyncRuns = [];
   state.rakutenRmsSyncRunsLoading = false;
   renderRakutenRmsSyncRuns();
-  state.rakutenRmsAutomationStatus = null;
-  state.rakutenRmsAutomationStatusLoading = false;
-  renderRakutenRmsAutomationStatus();
   openModal("rakutenRmsConnectionModal");
   if (connection) {
     loadRakutenRmsSyncRuns(connection.id).catch((error) => showToast(error.message, true));
-    loadRakutenRmsAutomationStatus(connection.id).catch((error) => showToast(error.message, true));
   }
 }
 
@@ -16706,7 +16587,7 @@ function bindForms() {
     const button = event.target.closest("button[data-action='ignoreRakutenRmsConflicts']");
     if (!button) return;
     try {
-      await ignoreRakutenRmsPreviewConflicts(button, "api-import");
+      await ignoreRakutenRmsPreviewConflicts(button);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -18366,25 +18247,6 @@ function bindDelegates() {
           ? `乐天连接测试成功，searchOrder / getOrder 均可用，近62天匹配 ${formatOverviewNumber(result?.matchedOrderCount)} 个订单`
           : `searchOrder 测试成功；近62天无订单，暂时无法验证 getOrder 权限`,
       );
-      await loadRakutenRmsAutomationStatus(connectionId);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("rakutenRmsShippingQueueBtn")?.addEventListener("click", async (event) => {
-    closeModal("rakutenRmsConnectionModal");
-    try {
-      await openRakutenManualAutomationWorklist("shipping", event.currentTarget);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("rakutenRmsMailQueueBtn")?.addEventListener("click", async (event) => {
-    closeModal("rakutenRmsConnectionModal");
-    try {
-      await openRakutenManualAutomationWorklist("mail", event.currentTarget);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -18398,111 +18260,7 @@ function bindDelegates() {
         request(`/rakuten-rms-api/connections/${connectionId}/smtp/test`, { method: "POST", body: "{}" }),
       );
       showToast(`乐天SMTP认证成功：${result?.fromAddress || "-"}（未发送测试邮件）`);
-      await loadRakutenRmsAutomationStatus(connectionId);
     } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("rakutenRmsAutomationRefreshBtn")?.addEventListener("click", async (event) => {
-    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
-    if (!connectionId) return;
-    try {
-      await withBusyButton(event.currentTarget, "刷新中...", () => loadRakutenRmsAutomationStatus(connectionId));
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("rakutenRmsAutomationIssuesBody")?.addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action]");
-    if (!button) return;
-    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
-    const kind = String(button.dataset.kind || "").trim();
-    const id = String(button.dataset.id || "").trim();
-    if (!connectionId || !kind || !id) return;
-    if (button.dataset.action === "openRakutenUncertainMail") {
-      const shopId = String($("rakutenRmsShopId")?.value || "").trim();
-      closeModal("rakutenRmsConnectionModal");
-      try {
-        await openRakutenMailManagementForShop(shopId);
-        $("rakutenMailStatusFilter").value = "uncertain";
-        await loadRakutenMails({ reset: true });
-      } catch (error) {
-        showToast(error.message, true);
-      }
-      return;
-    }
-    if (button.dataset.action !== "retryRakutenAutomationJob") return;
-    try {
-      await withBusyButton(button, "处理中...", () =>
-        request(`/rakuten-rms-api/connections/${connectionId}/automation/retry`, {
-          method: "POST",
-          body: JSON.stringify({ kind, id }),
-        }),
-      );
-      showToast("任务已重新加入待处理队列");
-      await loadRakutenRmsAutomationStatus(connectionId);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("rakutenRmsPreviewBtn")?.addEventListener("click", async (event) => {
-    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
-    if (!connectionId) return;
-    try {
-      state.rakutenRmsSyncPreview = null;
-      renderRakutenRmsSyncPreview();
-      const preview = await withBusyButton(event.currentTarget, "预览中...", () =>
-        request(`/rakuten-rms-api/connections/${connectionId}/preview`, {
-          method: "POST",
-          body: "{}",
-        }),
-      );
-      state.rakutenRmsSyncPreview = preview;
-      renderRakutenRmsSyncPreview();
-      showToast(preview?.canConfirm ? "预览完成，请核对后确认正式同步" : "预览发现冲突，正式同步已锁定");
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("rakutenRmsSyncPreview")?.addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action='ignoreRakutenRmsConflicts']");
-    if (!button) return;
-    try {
-      await ignoreRakutenRmsPreviewConflicts(button, "connection");
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("rakutenRmsSyncBtn")?.addEventListener("click", async (event) => {
-    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
-    const previewToken = String(state.rakutenRmsSyncPreview?.previewToken || "").trim();
-    if (!connectionId || !previewToken) return;
-    const confirmed = await openActionConfirmModal(
-      "将按照当前预览正式写入乐天订单。同步批次会保存快照，可在订单未被后续处理时回滚。确定继续吗？",
-      "确认乐天正式同步",
-      "确认同步",
-    );
-    if (!confirmed) return;
-    try {
-      const result = await withBusyButton(event.currentTarget, "同步中...", () =>
-        request(`/rakuten-rms-api/connections/${connectionId}/sync`, {
-          method: "POST",
-          body: JSON.stringify({ previewToken }),
-        }),
-      );
-      state.rakutenRmsSyncPreview = null;
-      await loadRakutenRmsConnections();
-      openRakutenRmsConnectionModal($("rakutenRmsShopId").value);
-      showToast(
-        `乐天同步完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，无业务变化 ${formatOverviewNumber(result?.unchanged)}`,
-      );
-    } catch (error) {
-      await loadRakutenRmsSyncRuns(connectionId).catch(() => {});
       showToast(error.message, true);
     }
   });
