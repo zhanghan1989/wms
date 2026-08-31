@@ -673,9 +673,16 @@ describe('Rakuten RMS shipping and mail automation', () => {
     } as any;
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
 
-    const result = await scopedService.getAutomationHealth() as any;
+    const result = await scopedService.getAutomationHealth('7') as any;
 
     expect(result).toMatchObject({ running: true, activeConnections: 1, summary: { critical: 1 } });
+    expect(prisma.rakutenRmsConnection.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 7n } }));
+    expect(shippingGroupBy).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({ connectionId: 7n, createdAt: { gte: new Date('2026-08-31T15:00:00.000Z') } }),
+    }));
+    expect(mailGroupBy).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({ connectionId: 7n, createdAt: { gte: new Date('2026-08-31T15:00:00.000Z') } }),
+    }));
     expect(result.items[0]).toMatchObject({
       connectionId: '7',
       health: 'critical',
@@ -690,6 +697,27 @@ describe('Rakuten RMS shipping and mail automation', () => {
       expect.stringContaining('1个单号回传失败'),
       expect.stringContaining('邮件发送已暂停'),
     ]));
+  });
+
+  it('keeps the mail management list inside the September 1 automation scope', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = {
+      rakutenOrderMail: {
+        findMany,
+        count: jest.fn().mockResolvedValue(0),
+        groupBy: jest.fn().mockResolvedValue([]),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+
+    await scopedService.listMails({ connectionId: '7', dateFrom: '2026-08-01' });
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        connectionId: 7n,
+        createdAt: expect.objectContaining({ gte: new Date('2026-08-31T15:00:00.000Z') }),
+      }),
+    }));
   });
 
   it('continues the mail stage when the shipping stage fails and persists a partial run', async () => {

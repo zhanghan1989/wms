@@ -2405,6 +2405,35 @@ td {
   color: #334b3b;
 }
 
+.shop-mail-badge {
+  display: inline-flex;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  margin-left: 0.3rem;
+  padding: 0 0.35rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #d64545;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.rakuten-mail-shop-context {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid #b9ddcc;
+  border-radius: 0.75rem;
+  background: #edf8f2;
+  color: #176b4a;
+  font-weight: 700;
+  box-shadow: 0 0.2rem 0.7rem rgb(20 91 64 / 8%);
+}
+
 .manage-create-btn {
   width: auto;
   justify-self: start;

@@ -411,13 +411,20 @@ export class RakutenRmsAutomationService {
       ? parseId(query.connectionId, 'connectionId')
       : undefined;
     const createdAt = this.parseDateRange(query.dateFrom, query.dateTo);
+    const requestedStart = createdAt?.gte instanceof Date ? createdAt.gte : null;
+    const effectiveCreatedAt: Prisma.DateTimeFilter = {
+      ...createdAt,
+      gte: requestedStart && requestedStart > AUTOMATION_ORDER_IMPORT_CUTOFF
+        ? requestedStart
+        : AUTOMATION_ORDER_IMPORT_CUTOFF,
+    };
     const baseWhere: Prisma.RakutenOrderMailWhereInput = {
       ...(connectionId ? { connectionId } : {}),
       ...(event ? { event } : {}),
       ...(query.orderId?.trim()
         ? { orderId: { contains: query.orderId.trim() } }
         : {}),
-      ...(createdAt ? { createdAt } : {}),
+      createdAt: effectiveCreatedAt,
     };
     const where: Prisma.RakutenOrderMailWhereInput = {
       ...baseWhere,
@@ -1406,7 +1413,12 @@ export class RakutenRmsAutomationService {
     };
   }
 
-  async getAutomationHealth(): Promise<unknown> {
+  async getAutomationHealth(connectionIdRaw?: string): Promise<unknown> {
+    const connectionId = String(connectionIdRaw || '').trim()
+      ? parseId(String(connectionIdRaw), 'connectionId')
+      : null;
+    const connectionWhere = connectionId ? { connectionId } : {};
+    const taskWhere = { ...connectionWhere, createdAt: { gte: AUTOMATION_ORDER_IMPORT_CUTOFF } };
     const staleBefore = new Date(Date.now() - 30 * 60_000);
     const [
       connections,
@@ -1420,6 +1432,7 @@ export class RakutenRmsAutomationService {
       lastMailSuccess,
     ] = await Promise.all([
       this.prisma.rakutenRmsConnection.findMany({
+        where: connectionId ? { id: connectionId } : {},
         orderBy: { id: 'asc' },
         select: {
           id: true,
@@ -1446,40 +1459,50 @@ export class RakutenRmsAutomationService {
       }),
       this.prisma.rakutenOrderShippingReport.groupBy({
         by: ['connectionId', 'status'],
+        where: taskWhere,
         _count: { _all: true },
       }),
       this.prisma.rakutenOrderMail.groupBy({
         by: ['connectionId', 'status'],
+        where: taskWhere,
         _count: { _all: true },
       }),
       this.prisma.rakutenOrderShippingReport.groupBy({
         by: ['connectionId'],
-        where: { status: RakutenAutomationStatus.pending, createdAt: { lt: staleBefore } },
+        where: {
+          ...connectionWhere,
+          status: RakutenAutomationStatus.pending,
+          createdAt: { gte: AUTOMATION_ORDER_IMPORT_CUTOFF, lt: staleBefore },
+        },
         _count: { _all: true },
       }),
       this.prisma.rakutenOrderMail.groupBy({
         by: ['connectionId'],
-        where: { status: RakutenAutomationStatus.pending, createdAt: { lt: staleBefore } },
+        where: {
+          ...connectionWhere,
+          status: RakutenAutomationStatus.pending,
+          createdAt: { gte: AUTOMATION_ORDER_IMPORT_CUTOFF, lt: staleBefore },
+        },
         _count: { _all: true },
       }),
       this.prisma.rakutenOrderShippingReport.groupBy({
         by: ['connectionId'],
-        where: { status: RakutenAutomationStatus.pending },
+        where: { ...taskWhere, status: RakutenAutomationStatus.pending },
         _min: { createdAt: true },
       }),
       this.prisma.rakutenOrderMail.groupBy({
         by: ['connectionId'],
-        where: { status: RakutenAutomationStatus.pending },
+        where: { ...taskWhere, status: RakutenAutomationStatus.pending },
         _min: { createdAt: true },
       }),
       this.prisma.rakutenOrderShippingReport.groupBy({
         by: ['connectionId'],
-        where: { status: RakutenAutomationStatus.sent },
+        where: { ...taskWhere, status: RakutenAutomationStatus.sent },
         _max: { reportedAt: true },
       }),
       this.prisma.rakutenOrderMail.groupBy({
         by: ['connectionId'],
-        where: { status: RakutenAutomationStatus.sent },
+        where: { ...taskWhere, status: RakutenAutomationStatus.sent },
         _max: { sentAt: true },
       }),
     ]);

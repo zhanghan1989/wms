@@ -145,8 +145,8 @@ export class RakutenRmsApiController {
   }
 
   @Get('automation/health')
-  async getAutomationHealth(): Promise<unknown> {
-    return this.automation.getAutomationHealth();
+  async getAutomationHealth(@Query('connectionId') connectionId?: string): Promise<unknown> {
+    return this.automation.getAutomationHealth(connectionId);
   }
 
   @Get('automation/runs')

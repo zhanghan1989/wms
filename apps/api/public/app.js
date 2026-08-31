@@ -189,6 +189,8 @@ const state = {
   rakutenMailLoading: false,
   rakutenMailDetail: null,
   rakutenMailScopedConnectionId: "",
+  rakutenMailViewStates: new Map(),
+  rakutenShopAutomationHealthItems: [],
   rakutenMailTemplates: [],
   rakutenMailTemplateVariables: [],
   rakutenMailTemplateEvent: "new_order",
@@ -6254,6 +6256,12 @@ function renderShopsTable() {
         const rakutenConnection = state.rakutenRmsConnections.find(
           (connection) => String(connection?.shop?.id || "") === itemId,
         );
+        const rakutenHealth = state.rakutenShopAutomationHealthItems.find(
+          (health) => String(health?.connectionId || "") === String(rakutenConnection?.id || ""),
+        );
+        const mailCounts = rakutenHealth?.mail || {};
+        const mailAttentionCount = ["pending", "failed", "dead_letter", "uncertain"]
+          .reduce((sum, status) => sum + Number(mailCounts?.[status] || 0), 0);
         const connection = platform === "amazon" ? amazonConnection : rakutenConnection;
         const connectionAction = platform === "amazon" ? "amazonSpApi" : "rakutenRmsApi";
         const connectionLabel =
@@ -6291,7 +6299,11 @@ function renderShopsTable() {
         </td>
         <td data-label="操作">
           <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
-          ${platform === "rakuten" ? `<button class="tiny-btn ghost" data-action="manageRakutenMail" data-id="${escapeHtml(item.id)}" ${rakutenConnection ? "" : 'disabled title="请先建立乐天 RMS API连接"'}>邮件管理</button>` : ""}
+          ${platform === "rakuten"
+            ? rakutenConnection
+              ? `<button class="tiny-btn ghost" data-action="manageRakutenMail" data-id="${escapeHtml(item.id)}">邮件管理${mailAttentionCount > 0 ? `<span class="shop-mail-badge" aria-label="${mailAttentionCount}项需要处理">${formatOverviewNumber(mailAttentionCount)}</span>` : ""}</button>`
+              : `<button class="tiny-btn ghost" data-action="rakutenRmsApi" data-id="${escapeHtml(item.id)}">请先连接</button>`
+            : ""}
           <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
@@ -6313,6 +6325,33 @@ async function loadRakutenRmsConnections() {
   return state.rakutenRmsConnections;
 }
 
+function captureRakutenMailViewState() {
+  const connectionId = String(state.rakutenMailScopedConnectionId || "");
+  if (!connectionId) return;
+  const fieldIds = [
+    "rakutenMailStatusFilter", "rakutenMailEventFilter", "rakutenMailOrderFilter",
+    "rakutenMailDateFromFilter", "rakutenMailDateToFilter", "rakutenAutomationRunStatusFilter",
+  ];
+  state.rakutenMailViewStates.set(connectionId, {
+    fields: Object.fromEntries(fieldIds.map((id) => [id, String($(id)?.value || "")])),
+    mailPage: state.rakutenMailPage,
+    runPage: state.rakutenAutomationRunsPage,
+    templateEvent: state.rakutenMailTemplateEvent,
+    scrollTop: Number(window.scrollY || document.documentElement?.scrollTop || 0),
+  });
+}
+
+function restoreRakutenMailViewState(connectionId) {
+  const saved = state.rakutenMailViewStates.get(String(connectionId || "")) || {};
+  Object.entries(saved.fields || {}).forEach(([id, value]) => {
+    if ($(id)) $(id).value = String(value || "");
+  });
+  state.rakutenMailPage = Math.max(1, Number(saved.mailPage || 1));
+  state.rakutenAutomationRunsPage = Math.max(1, Number(saved.runPage || 1));
+  state.rakutenMailTemplateEvent = String(saved.templateEvent || "new_order");
+  return Math.max(0, Number(saved.scrollTop || 0));
+}
+
 async function openRakutenMailManagementForShop(shopIdRaw) {
   const shopId = String(shopIdRaw || "").trim();
   if (!shopId) throw new Error("店铺不存在");
@@ -6323,14 +6362,16 @@ async function openRakutenMailManagementForShop(shopIdRaw) {
   if (!connection) throw new Error("请先为该店铺建立乐天 RMS API连接");
   state.rakutenMailScopedConnectionId = String(connection.id || "");
   renderRakutenMailConnectionFilter();
+  const scrollTop = restoreRakutenMailViewState(state.rakutenMailScopedConnectionId);
   closeModal("shopManageModal");
   switchPanel("rakutenMailManagement");
   await Promise.all([
-    loadRakutenMails({ reset: true }),
+    loadRakutenMails(),
     loadRakutenMailTemplates(),
     loadRakutenAutomationHealth(),
-    loadRakutenAutomationRuns({ reset: true }),
+    loadRakutenAutomationRuns(),
   ]);
+  requestAnimationFrame(() => window.scrollTo({ top: scrollTop, behavior: "auto" }));
 }
 
 function renderRakutenRmsSyncRuns() {
@@ -6520,6 +6561,10 @@ function renderRakutenMailConnectionFilter() {
     "rakutenMailManagementTitle",
     scopedConnection ? `${scopedConnection?.shop?.name || "乐天店铺"} / 邮件管理` : "乐天邮件管理",
   );
+  setTextById(
+    "rakutenMailShopContext",
+    scopedConnection ? `当前管理店铺：${scopedConnection?.shop?.name || "乐天店铺"}` : "当前管理店铺：-",
+  );
 }
 
 function renderRakutenMailStats() {
@@ -6619,12 +6664,21 @@ async function loadRakutenAutomationHealth() {
   state.rakutenAutomationHealthLoading = true;
   renderRakutenAutomationHealth();
   try {
-    state.rakutenAutomationHealth = await request("/rakuten-rms-api/automation/health") || null;
+    const connectionId = String(state.rakutenMailScopedConnectionId || "");
+    const query = connectionId ? `?connectionId=${encodeURIComponent(connectionId)}` : "";
+    state.rakutenAutomationHealth = await request(`/rakuten-rms-api/automation/health${query}`) || null;
     return state.rakutenAutomationHealth;
   } finally {
     state.rakutenAutomationHealthLoading = false;
     renderRakutenAutomationHealth();
   }
+}
+
+async function loadRakutenShopAutomationHealth() {
+  const health = await request("/rakuten-rms-api/automation/health") || {};
+  state.rakutenShopAutomationHealthItems = Array.isArray(health.items) ? health.items : [];
+  renderShopsTable();
+  return state.rakutenShopAutomationHealthItems;
 }
 
 function renderRakutenAutomationRuns() {
@@ -16754,7 +16808,9 @@ function bindForms() {
   $("openShopManageModal").addEventListener("click", async () => {
     try {
       state.shopEditingIds = new Set();
-      await Promise.all([loadShops(), loadAmazonSpApiConnections(), loadRakutenRmsConnections()]);
+      await Promise.all([
+        loadShops(), loadAmazonSpApiConnections(), loadRakutenRmsConnections(), loadRakutenShopAutomationHealth(),
+      ]);
       openModal("shopManageModal");
     } catch (error) {
       showToast(error.message, true);
@@ -17574,9 +17630,12 @@ function bindDelegates() {
   }
   $("backToRakutenShopManagementBtn")?.addEventListener("click", async () => {
     try {
+      captureRakutenMailViewState();
       state.shopManagePlatform = "rakuten";
       state.shopEditingIds = new Set();
-      await Promise.all([loadShops(), loadAmazonSpApiConnections(), loadRakutenRmsConnections()]);
+      await Promise.all([
+        loadShops(), loadAmazonSpApiConnections(), loadRakutenRmsConnections(), loadRakutenShopAutomationHealth(),
+      ]);
       openModal("shopManageModal");
     } catch (error) {
       showToast(error.message, true);
@@ -17601,6 +17660,7 @@ function bindDelegates() {
         return;
       }
       if (button.dataset.action === "openRakutenHealthConnection") {
+        captureRakutenMailViewState();
         openRakutenRmsConnectionModal(String(button.dataset.shopId || ""));
         return;
       }
