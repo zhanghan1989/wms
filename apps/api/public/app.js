@@ -8921,7 +8921,6 @@ function collectRakutenComboProductPayload() {
     .map((item) => String(item.productId || "").trim())
     .filter(Boolean);
   return {
-    id: String($("rakutenComboProductEditingId")?.value || state.rakutenComboProductEditingId || "").trim(),
     comboName,
     productIds,
   };
@@ -15534,8 +15533,11 @@ function bindForms() {
     try {
       await withBusyButton(submitButton, "保存中...", async () => {
         const payload = collectRakutenComboProductPayload();
-        const isEditing = Boolean(payload.id);
-        await request(isEditing ? `/rakuten-combo-products/${encodeURIComponent(payload.id)}` : "/rakuten-combo-products", {
+        const editingId = String(
+          $("rakutenComboProductEditingId")?.value || state.rakutenComboProductEditingId || "",
+        ).trim();
+        const isEditing = Boolean(editingId);
+        await request(isEditing ? `/rakuten-combo-products/${encodeURIComponent(editingId)}` : "/rakuten-combo-products", {
           method: isEditing ? "PUT" : "POST",
           body: JSON.stringify(payload),
         },
