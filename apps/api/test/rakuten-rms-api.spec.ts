@@ -32,12 +32,27 @@ describe("Rakuten RMS API integration", () => {
       RakutenRmsApiController.prototype.listSyncRuns,
       RakutenRmsApiController.prototype.runAutomation,
       RakutenRmsApiController.prototype.getAutomationSummary,
+      RakutenRmsApiController.prototype.previewManualAutomationActions,
+      RakutenRmsApiController.prototype.executeManualAutomationActions,
     ];
 
     expect(Reflect.getMetadata(ROLES_KEY, RakutenRmsApiController)).toBeUndefined();
     for (const handler of unrestrictedHandlers) {
       expect(Reflect.getMetadata(ROLES_KEY, handler)).toBeUndefined();
     }
+  });
+
+  it("keeps scheduled Rakuten order import paused by default", async () => {
+    const service = new RakutenRmsApiService(
+      {} as PrismaService,
+      {} as RakutenRmsApiClient,
+      {} as RakutenRmsApiCryptoService,
+    );
+    const syncAllConnections = jest.spyOn(service, "syncAllConnections");
+
+    await service.runScheduledSync();
+
+    expect(syncAllConnections).not.toHaveBeenCalled();
   });
 
   it("encrypts the RMS credentials with authenticated encryption", () => {

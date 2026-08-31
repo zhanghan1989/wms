@@ -970,4 +970,151 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
     expect(result).toMatchObject({ total: 1, page: 2, pageSize: 10, items: [{ id: '301' }] });
   });
+
+  it('keeps scheduled shipping and mail automation paused by default', async () => {
+    const scopedService = new RakutenRmsAutomationService({} as any, {} as any, {} as any);
+    const runAutomation = jest.spyOn(scopedService, 'runAutomation');
+
+    await scopedService.runScheduledAutomation();
+
+    expect(runAutomation).not.toHaveBeenCalled();
+    await expect(scopedService.runConnection('7')).rejects.toThrow('自动执行当前已暂停');
+  });
+
+  it('prepares a manual worklist without executing a shipment or sending a mail', async () => {
+    const connection = {
+      id: 7n,
+      status: 1,
+      autoShippingEnabled: true,
+      mailNotificationsEnabled: true,
+      shippingCircuitOpenedAt: null,
+      shippingCircuitReason: null,
+      mailCircuitOpenedAt: null,
+      mailCircuitReason: null,
+      shop: { id: 3n, name: '乐天店' },
+    };
+    const prisma = {
+      rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([connection]) },
+      rakutenOrderShippingReport: {
+        findMany: jest.fn().mockResolvedValue([{
+          id: 91n,
+          connectionId: 7n,
+          orderId: '421951-ORDER',
+          fulfillmentType: 'japan',
+          status: RakutenAutomationStatus.pending,
+          attempts: 0,
+          lastError: null,
+          nextAttemptAt: null,
+          createdAt: new Date('2026-08-31T00:00:00Z'),
+          connection,
+        }]),
+      },
+      rakutenOrderMail: {
+        findMany: jest.fn().mockResolvedValue([{
+          id: 92n,
+          connectionId: 7n,
+          orderId: '421951-ORDER',
+          event: RakutenOrderMailEvent.new_order,
+          status: RakutenAutomationStatus.pending,
+          attempts: 0,
+          recipient: null,
+          subject: null,
+          lastError: null,
+          nextAttemptAt: null,
+          createdAt: new Date('2026-08-31T00:00:01Z'),
+          connection,
+        }]),
+        findUnique: jest.fn(),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'prepareShippingReports').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'prepareCustomsMails').mockResolvedValue(undefined);
+    const processShippingReports = jest.spyOn(scopedService as any, 'processShippingReports');
+    const processMails = jest.spyOn(scopedService as any, 'processMails');
+
+    const result = await scopedService.prepareManualActions() as any;
+
+    expect(result).toMatchObject({
+      scheduledPaused: true,
+      summary: { shipping: 1, mail: 1 },
+      items: [
+        expect.objectContaining({ kind: 'shipping', id: '91', executable: true }),
+        expect.objectContaining({ kind: 'mail', id: '92', executable: true }),
+      ],
+    });
+    expect(processShippingReports).not.toHaveBeenCalled();
+    expect(processMails).not.toHaveBeenCalled();
+  });
+
+  it('limits manual shipment processing to the explicitly selected task ids', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const scopedService = new RakutenRmsAutomationService({
+      rakutenOrderShippingReport: { findMany },
+    } as any, {} as any, {} as any);
+
+    await (scopedService as any).processShippingReports(7n, [91n, 93n]);
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ connectionId: 7n, id: { in: [91n, 93n] } }),
+      take: 2,
+    }));
+  });
+
+  it('executes only the explicitly confirmed manual worklist items', async () => {
+    const connection = {
+      id: 7n,
+      status: 1,
+      autoShippingEnabled: true,
+      mailNotificationsEnabled: true,
+      shippingCircuitOpenedAt: null,
+      mailCircuitOpenedAt: null,
+      shop: { id: 3n, name: '乐天店' },
+    };
+    const shippingRow = {
+      id: 91n,
+      connectionId: 7n,
+      orderId: '421951-SHIPPING',
+      status: RakutenAutomationStatus.pending,
+      nextAttemptAt: null,
+      connection,
+    };
+    const mailRow = {
+      id: 92n,
+      connectionId: 7n,
+      orderId: '421951-MAIL',
+      status: RakutenAutomationStatus.pending,
+      nextAttemptAt: null,
+      connection,
+    };
+    const prisma = {
+      rakutenOrderShippingReport: { findMany: jest.fn().mockResolvedValue([shippingRow]) },
+      rakutenOrderMail: { findMany: jest.fn().mockResolvedValue([mailRow]) },
+      rakutenAutomationRun: {
+        create: jest.fn().mockResolvedValue({ id: 501n }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'acquireConnectionLock').mockResolvedValue(true);
+    jest.spyOn(scopedService as any, 'startConnectionLockHeartbeat').mockReturnValue({});
+    jest.spyOn(scopedService as any, 'releaseConnectionLock').mockResolvedValue(undefined);
+    const processShipping = jest.spyOn(scopedService as any, 'processShippingReports')
+      .mockResolvedValue({ sent: 1, skipped: 0, failed: 0 });
+    const processMails = jest.spyOn(scopedService as any, 'processMails')
+      .mockResolvedValue({ sent: 1, failed: 0, blocked: 0 });
+
+    const result = await scopedService.executeManualActions([
+      { kind: 'shipping', id: '91' },
+      { kind: 'mail', id: '92' },
+    ]) as any;
+
+    expect(processShipping).toHaveBeenCalledWith(7n, [91n]);
+    expect(processMails).toHaveBeenCalledWith(7n, [92n]);
+    expect(result).toMatchObject({
+      executed: 2,
+      results: [{ shipping: { sent: 1 }, mail: { sent: 1 }, status: RakutenAutomationRunStatus.success }],
+    });
+  });
 });

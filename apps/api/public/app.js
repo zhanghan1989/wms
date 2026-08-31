@@ -203,6 +203,9 @@ const state = {
   rakutenAutomationRunsLoading: false,
   rakutenRmsSyncPreview: null,
   rakutenApiImportPreview: null,
+  rakutenManualAutomationItems: [],
+  rakutenManualAutomationSelected: new Set(),
+  rakutenManualAutomationLoading: false,
   skuEditRequests: [],
   skuEditRequestsPage: 1,
   skuEditRequestsPageSize: 30,
@@ -6996,6 +6999,114 @@ function renderRakutenApiImportPreview() {
     state.rakutenApiImportPreview,
     "api-import",
   );
+}
+
+function rakutenManualAutomationKey(item) {
+  return `${String(item?.kind || "")}:${String(item?.id || "")}`;
+}
+
+function renderRakutenManualAutomation() {
+  const body = $("rakutenManualAutomationBody");
+  if (!body) return;
+  const items = Array.isArray(state.rakutenManualAutomationItems) ? state.rakutenManualAutomationItems : [];
+  const executableItems = items.filter((item) => item?.executable === true);
+  const selectedKeys = state.rakutenManualAutomationSelected;
+  const selectedCount = executableItems.filter((item) => selectedKeys.has(rakutenManualAutomationKey(item))).length;
+  const selectAll = $("rakutenManualAutomationSelectAll");
+  if (selectAll) {
+    selectAll.disabled = state.rakutenManualAutomationLoading || executableItems.length === 0;
+    selectAll.checked = executableItems.length > 0 && selectedCount === executableItems.length;
+    selectAll.indeterminate = selectedCount > 0 && selectedCount < executableItems.length;
+  }
+  const executeButton = $("executeSelectedRakutenManualAutomationBtn");
+  if (executeButton) executeButton.disabled = state.rakutenManualAutomationLoading || selectedCount === 0;
+  setTextById("rakutenManualAutomationSelectionMeta", `已选择 ${selectedCount} 项`);
+  const shippingCount = executableItems.filter((item) => item?.kind === "shipping").length;
+  const mailCount = executableItems.filter((item) => item?.kind === "mail").length;
+  const blockedCount = items.length - executableItems.length;
+  const summary = $("rakutenManualAutomationSummary");
+  if (summary) {
+    summary.innerHTML = [
+      ["待确认回传", shippingCount],
+      ["待确认邮件", mailCount],
+      ["暂不可执行", blockedCount],
+    ].map(([label, count]) => `<span class="rakuten-mail-stat">${escapeHtml(label)}<strong>${formatOverviewNumber(count)}</strong></span>`).join("");
+  }
+  if (state.rakutenManualAutomationLoading) {
+    body.innerHTML = '<tr><td colspan="8" class="muted">正在整理当前任务，请稍候...</td></tr>';
+    return;
+  }
+  body.innerHTML = items.map((item) => {
+    const key = rakutenManualAutomationKey(item);
+    const executable = item?.executable === true;
+    const kindLabel = item?.kind === "shipping" ? "单号回传" : RAKUTEN_MAIL_EVENT_LABELS[item?.event] || "发送邮件";
+    const status = String(item?.status || "");
+    const note = String(item?.blockedReason || item?.lastError || "").trim();
+    return `<tr class="${executable ? "" : "is-disabled"}">
+      <td><input type="checkbox" data-action="selectRakutenManualAutomation" data-key="${escapeHtml(key)}" ${selectedKeys.has(key) ? "checked" : ""} ${executable ? "" : "disabled"} /></td>
+      <td>${escapeHtml(displayText(item?.shopName))}</td>
+      <td>${escapeHtml(displayText(item?.orderId))}</td>
+      <td>${escapeHtml(kindLabel)}</td>
+      <td>${escapeHtml(displayText(item?.actionLabel))}</td>
+      <td>${escapeHtml(RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status))}</td>
+      <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
+      <td>${executable ? `<button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">确认执行</button>` : '<span class="muted">请先处理异常</span>'}</td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="8" class="muted">当前没有需要回传单号或发送邮件的任务。</td></tr>';
+}
+
+async function loadRakutenManualAutomationActions() {
+  state.rakutenManualAutomationLoading = true;
+  state.rakutenManualAutomationSelected = new Set();
+  renderRakutenManualAutomation();
+  try {
+    const result = await request("/rakuten-rms-api/automation/manual-actions/preview", {
+      method: "POST",
+      body: "{}",
+    }) || {};
+    state.rakutenManualAutomationItems = Array.isArray(result.items) ? result.items : [];
+    setTextById(
+      "rakutenManualAutomationMeta",
+      `整理时间：${result.generatedAt ? formatDate(result.generatedAt) : "-"}。定时自动执行当前为暂停状态；只有人工确认后才会回传或发送。`,
+    );
+  } finally {
+    state.rakutenManualAutomationLoading = false;
+    renderRakutenManualAutomation();
+  }
+}
+
+async function executeRakutenManualAutomationItems(items, button) {
+  const selections = items.filter((item) => item?.executable === true).map((item) => ({
+    kind: item.kind,
+    id: item.id,
+  }));
+  if (!selections.length) return;
+  const shippingCount = selections.filter((item) => item.kind === "shipping").length;
+  const mailCount = selections.filter((item) => item.kind === "mail").length;
+  const confirmed = await openActionConfirmModal(
+    `确认执行所选 ${selections.length} 项任务吗？其中单号回传 ${shippingCount} 项、发送邮件 ${mailCount} 项。该操作会实际调用乐天接口或向买家发送邮件。`,
+    selections.length === 1 ? "确认执行当前任务" : "确认批量执行",
+    "确认执行",
+  );
+  if (!confirmed) return;
+  const result = await withBusyButton(button, "执行中...", () => request(
+    "/rakuten-rms-api/automation/manual-actions/execute",
+    { method: "POST", body: JSON.stringify({ items: selections }) },
+  ));
+  const runs = Array.isArray(result?.results) ? result.results : [];
+  const totals = runs.reduce((summary, run) => {
+    summary.shippingSent += Number(run?.shipping?.sent || 0);
+    summary.shippingSkipped += Number(run?.shipping?.skipped || 0);
+    summary.shippingFailed += Number(run?.shipping?.failed || 0);
+    summary.mailSent += Number(run?.mail?.sent || 0);
+    summary.mailFailed += Number(run?.mail?.failed || 0);
+    return summary;
+  }, { shippingSent: 0, shippingSkipped: 0, shippingFailed: 0, mailSent: 0, mailFailed: 0 });
+  showToast(
+    `执行完成：回传成功 ${totals.shippingSent}、跳过 ${totals.shippingSkipped}、失败 ${totals.shippingFailed}；邮件成功 ${totals.mailSent}、失败 ${totals.mailFailed}`,
+    totals.shippingFailed > 0 || totals.mailFailed > 0,
+  );
+  await loadRakutenManualAutomationActions();
 }
 
 function getSelectedRakutenApiImportConnection() {
@@ -16365,6 +16476,69 @@ function bindForms() {
     }
   });
 
+  $("openRakutenManualAutomationModal")?.addEventListener("click", async (event) => {
+    openModal("rakutenManualAutomationModal");
+    try {
+      await withBusyButton(event.currentTarget, "整理中...", loadRakutenManualAutomationActions);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("refreshRakutenManualAutomationBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "整理中...", loadRakutenManualAutomationActions);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenManualAutomationSelectAll")?.addEventListener("change", (event) => {
+    const selected = event.currentTarget.checked;
+    state.rakutenManualAutomationSelected = new Set(
+      selected
+        ? state.rakutenManualAutomationItems
+            .filter((item) => item?.executable === true)
+            .map(rakutenManualAutomationKey)
+        : [],
+    );
+    renderRakutenManualAutomation();
+  });
+
+  $("rakutenManualAutomationBody")?.addEventListener("change", (event) => {
+    const checkbox = event.target.closest("input[data-action='selectRakutenManualAutomation']");
+    if (!checkbox) return;
+    const key = String(checkbox.dataset.key || "");
+    if (checkbox.checked) state.rakutenManualAutomationSelected.add(key);
+    else state.rakutenManualAutomationSelected.delete(key);
+    renderRakutenManualAutomation();
+  });
+
+  $("rakutenManualAutomationBody")?.addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-action='executeRakutenManualAutomation']");
+    if (!button) return;
+    const item = state.rakutenManualAutomationItems.find(
+      (candidate) => rakutenManualAutomationKey(candidate) === String(button.dataset.key || ""),
+    );
+    if (!item) return;
+    try {
+      await executeRakutenManualAutomationItems([item], button);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("executeSelectedRakutenManualAutomationBtn")?.addEventListener("click", async (event) => {
+    const items = state.rakutenManualAutomationItems.filter(
+      (item) => state.rakutenManualAutomationSelected.has(rakutenManualAutomationKey(item)),
+    );
+    try {
+      await executeRakutenManualAutomationItems(items, event.currentTarget);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("rakutenApiImportConnection")?.addEventListener("change", resetRakutenApiImportPreview);
 
   $("rakutenApiImportPreviewBtn")?.addEventListener("click", async (event) => {
@@ -18052,32 +18226,10 @@ function bindDelegates() {
   });
 
   $("rakutenRmsAutomationRunBtn")?.addEventListener("click", async (event) => {
-    const connectionId = String($("rakutenRmsConnectionId").value || "").trim();
-    if (!connectionId) return;
+    closeModal("rakutenRmsConnectionModal");
+    openModal("rakutenManualAutomationModal");
     try {
-      const result = await withBusyButton(event.currentTarget, "运行中...", () =>
-        request(`/rakuten-rms-api/connections/${connectionId}/automation/run`, { method: "POST", body: "{}" }),
-      );
-      if (result?.alreadyRunning) {
-        showToast("当前已有乐天自动任务正在运行，请稍后查看结果");
-        return;
-      }
-      const shippingSent = Number(result?.shipping?.sent || 0);
-      const shippingSkipped = Number(result?.shipping?.skipped || 0);
-      const shippingFailed = Number(result?.shipping?.failed || 0);
-      const mailSent = Number(result?.mail?.sent || 0);
-      const mailFailed = Number(result?.mail?.failed || 0);
-      const mailBlocked = Number(result?.mail?.blocked || 0);
-      const connectionRuns = Array.isArray(result?.connectionRuns) ? result.connectionRuns : [];
-      const hasFailure = shippingFailed > 0 || mailFailed > 0 || connectionRuns.some((run) => run?.status === "failed");
-      showToast(
-        `当前店铺自动任务：回传成功 ${shippingSent}，跳过 ${shippingSkipped}，失败 ${shippingFailed}；邮件成功 ${mailSent}，失败 ${mailFailed}，等待前置邮件 ${mailBlocked}`,
-        hasFailure,
-      );
-      await loadRakutenRmsAutomationStatus(connectionId);
-      if ($("rakutenAutomationRunsBody")) {
-        await Promise.all([loadRakutenAutomationRuns({ reset: true }), loadRakutenAutomationHealth()]);
-      }
+      await withBusyButton(event.currentTarget, "整理中...", loadRakutenManualAutomationActions);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -19653,6 +19805,11 @@ function bindDelegates() {
     const rakutenApiImportClose = event.target.closest("button[data-action='closeRakutenApiImportModal']");
     if (rakutenApiImportClose) {
       closeModal("rakutenApiImportModal");
+      return;
+    }
+    const rakutenManualAutomationClose = event.target.closest("button[data-action='closeRakutenManualAutomationModal']");
+    if (rakutenManualAutomationClose) {
+      closeModal("rakutenManualAutomationModal");
       return;
     }
     const shelfManageClose = event.target.closest("button[data-action='closeShelfManageModal']");

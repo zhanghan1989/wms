@@ -2497,6 +2497,23 @@ td {
   margin-top: 24px;
 }
 
+.modal-card.rakuten-manual-automation-card {
+  width: min(1380px, 100%);
+}
+
+.rakuten-manual-automation-table-wrap {
+  max-height: 58vh;
+}
+
+.rakuten-manual-automation-table-wrap table {
+  min-width: 1120px;
+}
+
+.rakuten-manual-automation-table-wrap tr.is-disabled td {
+  background: #f7f8f7;
+  color: var(--muted);
+}
+
 #rakutenApiImportPreviewBtn {
   background: var(--accent);
   border-color: #0b6a48;

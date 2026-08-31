@@ -21,6 +21,8 @@ import { RakutenRmsApiCryptoService } from './rakuten-rms-api-crypto.service';
 
 const AUTOMATION_CRON = process.env.RAKUTEN_RMS_AUTOMATION_CRON || '0 */5 * * * *';
 const AUTOMATION_TIMEZONE = 'Asia/Tokyo';
+const SCHEDULED_AUTOMATION_PAUSED =
+  String(process.env.RAKUTEN_RMS_AUTOMATION_SCHEDULED_PAUSED ?? 'true').toLowerCase() !== 'false';
 const SMTP_HOST = 'sub.fw.rakuten.ne.jp';
 const SMTP_PORT = 587;
 const MAX_ATTEMPTS = 10;
@@ -112,6 +114,11 @@ interface MailTemplateDefinition {
   bodyTemplate: string;
 }
 
+interface ManualAutomationSelection {
+  kind?: string;
+  id?: string;
+}
+
 const MAIL_TEMPLATE_VARIABLES = [
   { key: 'buyer_name', label: '购买者姓名' },
   { key: 'order_number', label: '乐天订单号' },
@@ -154,6 +161,7 @@ export class RakutenRmsAutomationService {
 
   @Cron(AUTOMATION_CRON, { name: 'rakuten-rms-shipping-mail-automation', timeZone: AUTOMATION_TIMEZONE })
   async runScheduledAutomation(): Promise<void> {
+    if (SCHEDULED_AUTOMATION_PAUSED) return;
     try {
       await this.runAutomation(undefined, RakutenAutomationRunTrigger.scheduled);
     } catch (error) {
@@ -162,6 +170,9 @@ export class RakutenRmsAutomationService {
   }
 
   async runConnection(idRaw: string): Promise<AutomationRunResult> {
+    if (SCHEDULED_AUTOMATION_PAUSED) {
+      throw new BadRequestException('自动执行当前已暂停，请使用“单号回传和发送邮件”清单逐项确认');
+    }
     const connectionId = parseId(idRaw, 'connectionId');
     return this.runAutomation(connectionId, RakutenAutomationRunTrigger.manual);
   }
@@ -836,6 +847,244 @@ export class RakutenRmsAutomationService {
     return this.serializeMail({ items, total, page, pageSize });
   }
 
+  async prepareManualActions(): Promise<unknown> {
+    await this.recoverStaleJobs();
+    const connections = await this.prisma.rakutenRmsConnection.findMany({
+      where: {
+        status: 1,
+        OR: [{ autoShippingEnabled: true }, { mailNotificationsEnabled: true }],
+      },
+      include: { shop: { select: { id: true, name: true } } },
+      orderBy: { id: 'asc' },
+    });
+    for (const connection of connections) {
+      if (connection.autoShippingEnabled) await this.prepareShippingReports(connection);
+      if (connection.mailNotificationsEnabled) await this.prepareCustomsMails(connection);
+    }
+    const connectionIds = connections.map((connection) => connection.id);
+    if (!connectionIds.length) {
+      return { generatedAt: new Date().toISOString(), scheduledPaused: SCHEDULED_AUTOMATION_PAUSED, items: [], summary: {} };
+    }
+    const [shippingRows, mailRows] = await Promise.all([
+      this.prisma.rakutenOrderShippingReport.findMany({
+        where: {
+          connectionId: { in: connectionIds },
+          status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter] },
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: 500,
+        include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
+      }),
+      this.prisma.rakutenOrderMail.findMany({
+        where: {
+          connectionId: { in: connectionIds },
+          status: { in: [
+            RakutenAutomationStatus.pending,
+            RakutenAutomationStatus.failed,
+            RakutenAutomationStatus.uncertain,
+            RakutenAutomationStatus.dead_letter,
+          ] },
+        },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        take: 500,
+        include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
+      }),
+    ]);
+    const items: Array<Record<string, unknown>> = [];
+    const now = new Date();
+    for (const row of shippingRows) {
+      const blockedReason = row.connection.shippingCircuitOpenedAt
+        ? `单号回传已暂停：${row.connection.shippingCircuitReason || '请先恢复回传功能'}`
+        : row.status === RakutenAutomationStatus.dead_letter
+          ? '已停止自动重试，请先在连接管理中处理并重试'
+          : row.nextAttemptAt && row.nextAttemptAt > now
+            ? `等待重试时间 ${row.nextAttemptAt.toISOString()}`
+            : null;
+      items.push({
+        kind: 'shipping',
+        id: row.id.toString(),
+        connectionId: row.connectionId.toString(),
+        shopName: row.connection.shop.name,
+        orderId: row.orderId,
+        actionLabel: row.fulfillmentType === 'japan'
+          ? '回传日本快递单号'
+          : row.fulfillmentType === 'china'
+            ? '回传中国快递单号'
+            : '回传混发订单的日本快递单号',
+        event: null,
+        status: row.status,
+        attempts: row.attempts,
+        lastError: row.lastError,
+        nextAttemptAt: row.nextAttemptAt?.toISOString() ?? null,
+        createdAt: row.createdAt.toISOString(),
+        executable: !blockedReason,
+        blockedReason,
+      });
+    }
+    for (const row of mailRows) {
+      let blockedReason: string | null = row.connection.mailCircuitOpenedAt
+        ? `邮件发送已暂停：${row.connection.mailCircuitReason || '请先恢复邮件功能'}`
+        : row.status === RakutenAutomationStatus.uncertain
+          ? '发送结果待确认，请到乐天邮件管理中确认已发送或确认重发'
+          : row.status === RakutenAutomationStatus.dead_letter
+            ? '已停止自动重试，请先到乐天邮件管理中处理并重试'
+            : row.nextAttemptAt && row.nextAttemptAt > now
+              ? `等待重试时间 ${row.nextAttemptAt.toISOString()}`
+              : null;
+      const prerequisiteEvent = this.mailPrerequisiteEvent(row.event);
+      if (!blockedReason && prerequisiteEvent) {
+        const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
+          where: {
+            connectionId_orderId_event: {
+              connectionId: row.connectionId,
+              orderId: row.orderId,
+              event: prerequisiteEvent,
+            },
+          },
+          select: { status: true },
+        });
+        if (prerequisite && prerequisite.status !== RakutenAutomationStatus.sent) {
+          blockedReason = `等待前置邮件 ${prerequisiteEvent} 发送成功`;
+        }
+      }
+      items.push({
+        kind: 'mail',
+        id: row.id.toString(),
+        connectionId: row.connectionId.toString(),
+        shopName: row.connection.shop.name,
+        orderId: row.orderId,
+        actionLabel: `发送 ${row.event} 邮件`,
+        event: row.event,
+        status: row.status,
+        attempts: row.attempts,
+        recipient: row.recipient,
+        subject: row.subject,
+        lastError: row.lastError,
+        nextAttemptAt: row.nextAttemptAt?.toISOString() ?? null,
+        createdAt: row.createdAt.toISOString(),
+        executable: !blockedReason,
+        blockedReason,
+      });
+    }
+    items.sort((left, right) => {
+      const connectionDifference = String(left.connectionId).localeCompare(String(right.connectionId), undefined, { numeric: true });
+      if (connectionDifference) return connectionDifference;
+      const orderDifference = String(left.orderId).localeCompare(String(right.orderId), undefined, { numeric: true });
+      if (orderDifference) return orderDifference;
+      if (left.kind !== right.kind) return left.kind === 'shipping' ? -1 : 1;
+      return String(left.createdAt).localeCompare(String(right.createdAt));
+    });
+    const summary = items.reduce<Record<string, number>>((counts, item) => {
+      const key = item.executable ? String(item.kind) : 'blocked';
+      counts[key] = (counts[key] ?? 0) + 1;
+      return counts;
+    }, {});
+    return { generatedAt: new Date().toISOString(), scheduledPaused: SCHEDULED_AUTOMATION_PAUSED, items, summary };
+  }
+
+  async executeManualActions(selections: ManualAutomationSelection[]): Promise<unknown> {
+    if (!Array.isArray(selections) || !selections.length) throw new BadRequestException('请选择要执行的任务');
+    if (selections.length > 100) throw new BadRequestException('一次最多执行100个任务');
+    const normalized = Array.from(new Map(selections.map((selection) => {
+      const kind = String(selection?.kind || '').trim();
+      if (kind !== 'shipping' && kind !== 'mail') throw new BadRequestException('任务类型只支持shipping或mail');
+      const id = parseId(String(selection?.id || ''), 'jobId');
+      return [`${kind}:${id.toString()}`, { kind, id }];
+    })).values());
+    const shippingIds = normalized.filter((item) => item.kind === 'shipping').map((item) => item.id);
+    const mailIds = normalized.filter((item) => item.kind === 'mail').map((item) => item.id);
+    const [shippingRows, mailRows] = await Promise.all([
+      this.prisma.rakutenOrderShippingReport.findMany({
+        where: { id: { in: shippingIds } },
+        include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
+      }),
+      this.prisma.rakutenOrderMail.findMany({
+        where: { id: { in: mailIds } },
+        include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
+      }),
+    ]);
+    if (shippingRows.length !== shippingIds.length || mailRows.length !== mailIds.length) {
+      throw new BadRequestException('部分任务已不存在，请刷新清单');
+    }
+    const now = new Date();
+    for (const row of shippingRows) {
+      if (!row.connection.autoShippingEnabled || row.connection.status !== 1 || row.connection.shippingCircuitOpenedAt) {
+        throw new BadRequestException(`订单 ${row.orderId} 的单号回传当前不可执行`);
+      }
+      if ((row.status !== RakutenAutomationStatus.pending && row.status !== RakutenAutomationStatus.failed) || (row.nextAttemptAt && row.nextAttemptAt > now)) {
+        throw new BadRequestException(`订单 ${row.orderId} 的单号回传状态已变化，请刷新清单`);
+      }
+    }
+    for (const row of mailRows) {
+      if (!row.connection.mailNotificationsEnabled || row.connection.status !== 1 || row.connection.mailCircuitOpenedAt) {
+        throw new BadRequestException(`订单 ${row.orderId} 的邮件当前不可执行`);
+      }
+      if ((row.status !== RakutenAutomationStatus.pending && row.status !== RakutenAutomationStatus.failed) || (row.nextAttemptAt && row.nextAttemptAt > now)) {
+        throw new BadRequestException(`订单 ${row.orderId} 的邮件状态已变化，请刷新清单`);
+      }
+    }
+    const connectionIds = Array.from(new Set([
+      ...shippingRows.map((row) => row.connectionId),
+      ...mailRows.map((row) => row.connectionId),
+    ]));
+    const results: ConnectionAutomationRunResult[] = [];
+    for (const connectionId of connectionIds) {
+      const sourceRow = [...shippingRows, ...mailRows].find((row) => row.connectionId === connectionId);
+      if (!sourceRow) throw new BadRequestException('任务所属乐天连接不存在，请刷新清单');
+      const connection = sourceRow.connection;
+      const lockToken = randomUUID();
+      if (!(await this.acquireConnectionLock(connectionId, lockToken))) {
+        throw new BadRequestException(`${connection.shop.name} 当前已有任务正在执行`);
+      }
+      const heartbeat = this.startConnectionLockHeartbeat(connectionId, lockToken);
+      try {
+        const run = await this.prisma.rakutenAutomationRun.create({
+          data: { connectionId, trigger: RakutenAutomationRunTrigger.manual },
+          select: { id: true },
+        });
+        const shipping = await this.processShippingReports(
+          connectionId,
+          shippingRows.filter((row) => row.connectionId === connectionId).map((row) => row.id),
+        );
+        const mail = await this.processMails(
+          connectionId,
+          mailRows.filter((row) => row.connectionId === connectionId).map((row) => row.id),
+        );
+        const failedJobs = shipping.failed + mail.failed;
+        const completedJobs = shipping.sent + shipping.skipped + mail.sent;
+        const status = failedJobs > 0 || mail.blocked > 0
+          ? completedJobs > 0 || mail.blocked > 0 ? RakutenAutomationRunStatus.partial : RakutenAutomationRunStatus.failed
+          : RakutenAutomationRunStatus.success;
+        await this.prisma.rakutenAutomationRun.update({
+          where: { id: run.id },
+          data: {
+            status,
+            shippingSent: shipping.sent,
+            shippingSkipped: shipping.skipped,
+            shippingFailed: shipping.failed,
+            mailSent: mail.sent,
+            mailFailed: mail.failed,
+            mailBlocked: mail.blocked,
+            finishedAt: new Date(),
+          },
+        });
+        results.push({
+          connectionId: connectionId.toString(),
+          shopName: connection.shop.name,
+          runId: run.id.toString(),
+          status,
+          shipping,
+          mail,
+          errors: [],
+        });
+      } finally {
+        clearInterval(heartbeat);
+        await this.releaseConnectionLock(connectionId, lockToken);
+      }
+    }
+    return this.serializeMail({ executed: normalized.length, results });
+  }
+
   async runAutomation(
     connectionId?: bigint,
     trigger: RakutenAutomationRunTrigger = RakutenAutomationRunTrigger.manual,
@@ -1368,17 +1617,18 @@ export class RakutenRmsAutomationService {
     }
   }
 
-  private async processShippingReports(connectionId?: bigint): Promise<ShippingRunCounts> {
+  private async processShippingReports(connectionId?: bigint, selectedIds?: bigint[]): Promise<ShippingRunCounts> {
     const rows = await this.prisma.rakutenOrderShippingReport.findMany({
       where: {
         ...(connectionId ? { connectionId } : {}),
+        ...(selectedIds ? { id: { in: selectedIds } } : {}),
         status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
         attempts: { lt: MAX_ATTEMPTS },
         OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
         connection: { status: 1, autoShippingEnabled: true },
       },
       orderBy: { createdAt: 'asc' },
-      take: 50,
+      take: selectedIds ? selectedIds.length : 50,
       include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
     });
     const counts: ShippingRunCounts = { sent: 0, skipped: 0, failed: 0 };
@@ -1549,17 +1799,18 @@ export class RakutenRmsAutomationService {
     }
   }
 
-  private async processMails(connectionId?: bigint): Promise<MailRunCounts> {
+  private async processMails(connectionId?: bigint, selectedIds?: bigint[]): Promise<MailRunCounts> {
     const mails = await this.prisma.rakutenOrderMail.findMany({
       where: {
         ...(connectionId ? { connectionId } : {}),
+        ...(selectedIds ? { id: { in: selectedIds } } : {}),
         status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
         attempts: { lt: MAX_ATTEMPTS },
         OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
         connection: { status: 1, mailNotificationsEnabled: true },
       },
       orderBy: { createdAt: 'asc' },
-      take: 100,
+      take: selectedIds ? selectedIds.length : 100,
       include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
     });
     const counts: MailRunCounts = { sent: 0, failed: 0, blocked: 0 };

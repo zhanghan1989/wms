@@ -159,6 +159,18 @@ export class RakutenRmsApiController {
     return this.automation.listAutomationRuns({ connectionId, status, page, pageSize });
   }
 
+  @Post('automation/manual-actions/preview')
+  async previewManualAutomationActions(): Promise<unknown> {
+    return this.automation.prepareManualActions();
+  }
+
+  @Post('automation/manual-actions/execute')
+  async executeManualAutomationActions(
+    @Body() payload: { items?: Array<{ kind?: string; id?: string }> },
+  ): Promise<unknown> {
+    return this.automation.executeManualActions(payload?.items ?? []);
+  }
+
   @Get('connections/:id/mail-templates')
   async listMailTemplates(@Param('id') id: string): Promise<unknown> {
     return this.automation.listMailTemplates(id);

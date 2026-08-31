@@ -32,6 +32,8 @@ const RAKUTEN_SYNC_CRON = process.env.RAKUTEN_RMS_API_SYNC_CRON || "0 */15 * * *
 const RAKUTEN_SYNC_TIMEZONE = process.env.RAKUTEN_RMS_API_SYNC_TIMEZONE || "Asia/Tokyo";
 const RAKUTEN_SCHEDULED_SYNC_ENABLED =
   String(process.env.RAKUTEN_RMS_API_SCHEDULED_SYNC_ENABLED ?? "false").toLowerCase() === "true";
+const RAKUTEN_SCHEDULED_SYNC_PAUSED =
+  String(process.env.RAKUTEN_RMS_API_SCHEDULED_SYNC_PAUSED ?? "true").toLowerCase() !== "false";
 const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
 const ORDER_FIX_DATETIME_SEARCH_TYPE = 3;
 const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
@@ -855,7 +857,7 @@ export class RakutenRmsApiService {
     timeZone: RAKUTEN_SYNC_TIMEZONE,
   })
   async runScheduledSync(): Promise<void> {
-    if (!RAKUTEN_SCHEDULED_SYNC_ENABLED) return;
+    if (!RAKUTEN_SCHEDULED_SYNC_ENABLED || RAKUTEN_SCHEDULED_SYNC_PAUSED) return;
     try {
       const result = await this.syncAllConnections();
       this.logger.log(`Rakuten scheduled sync completed: connections=${result.results.length}`);

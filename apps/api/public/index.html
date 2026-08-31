@@ -1379,6 +1379,7 @@
                 <button id="openRakutenOrderImportModal">订单导入</button>
                 <button id="rakutenBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
                 <button id="openRakutenApiImportModal" type="button">API导入</button>
+                <button id="openRakutenManualAutomationModal" type="button">单号回传和发送邮件</button>
               </div>
             </div>
             <div class="action-row-right">
@@ -2280,6 +2281,7 @@
           <select id="rakutenApiImportConnection"></select>
         </label>
       </div>
+      <p class="muted">当前定时自动导入已暂停。订单只会按照“预览同步 → 确认正式同步”的人工操作顺序写入 WMS。</p>
       <p id="rakutenApiImportMeta" class="muted"></p>
       <div id="rakutenApiImportPreview" class="muted">请先选择店铺并生成同步预览。</div>
       <div class="modal-actions modal-actions-split rakuten-api-import-actions">
@@ -2288,6 +2290,45 @@
           <button id="rakutenApiImportSyncBtn" type="button" class="hidden">确认正式同步</button>
         </div>
         <button type="button" class="ghost" data-action="closeRakutenApiImportModal">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="rakutenManualAutomationModal" class="modal hidden">
+    <div class="modal-card modal-wide rakuten-manual-automation-card">
+      <div class="modal-head">
+        <div>
+          <h3>单号回传和发送邮件</h3>
+          <p class="muted">这里只整理当前需要人工确认的任务。打开清单不会向乐天回传单号，也不会发送邮件。</p>
+        </div>
+        <button type="button" class="ghost" data-action="closeRakutenManualAutomationModal">关闭</button>
+      </div>
+      <div class="card-head">
+        <div>
+          <p id="rakutenManualAutomationMeta" class="muted">正在整理当前任务...</p>
+          <div id="rakutenManualAutomationSummary" class="rakuten-mail-stats"></div>
+        </div>
+        <button id="refreshRakutenManualAutomationBtn" type="button" class="ghost">重新整理</button>
+      </div>
+      <div class="master-product-table-wrap rakuten-manual-automation-table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th><input id="rakutenManualAutomationSelectAll" type="checkbox" aria-label="选择全部可执行任务" /></th>
+              <th>店铺</th><th>订单号</th><th>类型</th><th>需要执行的内容</th><th>状态</th><th>说明</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="rakutenManualAutomationBody">
+            <tr><td colspan="8" class="muted">正在整理当前任务...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-actions modal-actions-split">
+        <div>
+          <button id="executeSelectedRakutenManualAutomationBtn" type="button" disabled>执行选中任务</button>
+          <span id="rakutenManualAutomationSelectionMeta" class="muted">已选择 0 项</span>
+        </div>
+        <button type="button" class="ghost" data-action="closeRakutenManualAutomationModal">取消</button>
       </div>
     </div>
   </div>
@@ -3155,7 +3196,7 @@
             <label><input id="rakutenRmsAutoShippingEnabled" type="checkbox" /> 自动通过乐天 API 回传快递单号</label>
             <label><input id="rakutenRmsMailNotificationsEnabled" type="checkbox" /> 使用乐天匿名邮件自动通知买家</label>
           </div>
-          <p class="muted">新建连接时必须填写 serviceSecret 和 licenseKey；API及SMTP密码均加密保存且不会回显。启用自动回传前，还需要在 RMS WEB API 中授权 updateOrderShipping。原“回传单号CSV”按钮继续保留，和自动回传互不影响。</p>
+          <p class="muted">新建连接时必须填写 serviceSecret 和 licenseKey；API及SMTP密码均加密保存且不会回显。启用回传前，还需要在 RMS WEB API 中授权 updateOrderShipping。当前定时执行已暂停，请从“单号回传和发送邮件”清单人工确认。原“回传单号CSV”按钮继续保留。</p>
           <p id="rakutenRmsConnectionMeta" class="muted">尚未连接。</p>
           <div id="rakutenRmsSyncPreview" class="muted">正式同步前必须先生成预览并人工确认。</div>
           <div class="manage-table-scroll">
@@ -3205,7 +3246,7 @@
               <button id="rakutenRmsSmtpTestBtn" type="button" class="ghost hidden">测试乐天SMTP</button>
               <button id="rakutenRmsPreviewBtn" type="button" class="ghost hidden">预览同步</button>
               <button id="rakutenRmsSyncBtn" type="button" class="hidden">确认正式同步</button>
-              <button id="rakutenRmsAutomationRunBtn" type="button" class="ghost hidden">立即运行自动回传/邮件</button>
+              <button id="rakutenRmsAutomationRunBtn" type="button" class="ghost hidden">打开单号回传和邮件清单</button>
             </div>
             <button type="button" class="ghost" data-action="closeRakutenRmsConnectionModal">取消</button>
           </div>
