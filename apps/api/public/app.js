@@ -203,6 +203,7 @@ const state = {
   rakutenAutomationRunsLoading: false,
   rakutenRmsSyncPreview: null,
   rakutenApiImportPreview: null,
+  rakutenManualAutomationKind: "shipping",
   rakutenManualAutomationItems: [],
   rakutenManualAutomationSelected: new Set(),
   rakutenManualAutomationLoading: false,
@@ -7008,7 +7009,9 @@ function rakutenManualAutomationKey(item) {
 function renderRakutenManualAutomation() {
   const body = $("rakutenManualAutomationBody");
   if (!body) return;
-  const items = Array.isArray(state.rakutenManualAutomationItems) ? state.rakutenManualAutomationItems : [];
+  const items = Array.isArray(state.rakutenManualAutomationItems)
+    ? state.rakutenManualAutomationItems.filter((item) => item?.kind === state.rakutenManualAutomationKind)
+    : [];
   const executableItems = items.filter((item) => item?.executable === true);
   const selectedKeys = state.rakutenManualAutomationSelected;
   const selectedCount = executableItems.filter((item) => selectedKeys.has(rakutenManualAutomationKey(item))).length;
@@ -7021,14 +7024,12 @@ function renderRakutenManualAutomation() {
   const executeButton = $("executeSelectedRakutenManualAutomationBtn");
   if (executeButton) executeButton.disabled = state.rakutenManualAutomationLoading || selectedCount === 0;
   setTextById("rakutenManualAutomationSelectionMeta", `已选择 ${selectedCount} 项`);
-  const shippingCount = executableItems.filter((item) => item?.kind === "shipping").length;
-  const mailCount = executableItems.filter((item) => item?.kind === "mail").length;
   const blockedCount = items.length - executableItems.length;
+  const isShipping = state.rakutenManualAutomationKind === "shipping";
   const summary = $("rakutenManualAutomationSummary");
   if (summary) {
     summary.innerHTML = [
-      ["待确认回传", shippingCount],
-      ["待确认邮件", mailCount],
+      [isShipping ? "待确认回传" : "待确认邮件", executableItems.length],
       ["暂不可执行", blockedCount],
     ].map(([label, count]) => `<span class="rakuten-mail-stat">${escapeHtml(label)}<strong>${formatOverviewNumber(count)}</strong></span>`).join("");
   }
@@ -7052,39 +7053,59 @@ function renderRakutenManualAutomation() {
       <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
       <td>${executable ? `<button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">确认执行</button>` : '<span class="muted">请先处理异常</span>'}</td>
     </tr>`;
-  }).join("") || '<tr><td colspan="8" class="muted">当前没有需要回传单号或发送邮件的任务。</td></tr>';
+  }).join("") || `<tr><td colspan="8" class="muted">当前没有需要${isShipping ? "回传单号" : "发送邮件"}的任务。</td></tr>`;
 }
 
-async function loadRakutenManualAutomationActions() {
+async function loadRakutenManualAutomationActions(kind = state.rakutenManualAutomationKind) {
+  const requestedKind = kind === "mail" ? "mail" : "shipping";
   state.rakutenManualAutomationLoading = true;
   state.rakutenManualAutomationSelected = new Set();
   renderRakutenManualAutomation();
   try {
     const result = await request("/rakuten-rms-api/automation/manual-actions/preview", {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify({ kind: requestedKind }),
     }) || {};
+    if (state.rakutenManualAutomationKind !== requestedKind) return;
     state.rakutenManualAutomationItems = Array.isArray(result.items) ? result.items : [];
     setTextById(
       "rakutenManualAutomationMeta",
-      `整理时间：${result.generatedAt ? formatDate(result.generatedAt) : "-"}。定时自动执行当前为暂停状态；只有人工确认后才会回传或发送。`,
+      `整理时间：${result.generatedAt ? formatDate(result.generatedAt) : "-"}。定时自动执行当前为暂停状态；只有人工确认后才会${requestedKind === "shipping" ? "回传单号" : "发送邮件"}。`,
     );
   } finally {
-    state.rakutenManualAutomationLoading = false;
-    renderRakutenManualAutomation();
+    if (state.rakutenManualAutomationKind === requestedKind) {
+      state.rakutenManualAutomationLoading = false;
+      renderRakutenManualAutomation();
+    }
   }
 }
 
+async function openRakutenManualAutomationWorklist(kind, button) {
+  const requestedKind = kind === "mail" ? "mail" : "shipping";
+  state.rakutenManualAutomationKind = requestedKind;
+  const isShipping = state.rakutenManualAutomationKind === "shipping";
+  setTextById("rakutenManualAutomationTitle", isShipping ? "单号回传" : "邮件发送");
+  setTextById(
+    "rakutenManualAutomationDescription",
+    isShipping
+      ? "这里只整理当前需要人工确认的单号回传任务。打开清单不会向乐天回传单号。"
+      : "这里只整理当前需要人工确认的邮件任务。打开清单不会向买家发送邮件。",
+  );
+  openModal("rakutenManualAutomationModal");
+  await withBusyButton(button, "整理中...", () => loadRakutenManualAutomationActions(requestedKind));
+}
+
 async function executeRakutenManualAutomationItems(items, button) {
-  const selections = items.filter((item) => item?.executable === true).map((item) => ({
+  const selections = items.filter(
+    (item) => item?.executable === true && item?.kind === state.rakutenManualAutomationKind,
+  ).map((item) => ({
     kind: item.kind,
     id: item.id,
   }));
   if (!selections.length) return;
-  const shippingCount = selections.filter((item) => item.kind === "shipping").length;
-  const mailCount = selections.filter((item) => item.kind === "mail").length;
+  const isShipping = state.rakutenManualAutomationKind === "shipping";
   const confirmed = await openActionConfirmModal(
-    `确认执行所选 ${selections.length} 项任务吗？其中单号回传 ${shippingCount} 项、发送邮件 ${mailCount} 项。该操作会实际调用乐天接口或向买家发送邮件。`,
+    `确认执行所选 ${selections.length} 项${isShipping ? "单号回传" : "邮件发送"}任务吗？该操作会${isShipping ? "实际调用乐天接口回传快递单号" : "实际向买家发送邮件"}。`,
     selections.length === 1 ? "确认执行当前任务" : "确认批量执行",
     "确认执行",
   );
@@ -7102,10 +7123,10 @@ async function executeRakutenManualAutomationItems(items, button) {
     summary.mailFailed += Number(run?.mail?.failed || 0);
     return summary;
   }, { shippingSent: 0, shippingSkipped: 0, shippingFailed: 0, mailSent: 0, mailFailed: 0 });
-  showToast(
-    `执行完成：回传成功 ${totals.shippingSent}、跳过 ${totals.shippingSkipped}、失败 ${totals.shippingFailed}；邮件成功 ${totals.mailSent}、失败 ${totals.mailFailed}`,
-    totals.shippingFailed > 0 || totals.mailFailed > 0,
-  );
+  showToast(isShipping
+    ? `执行完成：回传成功 ${totals.shippingSent}、跳过 ${totals.shippingSkipped}、失败 ${totals.shippingFailed}`
+    : `执行完成：邮件成功 ${totals.mailSent}、失败 ${totals.mailFailed}`,
+  isShipping ? totals.shippingFailed > 0 : totals.mailFailed > 0);
   await loadRakutenManualAutomationActions();
 }
 
@@ -7239,11 +7260,17 @@ function openRakutenRmsConnectionModal(shopId) {
   $("rakutenRmsSmtpTestBtn").classList.toggle("hidden", !connection || connection.smtpPasswordConfigured !== true);
   $("rakutenRmsAutomationRefreshBtn").classList.toggle("hidden", !connection);
   $("rakutenRmsPreviewBtn").classList.toggle("hidden", !connection || Number(connection.status) !== 1);
-  $("rakutenRmsAutomationRunBtn").classList.toggle(
+  $("rakutenRmsShippingQueueBtn").classList.toggle(
     "hidden",
     !connection ||
       Number(connection.status) !== 1 ||
-      (connection.autoShippingEnabled !== true && connection.mailNotificationsEnabled !== true),
+      connection.autoShippingEnabled !== true,
+  );
+  $("rakutenRmsMailQueueBtn").classList.toggle(
+    "hidden",
+    !connection ||
+      Number(connection.status) !== 1 ||
+      connection.mailNotificationsEnabled !== true,
   );
   state.rakutenRmsSyncPreview = null;
   renderRakutenRmsSyncPreview();
@@ -16476,10 +16503,17 @@ function bindForms() {
     }
   });
 
-  $("openRakutenManualAutomationModal")?.addEventListener("click", async (event) => {
-    openModal("rakutenManualAutomationModal");
+  $("openRakutenManualShippingModal")?.addEventListener("click", async (event) => {
     try {
-      await withBusyButton(event.currentTarget, "整理中...", loadRakutenManualAutomationActions);
+      await openRakutenManualAutomationWorklist("shipping", event.currentTarget);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("openRakutenManualMailModal")?.addEventListener("click", async (event) => {
+    try {
+      await openRakutenManualAutomationWorklist("mail", event.currentTarget);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -16487,7 +16521,11 @@ function bindForms() {
 
   $("refreshRakutenManualAutomationBtn")?.addEventListener("click", async (event) => {
     try {
-      await withBusyButton(event.currentTarget, "整理中...", loadRakutenManualAutomationActions);
+      await withBusyButton(
+        event.currentTarget,
+        "整理中...",
+        () => loadRakutenManualAutomationActions(state.rakutenManualAutomationKind),
+      );
     } catch (error) {
       showToast(error.message, true);
     }
@@ -16498,6 +16536,7 @@ function bindForms() {
     state.rakutenManualAutomationSelected = new Set(
       selected
         ? state.rakutenManualAutomationItems
+            .filter((item) => item?.kind === state.rakutenManualAutomationKind)
             .filter((item) => item?.executable === true)
             .map(rakutenManualAutomationKey)
         : [],
@@ -16518,7 +16557,8 @@ function bindForms() {
     const button = event.target.closest("button[data-action='executeRakutenManualAutomation']");
     if (!button) return;
     const item = state.rakutenManualAutomationItems.find(
-      (candidate) => rakutenManualAutomationKey(candidate) === String(button.dataset.key || ""),
+      (candidate) => candidate?.kind === state.rakutenManualAutomationKind &&
+        rakutenManualAutomationKey(candidate) === String(button.dataset.key || ""),
     );
     if (!item) return;
     try {
@@ -16530,7 +16570,8 @@ function bindForms() {
 
   $("executeSelectedRakutenManualAutomationBtn")?.addEventListener("click", async (event) => {
     const items = state.rakutenManualAutomationItems.filter(
-      (item) => state.rakutenManualAutomationSelected.has(rakutenManualAutomationKey(item)),
+      (item) => item?.kind === state.rakutenManualAutomationKind &&
+        state.rakutenManualAutomationSelected.has(rakutenManualAutomationKey(item)),
     );
     try {
       await executeRakutenManualAutomationItems(items, event.currentTarget);
@@ -18225,11 +18266,19 @@ function bindDelegates() {
     }
   });
 
-  $("rakutenRmsAutomationRunBtn")?.addEventListener("click", async (event) => {
+  $("rakutenRmsShippingQueueBtn")?.addEventListener("click", async (event) => {
     closeModal("rakutenRmsConnectionModal");
-    openModal("rakutenManualAutomationModal");
     try {
-      await withBusyButton(event.currentTarget, "整理中...", loadRakutenManualAutomationActions);
+      await openRakutenManualAutomationWorklist("shipping", event.currentTarget);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenRmsMailQueueBtn")?.addEventListener("click", async (event) => {
+    closeModal("rakutenRmsConnectionModal");
+    try {
+      await openRakutenManualAutomationWorklist("mail", event.currentTarget);
     } catch (error) {
       showToast(error.message, true);
     }

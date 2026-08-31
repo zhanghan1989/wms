@@ -160,8 +160,10 @@ export class RakutenRmsApiController {
   }
 
   @Post('automation/manual-actions/preview')
-  async previewManualAutomationActions(): Promise<unknown> {
-    return this.automation.prepareManualActions();
+  async previewManualAutomationActions(
+    @Body() payload: { kind?: string },
+  ): Promise<unknown> {
+    return this.automation.prepareManualActions(payload?.kind);
   }
 
   @Post('automation/manual-actions/execute')

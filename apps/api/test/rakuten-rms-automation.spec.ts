@@ -1046,6 +1046,21 @@ describe('Rakuten RMS shipping and mail automation', () => {
     });
     expect(processShippingReports).not.toHaveBeenCalled();
     expect(processMails).not.toHaveBeenCalled();
+
+    prisma.rakutenOrderMail.findMany.mockClear();
+    const shippingOnly = await scopedService.prepareManualActions('shipping') as any;
+    expect(shippingOnly.items).toEqual([
+      expect.objectContaining({ kind: 'shipping', id: '91' }),
+    ]);
+    expect(prisma.rakutenOrderMail.findMany).not.toHaveBeenCalled();
+
+    prisma.rakutenOrderShippingReport.findMany.mockClear();
+    const mailOnly = await scopedService.prepareManualActions('mail') as any;
+    expect(mailOnly.items).toEqual([
+      expect.objectContaining({ kind: 'mail', id: '92' }),
+    ]);
+    expect(prisma.rakutenOrderShippingReport.findMany).not.toHaveBeenCalled();
+    await expect(scopedService.prepareManualActions('other')).rejects.toThrow('任务类型只支持shipping或mail');
   });
 
   it('limits manual shipment processing to the explicitly selected task ids', async () => {

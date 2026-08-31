@@ -119,6 +119,8 @@ interface ManualAutomationSelection {
   id?: string;
 }
 
+type ManualAutomationKind = 'shipping' | 'mail';
+
 const MAIL_TEMPLATE_VARIABLES = [
   { key: 'buyer_name', label: '购买者姓名' },
   { key: 'order_number', label: '乐天订单号' },
@@ -171,7 +173,7 @@ export class RakutenRmsAutomationService {
 
   async runConnection(idRaw: string): Promise<AutomationRunResult> {
     if (SCHEDULED_AUTOMATION_PAUSED) {
-      throw new BadRequestException('自动执行当前已暂停，请使用“单号回传和发送邮件”清单逐项确认');
+      throw new BadRequestException('自动执行当前已暂停，请使用“单号回传”或“邮件发送”清单逐项确认');
     }
     const connectionId = parseId(idRaw, 'connectionId');
     return this.runAutomation(connectionId, RakutenAutomationRunTrigger.manual);
@@ -847,26 +849,35 @@ export class RakutenRmsAutomationService {
     return this.serializeMail({ items, total, page, pageSize });
   }
 
-  async prepareManualActions(): Promise<unknown> {
+  async prepareManualActions(kindRaw?: string): Promise<unknown> {
+    const kind = String(kindRaw || '').trim();
+    if (kind && kind !== 'shipping' && kind !== 'mail') {
+      throw new BadRequestException('任务类型只支持shipping或mail');
+    }
+    const requestedKind = kind as ManualAutomationKind | '';
     await this.recoverStaleJobs();
     const connections = await this.prisma.rakutenRmsConnection.findMany({
       where: {
         status: 1,
-        OR: [{ autoShippingEnabled: true }, { mailNotificationsEnabled: true }],
+        ...(requestedKind === 'shipping'
+          ? { autoShippingEnabled: true }
+          : requestedKind === 'mail'
+            ? { mailNotificationsEnabled: true }
+            : { OR: [{ autoShippingEnabled: true }, { mailNotificationsEnabled: true }] }),
       },
       include: { shop: { select: { id: true, name: true } } },
       orderBy: { id: 'asc' },
     });
     for (const connection of connections) {
-      if (connection.autoShippingEnabled) await this.prepareShippingReports(connection);
-      if (connection.mailNotificationsEnabled) await this.prepareCustomsMails(connection);
+      if (connection.autoShippingEnabled && requestedKind !== 'mail') await this.prepareShippingReports(connection);
+      if (connection.mailNotificationsEnabled && requestedKind !== 'shipping') await this.prepareCustomsMails(connection);
     }
     const connectionIds = connections.map((connection) => connection.id);
     if (!connectionIds.length) {
       return { generatedAt: new Date().toISOString(), scheduledPaused: SCHEDULED_AUTOMATION_PAUSED, items: [], summary: {} };
     }
     const [shippingRows, mailRows] = await Promise.all([
-      this.prisma.rakutenOrderShippingReport.findMany({
+      requestedKind === 'mail' ? Promise.resolve([]) : this.prisma.rakutenOrderShippingReport.findMany({
         where: {
           connectionId: { in: connectionIds },
           status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter] },
@@ -875,7 +886,7 @@ export class RakutenRmsAutomationService {
         take: 500,
         include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
       }),
-      this.prisma.rakutenOrderMail.findMany({
+      requestedKind === 'shipping' ? Promise.resolve([]) : this.prisma.rakutenOrderMail.findMany({
         where: {
           connectionId: { in: connectionIds },
           status: { in: [
