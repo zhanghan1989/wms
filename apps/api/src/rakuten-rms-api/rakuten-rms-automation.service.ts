@@ -892,7 +892,7 @@ export class RakutenRmsAutomationService {
     if (!connectionIds.length) {
       return { generatedAt: new Date().toISOString(), scheduledPaused: SCHEDULED_AUTOMATION_PAUSED, items: [], summary: {} };
     }
-    const [shippingRows, mailRows] = await Promise.all([
+    const [shippingRows, mailCandidates] = await Promise.all([
       requestedKind === 'mail' ? Promise.resolve([]) : this.prisma.rakutenOrderShippingReport.findMany({
         where: {
           connectionId: { in: connectionIds },
@@ -917,6 +917,37 @@ export class RakutenRmsAutomationService {
         include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
       }),
     ]);
+    const mailOrderRefs = Array.from(new Map(mailCandidates.map((row) => [
+      this.automationOrderKey(row.connectionId, row.orderId),
+      { connectionId: row.connectionId, orderId: row.orderId },
+    ])).values());
+    const mailRows = mailOrderRefs.length
+      ? await this.prisma.rakutenOrderMail.findMany({
+          where: { OR: mailOrderRefs },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
+        })
+      : [];
+    const mailOrderRecords = mailOrderRefs.length
+      ? await this.prisma.rakutenOrderRecord.findMany({
+          where: {
+            OR: mailOrderRefs.map((ref) => ({
+              rmsConnectionId: ref.connectionId,
+              orderId: ref.orderId,
+            })),
+          },
+          select: { rmsConnectionId: true, orderId: true, dispatchMode: true },
+        })
+      : [];
+    const fulfillmentFlags = new Map<string, { hasChina: boolean; hasJapan: boolean }>();
+    for (const record of mailOrderRecords) {
+      if (!record.rmsConnectionId || !record.orderId) continue;
+      const key = this.automationOrderKey(record.rmsConnectionId, record.orderId);
+      const flags = fulfillmentFlags.get(key) ?? { hasChina: false, hasJapan: false };
+      if (this.isChina(record)) flags.hasChina = true;
+      else flags.hasJapan = true;
+      fulfillmentFlags.set(key, flags);
+    }
     const eligibleKeys = await this.loadEligibleAutomationOrderKeys([
       ...shippingRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
       ...mailRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
@@ -957,6 +988,8 @@ export class RakutenRmsAutomationService {
       });
     }
     for (const row of eligibleMailRows) {
+      const executableStatus =
+        row.status === RakutenAutomationStatus.pending || row.status === RakutenAutomationStatus.failed;
       let blockedReason: string | null = row.connection.mailCircuitOpenedAt
         ? `邮件发送已暂停：${row.connection.mailCircuitReason || '请先恢复邮件功能'}`
         : row.status === RakutenAutomationStatus.uncertain
@@ -978,10 +1011,18 @@ export class RakutenRmsAutomationService {
           },
           select: { status: true },
         });
-        if (prerequisite && prerequisite.status !== RakutenAutomationStatus.sent) {
-          blockedReason = `等待前置邮件 ${prerequisiteEvent} 发送成功`;
+        if (!prerequisite || prerequisite.status !== RakutenAutomationStatus.sent) {
+          blockedReason = prerequisite
+            ? `等待前置邮件 ${prerequisiteEvent} 发送成功`
+            : `等待前置邮件 ${prerequisiteEvent} 生成并发送`;
         }
       }
+      const flags = fulfillmentFlags.get(this.automationOrderKey(row.connectionId, row.orderId));
+      const fulfillmentType: FulfillmentType = flags?.hasChina && flags.hasJapan
+        ? 'mixed'
+        : flags?.hasChina
+          ? 'china'
+          : 'japan';
       items.push({
         kind: 'mail',
         id: row.id.toString(),
@@ -990,14 +1031,16 @@ export class RakutenRmsAutomationService {
         orderId: row.orderId,
         actionLabel: `发送 ${row.event} 邮件`,
         event: row.event,
+        fulfillmentType,
         status: row.status,
         attempts: row.attempts,
         recipient: row.recipient,
         subject: row.subject,
         lastError: row.lastError,
         nextAttemptAt: row.nextAttemptAt?.toISOString() ?? null,
+        sentAt: row.sentAt?.toISOString() ?? null,
         createdAt: row.createdAt.toISOString(),
-        executable: !blockedReason,
+        executable: executableStatus && !blockedReason,
         blockedReason,
       });
     }
@@ -1010,6 +1053,14 @@ export class RakutenRmsAutomationService {
       return String(left.createdAt).localeCompare(String(right.createdAt));
     });
     const summary = items.reduce<Record<string, number>>((counts, item) => {
+      const status = String(item.status || '');
+      const needsAttention = new Set<RakutenAutomationStatus>([
+        RakutenAutomationStatus.pending,
+        RakutenAutomationStatus.failed,
+        RakutenAutomationStatus.uncertain,
+        RakutenAutomationStatus.dead_letter,
+      ]).has(status as RakutenAutomationStatus);
+      if (!item.executable && !needsAttention) return counts;
       const key = item.executable ? String(item.kind) : 'blocked';
       counts[key] = (counts[key] ?? 0) + 1;
       return counts;
@@ -1908,7 +1959,18 @@ export class RakutenRmsAutomationService {
           },
           select: { status: true },
         });
-        if (prerequisite && prerequisite.status !== RakutenAutomationStatus.sent) {
+        if (!prerequisite || prerequisite.status !== RakutenAutomationStatus.sent) {
+          if (!prerequisite) {
+            await this.prisma.rakutenOrderMail.update({
+              where: { id: mail.id },
+              data: {
+                nextAttemptAt: new Date(Date.now() + 5 * 60_000),
+                lastError: `等待前置邮件 ${prerequisiteEvent} 生成并发送`,
+              },
+            });
+            counts.blocked += 1;
+            continue;
+          }
           if (prerequisite.status === RakutenAutomationStatus.dead_letter) {
             await this.prisma.rakutenOrderMail.update({
               where: { id: mail.id },

@@ -7010,6 +7010,84 @@ function rakutenManualAutomationKey(item) {
   return `${String(item?.kind || "")}:${String(item?.id || "")}`;
 }
 
+function renderRakutenManualMailStage(item, emptyText) {
+  if (!item) return `<span class="muted">${escapeHtml(emptyText)}</span>`;
+  const key = rakutenManualAutomationKey(item);
+  const status = String(item?.status || "");
+  const statusLabel = RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status);
+  const note = String(item?.blockedReason || item?.lastError || "").trim();
+  const sentAt = status === "sent" && item?.sentAt ? formatDate(item.sentAt) : "";
+  const action = item?.executable === true
+    ? `<div class="rakuten-manual-mail-stage-actions">
+        <label><input type="checkbox" data-action="selectRakutenManualAutomation" data-key="${escapeHtml(key)}" ${state.rakutenManualAutomationSelected.has(key) ? "checked" : ""} /> 选择</label>
+        <button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">${status === "failed" ? "重试" : "发送"}</button>
+      </div>`
+    : "";
+  return `<div class="rakuten-manual-mail-stage" title="${escapeHtml(note)}">
+    <span class="rakuten-manual-mail-status status-${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>
+    ${sentAt ? `<small>${escapeHtml(sentAt)}</small>` : ""}
+    ${note ? `<small class="muted">${escapeHtml(note)}</small>` : ""}
+    ${action}
+  </div>`;
+}
+
+function renderRakutenManualMailOrders(items) {
+  const grouped = new Map();
+  for (const item of items) {
+    const key = `${String(item?.connectionId || "")}:${String(item?.orderId || "")}`;
+    const group = grouped.get(key) || {
+      connectionId: String(item?.connectionId || ""),
+      shopName: item?.shopName,
+      orderId: item?.orderId,
+      fulfillmentType: item?.fulfillmentType || "japan",
+      events: new Map(),
+    };
+    group.events.set(String(item?.event || ""), item);
+    grouped.set(key, group);
+  }
+  const fulfillmentLabels = { japan: "日本发", china: "中国发", mixed: "日中混发" };
+  return Array.from(grouped.values()).map((group) => {
+    const fulfillmentType = ["china", "mixed"].includes(group.fulfillmentType)
+      ? group.fulfillmentType
+      : "japan";
+    const firstEvent = fulfillmentType === "japan"
+      ? "japan_shipped"
+      : fulfillmentType === "china"
+        ? "china_delay"
+        : "mixed_partial";
+    const secondEvent = fulfillmentType === "china"
+      ? "china_customs"
+      : fulfillmentType === "mixed"
+        ? "mixed_customs"
+        : "";
+    const groupItems = Array.from(group.events.values());
+    const executableItems = groupItems.filter((item) => item?.executable === true);
+    const selectedCount = executableItems.filter((item) =>
+      state.rakutenManualAutomationSelected.has(rakutenManualAutomationKey(item))).length;
+    const attentionCount = groupItems.filter((item) =>
+      ["pending", "failed", "uncertain", "dead_letter"].includes(String(item?.status || ""))).length;
+    const progressText = executableItems.length
+      ? `可发送 ${executableItems.length} 封`
+      : attentionCount
+        ? "等待处理条件"
+        : "无需操作";
+    return `<tr class="${executableItems.length ? "" : "is-disabled"}">
+      <td>${executableItems.length
+        ? `<span class="rakuten-manual-order-selection">${selectedCount}/${executableItems.length}</span>`
+        : '<span class="muted">—</span>'}</td>
+      <td>${escapeHtml(displayText(group.shopName))}</td>
+      <td>${escapeHtml(displayText(group.orderId))}</td>
+      <td>${escapeHtml(fulfillmentLabels[fulfillmentType])}</td>
+      <td>${renderRakutenManualMailStage(group.events.get("new_order"), "未生成")}</td>
+      <td>${renderRakutenManualMailStage(group.events.get(firstEvent), "等待单号回传")}</td>
+      <td>${secondEvent
+        ? renderRakutenManualMailStage(group.events.get(secondEvent), "等待通関許可")
+        : '<span class="muted">不适用</span>'}</td>
+      <td>${escapeHtml(progressText)}</td>
+    </tr>`;
+  }).join("");
+}
+
 function renderRakutenManualAutomation() {
   const body = $("rakutenManualAutomationBody");
   if (!body) return;
@@ -7028,17 +7106,39 @@ function renderRakutenManualAutomation() {
   const executeButton = $("executeSelectedRakutenManualAutomationBtn");
   if (executeButton) executeButton.disabled = state.rakutenManualAutomationLoading || selectedCount === 0;
   setTextById("rakutenManualAutomationSelectionMeta", `已选择 ${selectedCount} 项`);
-  const blockedCount = items.length - executableItems.length;
   const isShipping = state.rakutenManualAutomationKind === "shipping";
+  const headRow = $("rakutenManualAutomationHeadRow");
+  if (headRow) {
+    const labels = isShipping
+      ? ["店铺", "订单号", "类型", "需要执行的内容", "状态", "说明", "操作"]
+      : ["店铺", "订单号", "发货类型", "新規", "第一封发货邮件", "第二封通关邮件", "当前进度"];
+    Array.from(headRow.children).slice(1).forEach((cell, index) => {
+      cell.textContent = labels[index] || "";
+    });
+    $("rakutenManualAutomationSelectAll")?.setAttribute(
+      "aria-label",
+      isShipping ? "选择全部可执行任务" : "选择全部可发送邮件",
+    );
+  }
+  const attentionStatuses = new Set(["pending", "failed", "uncertain", "dead_letter"]);
+  const blockedCount = items.filter((item) =>
+    attentionStatuses.has(String(item?.status || "")) && item?.executable !== true).length;
+  const sentCount = items.filter((item) => item?.status === "sent").length;
   const summary = $("rakutenManualAutomationSummary");
   if (summary) {
-    summary.innerHTML = [
-      [isShipping ? "待确认回传" : "待确认邮件", executableItems.length],
-      ["暂不可执行", blockedCount],
-    ].map(([label, count]) => `<span class="rakuten-mail-stat">${escapeHtml(label)}<strong>${formatOverviewNumber(count)}</strong></span>`).join("");
+    const orderCount = new Set(items.map((item) =>
+      `${String(item?.connectionId || "")}:${String(item?.orderId || "")}`)).size;
+    const stats = isShipping
+      ? [["待确认回传", executableItems.length], ["暂不可执行", blockedCount]]
+      : [["订单", orderCount], ["当前可发送", executableItems.length], ["暂不可发送", blockedCount], ["已发送阶段", sentCount]];
+    summary.innerHTML = stats.map(([label, count]) => `<span class="rakuten-mail-stat">${escapeHtml(label)}<strong>${formatOverviewNumber(count)}</strong></span>`).join("");
   }
   if (state.rakutenManualAutomationLoading) {
     body.innerHTML = '<tr><td colspan="8" class="muted">正在整理当前任务，请稍候...</td></tr>';
+    return;
+  }
+  if (!isShipping) {
+    body.innerHTML = renderRakutenManualMailOrders(items) || '<tr><td colspan="8" class="muted">当前没有需要发送邮件的订单。</td></tr>';
     return;
   }
   body.innerHTML = items.map((item) => {
@@ -7057,7 +7157,7 @@ function renderRakutenManualAutomation() {
       <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
       <td>${executable ? `<button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">确认执行</button>` : '<span class="muted">请先处理异常</span>'}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="8" class="muted">当前没有需要${isShipping ? "回传单号" : "发送邮件"}的任务。</td></tr>`;
+  }).join("") || '<tr><td colspan="8" class="muted">当前没有需要回传单号的任务。</td></tr>';
 }
 
 async function loadRakutenManualAutomationActions(kind = state.rakutenManualAutomationKind) {

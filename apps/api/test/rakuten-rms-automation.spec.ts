@@ -322,6 +322,37 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
   });
 
+  it('does not send a dependent mail when its prerequisite record is missing', async () => {
+    const mail = {
+      id: 54n,
+      connectionId: 7n,
+      orderId: '421951-ORDER',
+      event: RakutenOrderMailEvent.japan_shipped,
+      attempts: 0,
+      connection: {},
+    };
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      rakutenOrderMail: {
+        findMany: jest.fn().mockResolvedValue([mail]),
+        findUnique: jest.fn().mockResolvedValue(null),
+        update,
+        updateMany: jest.fn(),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+
+    const result = await (scopedService as any).processMails(7n);
+
+    expect(result).toEqual({ sent: 0, failed: 0, blocked: 1 });
+    expect(prisma.rakutenOrderMail.updateMany).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        lastError: expect.stringContaining('等待前置邮件 new_order 生成并发送'),
+      }),
+    }));
+  });
+
   it('moves a dependent mail to manual handling when its prerequisite cannot auto-recover', async () => {
     const mail = {
       id: 53n,
@@ -1117,6 +1148,84 @@ describe('Rakuten RMS shipping and mail automation', () => {
     ]);
     expect(prisma.rakutenOrderShippingReport.findMany).not.toHaveBeenCalled();
     await expect(scopedService.prepareManualActions('other')).rejects.toThrow('任务类型只支持shipping或mail');
+  });
+
+  it('returns all mail stages for each actionable order without making sent stages executable', async () => {
+    const connection = {
+      id: 7n,
+      status: 1,
+      autoShippingEnabled: false,
+      mailNotificationsEnabled: true,
+      shippingCircuitOpenedAt: null,
+      mailCircuitOpenedAt: null,
+      shop: { id: 3n, name: '乐天店' },
+    };
+    const sentAt = new Date('2026-09-01T01:00:00Z');
+    const newOrderMail = {
+      id: 92n,
+      connectionId: 7n,
+      orderId: '421951-ORDER',
+      event: RakutenOrderMailEvent.new_order,
+      status: RakutenAutomationStatus.sent,
+      attempts: 1,
+      sentAt,
+      nextAttemptAt: null,
+      createdAt: new Date('2026-09-01T00:00:00Z'),
+      connection,
+    };
+    const shippingMail = {
+      id: 93n,
+      connectionId: 7n,
+      orderId: '421951-ORDER',
+      event: RakutenOrderMailEvent.japan_shipped,
+      status: RakutenAutomationStatus.pending,
+      attempts: 0,
+      sentAt: null,
+      nextAttemptAt: null,
+      createdAt: new Date('2026-09-01T02:00:00Z'),
+      connection,
+    };
+    const prisma = {
+      rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([connection]) },
+      rakutenOrderMail: {
+        findMany: jest.fn()
+          .mockResolvedValueOnce([shippingMail])
+          .mockResolvedValueOnce([newOrderMail, shippingMail]),
+        findUnique: jest.fn().mockResolvedValue({ status: RakutenAutomationStatus.sent }),
+      },
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([{
+          rmsConnectionId: 7n,
+          orderId: '421951-ORDER',
+          dispatchMode: 'overseas',
+          createdAt: new Date('2026-09-01T00:00:00Z'),
+        }]),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'prepareCustomsMails').mockResolvedValue(undefined);
+
+    const result = await scopedService.prepareManualActions('mail') as any;
+
+    expect(result.summary).toEqual({ mail: 1 });
+    expect(result.items).toEqual([
+      expect.objectContaining({
+        id: '92',
+        event: RakutenOrderMailEvent.new_order,
+        status: RakutenAutomationStatus.sent,
+        fulfillmentType: 'japan',
+        sentAt: sentAt.toISOString(),
+        executable: false,
+      }),
+      expect.objectContaining({
+        id: '93',
+        event: RakutenOrderMailEvent.japan_shipped,
+        status: RakutenAutomationStatus.pending,
+        fulfillmentType: 'japan',
+        executable: true,
+      }),
+    ]);
   });
 
   it('limits manual shipment processing to the explicitly selected task ids', async () => {

@@ -2622,6 +2622,72 @@ td {
   color: var(--muted);
 }
 
+.rakuten-manual-mail-stage {
+  display: grid;
+  min-width: 178px;
+  gap: 5px;
+  align-content: start;
+}
+
+.rakuten-manual-mail-status {
+  display: inline-flex;
+  width: fit-content;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef2ef;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.rakuten-manual-mail-status.status-pending,
+.rakuten-manual-mail-status.status-failed {
+  background: #fff2dc;
+  color: #8a5800;
+}
+
+.rakuten-manual-mail-status.status-sent {
+  background: #e8f7f0;
+  color: #08734e;
+}
+
+.rakuten-manual-mail-status.status-uncertain,
+.rakuten-manual-mail-status.status-dead_letter {
+  background: #fde9e9;
+  color: #a52d2d;
+}
+
+.rakuten-manual-mail-stage small {
+  display: block;
+  max-width: 220px;
+  line-height: 1.35;
+}
+
+.rakuten-manual-mail-stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.rakuten-manual-mail-stage-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.rakuten-manual-mail-stage-actions input {
+  width: auto;
+  margin: 0;
+}
+
+.rakuten-manual-order-selection {
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 #rakutenApiImportPreviewBtn {
   background: var(--accent);
   border-color: #0b6a48;
