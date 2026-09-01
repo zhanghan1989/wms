@@ -30,6 +30,7 @@ const STALE_PROCESSING_MS = 30 * 60 * 1000;
 const AUTOMATION_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
 const CHINA_MODES = new Set(['china_pending', 'china_no_stock']);
+const MANUALLY_IGNORED_MAIL_NOTE = '用户人工忽略邮件';
 // 2026-09-01 00:00:00 Asia/Tokyo. Automation applies only to orders first imported after this instant.
 const AUTOMATION_ORDER_IMPORT_CUTOFF = new Date('2026-08-31T15:00:00.000Z');
 
@@ -673,6 +674,37 @@ export class RakutenRmsAutomationService {
     return { markedSent: true };
   }
 
+  async ignoreMail(idRaw: string, userId: bigint): Promise<{ ignored: boolean }> {
+    const id = parseId(idRaw, 'mailId');
+    const mail = await this.prisma.rakutenOrderMail.findUnique({ where: { id } });
+    if (!mail) throw new NotFoundException('邮件任务不存在');
+    const result = await this.prisma.rakutenOrderMail.updateMany({
+      where: { id, status: RakutenAutomationStatus.pending },
+      data: {
+        status: RakutenAutomationStatus.cancelled,
+        nextAttemptAt: null,
+        lastError: null,
+        failureCategory: null,
+        deadLetteredAt: null,
+        resolvedAt: new Date(),
+        resolvedBy: userId,
+        resolutionNote: MANUALLY_IGNORED_MAIL_NOTE,
+      },
+    });
+    if (result.count !== 1) throw new BadRequestException('只有待发送邮件可以忽略，请刷新清单');
+    await this.createAudit({
+      entityType: 'rakuten_order_mail',
+      entityId: id,
+      action: AuditAction.update,
+      eventType: AuditEventType.RAKUTEN_MAIL_CANCELLED,
+      operatorId: userId,
+      beforeData: { status: mail.status },
+      afterData: { status: RakutenAutomationStatus.cancelled, resolutionNote: MANUALLY_IGNORED_MAIL_NOTE },
+      remark: '用户人工忽略邮件并允许继续后续邮件阶段',
+    });
+    return { ignored: true };
+  }
+
   async listMailTemplates(connectionIdRaw: string): Promise<unknown> {
     const connectionId = await this.requireConnection(connectionIdRaw);
     const activeVersions = await this.prisma.rakutenMailTemplateVersion.findMany({
@@ -1072,9 +1104,9 @@ export class RakutenRmsAutomationService {
               event: prerequisiteEvent,
             },
           },
-          select: { status: true },
+          select: { status: true, resolutionNote: true },
         });
-        if (!prerequisite || prerequisite.status !== RakutenAutomationStatus.sent) {
+        if (!this.isMailPrerequisiteSatisfied(prerequisite)) {
           blockedReason = prerequisite
             ? `等待前置邮件 ${prerequisiteEvent} 发送成功`
             : `等待前置邮件 ${prerequisiteEvent} 生成并发送`;
@@ -1101,6 +1133,7 @@ export class RakutenRmsAutomationService {
         attempts: row.attempts,
         recipient: row.recipient,
         subject: row.subject,
+        resolutionNote: row.resolutionNote,
         lastError: row.lastError,
         nextAttemptAt: row.nextAttemptAt?.toISOString() ?? null,
         sentAt: row.sentAt?.toISOString() ?? null,
@@ -2013,7 +2046,10 @@ export class RakutenRmsAutomationService {
         ON prerequisite.connection_id = records.rms_connection_id
         AND prerequisite.order_id = records.order_id
         AND prerequisite.event IN ('china_delay', 'mixed_partial')
-        AND prerequisite.status = 'sent'
+        AND (
+          prerequisite.status = 'sent'
+          OR (prerequisite.status = 'cancelled' AND prerequisite.resolution_note = ${MANUALLY_IGNORED_MAIL_NOTE})
+        )
       LEFT JOIN rakuten_order_mails mails
         ON mails.connection_id = records.rms_connection_id
         AND mails.order_id = records.order_id
@@ -2058,9 +2094,9 @@ export class RakutenRmsAutomationService {
             event: prerequisiteEvent,
           },
         },
-        select: { status: true },
+        select: { status: true, resolutionNote: true },
       });
-      if (prerequisite?.status !== RakutenAutomationStatus.sent) continue;
+      if (!this.isMailPrerequisiteSatisfied(prerequisite)) continue;
       await this.prisma.rakutenOrderMail.create({
         data: { connectionId: connection.id, orderId, event },
       }).catch((error: unknown) => {
@@ -2099,9 +2135,9 @@ export class RakutenRmsAutomationService {
               event: prerequisiteEvent,
             },
           },
-          select: { status: true },
+          select: { status: true, resolutionNote: true },
         });
-        if (!prerequisite || prerequisite.status !== RakutenAutomationStatus.sent) {
+        if (!this.isMailPrerequisiteSatisfied(prerequisite)) {
           if (!prerequisite) {
             await this.prisma.rakutenOrderMail.update({
               where: { id: mail.id },
@@ -2883,6 +2919,13 @@ export class RakutenRmsAutomationService {
     if (event === RakutenOrderMailEvent.china_customs) return RakutenOrderMailEvent.china_delay;
     if (event === RakutenOrderMailEvent.mixed_customs) return RakutenOrderMailEvent.mixed_partial;
     return null;
+  }
+
+  private isMailPrerequisiteSatisfied(
+    mail: { status: RakutenAutomationStatus; resolutionNote?: string | null } | null | undefined,
+  ): boolean {
+    return mail?.status === RakutenAutomationStatus.sent ||
+      (mail?.status === RakutenAutomationStatus.cancelled && mail.resolutionNote === MANUALLY_IGNORED_MAIL_NOTE);
   }
 
   private dependentMailEvents(event: RakutenOrderMailEvent): RakutenOrderMailEvent[] {

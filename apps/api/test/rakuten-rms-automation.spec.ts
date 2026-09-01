@@ -703,6 +703,35 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
   });
 
+  it('marks a pending mail as manually ignored without cancelling its later stages', async () => {
+    const prisma = {
+      rakutenOrderMail: {
+        findUnique: jest.fn().mockResolvedValue({ id: 83n, status: RakutenAutomationStatus.pending }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+
+    await expect(scopedService.ignoreMail('83', 9n)).resolves.toEqual({ ignored: true });
+
+    expect(prisma.rakutenOrderMail.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 83n, status: RakutenAutomationStatus.pending },
+      data: expect.objectContaining({
+        status: RakutenAutomationStatus.cancelled,
+        resolvedBy: 9n,
+        resolutionNote: '用户人工忽略邮件',
+      }),
+    }));
+    expect((scopedService as any).isMailPrerequisiteSatisfied({
+      status: RakutenAutomationStatus.cancelled,
+      resolutionNote: '用户人工忽略邮件',
+    })).toBe(true);
+    expect((scopedService as any).isMailPrerequisiteSatisfied({
+      status: RakutenAutomationStatus.cancelled,
+      resolutionNote: '用户手动取消邮件',
+    })).toBe(false);
+  });
+
   it('reports a critical shop health state for uncertain mail and failed shipping', async () => {
     const connection = {
       id: 7n,

@@ -6424,7 +6424,7 @@ const RAKUTEN_MAIL_EVENT_LABELS = {
 };
 
 const RAKUTEN_MAIL_STATUS_LABELS = {
-  pending: "待处理",
+  pending: "待发送",
   processing: "发送中",
   sent: "已发送",
   failed: "失败",
@@ -6433,6 +6433,11 @@ const RAKUTEN_MAIL_STATUS_LABELS = {
   cancelled: "已取消",
   skipped: "已跳过",
 };
+
+function rakutenMailStatusLabel(mail) {
+  if (mail?.status === "cancelled" && mail?.resolutionNote === "用户人工忽略邮件") return "已忽略";
+  return RAKUTEN_MAIL_STATUS_LABELS[String(mail?.status || "")] || displayText(mail?.status);
+}
 
 const RAKUTEN_FAILURE_CATEGORY_LABELS = {
   authentication: "认证或授权错误",
@@ -6706,7 +6711,7 @@ function renderRakutenMails() {
       <td data-label="邮件类型">${escapeHtml(RAKUTEN_MAIL_EVENT_LABELS[mail?.event] || displayText(mail?.event))}</td>
       <td data-label="收件人" title="${escapeHtml(recipient)}">${escapeHtml(recipient || "-")}</td>
       <td data-label="标题" title="${escapeHtml(subject)}">${escapeHtml(subject || "-")}</td>
-      <td data-label="状态">${escapeHtml(RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status))}</td>
+      <td data-label="状态">${escapeHtml(rakutenMailStatusLabel(mail))}</td>
       <td data-label="尝试/下次">${formatOverviewNumber(mail?.attempts)} / ${escapeHtml(nextAttempt)}</td>
       <td data-label="错误" title="${escapeHtml(error)}">${escapeHtml(error || "-")}</td>
       <td data-label="操作">
@@ -6761,7 +6766,7 @@ function renderRakutenMailDetail(mail) {
   const warning = $("rakutenMailDetailWarning");
   const body = $("rakutenMailDetailBody");
   if (!meta || !warning || !body) return;
-  const status = RAKUTEN_MAIL_STATUS_LABELS[mail?.status] || displayText(mail?.status);
+  const status = rakutenMailStatusLabel(mail);
   const event = RAKUTEN_MAIL_EVENT_LABELS[mail?.event] || displayText(mail?.event);
   const values = [
     ["店铺", mail?.connection?.shop?.name], ["订单号", mail?.orderId], ["邮件类型", event],
@@ -7019,13 +7024,17 @@ function renderRakutenManualMailStage(item, emptyText) {
   if (!item) return `<span class="muted">${escapeHtml(emptyText)}</span>`;
   const key = rakutenManualAutomationKey(item);
   const status = String(item?.status || "");
-  const statusLabel = RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status);
+  const statusLabel = rakutenMailStatusLabel(item);
   const note = String(item?.blockedReason || item?.lastError || "").trim();
   const sentAt = status === "sent" && item?.sentAt ? formatDate(item.sentAt) : "";
+  const ignoreAction = status === "pending"
+    ? `<button type="button" class="tiny-btn ghost" data-action="ignoreRakutenManualMail" data-id="${escapeHtml(item.id)}">忽略</button>`
+    : "";
   const sendAction = item?.executable === true
     ? `<div class="rakuten-manual-mail-stage-actions">
         <label><input type="checkbox" data-action="selectRakutenManualAutomation" data-key="${escapeHtml(key)}" ${state.rakutenManualAutomationSelected.has(key) ? "checked" : ""} /> 选择</label>
         <button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">${status === "failed" ? "重试" : "发送"}</button>
+        ${ignoreAction}
       </div>`
     : "";
   const recoveryActions = status === "uncertain"
@@ -7037,7 +7046,7 @@ function renderRakutenManualMailStage(item, emptyText) {
     <span class="rakuten-manual-mail-status status-${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>
     ${sentAt ? `<small>${escapeHtml(sentAt)}</small>` : ""}
     ${note ? `<small class="muted">${escapeHtml(note)}</small>` : ""}
-    <div class="rakuten-manual-mail-stage-actions"><button type="button" class="tiny-btn ghost" data-action="viewRakutenManualMail" data-id="${escapeHtml(item.id)}">查看</button>${recoveryActions}</div>
+    <div class="rakuten-manual-mail-stage-actions"><button type="button" class="tiny-btn ghost" data-action="viewRakutenManualMail" data-id="${escapeHtml(item.id)}">查看</button>${recoveryActions}${item?.executable === true ? "" : ignoreAction}</div>
     ${sendAction}
   </div>`;
 }
@@ -16656,6 +16665,21 @@ function bindForms() {
         if (!await openActionConfirmModal(label, "确认处理", "确认")) return;
         const endpoint = action === "retryRakutenManualMail" ? "retry" : "mark-sent";
         await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(mailId)}/${endpoint}`, { method: "POST" }));
+        await loadRakutenManualAutomationActions("mail");
+        return;
+      }
+      if (action === "ignoreRakutenManualMail") {
+        const confirmed = await openActionConfirmModal(
+          "确认忽略这封待发送邮件吗？忽略后不会发送本邮件，并允许继续执行该订单的下一封邮件。",
+          "确认忽略邮件",
+          "确认忽略",
+        );
+        if (!confirmed) return;
+        await withBusyButton(button, "处理中...", () => request(
+          `/rakuten-rms-api/mails/${encodeURIComponent(mailId)}/ignore`,
+          { method: "POST" },
+        ));
+        showToast("邮件已忽略，后续邮件阶段可以继续处理");
         await loadRakutenManualAutomationActions("mail");
         return;
       }

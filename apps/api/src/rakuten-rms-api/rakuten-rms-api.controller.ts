@@ -273,4 +273,9 @@ export class RakutenRmsApiController {
   async markMailAsSent(@Param('id') id: string, @CurrentUser() user: AuthUser): Promise<unknown> {
     return this.automation.markMailAsSent(id, user.id);
   }
+
+  @Post('mails/:id/ignore')
+  async ignoreMail(@Param('id') id: string, @CurrentUser() user: AuthUser): Promise<unknown> {
+    return this.automation.ignoreMail(id, user.id);
+  }
 }
