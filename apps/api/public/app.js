@@ -212,6 +212,13 @@ const state = {
   rakutenManualMailTotalOrders: 0,
   rakutenManualMailTotalPages: 0,
   rakutenManualMailPreviewItem: null,
+  rakutenShippingScopedConnectionId: "",
+  rakutenShippingManagementItems: [],
+  rakutenShippingManagementStats: {},
+  rakutenShippingManagementLoading: false,
+  rakutenShippingManagementPage: 1,
+  rakutenShippingManagementPageSize: 30,
+  rakutenShippingManagementTotal: 0,
   skuEditRequests: [],
   skuEditRequestsPage: 1,
   skuEditRequestsPageSize: 30,
@@ -6303,7 +6310,8 @@ function renderShopsTable() {
           <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           ${platform === "rakuten"
             ? rakutenConnection
-              ? `<button class="tiny-btn ghost" data-action="manageRakutenMail" data-id="${escapeHtml(item.id)}">邮件管理${mailAttentionCount > 0 ? `<span class="shop-mail-badge" aria-label="${mailAttentionCount}项需要处理">${formatOverviewNumber(mailAttentionCount)}</span>` : ""}</button>`
+              ? `<button class="tiny-btn ghost" data-action="manageRakutenMail" data-id="${escapeHtml(item.id)}">邮件管理${mailAttentionCount > 0 ? `<span class="shop-mail-badge" aria-label="${mailAttentionCount}项需要处理">${formatOverviewNumber(mailAttentionCount)}</span>` : ""}</button>
+                 <button class="tiny-btn ghost" data-action="manageRakutenShipping" data-id="${escapeHtml(item.id)}">回传单号管理</button>`
               : `<button class="tiny-btn ghost" data-action="rakutenRmsApi" data-id="${escapeHtml(item.id)}">请先连接</button>`
             : ""}
           <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
@@ -6374,6 +6382,25 @@ async function openRakutenMailManagementForShop(shopIdRaw) {
     loadRakutenAutomationRuns(),
   ]);
   requestAnimationFrame(() => window.scrollTo({ top: scrollTop, behavior: "auto" }));
+}
+
+async function openRakutenShippingManagementForShop(shopIdRaw) {
+  const shopId = String(shopIdRaw || "").trim();
+  if (!shopId) throw new Error("店铺不存在");
+  await loadRakutenRmsConnections();
+  const connection = state.rakutenRmsConnections.find(
+    (item) => String(item?.shop?.id || "") === shopId,
+  );
+  if (!connection) throw new Error("请先为该店铺建立乐天 RMS API连接");
+  state.rakutenShippingScopedConnectionId = String(connection.id || "");
+  state.rakutenShippingManagementItems = [];
+  state.rakutenShippingManagementStats = {};
+  state.rakutenShippingManagementPage = 1;
+  setTextById("rakutenShippingManagementTitle", `${connection?.shop?.name || "乐天店铺"} / 回传单号管理`);
+  setTextById("rakutenShippingShopContext", `当前管理店铺：${connection?.shop?.name || "乐天店铺"}`);
+  closeModal("shopManageModal");
+  switchPanel("rakutenShippingManagement");
+  await loadRakutenShippingManagementActions();
 }
 
 function renderRakutenRmsSyncRuns() {
@@ -6700,9 +6727,6 @@ function renderRakutenMails() {
     const error = String(mail?.lastError || "").trim();
     const recipient = String(mail?.recipient || "").trim();
     const subject = String(mail?.subject || "").trim();
-    const canRetry = status === "failed" || status === "dead_letter" || status === "cancelled" || status === "uncertain";
-    const canCancel = status === "pending" || status === "failed" || status === "dead_letter" || status === "uncertain";
-    const canMarkSent = status === "uncertain";
     const nextAttempt = mail?.nextAttemptAt ? formatDate(mail.nextAttemptAt) : "-";
     return `<tr>
       <td data-label="创建时间">${escapeHtml(formatDate(mail?.createdAt))}</td>
@@ -6714,11 +6738,8 @@ function renderRakutenMails() {
       <td data-label="状态">${escapeHtml(rakutenMailStatusLabel(mail))}</td>
       <td data-label="尝试/下次">${formatOverviewNumber(mail?.attempts)} / ${escapeHtml(nextAttempt)}</td>
       <td data-label="错误" title="${escapeHtml(error)}">${escapeHtml(error || "-")}</td>
-      <td data-label="操作">
+      <td data-label="查看">
         <button type="button" class="tiny-btn ghost" data-action="viewRakutenMail" data-id="${escapeHtml(mail?.id)}">查看</button>
-        ${canRetry ? `<button type="button" class="tiny-btn" data-action="retryRakutenMail" data-id="${escapeHtml(mail?.id)}">${status === "uncertain" ? "确认重发" : status === "dead_letter" ? "处理后重试" : "重试"}</button>` : ""}
-        ${canMarkSent ? `<button type="button" class="tiny-btn" data-action="markRakutenMailSent" data-id="${escapeHtml(mail?.id)}">确认已发送</button>` : ""}
-        ${canCancel ? `<button type="button" class="tiny-btn danger" data-action="cancelRakutenMail" data-id="${escapeHtml(mail?.id)}">取消</button>` : ""}
       </td>
     </tr>`;
   }).join("") || '<tr><td colspan="10" class="muted">没有符合条件的邮件记录</td></tr>';
@@ -7188,7 +7209,7 @@ function renderRakutenManualAutomation() {
       <td>${escapeHtml(displayText(item?.actionLabel))}</td>
       <td>${escapeHtml(RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status))}</td>
       <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
-      <td>${executable ? `<button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">确认执行</button>` : '<span class="muted">请先处理异常</span>'}</td>
+      <td>${executable ? `<button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">${isShipping ? "回传" : "确认执行"}</button>` : '<span class="muted">请先处理异常</span>'}</td>
     </tr>`;
   }).join("") || '<tr><td colspan="8" class="muted">当前没有需要回传单号的任务。</td></tr>';
 }
@@ -7315,6 +7336,83 @@ async function executeRakutenManualAutomationItems(items, button, options = {}) 
     : `执行完成：邮件成功 ${totals.mailSent}、失败 ${totals.mailFailed}`,
   isShipping ? totals.shippingFailed > 0 : totals.mailFailed > 0);
   await loadRakutenManualAutomationActions();
+}
+
+function renderRakutenShippingManagement() {
+  const body = $("rakutenShippingManagementBody");
+  if (!body) return;
+  const items = Array.isArray(state.rakutenShippingManagementItems) ? state.rakutenShippingManagementItems : [];
+  const statsData = state.rakutenShippingManagementStats || {};
+  const stats = $("rakutenShippingManagementStats");
+  if (stats) {
+    stats.innerHTML = [
+      ["全部记录", Object.values(statsData).reduce((sum, count) => sum + Number(count || 0), 0)],
+      ["待处理", statsData.pending],
+      ["已回传", statsData.sent],
+      ["已跳过", statsData.skipped],
+      ["失败", statsData.failed],
+      ["需人工处理", statsData.dead_letter],
+    ].map(([label, count]) => `<div class="rakuten-mail-stat"><span class="muted">${escapeHtml(label)}</span><strong>${formatOverviewNumber(count || 0)}</strong></div>`).join("");
+  }
+  const totalPages = Math.max(1, Math.ceil(state.rakutenShippingManagementTotal / state.rakutenShippingManagementPageSize));
+  setTextById("rakutenShippingManagementPageSummary", `第 ${state.rakutenShippingManagementPage} / ${totalPages} 页，共 ${formatOverviewNumber(state.rakutenShippingManagementTotal)} 条`);
+  if ($("rakutenShippingManagementPrevBtn")) {
+    $("rakutenShippingManagementPrevBtn").disabled = state.rakutenShippingManagementLoading || state.rakutenShippingManagementPage <= 1;
+  }
+  if ($("rakutenShippingManagementNextBtn")) {
+    $("rakutenShippingManagementNextBtn").disabled = state.rakutenShippingManagementLoading || state.rakutenShippingManagementPage >= totalPages;
+  }
+  if (state.rakutenShippingManagementLoading) {
+    body.innerHTML = '<tr><td colspan="7" class="muted">正在读取单号回传记录，请稍候...</td></tr>';
+    return;
+  }
+  body.innerHTML = items.map((item) => {
+    const status = String(item?.status || "");
+    const fulfillmentLabels = { japan: "全日本发", china: "全中国发", mixed: "日中混发" };
+    const note = String(item?.lastError || (status === "sent" ? "回传成功" : status === "skipped" ? "已跳过回传" : "")).trim();
+    return `<tr>
+      <td>${escapeHtml(displayText(item?.orderId))}</td>
+      <td>${escapeHtml(fulfillmentLabels[item?.fulfillmentType] || displayText(item?.fulfillmentType))}</td>
+      <td>${escapeHtml(RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status))}</td>
+      <td>${formatOverviewNumber(item?.attempts || 0)}</td>
+      <td>${escapeHtml(item?.reportedAt ? formatDate(item.reportedAt) : "-")}</td>
+      <td>${escapeHtml(item?.updatedAt ? formatDate(item.updatedAt) : "-")}</td>
+      <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
+    </tr>`;
+  }).join("") || '<tr><td colspan="7" class="muted">暂无单号回传记录。</td></tr>';
+}
+
+async function loadRakutenShippingManagementActions({ reset = false } = {}) {
+  const connectionId = String(state.rakutenShippingScopedConnectionId || "").trim();
+  if (!connectionId) throw new Error("请先选择要管理的乐天店铺");
+  if (reset) state.rakutenShippingManagementPage = 1;
+  state.rakutenShippingManagementLoading = true;
+  renderRakutenShippingManagement();
+  try {
+    const params = new URLSearchParams({
+      connectionId,
+      page: String(state.rakutenShippingManagementPage),
+      pageSize: String(state.rakutenShippingManagementPageSize),
+    });
+    const orderId = String($("rakutenShippingManagementOrderFilter")?.value || "").trim();
+    const status = String($("rakutenShippingManagementStatusFilter")?.value || "").trim();
+    if (orderId) params.set("orderId", orderId);
+    if (status) params.set("status", status);
+    const result = await request(`/rakuten-rms-api/automation/shipping-reports?${params.toString()}`) || {};
+    if (state.rakutenShippingScopedConnectionId !== connectionId) return;
+    state.rakutenShippingManagementItems = Array.isArray(result.items) ? result.items : [];
+    state.rakutenShippingManagementStats = result.stats || {};
+    state.rakutenShippingManagementTotal = Number(result.total || 0);
+    setTextById(
+      "rakutenShippingManagementMeta",
+      `共保存 ${formatOverviewNumber(result.total || 0)} 条符合当前条件的回传记录。本页面不会执行回传操作。`,
+    );
+  } finally {
+    if (state.rakutenShippingScopedConnectionId === connectionId) {
+      state.rakutenShippingManagementLoading = false;
+      renderRakutenShippingManagement();
+    }
+  }
 }
 
 function getSelectedRakutenApiImportConnection() {
@@ -16750,6 +16848,54 @@ function bindForms() {
     }
   });
 
+  $("refreshRakutenShippingManagementBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "读取中...", loadRakutenShippingManagementActions);
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenShippingManagementFilterForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await loadRakutenShippingManagementActions({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("resetRakutenShippingManagementFiltersBtn")?.addEventListener("click", async () => {
+    if ($("rakutenShippingManagementOrderFilter")) $("rakutenShippingManagementOrderFilter").value = "";
+    if ($("rakutenShippingManagementStatusFilter")) $("rakutenShippingManagementStatusFilter").value = "";
+    try {
+      await loadRakutenShippingManagementActions({ reset: true });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenShippingManagementPrevBtn")?.addEventListener("click", async () => {
+    if (state.rakutenShippingManagementPage <= 1) return;
+    state.rakutenShippingManagementPage -= 1;
+    try {
+      await loadRakutenShippingManagementActions();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenShippingManagementNextBtn")?.addEventListener("click", async () => {
+    const totalPages = Math.max(1, Math.ceil(state.rakutenShippingManagementTotal / state.rakutenShippingManagementPageSize));
+    if (state.rakutenShippingManagementPage >= totalPages) return;
+    state.rakutenShippingManagementPage += 1;
+    try {
+      await loadRakutenShippingManagementActions();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("rakutenApiImportConnection")?.addEventListener("change", resetRakutenApiImportPreview);
 
   $("rakutenApiImportPreviewBtn")?.addEventListener("click", async (event) => {
@@ -17714,6 +17860,18 @@ function bindDelegates() {
       showToast(error.message, true);
     }
   });
+  $("backToRakutenShopManagementFromShippingBtn")?.addEventListener("click", async () => {
+    try {
+      state.shopManagePlatform = "rakuten";
+      state.shopEditingIds = new Set();
+      await Promise.all([
+        loadShops(), loadAmazonSpApiConnections(), loadRakutenRmsConnections(), loadRakutenShopAutomationHealth(),
+      ]);
+      openModal("shopManageModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
   $("refreshRakutenAutomationHealthBtn")?.addEventListener("click", async (event) => {
     try {
       await withBusyButton(event.currentTarget, "检查中...", loadRakutenAutomationHealth);
@@ -17977,59 +18135,12 @@ function bindDelegates() {
     }
   });
   $("rakutenMailManagementBody")?.addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-action]");
+    const button = event.target.closest('button[data-action="viewRakutenMail"]');
     if (!button) return;
     const id = String(button.dataset.id || "");
     if (!id) return;
-    const row = state.rakutenMails.find((mail) => String(mail?.id || "") === id);
-    const isUncertain = row?.status === "uncertain";
-    const isDeadLetter = row?.status === "dead_letter";
     try {
-      if (button.dataset.action === "viewRakutenMail") {
-        await openRakutenMailDetail(id);
-        return;
-      }
-      if (button.dataset.action === "retryRakutenMail") {
-        const ok = await openActionConfirmModal(
-          isUncertain
-            ? "该邮件可能已经送达。确认重发可能导致买家收到重复邮件，请先通过乐天记录或买家反馈核实。仍然确认重新发送吗？"
-            : isDeadLetter
-              ? "该邮件因不可自动恢复的错误或达到重试上限而停止。请确认已经修正收件地址、SMTP或模板等原因，再恢复自动发送。"
-              : "确认将该邮件恢复为待处理？自动任务会重新发送。",
-          isUncertain ? "确认重新发送" : isDeadLetter ? "确认问题已处理" : "确认重试邮件",
-          isUncertain ? "仍然重发" : isDeadLetter ? "已处理并重试" : "确认重试",
-        );
-        if (!ok) return;
-        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(id)}/retry`, { method: "POST" }));
-        showToast("邮件已恢复为待处理");
-        await Promise.all([loadRakutenMails(), loadRakutenAutomationHealth()]);
-        return;
-      }
-      if (button.dataset.action === "markRakutenMailSent") {
-        const ok = await openActionConfirmModal(
-          "仅在已经核实邮件已送达，或确认无需再次发送时执行。标记后该任务不会再自动发送。",
-          "确认邮件发送结果",
-          "确认已发送",
-        );
-        if (!ok) return;
-        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(id)}/mark-sent`, { method: "POST" }));
-        showToast("邮件已人工确认并标记为已发送");
-        await Promise.all([loadRakutenMails(), loadRakutenAutomationHealth()]);
-        return;
-      }
-      if (button.dataset.action === "cancelRakutenMail") {
-        const ok = await openActionConfirmModal(
-          isUncertain
-            ? "取消只会阻止系统再次发送，无法撤回可能已经送达的邮件。确认停止后续重发吗？"
-            : "确认取消该邮件？尚未发送的依赖邮件也会一并取消；已发送的邮件不会被撤回。",
-          "确认取消邮件",
-          "确认取消",
-        );
-        if (!ok) return;
-        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(id)}/cancel`, { method: "POST" }));
-        showToast("邮件任务已取消");
-        await Promise.all([loadRakutenMails(), loadRakutenAutomationHealth()]);
-      }
+      await openRakutenMailDetail(id);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -18300,6 +18411,8 @@ function bindDelegates() {
         openRakutenRmsConnectionModal(id);
       } else if (action === "manageRakutenMail") {
         await openRakutenMailManagementForShop(id);
+      } else if (action === "manageRakutenShipping") {
+        await openRakutenShippingManagementForShop(id);
       } else if (action === "editShop") {
         const input = $(`shopName-${id}`);
         if (!input) return;

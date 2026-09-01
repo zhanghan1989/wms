@@ -159,6 +159,17 @@ export class RakutenRmsApiController {
     return this.automation.listAutomationRuns({ connectionId, status, page, pageSize });
   }
 
+  @Get('automation/shipping-reports')
+  async listShippingReports(
+    @Query('connectionId') connectionId?: string,
+    @Query('status') status?: string,
+    @Query('orderId') orderId?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<unknown> {
+    return this.automation.listShippingReports({ connectionId, status, orderId, page, pageSize });
+  }
+
   @Post('automation/manual-actions/preview')
   async previewManualAutomationActions(
     @Body() payload: {

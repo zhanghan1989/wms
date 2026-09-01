@@ -2732,6 +2732,10 @@ td {
   font-size: 12px;
 }
 
+.rakuten-shipping-management-table-wrap table {
+  min-width: 1120px;
+}
+
 #rakutenApiImportPreviewBtn {
   background: var(--accent);
   border-color: #0b6a48;

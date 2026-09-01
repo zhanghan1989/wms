@@ -1165,6 +1165,50 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(result).toMatchObject({ total: 1, page: 2, pageSize: 10, items: [{ id: '301' }] });
   });
 
+  it('lists all shipment report outcomes as read-only shop history', async () => {
+    const prisma = {
+      rakutenOrderShippingReport: {
+        findMany: jest.fn().mockResolvedValue([{
+          id: 91n,
+          connectionId: 7n,
+          orderId: '421951-ORDER',
+          fulfillmentType: 'china',
+          status: RakutenAutomationStatus.sent,
+          attempts: 1,
+          reportedAt: new Date('2026-09-01T03:00:00Z'),
+          updatedAt: new Date('2026-09-01T03:00:00Z'),
+          connection: { id: 7n, shop: { id: 3n, name: '乐天店' } },
+        }]),
+        count: jest.fn().mockResolvedValue(1),
+        groupBy: jest.fn().mockResolvedValue([
+          { status: RakutenAutomationStatus.sent, _count: { _all: 8 } },
+          { status: RakutenAutomationStatus.failed, _count: { _all: 2 } },
+        ]),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+
+    const result = await scopedService.listShippingReports({
+      connectionId: '7', status: 'sent', orderId: '421951', page: '2', pageSize: '10',
+    }) as any;
+
+    expect(prisma.rakutenOrderShippingReport.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { connectionId: 7n, orderId: { contains: '421951' }, status: RakutenAutomationStatus.sent },
+      skip: 10,
+      take: 10,
+    }));
+    expect(prisma.rakutenOrderShippingReport.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: { connectionId: 7n, orderId: { contains: '421951' } },
+    }));
+    expect(result).toMatchObject({
+      total: 1,
+      page: 2,
+      pageSize: 10,
+      stats: { sent: 8, failed: 2 },
+      items: [{ id: '91', connectionId: '7', status: RakutenAutomationStatus.sent }],
+    });
+  });
+
   it('keeps scheduled shipping and mail automation paused by default', async () => {
     const scopedService = new RakutenRmsAutomationService({} as any, {} as any, {} as any);
     const runAutomation = jest.spyOn(scopedService, 'runAutomation');
@@ -1382,6 +1426,95 @@ describe('Rakuten RMS shipping and mail automation', () => {
         ] },
       }),
     }));
+  });
+
+  it('shows Japan shipments immediately but waits for customs clearance on China and mixed shipments', async () => {
+    const connection = {
+      id: 7n,
+      status: 1,
+      autoShippingEnabled: true,
+      mailNotificationsEnabled: false,
+      shippingCircuitOpenedAt: null,
+      shippingCircuitReason: null,
+      shop: { id: 3n, name: '乐天店' },
+    };
+    const makeReport = (id: bigint, orderId: string, fulfillmentType: string) => ({
+      id,
+      connectionId: 7n,
+      orderId,
+      fulfillmentType,
+      status: RakutenAutomationStatus.pending,
+      attempts: 0,
+      lastError: null,
+      nextAttemptAt: null,
+      createdAt: new Date('2026-09-01T00:00:00Z'),
+      connection,
+    });
+    const shippingReports = [
+      makeReport(91n, 'JAPAN', 'japan'),
+      makeReport(92n, 'CHINA-WAITING', 'china'),
+      makeReport(93n, 'MIXED-CLEARED', 'mixed'),
+    ];
+    const prisma = {
+      rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([connection]) },
+      rakutenOrderShippingReport: { findMany: jest.fn().mockResolvedValue(shippingReports) },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'prepareShippingReports').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'loadEligibleAutomationOrderKeys').mockResolvedValue(new Set([
+      '7:JAPAN', '7:CHINA-WAITING', '7:MIXED-CLEARED',
+    ]));
+    jest.spyOn(scopedService as any, 'loadOrderRows').mockImplementation(async (_connectionId, orderId) => {
+      if (orderId === 'JAPAN') return [{ dispatchMode: 'japan_stock' }];
+      if (orderId === 'CHINA-WAITING') {
+        return [{ dispatchMode: 'china_pending', trackingHasCustomsClearance: false }];
+      }
+      return [
+        { dispatchMode: 'japan_stock' },
+        { dispatchMode: 'china_pending', trackingHasCustomsClearance: true },
+      ];
+    });
+
+    const result = await scopedService.prepareManualActions({ kind: 'shipping', connectionId: '7' }) as any;
+
+    expect(prisma.rakutenRmsConnection.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 7n, autoShippingEnabled: true }),
+    }));
+    expect(result.items.map((item: any) => item.orderId)).toEqual(['JAPAN', 'MIXED-CLEARED']);
+  });
+
+  it('rejects a stale China shipment selection when customs clearance is no longer ready', async () => {
+    const connection = {
+      id: 7n,
+      status: 1,
+      autoShippingEnabled: true,
+      mailNotificationsEnabled: false,
+      shippingCircuitOpenedAt: null,
+      shop: { id: 3n, name: '乐天店' },
+    };
+    const shippingRow = {
+      id: 91n,
+      connectionId: 7n,
+      orderId: 'CHINA-WAITING',
+      fulfillmentType: 'china',
+      status: RakutenAutomationStatus.pending,
+      nextAttemptAt: null,
+      connection,
+    };
+    const prisma = {
+      rakutenOrderShippingReport: { findMany: jest.fn().mockResolvedValue([shippingRow]) },
+      rakutenOrderMail: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'loadEligibleAutomationOrderKeys').mockResolvedValue(new Set(['7:CHINA-WAITING']));
+    jest.spyOn(scopedService as any, 'loadOrderRows').mockResolvedValue([
+      { dispatchMode: 'china_pending', trackingHasCustomsClearance: false },
+    ]);
+
+    await expect(scopedService.executeManualActions([
+      { kind: 'shipping', id: '91' },
+    ])).rejects.toThrow('尚未取得通関許可');
   });
 
   it('limits manual shipment processing to the explicitly selected task ids', async () => {

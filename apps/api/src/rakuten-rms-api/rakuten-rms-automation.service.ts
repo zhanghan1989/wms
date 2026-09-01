@@ -86,6 +86,14 @@ interface AutomationRunListQuery {
   pageSize?: string;
 }
 
+interface ShippingReportListQuery {
+  connectionId?: string;
+  status?: string;
+  orderId?: string;
+  page?: string;
+  pageSize?: string;
+}
+
 interface FailureClassification {
   retryable: boolean;
   category: string;
@@ -917,6 +925,48 @@ export class RakutenRmsAutomationService {
     return this.serializeMail({ items, total, page, pageSize });
   }
 
+  async listShippingReports(query: ShippingReportListQuery): Promise<unknown> {
+    const page = this.parsePositiveInteger(query.page, 1, 1, 100_000);
+    const pageSize = this.parsePositiveInteger(query.pageSize, 30, 1, 100);
+    const connectionId = query.connectionId?.trim()
+      ? parseId(query.connectionId, 'connectionId')
+      : undefined;
+    const statusRaw = String(query.status || '').trim();
+    if (statusRaw && !Object.values(RakutenAutomationStatus).includes(statusRaw as RakutenAutomationStatus)) {
+      throw new BadRequestException('单号回传状态无效');
+    }
+    const baseWhere: Prisma.RakutenOrderShippingReportWhereInput = {
+      ...(connectionId ? { connectionId } : {}),
+      ...(query.orderId?.trim() ? { orderId: { contains: query.orderId.trim() } } : {}),
+    };
+    const where: Prisma.RakutenOrderShippingReportWhereInput = {
+      ...baseWhere,
+      ...(statusRaw ? { status: statusRaw as RakutenAutomationStatus } : {}),
+    };
+    const [items, total, statusCounts] = await Promise.all([
+      this.prisma.rakutenOrderShippingReport.findMany({
+        where,
+        orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
+      }),
+      this.prisma.rakutenOrderShippingReport.count({ where }),
+      this.prisma.rakutenOrderShippingReport.groupBy({
+        by: ['status'],
+        where: baseWhere,
+        _count: { _all: true },
+      }),
+    ]);
+    return this.serializeMail({
+      items,
+      total,
+      page,
+      pageSize,
+      stats: Object.fromEntries(statusCounts.map((row) => [row.status, row._count._all])),
+    });
+  }
+
   async prepareManualActions(input: ManualAutomationPreviewQuery | string = {}): Promise<unknown> {
     const query = typeof input === 'string' ? { kind: input } : (input ?? {});
     const kind = String(query.kind || '').trim();
@@ -1052,8 +1102,14 @@ export class RakutenRmsAutomationService {
       ...shippingRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
       ...mailRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
     ]);
-    const eligibleShippingRows = shippingRows.filter((row) =>
-      eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
+    const eligibleShippingRowsWithOrders = await Promise.all(
+      shippingRows
+        .filter((row) => eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)))
+        .map(async (row) => ({ row, orderRows: await this.loadOrderRows(row.connectionId, row.orderId) })),
+    );
+    const eligibleShippingRows = eligibleShippingRowsWithOrders
+      .filter(({ row, orderRows }) => this.isShippingCustomsReady(orderRows, row.fulfillmentType as FulfillmentType))
+      .map(({ row }) => row);
     const eligibleMailRows = mailRows.filter((row) =>
       eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
     const items: Array<Record<string, unknown>> = [];
@@ -1276,6 +1332,10 @@ export class RakutenRmsAutomationService {
       }
       if ((row.status !== RakutenAutomationStatus.pending && row.status !== RakutenAutomationStatus.failed) || (row.nextAttemptAt && row.nextAttemptAt > now)) {
         throw new BadRequestException(`订单 ${row.orderId} 的单号回传状态已变化，请刷新清单`);
+      }
+      const orderRows = await this.loadOrderRows(row.connectionId, row.orderId);
+      if (!this.isShippingCustomsReady(orderRows, row.fulfillmentType as FulfillmentType | undefined)) {
+        throw new BadRequestException(`订单 ${row.orderId} 尚未取得通関許可，当前不能回传单号`);
       }
     }
     for (const row of mailRows) {
@@ -1905,6 +1965,7 @@ export class RakutenRmsAutomationService {
       if (existing) continue;
       const rows = await this.loadOrderRows(connection.id, orderId);
       const fulfillmentType = this.resolveFulfillmentType(rows);
+      if (!this.isShippingCustomsReady(rows, fulfillmentType)) continue;
       const reportRows = fulfillmentType === 'china' ? rows.filter((row) => this.isChina(row)) : rows.filter((row) => !this.isChina(row));
       const baskets = this.buildShippingBaskets(reportRows, false);
       if (!this.allBasketsReady(reportRows, baskets)) continue;
@@ -1955,6 +2016,9 @@ export class RakutenRmsAutomationService {
           continue;
         }
         const fulfillmentType = report.fulfillmentType as FulfillmentType;
+        if (!this.isShippingCustomsReady(orderRows, fulfillmentType)) {
+          throw new Error('中国发或日中混发订单尚未取得通関許可');
+        }
         const selectedRows = fulfillmentType === 'china'
           ? orderRows.filter((row) => this.isChina(row))
           : orderRows.filter((row) => !this.isChina(row));
@@ -2778,6 +2842,15 @@ export class RakutenRmsAutomationService {
     const hasChina = rows.some((row) => this.isChina(row));
     const hasJapan = rows.some((row) => !this.isChina(row));
     return hasChina && hasJapan ? 'mixed' : hasChina ? 'china' : 'japan';
+  }
+
+  private isShippingCustomsReady(
+    rows: RakutenOrderRecord[],
+    fulfillmentType: FulfillmentType = this.resolveFulfillmentType(rows),
+  ): boolean {
+    if (fulfillmentType === 'japan') return true;
+    const chinaRows = rows.filter((row) => this.isChina(row));
+    return chinaRows.length > 0 && chinaRows.every((row) => row.trackingHasCustomsClearance === true);
   }
 
   private isChina(row: Pick<RakutenOrderRecord, 'dispatchMode'>): boolean {

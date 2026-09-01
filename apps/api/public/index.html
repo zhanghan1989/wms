@@ -1980,11 +1980,70 @@
         </article>
       </section>
 
+      <section class="panel" id="rakutenShippingManagement">
+        <div class="panel-head">
+          <div>
+            <h2 id="rakutenShippingManagementTitle">乐天回传单号管理</h2>
+            <p class="muted">查看该店铺全部单号回传任务及处理结果。本页面仅用于记录追溯，实际回传请在订单管理的“单号回传”弹框中操作。</p>
+          </div>
+          <div class="action-row">
+            <button id="backToRakutenShopManagementFromShippingBtn" type="button" class="ghost">返回店铺管理</button>
+            <button id="refreshRakutenShippingManagementBtn" type="button" class="ghost">刷新</button>
+          </div>
+        </div>
+        <div id="rakutenShippingShopContext" class="rakuten-mail-shop-context">当前管理店铺：-</div>
+        <div id="rakutenShippingManagementMeta" class="muted">正在读取单号回传记录...</div>
+        <div id="rakutenShippingManagementStats" class="rakuten-mail-stats"></div>
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>回传操作记录</h3>
+              <p class="muted">包括待处理、处理中、成功、跳过、失败及需人工处理的历史任务。</p>
+            </div>
+          </div>
+          <form id="rakutenShippingManagementFilterForm" class="form-grid compact rakuten-mail-filters">
+            <label>订单号<input id="rakutenShippingManagementOrderFilter" placeholder="输入订单号" /></label>
+            <label>状态
+              <select id="rakutenShippingManagementStatusFilter">
+                <option value="">全部状态</option>
+                <option value="pending">待处理</option>
+                <option value="processing">处理中</option>
+                <option value="sent">已回传</option>
+                <option value="failed">失败</option>
+                <option value="skipped">已跳过</option>
+                <option value="dead_letter">需人工处理</option>
+              </select>
+            </label>
+            <div class="actions">
+              <button type="submit">检索</button>
+              <button id="resetRakutenShippingManagementFiltersBtn" type="button" class="ghost">重置</button>
+            </div>
+          </form>
+          <div class="master-product-table-wrap rakuten-shipping-management-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>订单号</th><th>发货类型</th><th>状态</th><th>执行次数</th><th>回传时间</th><th>最后更新时间</th><th>结果说明</th>
+                </tr>
+              </thead>
+              <tbody id="rakutenShippingManagementBody">
+                <tr><td colspan="7" class="muted">正在读取单号回传记录...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="rakuten-mail-pagination">
+            <button id="rakutenShippingManagementPrevBtn" type="button" class="ghost">上一页</button>
+            <span id="rakutenShippingManagementPageSummary" class="muted">第 1 页</span>
+            <button id="rakutenShippingManagementNextBtn" type="button" class="ghost">下一页</button>
+          </div>
+        </article>
+      </section>
+
       <section class="panel" id="rakutenMailManagement">
         <div class="panel-head">
           <div>
             <h2 id="rakutenMailManagementTitle">乐天邮件管理</h2>
-            <p class="muted">查看乐天匿名邮件的待发送、成功、失败及取消记录。已发送邮件仅供追溯，无法撤回。</p>
+            <p class="muted">查看乐天匿名邮件的待发送、成功、失败及取消记录。下方邮件一览仅供查看追溯，实际发送请在订单管理的“邮件发送”弹框中操作。</p>
           </div>
           <div class="action-row">
             <button id="backToRakutenShopManagementBtn" type="button" class="ghost">返回店铺管理</button>
@@ -2146,7 +2205,7 @@
               <thead>
                 <tr>
                   <th>创建时间</th><th>店铺</th><th>订单号</th><th>邮件类型</th><th>收件人</th>
-                  <th>标题</th><th>状态</th><th>尝试/下次</th><th>错误</th><th>操作</th>
+                  <th>标题</th><th>状态</th><th>尝试/下次</th><th>错误</th><th>查看</th>
                 </tr>
               </thead>
               <tbody id="rakutenMailManagementBody">
