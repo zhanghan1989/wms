@@ -192,6 +192,14 @@ export class RakutenRmsApiController {
     return this.automation.executeManualActions(payload?.items ?? []);
   }
 
+  @Post('automation/manual-actions/shipping/:id/ignore')
+  async ignoreManualShippingAction(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    return this.automation.ignoreShippingReport(id, user.id);
+  }
+
   @Post('automation/manual-actions/mails/:id/preview')
   async previewManualMailAction(
     @Param('id') id: string,

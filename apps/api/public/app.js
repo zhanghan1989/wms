@@ -6466,6 +6466,11 @@ function rakutenMailStatusLabel(mail) {
   return RAKUTEN_MAIL_STATUS_LABELS[String(mail?.status || "")] || displayText(mail?.status);
 }
 
+function rakutenShippingStatusLabel(report) {
+  if (report?.status === "skipped" && report?.lastError === "用户人工忽略单号回传") return "已忽略";
+  return RAKUTEN_MAIL_STATUS_LABELS[String(report?.status || "")] || displayText(report?.status);
+}
+
 const RAKUTEN_FAILURE_CATEGORY_LABELS = {
   authentication: "认证或授权错误",
   recipient: "收件地址错误",
@@ -7207,9 +7212,9 @@ function renderRakutenManualAutomation() {
       <td>${escapeHtml(displayText(item?.orderId))}</td>
       <td>${escapeHtml(kindLabel)}</td>
       <td>${escapeHtml(displayText(item?.actionLabel))}</td>
-      <td>${escapeHtml(RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status))}</td>
+      <td>${escapeHtml(rakutenShippingStatusLabel(item))}</td>
       <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
-      <td>${executable ? `<button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">${isShipping ? "回传" : "确认执行"}</button>` : '<span class="muted">请先处理异常</span>'}</td>
+      <td>${executable ? `<div class="action-row"><button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">回传</button><button type="button" class="tiny-btn ghost" data-action="ignoreRakutenManualShipping" data-id="${escapeHtml(item.id)}">忽略</button></div>` : '<span class="muted">请先处理异常</span>'}</td>
     </tr>`;
   }).join("") || '<tr><td colspan="8" class="muted">当前没有需要回传单号的任务。</td></tr>';
 }
@@ -7373,7 +7378,7 @@ function renderRakutenShippingManagement() {
     return `<tr>
       <td>${escapeHtml(displayText(item?.orderId))}</td>
       <td>${escapeHtml(fulfillmentLabels[item?.fulfillmentType] || displayText(item?.fulfillmentType))}</td>
-      <td>${escapeHtml(RAKUTEN_MAIL_STATUS_LABELS[status] || displayText(status))}</td>
+      <td>${escapeHtml(rakutenShippingStatusLabel(item))}</td>
       <td>${formatOverviewNumber(item?.attempts || 0)}</td>
       <td>${escapeHtml(item?.reportedAt ? formatDate(item.reportedAt) : "-")}</td>
       <td>${escapeHtml(item?.updatedAt ? formatDate(item.updatedAt) : "-")}</td>
@@ -16755,6 +16760,21 @@ function bindForms() {
     const action = String(button.dataset.action || "");
     const mailId = String(button.dataset.id || "");
     try {
+      if (action === "ignoreRakutenManualShipping") {
+        const confirmed = await openActionConfirmModal(
+          "确认忽略这个单号回传任务吗？请仅在已经人工回传单号，或确认无需由系统回传时执行。忽略后任务会从当前清单移除，并保留在回传记录中。",
+          "确认忽略单号回传",
+          "确认忽略",
+        );
+        if (!confirmed) return;
+        await withBusyButton(button, "处理中...", () => request(
+          `/rakuten-rms-api/automation/manual-actions/shipping/${encodeURIComponent(mailId)}/ignore`,
+          { method: "POST", body: "{}" },
+        ));
+        showToast("单号回传任务已忽略");
+        await loadRakutenManualAutomationActions("shipping");
+        return;
+      }
       if (action === "viewRakutenManualMail") {
         await openRakutenMailDetail(mailId);
         return;

@@ -46,6 +46,7 @@ export const AuditEventType = {
   RAKUTEN_MAIL_TEMPLATE_SAVED: 'rakuten_mail_template_saved',
   RAKUTEN_MAIL_TEMPLATE_ACTIVATED: 'rakuten_mail_template_activated',
   RAKUTEN_SHIPPING_RETRIED: 'rakuten_shipping_retried',
+  RAKUTEN_SHIPPING_IGNORED: 'rakuten_shipping_ignored',
   RAKUTEN_AUTOMATION_CIRCUIT_RESET: 'rakuten_automation_circuit_reset',
 } as const;
 

@@ -31,6 +31,7 @@ const AUTOMATION_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
 const CHINA_MODES = new Set(['china_pending', 'china_no_stock']);
 const MANUALLY_IGNORED_MAIL_NOTE = '用户人工忽略邮件';
+const MANUALLY_IGNORED_SHIPPING_NOTE = '用户人工忽略单号回传';
 // 2026-09-01 00:00:00 Asia/Tokyo. Automation applies only to orders first imported after this instant.
 const AUTOMATION_ORDER_IMPORT_CUTOFF = new Date('2026-08-31T15:00:00.000Z');
 
@@ -718,6 +719,37 @@ export class RakutenRmsAutomationService {
       beforeData: { status: mail.status },
       afterData: { status: RakutenAutomationStatus.cancelled, resolutionNote: MANUALLY_IGNORED_MAIL_NOTE },
       remark: '用户人工忽略邮件并允许继续后续邮件阶段',
+    });
+    return { ignored: true };
+  }
+
+  async ignoreShippingReport(idRaw: string, userId: bigint): Promise<{ ignored: boolean }> {
+    const id = parseId(idRaw, 'shippingReportId');
+    const report = await this.prisma.rakutenOrderShippingReport.findUnique({ where: { id } });
+    if (!report) throw new NotFoundException('单号回传任务不存在');
+    const result = await this.prisma.rakutenOrderShippingReport.updateMany({
+      where: {
+        id,
+        status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
+      },
+      data: {
+        status: RakutenAutomationStatus.skipped,
+        nextAttemptAt: null,
+        lastError: MANUALLY_IGNORED_SHIPPING_NOTE,
+        failureCategory: null,
+        deadLetteredAt: null,
+      },
+    });
+    if (result.count !== 1) throw new BadRequestException('只有待回传或失败的单号回传任务可以忽略，请刷新清单');
+    await this.createAudit({
+      entityType: 'rakuten_shipping_report',
+      entityId: id,
+      action: AuditAction.update,
+      eventType: AuditEventType.RAKUTEN_SHIPPING_IGNORED,
+      operatorId: userId,
+      beforeData: { status: report.status },
+      afterData: { status: RakutenAutomationStatus.skipped, reason: MANUALLY_IGNORED_SHIPPING_NOTE },
+      remark: '用户确认由人工回传或无需系统回传，忽略单号回传任务',
     });
     return { ignored: true };
   }

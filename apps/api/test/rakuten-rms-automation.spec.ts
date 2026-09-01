@@ -778,6 +778,36 @@ describe('Rakuten RMS shipping and mail automation', () => {
     })).toBe(false);
   });
 
+  it('marks a pending or failed shipment report as manually ignored', async () => {
+    const prisma = {
+      rakutenOrderShippingReport: {
+        findUnique: jest.fn().mockResolvedValue({ id: 84n, status: RakutenAutomationStatus.failed }),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    } as any;
+    const audit = { create: jest.fn().mockResolvedValue(undefined) } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any, audit);
+
+    await expect(scopedService.ignoreShippingReport('84', 9n)).resolves.toEqual({ ignored: true });
+
+    expect(prisma.rakutenOrderShippingReport.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 84n,
+        status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
+      },
+      data: expect.objectContaining({
+        status: RakutenAutomationStatus.skipped,
+        lastError: '用户人工忽略单号回传',
+        nextAttemptAt: null,
+      }),
+    });
+    expect(audit.create).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 84n,
+      eventType: 'rakuten_shipping_ignored',
+      operatorId: 9n,
+    }));
+  });
+
   it('reports a critical shop health state for uncertain mail and failed shipping', async () => {
     const connection = {
       id: 7n,

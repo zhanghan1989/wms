@@ -146,6 +146,7 @@ enum AuditEventType {
   rakuten_mail_template_saved
   rakuten_mail_template_activated
   rakuten_shipping_retried
+  rakuten_shipping_ignored
   rakuten_automation_circuit_reset
 }
 
