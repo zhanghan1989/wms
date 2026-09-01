@@ -393,6 +393,7 @@ export class RakutenRmsApiService {
     const serviceSecret = this.crypto.encrypt(payload.serviceSecret.trim());
     const licenseKey = this.crypto.encrypt(payload.licenseKey.trim());
     const smtpPassword = payload.smtpAuthPassword ? this.crypto.encrypt(payload.smtpAuthPassword) : null;
+    const smtpBccAddresses = this.normalizeEmailAddressList(payload.smtpBccAddresses);
     const created = await this.prisma.rakutenRmsConnection.create({
       data: {
         shopId,
@@ -412,6 +413,7 @@ export class RakutenRmsApiService {
           : {}),
         smtpFromAddress: this.optionalText(payload.smtpFromAddress),
         smtpFromName: this.optionalText(payload.smtpFromName),
+        smtpBccAddresses,
         mailNotificationsEnabled: payload.mailNotificationsEnabled ?? false,
         autoShippingEnabled: payload.autoShippingEnabled ?? false,
         licenseExpiresAt: this.parseOptionalDate(payload.licenseExpiresAt),
@@ -440,6 +442,9 @@ export class RakutenRmsApiService {
     const serviceSecret = payload.serviceSecret ? this.crypto.encrypt(payload.serviceSecret.trim()) : null;
     const licenseKey = payload.licenseKey ? this.crypto.encrypt(payload.licenseKey.trim()) : null;
     const smtpPassword = payload.smtpAuthPassword ? this.crypto.encrypt(payload.smtpAuthPassword) : null;
+    const smtpBccAddresses = payload.smtpBccAddresses !== undefined
+      ? this.normalizeEmailAddressList(payload.smtpBccAddresses)
+      : undefined;
     const updated = await this.prisma.rakutenRmsConnection.update({
       where: { id },
       data: {
@@ -473,7 +478,8 @@ export class RakutenRmsApiService {
           ? { smtpFromAddress: this.optionalText(payload.smtpFromAddress) }
           : {}),
         ...(payload.smtpFromName !== undefined ? { smtpFromName: this.optionalText(payload.smtpFromName) } : {}),
-        ...(payload.smtpAuthId !== undefined || smtpPassword || payload.smtpFromAddress !== undefined
+        ...(smtpBccAddresses !== undefined ? { smtpBccAddresses } : {}),
+        ...(payload.smtpAuthId !== undefined || smtpPassword || payload.smtpFromAddress !== undefined || smtpBccAddresses !== undefined
           ? { mailCircuitOpenedAt: null, mailCircuitReason: null }
           : {}),
         ...(payload.mailNotificationsEnabled !== undefined
@@ -1760,6 +1766,7 @@ export class RakutenRmsApiService {
       smtpPasswordConfigured: Boolean(row.encryptedSmtpPassword),
       smtpFromAddress: row.smtpFromAddress,
       smtpFromName: row.smtpFromName,
+      smtpBccAddresses: row.smtpBccAddresses,
       mailNotificationsEnabled: row.mailNotificationsEnabled,
       autoShippingEnabled: row.autoShippingEnabled,
       licenseExpiresAt: row.licenseExpiresAt?.toISOString() ?? null,
@@ -1847,6 +1854,20 @@ export class RakutenRmsApiService {
   private optionalText(value: string | undefined): string | null {
     const text = String(value ?? '').trim();
     return text || null;
+  }
+
+  private normalizeEmailAddressList(value: string | undefined): string | null {
+    const addresses = Array.from(new Set(String(value ?? '')
+      .split(/[\s,;]+/)
+      .map((address) => address.trim().toLowerCase())
+      .filter(Boolean)));
+    if (addresses.length > 20) throw new BadRequestException('BCC邮箱最多填写20个');
+    const invalid = addresses.find((address) =>
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address));
+    if (invalid) throw new BadRequestException(`BCC邮箱格式无效：${invalid}`);
+    const normalized = addresses.join(', ');
+    if (normalized.length > 1000) throw new BadRequestException('BCC邮箱总长度不能超过1000个字符');
+    return normalized || null;
   }
 
   private parseOptionalDate(value: string | undefined): Date | null {

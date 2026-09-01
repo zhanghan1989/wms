@@ -217,6 +217,7 @@ export class RakutenRmsAutomationService {
         host: SMTP_HOST,
         port: SMTP_PORT,
         fromAddress: smtp.fromAddress,
+        bccAddresses: smtp.bccAddresses,
         testedAt: new Date().toISOString(),
       };
     } finally {
@@ -470,7 +471,11 @@ export class RakutenRmsAutomationService {
     const id = parseId(idRaw, 'mailId');
     const mail = await this.prisma.rakutenOrderMail.findUnique({
       where: { id },
-      include: { connection: { select: { id: true, shop: { select: { id: true, name: true } } } } },
+      include: {
+        connection: {
+          select: { id: true, smtpBccAddresses: true, shop: { select: { id: true, name: true } } },
+        },
+      },
     });
     if (!mail) throw new NotFoundException('邮件任务不存在');
     let subject = mail.subject;
@@ -486,7 +491,8 @@ export class RakutenRmsAutomationService {
         previewError = this.errorMessage(error);
       }
     }
-    return { ...this.serializeMail(mail), subject, body, previewError };
+    const bccRecipients = mail.bccRecipients ?? mail.connection.smtpBccAddresses;
+    return { ...this.serializeMail(mail), subject, body, bccRecipients, previewError };
   }
 
   async retryMail(idRaw: string, userId: bigint): Promise<{ retried: boolean; dependentMailsRetried: number }> {
@@ -1219,6 +1225,7 @@ export class RakutenRmsAutomationService {
       recipient,
       fromAddress: smtp.fromAddress,
       fromName: smtp.fromName,
+      bccAddresses: smtp.bccAddresses,
       templateVersion: template.version,
       subject: rendered.subject,
       body: rendered.body,
@@ -2209,6 +2216,7 @@ export class RakutenRmsAutomationService {
         const recipient = this.resolveRecipient(rows);
         if (!recipient) throw new Error('乐天订单没有返回可用的买家匿名邮箱');
         const smtp = this.decryptSmtpCredentials(mail.connection);
+        const bccAddresses = smtp.bccAddresses ?? [];
         const expectedTemplateVersion = expectedTemplateVersions?.get(mail.id.toString());
         const rendered = expectedTemplateVersion
           ? await this.renderMailTemplateVersion(mail.connectionId, mail.event, expectedTemplateVersion, rows)
@@ -2219,6 +2227,7 @@ export class RakutenRmsAutomationService {
           where: { id: mail.id },
           data: {
             recipient,
+            bccRecipients: bccAddresses.join(', ') || null,
             subject: rendered.subject,
             body: rendered.body,
             smtpMessageId,
@@ -2231,6 +2240,7 @@ export class RakutenRmsAutomationService {
           const info = await transport.sendMail({
             from: { address: smtp.fromAddress, name: smtp.fromName },
             to: recipient,
+            ...(bccAddresses.length ? { bcc: bccAddresses } : {}),
             subject: rendered.subject,
             text: rendered.body,
             messageId: smtpMessageId,
@@ -2850,7 +2860,7 @@ export class RakutenRmsAutomationService {
   }
 
   private decryptSmtpCredentials(connection: RakutenRmsConnection): {
-    authId: string; password: string; fromAddress: string; fromName: string;
+    authId: string; password: string; fromAddress: string; fromName: string; bccAddresses: string[];
   } {
     const authId = String(connection.smtpAuthId ?? '').trim();
     const fromAddress = String(connection.smtpFromAddress ?? '').trim();
@@ -2862,11 +2872,12 @@ export class RakutenRmsAutomationService {
       password: this.crypto.decrypt(connection.encryptedSmtpPassword, connection.smtpPasswordIv, connection.smtpPasswordAuthTag),
       fromAddress,
       fromName: String(connection.smtpFromName ?? '').trim() || 'DGAZ楽天市場店',
+      bccAddresses: String(connection.smtpBccAddresses ?? '').split(',').map((address) => address.trim()).filter(Boolean),
     };
   }
 
   private createSmtpTransport(smtp: {
-    authId: string; password: string; fromAddress: string; fromName: string;
+    authId: string; password: string; fromAddress: string; fromName: string; bccAddresses: string[];
   }) {
     return createTransport({
       host: SMTP_HOST,

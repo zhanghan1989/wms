@@ -64,6 +64,20 @@ describe("Rakuten RMS API integration", () => {
     expect(crypto.decrypt(encrypted.encryptedValue, encrypted.iv, encrypted.authTag)).toBe("SL421951_license-key");
   });
 
+  it("normalizes and validates multiple shop BCC addresses", () => {
+    const service = new RakutenRmsApiService(
+      {} as PrismaService,
+      {} as RakutenRmsApiClient,
+      {} as RakutenRmsApiCryptoService,
+    );
+
+    expect((service as any).normalizeEmailAddressList(
+      " Archive@Example.jp; audit@example.jp\narchive@example.jp ",
+    )).toBe("archive@example.jp, audit@example.jp");
+    expect(() => (service as any).normalizeEmailAddressList("not-an-email"))
+      .toThrow("BCC邮箱格式无效");
+  });
+
   it("rejects an RMS connection for an Amazon shop", async () => {
     const prisma = {
       shop: {

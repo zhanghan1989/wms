@@ -6770,7 +6770,7 @@ function renderRakutenMailDetail(mail) {
   const event = RAKUTEN_MAIL_EVENT_LABELS[mail?.event] || displayText(mail?.event);
   const values = [
     ["店铺", mail?.connection?.shop?.name], ["订单号", mail?.orderId], ["邮件类型", event],
-    ["状态", status], ["收件人", mail?.recipient], ["标题", mail?.subject],
+    ["状态", status], ["收件人", mail?.recipient], ["BCC内部密送", mail?.bccRecipients], ["标题", mail?.subject],
     ["创建时间", formatDate(mail?.createdAt)], ["发送时间", formatDate(mail?.sentAt)],
     ["尝试次数", mail?.attempts], ["失败分类", RAKUTEN_FAILURE_CATEGORY_LABELS[mail?.failureCategory] || mail?.failureCategory],
     ["转人工时间", formatDate(mail?.deadLetteredAt)], ["SMTP Message-ID", mail?.smtpMessageId],
@@ -7265,7 +7265,7 @@ async function previewRakutenManualMailAction(item, button) {
   state.rakutenManualMailPreviewItem = item;
   setTextById(
     "rakutenManualMailPreviewMeta",
-    `店铺：${preview.shopName || "-"} / 订单：${preview.orderId || "-"} / 收件人：${preview.recipient || "-"} / 发件人：${preview.fromName || "-"} <${preview.fromAddress || "-"}> / 模板版本：v${preview.templateVersion || "-"}`,
+    `店铺：${preview.shopName || "-"} / 订单：${preview.orderId || "-"} / 收件人：${preview.recipient || "-"} / BCC：${Array.isArray(preview.bccAddresses) && preview.bccAddresses.length ? preview.bccAddresses.join(", ") : "未设置"} / 发件人：${preview.fromName || "-"} <${preview.fromAddress || "-"}> / 模板版本：v${preview.templateVersion || "-"}`,
   );
   const subject = $("rakutenManualMailPreviewSubject");
   const body = $("rakutenManualMailPreviewBody");
@@ -7431,6 +7431,7 @@ function openRakutenRmsConnectionModal(shopId) {
   $("rakutenRmsSmtpAuthPassword").value = "";
   $("rakutenRmsSmtpFromAddress").value = connection?.smtpFromAddress || "dgaz@createbetter.co.jp";
   $("rakutenRmsSmtpFromName").value = connection?.smtpFromName || "DGAZ楽天市場店";
+  $("rakutenRmsSmtpBccAddresses").value = connection?.smtpBccAddresses || "";
   $("rakutenRmsStatus").value = String(connection?.status ?? 1);
   $("rakutenRmsSyncOrders").checked = connection?.syncOrders !== false;
   $("rakutenRmsAutoShippingEnabled").checked = connection?.autoShippingEnabled === true;
@@ -18391,6 +18392,7 @@ function bindDelegates() {
     const smtpAuthPassword = String($("rakutenRmsSmtpAuthPassword").value || "");
     const smtpFromAddress = String($("rakutenRmsSmtpFromAddress").value || "").trim();
     const smtpFromName = String($("rakutenRmsSmtpFromName").value || "").trim();
+    const smtpBccAddresses = String($("rakutenRmsSmtpBccAddresses").value || "").trim();
     if (!connectionId && (!serviceSecret || !licenseKey)) {
       showToast("新建乐天连接时必须填写 serviceSecret 和 licenseKey", true);
       return;
@@ -18404,6 +18406,7 @@ function bindDelegates() {
       ...(smtpAuthPassword ? { smtpAuthPassword } : {}),
       ...(smtpFromAddress ? { smtpFromAddress } : {}),
       ...(smtpFromName ? { smtpFromName } : {}),
+      smtpBccAddresses,
       status: Number($("rakutenRmsStatus").value),
       syncOrders: $("rakutenRmsSyncOrders").checked,
       autoShippingEnabled: $("rakutenRmsAutoShippingEnabled").checked,

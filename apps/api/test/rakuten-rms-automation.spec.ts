@@ -472,10 +472,11 @@ describe('Rakuten RMS shipping and mail automation', () => {
           orderId: '421951-ORDER',
           event: RakutenOrderMailEvent.japan_shipped,
           status: RakutenAutomationStatus.sent,
+          bccRecipients: 'sent-archive@example.jp',
           subject: '保存済み件名',
           body: '保存済み本文',
           smtpMessageId: '<message@example>',
-          connection: { id: 7n, shop: { id: 3n, name: '乐天店' } },
+          connection: { id: 7n, smtpBccAddresses: 'current-archive@example.jp', shop: { id: 3n, name: '乐天店' } },
         }),
       },
       rakutenOrderRecord: { findMany: jest.fn() },
@@ -488,6 +489,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       id: '54',
       subject: '保存済み件名',
       body: '保存済み本文',
+      bccRecipients: 'sent-archive@example.jp',
       smtpMessageId: '<message@example>',
       connection: { id: '7', shop: { id: '3', name: '乐天店' } },
     });
@@ -505,7 +507,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
           status: RakutenAutomationStatus.pending,
           subject: null,
           body: null,
-          connection: { id: 7n, shop: { id: 3n, name: '乐天店' } },
+          connection: { id: 7n, smtpBccAddresses: 'archive@example.jp', shop: { id: 3n, name: '乐天店' } },
         }),
       },
       rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([makeRow()]) },
@@ -524,6 +526,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       id: '55',
       subject: '注文 421951-ORDER',
       body: expect.stringContaining('山田 太郎様'),
+      bccRecipients: 'archive@example.jp',
       previewError: null,
     });
   });
@@ -581,6 +584,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
     jest.spyOn(scopedService as any, 'decryptSmtpCredentials').mockReturnValue({
       authId: '421951', password: 'secret', fromAddress: 'shop@example.jp', fromName: '乐天店',
+      bccAddresses: ['archive@example.jp'],
     });
 
     const preview = await scopedService.previewManualMailAction('92', 3) as any;
@@ -590,7 +594,8 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
     expect(preview).toMatchObject({
       id: '92', shopName: '乐天店', recipient: 'masked@pc.fw.rakuten.ne.jp',
-      fromAddress: 'shop@example.jp', templateVersion: 3, subject: '注文 421951-ORDER',
+      fromAddress: 'shop@example.jp', bccAddresses: ['archive@example.jp'],
+      templateVersion: 3, subject: '注文 421951-ORDER',
     });
   });
 
@@ -684,6 +689,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
         smtpPasswordAuthTag: 'tag',
         smtpFromAddress: 'dgaz@createbetter.co.jp',
         smtpFromName: 'DGAZ楽天市場店',
+        smtpBccAddresses: 'archive@example.jp, audit@example.jp',
       },
     };
     const update = jest.fn()
@@ -712,6 +718,10 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(result).toEqual({ sent: 0, failed: 0, blocked: 1 });
     expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
       messageId: '<wms-rakuten-mail-81@createbetter.co.jp>',
+      bcc: ['archive@example.jp', 'audit@example.jp'],
+    }));
+    expect(update).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      data: expect.objectContaining({ bccRecipients: 'archive@example.jp, audit@example.jp' }),
     }));
     expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({ status: RakutenAutomationStatus.uncertain, nextAttemptAt: null }),
