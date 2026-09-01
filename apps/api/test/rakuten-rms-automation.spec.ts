@@ -519,6 +519,45 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(rendered.body).toContain('390853178660');
   });
 
+  it('previews a manual mail with the exact active shop template version', async () => {
+    const connection = { id: 7n, shop: { id: 3n, name: '乐天店' } };
+    const prisma = {
+      rakutenOrderMail: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 92n,
+          connectionId: 7n,
+          orderId: '421951-ORDER',
+          event: RakutenOrderMailEvent.new_order,
+          status: RakutenAutomationStatus.pending,
+          connection,
+        }),
+      },
+      rakutenMailTemplateVersion: {
+        findUnique: jest.fn().mockResolvedValue({
+          version: 3,
+          subjectTemplate: '注文 {{order_number}}',
+          bodyTemplate: '{{buyer_name}}様',
+          isActive: true,
+        }),
+      },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([makeRow()]) },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'decryptSmtpCredentials').mockReturnValue({
+      authId: '421951', password: 'secret', fromAddress: 'shop@example.jp', fromName: '乐天店',
+    });
+
+    const preview = await scopedService.previewManualMailAction('92', 3) as any;
+
+    expect(prisma.rakutenMailTemplateVersion.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { connectionId_event_version: { connectionId: 7n, event: RakutenOrderMailEvent.new_order, version: 3 } },
+    }));
+    expect(preview).toMatchObject({
+      id: '92', shopName: '乐天店', recipient: 'masked@pc.fw.rakuten.ne.jp',
+      fromAddress: 'shop@example.jp', templateVersion: 3, subject: '注文 421951-ORDER',
+    });
+  });
+
   it('saves an edited template as the next active version', async () => {
     const tx = {
       rakutenMailTemplateVersion: {
@@ -1113,6 +1152,9 @@ describe('Rakuten RMS shipping and mail automation', () => {
         }]),
         findUnique: jest.fn(),
       },
+      rakutenMailTemplateVersion: {
+        findMany: jest.fn().mockResolvedValue([{ connectionId: 7n, event: RakutenOrderMailEvent.new_order, version: 1 }]),
+      },
     } as any;
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
     jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
@@ -1201,6 +1243,9 @@ describe('Rakuten RMS shipping and mail automation', () => {
           createdAt: new Date('2026-09-01T00:00:00Z'),
         }]),
       },
+      rakutenMailTemplateVersion: {
+        findMany: jest.fn().mockResolvedValue([{ connectionId: 7n, event: RakutenOrderMailEvent.japan_shipped, version: 2 }]),
+      },
     } as any;
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
     jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
@@ -1226,6 +1271,42 @@ describe('Rakuten RMS shipping and mail automation', () => {
         executable: true,
       }),
     ]);
+  });
+
+  it('omits an order from the manual mail dialog after every mail stage is complete', async () => {
+    const connection = {
+      id: 7n,
+      status: 1,
+      autoShippingEnabled: false,
+      mailNotificationsEnabled: true,
+      mailCircuitOpenedAt: null,
+      shop: { id: 3n, name: '乐天店' },
+    };
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = {
+      rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([connection]) },
+      rakutenOrderMail: { findMany },
+      rakutenOrderRecord: { findMany: jest.fn() },
+      rakutenMailTemplateVersion: { findMany: jest.fn() },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'prepareCustomsMails').mockResolvedValue(undefined);
+
+    const result = await scopedService.prepareManualActions('mail') as any;
+
+    expect(result).toMatchObject({ items: [], totalOrders: 0, totalPages: 0 });
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        status: { in: [
+          RakutenAutomationStatus.pending,
+          RakutenAutomationStatus.failed,
+          RakutenAutomationStatus.uncertain,
+          RakutenAutomationStatus.dead_letter,
+        ] },
+      }),
+    }));
   });
 
   it('limits manual shipment processing to the explicitly selected task ids', async () => {
@@ -1264,6 +1345,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       id: 92n,
       connectionId: 7n,
       orderId: '421951-MAIL',
+      event: RakutenOrderMailEvent.new_order,
       status: RakutenAutomationStatus.pending,
       nextAttemptAt: null,
       connection,
@@ -1277,6 +1359,9 @@ describe('Rakuten RMS shipping and mail automation', () => {
       },
       rakutenOrderShippingReport: { findMany: jest.fn().mockResolvedValue([shippingRow]) },
       rakutenOrderMail: { findMany: jest.fn().mockResolvedValue([mailRow]) },
+      rakutenMailTemplateVersion: {
+        findFirst: jest.fn().mockResolvedValue({ version: 1 }),
+      },
       rakutenAutomationRun: {
         create: jest.fn().mockResolvedValue({ id: 501n }),
         update: jest.fn().mockResolvedValue({}),
@@ -1293,11 +1378,11 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
     const result = await scopedService.executeManualActions([
       { kind: 'shipping', id: '91' },
-      { kind: 'mail', id: '92' },
+      { kind: 'mail', id: '92', templateVersion: 1 },
     ]) as any;
 
     expect(processShipping).toHaveBeenCalledWith(7n, [91n]);
-    expect(processMails).toHaveBeenCalledWith(7n, [92n]);
+    expect(processMails).toHaveBeenCalledWith(7n, [92n], new Map([['92', 1]]));
     expect(result).toMatchObject({
       executed: 2,
       results: [{ shipping: { sent: 1 }, mail: { sent: 1 }, status: RakutenAutomationRunStatus.success }],
@@ -1335,6 +1420,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       connection,
     }));
     const findTemplate = jest.fn().mockImplementation(({ where }: any) => ({
+      version: 1,
       subjectTemplate: where.connectionId === 7n
         ? '1号店 {{order_number}}'
         : '2号店 {{order_number}}',
@@ -1386,12 +1472,12 @@ describe('Rakuten RMS shipping and mail automation', () => {
       });
 
     const result = await scopedService.executeManualActions([
-      { kind: 'mail', id: '92' },
-      { kind: 'mail', id: '93' },
+      { kind: 'mail', id: '92', templateVersion: 1 },
+      { kind: 'mail', id: '93', templateVersion: 1 },
     ]) as any;
 
-    expect(processMails).toHaveBeenNthCalledWith(1, 7n, [92n]);
-    expect(processMails).toHaveBeenNthCalledWith(2, 8n, [93n]);
+    expect(processMails).toHaveBeenNthCalledWith(1, 7n, [92n], new Map([['92', 1]]));
+    expect(processMails).toHaveBeenNthCalledWith(2, 8n, [93n], new Map([['93', 1]]));
     expect(findTemplate).toHaveBeenCalledWith(expect.objectContaining({
       where: { connectionId: 7n, event: RakutenOrderMailEvent.new_order, isActive: true },
     }));

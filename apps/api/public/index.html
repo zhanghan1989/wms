@@ -2328,6 +2328,14 @@
         </div>
         <button id="refreshRakutenManualAutomationBtn" type="button" class="ghost">重新整理</button>
       </div>
+      <div id="rakutenManualMailFilters" class="rakuten-manual-mail-filters hidden">
+        <label>店铺<select id="rakutenManualMailConnectionFilter"><option value="">全部店铺</option></select></label>
+        <label>订单号<input id="rakutenManualMailOrderFilter" type="search" placeholder="输入订单号" /></label>
+        <label>发货类型<select id="rakutenManualMailFulfillmentFilter"><option value="">全部类型</option><option value="japan">日本发</option><option value="china">中国发</option><option value="mixed">日中混发</option></select></label>
+        <label>待处理状态<select id="rakutenManualMailStatusFilter"><option value="">全部状态</option><option value="pending">待发送</option><option value="failed">失败</option><option value="uncertain">发送结果待确认</option><option value="dead_letter">需人工处理</option></select></label>
+        <button id="applyRakutenManualMailFiltersBtn" type="button">筛选</button>
+        <button id="resetRakutenManualMailFiltersBtn" type="button" class="ghost">重置</button>
+      </div>
       <div class="master-product-table-wrap rakuten-manual-automation-table-wrap">
         <table>
           <thead>
@@ -2341,12 +2349,33 @@
           </tbody>
         </table>
       </div>
+      <div id="rakutenManualMailPager" class="rakuten-manual-mail-pager hidden">
+        <button id="prevRakutenManualMailPageBtn" type="button" class="ghost">上一页</button>
+        <span id="rakutenManualMailPageMeta" class="muted">第 1 页</span>
+        <button id="nextRakutenManualMailPageBtn" type="button" class="ghost">下一页</button>
+      </div>
       <div class="modal-actions modal-actions-split">
         <div>
           <button id="executeSelectedRakutenManualAutomationBtn" type="button" disabled>执行选中任务</button>
           <span id="rakutenManualAutomationSelectionMeta" class="muted">已选择 0 项</span>
         </div>
         <button type="button" class="ghost" data-action="closeRakutenManualAutomationModal">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="rakutenManualMailPreviewModal" class="modal hidden">
+    <div class="modal-card rakuten-manual-mail-preview-card">
+      <div class="modal-head">
+        <h3>发送前确认</h3>
+        <button type="button" class="ghost" data-action="closeRakutenManualMailPreviewModal">关闭</button>
+      </div>
+      <p id="rakutenManualMailPreviewMeta" class="muted"></p>
+      <label>主题<input id="rakutenManualMailPreviewSubject" type="text" readonly /></label>
+      <label>正文<textarea id="rakutenManualMailPreviewBody" rows="18" readonly></textarea></label>
+      <div class="modal-actions modal-actions-split">
+        <button id="confirmRakutenManualMailSendBtn" type="button">确认发送这封邮件</button>
+        <button type="button" class="ghost" data-action="closeRakutenManualMailPreviewModal">取消</button>
       </div>
     </div>
   </div>

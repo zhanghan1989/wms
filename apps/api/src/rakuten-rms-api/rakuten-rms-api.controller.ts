@@ -161,16 +161,32 @@ export class RakutenRmsApiController {
 
   @Post('automation/manual-actions/preview')
   async previewManualAutomationActions(
-    @Body() payload: { kind?: string },
+    @Body() payload: {
+      kind?: string;
+      connectionId?: string;
+      orderId?: string;
+      fulfillmentType?: string;
+      status?: string;
+      page?: number;
+      pageSize?: number;
+    },
   ): Promise<unknown> {
-    return this.automation.prepareManualActions(payload?.kind);
+    return this.automation.prepareManualActions(payload ?? {});
   }
 
   @Post('automation/manual-actions/execute')
   async executeManualAutomationActions(
-    @Body() payload: { items?: Array<{ kind?: string; id?: string }> },
+    @Body() payload: { items?: Array<{ kind?: string; id?: string; templateVersion?: number }> },
   ): Promise<unknown> {
     return this.automation.executeManualActions(payload?.items ?? []);
+  }
+
+  @Post('automation/manual-actions/mails/:id/preview')
+  async previewManualMailAction(
+    @Param('id') id: string,
+    @Body() payload: { templateVersion?: number },
+  ): Promise<unknown> {
+    return this.automation.previewManualMailAction(id, payload?.templateVersion);
   }
 
   @Get('connections/:id/mail-templates')

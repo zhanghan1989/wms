@@ -2617,6 +2617,44 @@ td {
   min-width: 1120px;
 }
 
+.rakuten-manual-mail-filters {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1fr 1fr auto auto;
+  gap: 10px;
+  align-items: end;
+  margin: 10px 0 14px;
+}
+
+.rakuten-manual-mail-filters label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rakuten-manual-mail-pager {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.rakuten-manual-mail-preview-card {
+  width: min(900px, 100%);
+}
+
+.rakuten-manual-mail-preview-card > label {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.rakuten-manual-mail-preview-card textarea {
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
 .rakuten-manual-automation-table-wrap tr.is-disabled td {
   background: #f7f8f7;
   color: var(--muted);
@@ -2680,6 +2718,12 @@ td {
 .rakuten-manual-mail-stage-actions input {
   width: auto;
   margin: 0;
+}
+
+@media (max-width: 900px) {
+  .rakuten-manual-mail-filters {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .rakuten-manual-order-selection {
