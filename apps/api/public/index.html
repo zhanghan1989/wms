@@ -737,15 +737,29 @@
         <article class="card shoulder-strap-parts-card">
           <div class="card-head">
             <div>
-              <h3>肩带零配件一览</h3>
-              <p id="shoulderStrapPartSummary" class="muted">共 0 个零配件，新建编号从 JD-0001 开始自动生成。</p>
+              <h3>肩带本体一览</h3>
+              <p id="shoulderStrapBodyMaterialSummary" class="muted">共 0 个肩带本体产品</p>
             </div>
-            <button type="button" id="openCreateShoulderStrapPartBtn">+ 新增零配件</button>
           </div>
           <div class="master-product-table-wrap">
             <table class="shoulder-strap-part-table">
-              <thead><tr><th>零配件编号</th><th>零配件名称</th><th>库存数量</th><th>更新时间</th><th>操作</th></tr></thead>
-              <tbody id="shoulderStrapPartBody"></tbody>
+              <thead><tr><th>产品ID</th><th>产品名称</th><th>库存数量</th><th>更新时间</th></tr></thead>
+              <tbody id="shoulderStrapBodyMaterialBody"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card shoulder-strap-parts-card">
+          <div class="card-head">
+            <div>
+              <h3>肩带配件一览</h3>
+              <p id="shoulderStrapAccessoryMaterialSummary" class="muted">共 0 个肩带配件产品</p>
+            </div>
+          </div>
+          <div class="master-product-table-wrap">
+            <table class="shoulder-strap-part-table">
+              <thead><tr><th>产品ID</th><th>产品名称</th><th>库存数量</th><th>更新时间</th></tr></thead>
+              <tbody id="shoulderStrapAccessoryMaterialBody"></tbody>
             </table>
           </div>
         </article>
@@ -767,7 +781,7 @@
               <thead>
                 <tr>
                   <th>产品ID</th><th>产品名称</th><th>颜色</th><th>款式</th><th>尺寸</th>
-                  <th>库存</th><th>可组装在库数</th><th>BOM配件</th><th>操作</th>
+                  <th>库存</th><th>可组装在库数</th><th>BOM材料</th><th>操作</th>
                 </tr>
               </thead>
               <tbody id="shoulderStrapProductBody"></tbody>
@@ -2529,26 +2543,6 @@
     </div>
   </div>
 
-  <div id="shoulderStrapPartModal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h3 id="shoulderStrapPartModalTitle">新增肩带零配件</h3>
-        <button type="button" class="ghost" data-action="closeShoulderStrapPartModal">关闭</button>
-      </div>
-      <form id="shoulderStrapPartForm" class="form-grid">
-        <input id="shoulderStrapPartEditingId" type="hidden" />
-        <input id="shoulderStrapPartUpdatedAt" type="hidden" />
-        <label>零配件编号<input id="shoulderStrapPartCode" value="保存后自动生成" disabled /></label>
-        <label>零配件名称<input id="shoulderStrapPartName" maxlength="255" required /></label>
-        <label>库存数量<input id="shoulderStrapPartStockQty" type="number" min="0" max="999999999" step="1" required /></label>
-        <div class="modal-actions">
-          <button type="submit" id="saveShoulderStrapPartBtn">保存</button>
-          <button type="button" class="ghost" data-action="closeShoulderStrapPartModal">取消</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
   <div id="shoulderStrapBomModal" class="modal hidden">
     <div class="modal-card modal-wide shoulder-strap-bom-modal-card">
       <div class="modal-head">
@@ -2560,8 +2554,8 @@
       </div>
       <form id="shoulderStrapBomForm">
         <div class="master-product-bom-head">
-          <p class="muted">从独立的肩带零配件表选择配件并设置单件用量，最多 10 种。</p>
-          <button type="button" id="addShoulderStrapBomItemBtn" class="ghost">+ 添加零配件</button>
+          <p class="muted">从主产品中的“肩带本体”和“肩带配件”选择材料并设置单件用量，最多 10 种。</p>
+          <button type="button" id="addShoulderStrapBomItemBtn" class="ghost">+ 添加 BOM 材料</button>
         </div>
         <div id="shoulderStrapBomItems" class="master-product-bom-items"></div>
         <div class="modal-actions">
@@ -2569,21 +2563,6 @@
           <button type="button" class="ghost" data-action="closeShoulderStrapBomModal">取消</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <div id="shoulderStrapPartMovementsModal" class="modal hidden">
-    <div class="modal-card modal-wide">
-      <div class="modal-head">
-        <h3 id="shoulderStrapPartMovementsTitle">肩带零配件库存流水</h3>
-        <button type="button" class="ghost" data-action="closeShoulderStrapPartMovementsModal">关闭</button>
-      </div>
-      <div class="master-product-table-wrap">
-        <table>
-          <thead><tr><th>时间</th><th>肩带产品ID</th><th>拣货批次ID</th><th>扣减前</th><th>变动</th><th>扣减后</th><th>操作人</th></tr></thead>
-          <tbody id="shoulderStrapPartMovementsBody"></tbody>
-        </table>
-      </div>
     </div>
   </div>
 
@@ -2719,14 +2698,14 @@
         </table>
       </div>
       <div id="yamatoAssemblyPartSection" class="hidden">
-        <h4>组装肩带零配件确认</h4>
-        <p class="muted">请核对每项零配件，全部确认后才能打印面单。</p>
+        <h4>组装肩带 BOM 材料确认</h4>
+        <p class="muted">请逐行核对肩带本体和肩带配件，全部确认后再点击打印确认。</p>
         <div class="master-product-table-wrap yamato-merged-scan-table-wrap">
           <table>
             <thead>
               <tr>
-                <th>零配件编号</th>
-                <th>零配件名称</th>
+                <th>主产品ID</th>
+                <th>主产品名称</th>
                 <th>所需数量</th>
                 <th>库存数量</th>
                 <th>操作</th>
@@ -2737,8 +2716,11 @@
         </div>
       </div>
       <div class="modal-actions modal-actions-split">
-        <span id="yamatoMergedScanHint" class="muted">扫齐产品并确认全部组装配件后会自动打印面单。</span>
-        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前面单打印</button>
+        <span id="yamatoMergedScanHint" class="muted">扫齐产品并逐行确认全部 BOM 材料后，再点击打印确认。</span>
+        <div class="actions">
+          <button id="confirmYamatoMergedScanBtn" type="button" disabled>确认并打印成品肩带面单</button>
+          <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前面单打印</button>
+        </div>
       </div>
     </div>
   </div>

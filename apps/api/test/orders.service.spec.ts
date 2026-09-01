@@ -476,40 +476,32 @@ describe('OrdersService', () => {
         actualQty: 2,
         dispatchMode: 'overseas',
         bomSnapshot: [{
-          partId: '7', partCode: 'JD-0007', partName: '龙虾扣', quantity: 3,
+          componentProductId: 'HOOK-7', componentProductName: '龙虾扣', quantity: 3,
         }],
       }],
     };
-    const partUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
-    const boxUpdate = jest.fn();
+    const boxUpdate = jest.fn().mockResolvedValue({ count: 1 });
+    const stockMovementCreate = jest.fn().mockResolvedValue({});
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([]),
       masterProductBoxInventory: {
-        findMany: jest.fn().mockResolvedValue([]),
-        update: boxUpdate,
+        findMany: jest.fn()
+          .mockResolvedValueOnce([])
+          .mockResolvedValueOnce([{ boxId: 7n, productId: 'HOOK-7', qty: 10 }]),
+        updateMany: boxUpdate,
         aggregate: jest.fn().mockResolvedValue({ _sum: { qty: 0 } }),
       },
       masterProduct: {
-        findMany: jest.fn().mockResolvedValue([{
-          productId: 'STRAP-1',
-          productType: '肩带',
-          bomComponents: [{
-            partId: 99n,
-            quantity: 100,
-            part: { id: 99n, partCode: 'JD-0099', partName: '修改后的配件', stockQty: 100, status: 1 },
-          }],
-        }]),
+        findMany: jest.fn()
+          .mockResolvedValueOnce([{
+            productId: 'STRAP-1', productType: '肩带', bomComponents: [],
+          }])
+          .mockResolvedValueOnce([{
+            productId: 'HOOK-7', productName: '龙虾扣', productType: '肩带配件', stockQty: 10, status: 1,
+          }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      shoulderStrapPart: {
-        findMany: jest.fn().mockResolvedValue([
-          { id: 7n, partCode: 'JD-0007', partName: '龙虾扣', stockQty: 10, status: 1 },
-        ]),
-        updateMany: partUpdateMany,
-        findUnique: jest.fn().mockResolvedValue({ stockQty: 4 }),
-      },
-      shoulderStrapPartStockMovement: { create: jest.fn().mockResolvedValue({}) },
-      stockMovement: { create: jest.fn() },
+      stockMovement: { create: stockMovementCreate },
       overseasPickingBatch: { update: jest.fn().mockResolvedValue({}) },
     };
     const prisma = {
@@ -524,22 +516,12 @@ describe('OrdersService', () => {
 
     await service.confirmOverseasPickingBatch('42', { items: [] }, 9n);
 
-    expect(boxUpdate).not.toHaveBeenCalled();
-    expect(tx.stockMovement.create).not.toHaveBeenCalled();
-    expect(partUpdateMany).toHaveBeenCalledWith({
-      where: { id: 7n, status: 1, stockQty: { gte: 6 } },
-      data: { stockQty: { decrement: 6 } },
+    expect(boxUpdate).toHaveBeenCalledWith({
+      where: { boxId: 7n, productId: 'HOOK-7', qty: { gte: 6 } },
+      data: { qty: { decrement: 6 } },
     });
-    expect(tx.shoulderStrapPartStockMovement.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        partId: 7n,
-        refType: 'overseas_picking_batch',
-        refId: 42n,
-        productId: 'STRAP-1',
-        qtyDelta: -6,
-        beforeQty: 10,
-        afterQty: 4,
-      }),
+    expect(stockMovementCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ productId: 'HOOK-7', qtyDelta: -6, boxId: 7n }),
     });
   });
 
@@ -558,13 +540,14 @@ describe('OrdersService', () => {
         dispatchMode: 'overseas',
       }],
     };
-    const partUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     const boxUpdate = jest.fn().mockResolvedValue({ count: 1 });
     const stockMovementCreate = jest.fn().mockResolvedValue({});
     const tx = {
       $queryRaw: jest.fn().mockResolvedValue([]),
       masterProductBoxInventory: {
-        findMany: jest.fn().mockResolvedValue([{ boxId: 4n, productId: 'STRAP-2', qty: 1 }]),
+        findMany: jest.fn()
+          .mockResolvedValueOnce([{ boxId: 4n, productId: 'STRAP-2', qty: 1 }])
+          .mockResolvedValueOnce([{ boxId: 8n, productId: 'BODY-8', qty: 12 }]),
         updateMany: boxUpdate,
         aggregate: jest.fn().mockResolvedValue({ _sum: { qty: 0 } }),
       },
@@ -573,18 +556,15 @@ describe('OrdersService', () => {
           productId: 'STRAP-2',
           productType: '肩带',
           bomComponents: [{
-            partId: 8n,
+            componentProductId: 'BODY-8',
             quantity: 2,
-            part: { id: 8n, partCode: 'JD-0008', partName: '肩带布', stockQty: 12, status: 1 },
+            componentProduct: {
+              productId: 'BODY-8', productName: '肩带布', productType: '肩带本体', stockQty: 12, status: 1,
+            },
           }],
         }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
-      shoulderStrapPart: {
-        updateMany: partUpdateMany,
-        findUnique: jest.fn().mockResolvedValue({ stockQty: 10 }),
-      },
-      shoulderStrapPartStockMovement: { create: jest.fn().mockResolvedValue({}) },
       stockMovement: { create: stockMovementCreate },
       overseasPickingBatch: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -607,48 +587,43 @@ describe('OrdersService', () => {
     expect(stockMovementCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ productId: 'STRAP-2', qtyDelta: -1 }),
     });
-    expect(partUpdateMany).toHaveBeenCalledWith({
-      where: { id: 8n, status: 1, stockQty: { gte: 2 } },
-      data: { stockQty: { decrement: 2 } },
+    expect(boxUpdate).toHaveBeenCalledWith({
+      where: { boxId: 8n, productId: 'BODY-8', qty: { gte: 2 } },
+      data: { qty: { decrement: 2 } },
     });
-    expect(tx.shoulderStrapPartStockMovement.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ beforeQty: 12, qtyDelta: -2, afterQty: 10 }),
+    expect(stockMovementCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ productId: 'BODY-8', qtyDelta: -2 }),
     });
   });
 
   it('aggregates shared component demand when validating a picking batch', async () => {
-    const sharedPart = { partCode: 'JD-0009', partName: '共用扣件', stockQty: 1, status: 1 };
+    const sharedComponent = { productId: 'HOOK-9', productName: '共用扣件', productType: '肩带配件', stockQty: 1, status: 1 };
     const service = new OrdersService({
       overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
-      shoulderStrapPart: {
-        findMany: jest.fn().mockResolvedValue([{ id: 9n, ...sharedPart }]),
-      },
       masterProduct: {
-        findMany: jest.fn().mockResolvedValue([
-          {
-            productId: 'STRAP-A',
-            productType: '肩带',
-            stockQty: 0,
-            bomComponents: [{ partId: 9n, quantity: 1, part: sharedPart }],
-          },
-          {
-            productId: 'STRAP-B',
-            productType: '肩带',
-            stockQty: 0,
-            bomComponents: [{ partId: 9n, quantity: 1, part: sharedPart }],
-          },
-        ]),
+        findMany: jest.fn()
+          .mockResolvedValueOnce([
+            {
+              productId: 'STRAP-A', productType: '肩带', stockQty: 0,
+              bomComponents: [{ componentProductId: 'HOOK-9', quantity: 1, componentProduct: sharedComponent }],
+            },
+            {
+              productId: 'STRAP-B', productType: '肩带', stockQty: 0,
+              bomComponents: [{ componentProductId: 'HOOK-9', quantity: 1, componentProduct: sharedComponent }],
+            },
+          ])
+          .mockResolvedValueOnce([sharedComponent]),
       },
     } as any);
 
     await expect((service as any).assertOverseasPickingBatchDemandWithinStock([
       {
         productId: 'STRAP-A', requestedQty: 1, pickingPlanSnapshot: [],
-        bomSnapshot: [{ partId: '9', partCode: 'JD-0009', partName: '共用扣件', quantity: 1 }],
+        bomSnapshot: [{ componentProductId: 'HOOK-9', componentProductName: '共用扣件', quantity: 1 }],
       },
       {
         productId: 'STRAP-B', requestedQty: 1, pickingPlanSnapshot: [],
-        bomSnapshot: [{ partId: '9', partCode: 'JD-0009', partName: '共用扣件', quantity: 1 }],
+        bomSnapshot: [{ componentProductId: 'HOOK-9', componentProductName: '共用扣件', quantity: 1 }],
       },
     ])).rejects.toThrow('库存 1，已预占 0，本批次需要 2');
   });
@@ -659,9 +634,9 @@ describe('OrdersService', () => {
         findMany: jest.fn().mockResolvedValue([{
           productId: 'STRAP-SNAPSHOT',
           bomComponents: [{
-            partId: 11n,
+            componentProductId: 'BODY-11',
             quantity: 2,
-            part: { partCode: 'JD-0011', partName: '快照配件' },
+            componentProduct: { productName: '快照本体' },
           }],
         }]),
       },
@@ -672,17 +647,91 @@ describe('OrdersService', () => {
 
     expect(snapshots[0]).toMatchObject({
       bomSnapshot: [{
-        partId: '11',
-        partCode: 'JD-0011',
-        partName: '快照配件',
+        componentProductId: 'BODY-11',
+        componentProductName: '快照本体',
         quantity: 2,
       }],
     });
   });
 
+  it('splits an assembled shoulder strap into master-product picking requirements', async () => {
+    const service = new OrdersService({
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 'STRAP-1', productName: '成品肩带', productType: '肩带' },
+          { productId: 'BODY-1', productName: '肩带本体', productType: '肩带本体' },
+          { productId: 'HOOK-1', productName: '肩带扣', productType: '肩带配件' },
+        ]),
+      },
+    } as any);
+    const snapshots = [{
+      productId: 'STRAP-1',
+      requestedQty: 2,
+      pickingPlanSnapshot: [{ shelfCode: 'S1', boxCode: 'B1', boxQty: 1, pickQty: 1 }],
+      bomSnapshot: [
+        { componentProductId: 'BODY-1', componentProductName: '肩带本体', quantity: 1 },
+        { componentProductId: 'HOOK-1', componentProductName: '肩带扣', quantity: 2 },
+      ],
+    }];
+
+    await (service as any).attachOverseasPickingRequirementSnapshots(snapshots);
+
+    expect(snapshots[0]).toMatchObject({
+      pickingRequirementSnapshot: [
+        { productId: 'STRAP-1', requestedQty: 1, pickedQty: 0 },
+        { productId: 'BODY-1', productType: '肩带本体', requestedQty: 1, pickedQty: 0 },
+        { productId: 'HOOK-1', productType: '肩带配件', requestedQty: 2, pickedQty: 0 },
+      ],
+    });
+  });
+
+  it('accepts a shoulder body product ID while scanning an assembled picking requirement', async () => {
+    const update = jest.fn().mockResolvedValue({
+      id: 1n, productId: 'STRAP-1', actualQty: 0, requestedQty: 1,
+    });
+    const prisma = {
+      overseasPickingBatch: {
+        findUnique: jest.fn().mockResolvedValue({ id: 42n, batchNo: 'PK-42', status: 'created' }),
+      },
+      overseasPickingBatchItem: {
+        findMany: jest.fn().mockResolvedValue([{
+          id: 1n,
+          productId: 'STRAP-1',
+          requestedQty: 1,
+          actualQty: 0,
+          dispatchMode: 'overseas',
+          pickingRequirementSnapshot: [
+            { productId: 'BODY-1', productName: '肩带本体', productType: '肩带本体', requestedQty: 1, pickedQty: 0 },
+            { productId: 'HOOK-1', productName: '肩带扣', productType: '肩带配件', requestedQty: 1, pickedQty: 0 },
+          ],
+        }]),
+        update,
+      },
+    };
+    const service = new OrdersService(prisma as any);
+    jest.spyOn(service as any, 'loadOverseasPickingBatchLocationMeta').mockResolvedValue(new Map([
+      ['BODY-1', { shelfCode: 'A', boxCode: '1', productName: '肩带本体', stockQty: 1, locations: [] }],
+      ['HOOK-1', { shelfCode: 'B', boxCode: '1', productName: '肩带扣', stockQty: 1, locations: [] }],
+    ]));
+
+    await expect(service.scanOverseasPickingBatchProduct('42', { productId: 'BODY-1' })).resolves.toMatchObject({
+      productId: 'BODY-1', pickedQty: 1, requestedQty: 1, remainingQty: 0,
+    });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 1n },
+      data: expect.objectContaining({
+        actualQty: 0,
+        pickingRequirementSnapshot: expect.arrayContaining([
+          expect.objectContaining({ productId: 'BODY-1', pickedQty: 1 }),
+          expect.objectContaining({ productId: 'HOOK-1', pickedQty: 0 }),
+        ]),
+      }),
+    }));
+  });
+
   it('subtracts component quantities reserved by active picking batches', async () => {
     const bomSnapshot = [{
-      partId: '12', partCode: 'JD-0012', partName: '预占配件', quantity: 1,
+      componentProductId: 'HOOK-12', componentProductName: '预占配件', quantity: 1,
     }];
     const service = new OrdersService({
       overseasPickingBatchItem: {
@@ -694,16 +743,13 @@ describe('OrdersService', () => {
         }]),
       },
       masterProduct: {
-        findMany: jest.fn().mockResolvedValue([{
-          productId: 'STRAP-RESERVED',
-          productType: '肩带',
-          bomComponents: [],
-        }]),
-      },
-      shoulderStrapPart: {
-        findMany: jest.fn().mockResolvedValue([{
-          id: 12n, partCode: 'JD-0012', partName: '预占配件', stockQty: 1, status: 1,
-        }]),
+        findMany: jest.fn()
+          .mockResolvedValueOnce([{
+            productId: 'STRAP-RESERVED', productType: '肩带', bomComponents: [],
+          }])
+          .mockResolvedValueOnce([{
+            productId: 'HOOK-12', productName: '预占配件', productType: '肩带配件', stockQty: 1, status: 1,
+          }]),
       },
     } as any);
 
@@ -770,15 +816,15 @@ describe('OrdersService', () => {
           actualQty: 2,
           pickingPlanSnapshot: [{ shelfCode: 'S1', boxCode: 'B1', boxQty: 1, pickQty: 1 }],
           bomSnapshot: [
-            { partId: '21', partCode: 'JD-0021', partName: '肩带扣', quantity: 2 },
-            { partId: '22', partCode: 'JD-0022', partName: '肩带布', quantity: 1 },
+            { componentProductId: 'HOOK-21', componentProductName: '肩带扣', quantity: 2 },
+            { componentProductId: 'BODY-22', componentProductName: '肩带布', quantity: 1 },
           ],
         }]),
       },
-      shoulderStrapPart: {
+      masterProduct: {
         findMany: jest.fn().mockResolvedValue([
-          { id: 21n, partCode: 'JD-0021', partName: '肩带扣', stockQty: 8 },
-          { id: 22n, partCode: 'JD-0022', partName: '肩带布', stockQty: 5 },
+          { productId: 'HOOK-21', productName: '肩带扣', stockQty: 8 },
+          { productId: 'BODY-22', productName: '肩带布', stockQty: 5 },
         ]),
       },
     };
@@ -790,26 +836,64 @@ describe('OrdersService', () => {
     );
 
     expect(parts).toEqual([
-      { partId: '21', partCode: 'JD-0021', partName: '肩带扣', requiredQty: 2, stockQty: 8 },
-      { partId: '22', partCode: 'JD-0022', partName: '肩带布', requiredQty: 1, stockQty: 5 },
+      { componentProductId: 'HOOK-21', componentProductName: '肩带扣', requiredQty: 2, stockQty: 8 },
+      { componentProductId: 'BODY-22', componentProductName: '肩带布', requiredQty: 1, stockQty: 5 },
     ]);
   });
 
   it('blocks Yamato label output until every assembly part is confirmed', () => {
     const service = new OrdersService({} as any);
     const parts = [
-      { partId: '21', partCode: 'JD-0021', partName: '肩带扣', requiredQty: 2, stockQty: 8 },
-      { partId: '22', partCode: 'JD-0022', partName: '肩带布', requiredQty: 1, stockQty: 5 },
+      { componentProductId: 'HOOK-21', componentProductName: '肩带扣', requiredQty: 2, stockQty: 8 },
+      { componentProductId: 'BODY-22', componentProductName: '肩带布', requiredQty: 1, stockQty: 5 },
     ];
 
     expect(() => (service as any).assertYamatoAssemblyPartsConfirmed(
-      { productId: 'STRAP-LABEL', confirmedAssemblyPartIds: ['21'] },
+      { productId: 'STRAP-LABEL', confirmedAssemblyComponentProductIds: ['HOOK-21'] },
       parts,
-    )).toThrow('请先确认全部零配件：JD-0022');
+    )).toThrow('请先确认全部 BOM 材料：BODY-22');
     expect(() => (service as any).assertYamatoAssemblyPartsConfirmed(
-      { productId: 'STRAP-LABEL', confirmedAssemblyPartIds: ['21', '22'] },
+      { productId: 'STRAP-LABEL', confirmedAssemblyComponentProductIds: ['HOOK-21', 'BODY-22'] },
       parts,
     )).not.toThrow();
+  });
+
+  it('finds the finished shoulder label when the scanned code is a shoulder body product ID', async () => {
+    const page = {
+      id: 31n,
+      pageNo: 1,
+      printedAt: null,
+      productIds: ['STRAP-LABEL'],
+    };
+    const service = new OrdersService({
+      yamatoShipmentBatch: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 9n,
+          pickingBatchId: 42n,
+          status: 'pdf_ready',
+          pdfFilePath: '/tmp/label.pdf',
+          pages: [page],
+        }),
+      },
+      masterProduct: {
+        findUnique: jest.fn().mockResolvedValue({ productType: '肩带本体' }),
+      },
+      overseasPickingBatchItem: {
+        findMany: jest.fn().mockResolvedValue([{
+          productId: 'STRAP-LABEL',
+          requestedQty: 1,
+          pickingPlanSnapshot: [],
+          bomSnapshot: [{
+            componentProductId: 'BODY-1', componentProductName: '肩带本体', quantity: 1,
+          }],
+        }]),
+      },
+    } as any);
+
+    await expect((service as any).findPrintableYamatoShipmentPageByProductId(
+      '9',
+      { productId: 'BODY-1' },
+    )).resolves.toMatchObject({ targetPage: page, productId: 'BODY-1' });
   });
 
   it('returns Yamato print progress for the picking batch status display', async () => {

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { MasterProductsService } from '../src/master-products/master-products.service';
 import { calculateAssemblableStock } from '../src/master-products/master-product-bom-stock';
 
@@ -15,9 +15,7 @@ describe('master product BOM', () => {
     const service = new MasterProductsService({
       masterProduct: { findUnique: jest.fn().mockResolvedValue({ id: 9n, productType: '包' }) },
     } as never, {} as never);
-    await expect(service.updateBom('BAG-1', { items: [] })).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(service.updateBom('BAG-1', { items: [] })).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('rejects a BOM containing more than 10 component types', async () => {
@@ -28,78 +26,44 @@ describe('master product BOM', () => {
     } as never, {} as never);
     await expect(service.updateBom('STRAP-1', {
       items: Array.from({ length: 11 }, (_, index) => ({
-        partId: String(index + 1),
+        componentProductId: `MATERIAL-${index + 1}`,
         quantity: 1,
       })),
     })).rejects.toThrow('一个 BOM 最多添加 10 个配件');
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it('creates independent parts with the next JD number', async () => {
-    const now = new Date('2026-08-28T00:00:00.000Z');
-    const create = jest.fn().mockImplementation(({ data }) => Promise.resolve({
-      id: 10n,
-      ...data,
-      status: 1,
-      createdAt: now,
-      updatedAt: now,
+  it('lists shoulder bodies and accessories from active master products', async () => {
+    const updatedAt = new Date('2026-09-01T00:00:00.000Z');
+    const findMany = jest.fn().mockResolvedValue([
+      { productId: 'BODY-1', productName: '黑色肩带本体', productType: '肩带本体', stockQty: 8, updatedAt },
+      { productId: 'HOOK-1', productName: '银色扣件', productType: '肩带配件', stockQty: 20, updatedAt },
+    ]);
+    const service = new MasterProductsService({ masterProduct: { findMany } } as never, {} as never);
+
+    await expect(service.listShoulderStrapMaterials()).resolves.toMatchObject({
+      total: 2,
+      bodyItems: [{ productId: 'BODY-1', productType: '肩带本体', stockQty: 8 }],
+      accessoryItems: [{ productId: 'HOOK-1', productType: '肩带配件', stockQty: 20 }],
+    });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { status: 1, productType: { in: ['肩带本体', '肩带配件'] } },
     }));
-    const service = new MasterProductsService({
-      shoulderStrapPart: {
-        findMany: jest.fn().mockResolvedValue([
-          { partCode: 'JD-0002' },
-          { partCode: 'JD-10000' },
-          { partCode: 'JD-0099' },
-        ]),
-        create,
-      },
-    } as never, {} as never);
-
-    await expect(service.createShoulderStrapPart({
-      partName: '旋转龙虾扣',
-      stockQty: 25,
-    })).resolves.toMatchObject({
-      id: '10',
-      partCode: 'JD-10001',
-      partName: '旋转龙虾扣',
-      stockQty: 25,
-    });
-    expect(create).toHaveBeenCalledWith({
-      data: { partCode: 'JD-10001', partName: '旋转龙虾扣', stockQty: 25 },
-    });
   });
 
-  it('does not delete a part that is still referenced by a BOM', async () => {
-    const update = jest.fn();
+  it('rejects BOM materials outside the two allowed master-product types', async () => {
+    const transaction = jest.fn();
     const service = new MasterProductsService({
-      shoulderStrapPart: {
-        findFirst: jest.fn().mockResolvedValue({ id: 3n, partCode: 'JD-0003' }),
-        update,
+      masterProduct: {
+        findUnique: jest.fn().mockResolvedValue({ id: 11n, productType: '肩带' }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
-      masterProductBomItem: { count: jest.fn().mockResolvedValue(2) },
+      $transaction: transaction,
     } as never, {} as never);
 
-    await expect(service.deleteShoulderStrapPart('3')).rejects.toBeInstanceOf(ConflictException);
-    expect(update).not.toHaveBeenCalled();
-  });
-
-  it('rejects stale shoulder strap part stock edits', async () => {
-    const updateMany = jest.fn().mockResolvedValue({ count: 0 });
-    const service = new MasterProductsService({
-      shoulderStrapPart: {
-        findFirst: jest.fn().mockResolvedValue({ id: 4n }),
-        updateMany,
-      },
-    } as never, {} as never);
-
-    await expect(service.updateShoulderStrapPart('4', {
-      partName: '旧页面中的名称',
-      stockQty: 20,
-      updatedAt: '2026-08-28T00:00:00.000Z',
-    })).rejects.toBeInstanceOf(ConflictException);
-    expect(updateMany).toHaveBeenCalledWith({
-      where: { id: 4n, status: 1, updatedAt: new Date('2026-08-28T00:00:00.000Z') },
-      data: { partName: '旧页面中的名称', stockQty: 20 },
-    });
+    await expect(service.updateBom('STRAP-1', {
+      items: [{ componentProductId: 'BAG-1', quantity: 1 }],
+    })).rejects.toThrow('肩带本体或肩带配件主产品不存在或已停用：BAG-1');
+    expect(transaction).not.toHaveBeenCalled();
   });
 });

@@ -217,36 +217,35 @@ enum RakutenAutomationRunTrigger {
 }
 
 model User {
-  id                             BigInt                           @id @default(autoincrement()) @db.UnsignedBigInt
-  username                       String                           @unique @db.VarChar(64)
-  passwordHash                   String?                          @map("password_hash") @db.VarChar(255)
-  passwordChangedAt              DateTime?                        @map("password_changed_at")
-  mfaSecretEncrypted             String?                          @map("mfa_secret_encrypted") @db.Text
-  mfaSecretIv                    String?                          @map("mfa_secret_iv") @db.VarChar(64)
-  mfaSecretAuthTag               String?                          @map("mfa_secret_auth_tag") @db.VarChar(64)
-  mfaEnabledAt                   DateTime?                        @map("mfa_enabled_at")
+  id                             BigInt                       @id @default(autoincrement()) @db.UnsignedBigInt
+  username                       String                       @unique @db.VarChar(64)
+  passwordHash                   String?                      @map("password_hash") @db.VarChar(255)
+  passwordChangedAt              DateTime?                    @map("password_changed_at")
+  mfaSecretEncrypted             String?                      @map("mfa_secret_encrypted") @db.Text
+  mfaSecretIv                    String?                      @map("mfa_secret_iv") @db.VarChar(64)
+  mfaSecretAuthTag               String?                      @map("mfa_secret_auth_tag") @db.VarChar(64)
+  mfaEnabledAt                   DateTime?                    @map("mfa_enabled_at")
   role                           Role
-  department                     String                           @default("china_warehouse") @db.VarChar(64)
-  status                         Int                              @default(1) @db.TinyInt
-  createdAt                      DateTime                         @default(now()) @map("created_at")
-  updatedAt                      DateTime                         @updatedAt @map("updated_at")
+  department                     String                       @default("china_warehouse") @db.VarChar(64)
+  status                         Int                          @default(1) @db.TinyInt
+  createdAt                      DateTime                     @default(now()) @map("created_at")
+  updatedAt                      DateTime                     @updatedAt @map("updated_at")
   inboundOrders                  InboundOrder[]
   outboundOrders                 OutboundOrder[]
   stocktakeTasks                 StocktakeTask[]
-  createdStocktakePlannerTasks   StocktakePlannerTask[]           @relation("stocktake_planner_created_by")
-  confirmedStocktakePlannerTasks StocktakePlannerTask[]           @relation("stocktake_planner_confirmed_by")
+  createdStocktakePlannerTasks   StocktakePlannerTask[]       @relation("stocktake_planner_created_by")
+  confirmedStocktakePlannerTasks StocktakePlannerTask[]       @relation("stocktake_planner_confirmed_by")
   adjustOrders                   InventoryAdjustOrder[]
   batchInboundOrders             BatchInboundOrder[]
-  createdFbaReplenishments       FbaReplenishment[]               @relation("fba_created_by")
-  confirmedFbaReplenishments     FbaReplenishment[]               @relation("fba_confirmed_by")
-  outboundFbaReplenishments      FbaReplenishment[]               @relation("fba_outbound_by")
-  deletedFbaReplenishments       FbaReplenishment[]               @relation("fba_deleted_by")
-  productEditRequests            ProductEditRequest[]             @relation("product_edit_created_by")
+  createdFbaReplenishments       FbaReplenishment[]           @relation("fba_created_by")
+  confirmedFbaReplenishments     FbaReplenishment[]           @relation("fba_confirmed_by")
+  outboundFbaReplenishments      FbaReplenishment[]           @relation("fba_outbound_by")
+  deletedFbaReplenishments       FbaReplenishment[]           @relation("fba_deleted_by")
+  productEditRequests            ProductEditRequest[]         @relation("product_edit_created_by")
   stockMovements                 StockMovement[]
   auditLogs                      OperationAuditLog[]
   masterProductSyncRecords       MasterProductSyncRecord[]
   amazonSpApiOAuthStates         AmazonSpApiOAuthState[]
-  shoulderStrapPartMovements     ShoulderStrapPartStockMovement[]
   rakutenMailTemplateVersions    RakutenMailTemplateVersion[]
 
   @@map("users")
@@ -623,22 +622,22 @@ model AmazonSpApiOAuthState {
 }
 
 model AmazonSpApiSyncRun {
-  id           BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
-  connectionId BigInt                @map("connection_id") @db.UnsignedBigInt
-  syncType     AmazonSpApiSyncType   @map("sync_type")
-  trigger      String                @default("manual") @db.VarChar(16)
-  status       AmazonSpApiSyncStatus @default(running)
-  startedAt    DateTime              @default(now()) @map("started_at")
-  finishedAt   DateTime?             @map("finished_at")
-  fetchedCount Int                   @default(0) @map("fetched_count")
-  createdCount Int                   @default(0) @map("created_count")
-  updatedCount Int                   @default(0) @map("updated_count")
-  unchangedCount Int                 @default(0) @map("unchanged_count")
-  frozenCount    Int                 @default(0) @map("frozen_count")
-  excludedCount  Int                 @default(0) @map("excluded_count")
-  conflictCount  Int                 @default(0) @map("conflict_count")
-  errorMessage String?               @map("error_message") @db.Text
-  connection   AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  id             BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId   BigInt                @map("connection_id") @db.UnsignedBigInt
+  syncType       AmazonSpApiSyncType   @map("sync_type")
+  trigger        String                @default("manual") @db.VarChar(16)
+  status         AmazonSpApiSyncStatus @default(running)
+  startedAt      DateTime              @default(now()) @map("started_at")
+  finishedAt     DateTime?             @map("finished_at")
+  fetchedCount   Int                   @default(0) @map("fetched_count")
+  createdCount   Int                   @default(0) @map("created_count")
+  updatedCount   Int                   @default(0) @map("updated_count")
+  unchangedCount Int                   @default(0) @map("unchanged_count")
+  frozenCount    Int                   @default(0) @map("frozen_count")
+  excludedCount  Int                   @default(0) @map("excluded_count")
+  conflictCount  Int                   @default(0) @map("conflict_count")
+  errorMessage   String?               @map("error_message") @db.Text
+  connection     AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
   @@index([connectionId, startedAt])
   @@index([status, startedAt])
@@ -1328,26 +1327,27 @@ model OverseasPickingBatch {
 }
 
 model OverseasPickingBatchItem {
-  id                     BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
-  batchId                BigInt               @map("batch_id") @db.UnsignedBigInt
-  source                 String               @db.VarChar(16)
-  sourceRecordId         BigInt               @map("source_record_id") @db.UnsignedBigInt
-  orderId                String?              @map("order_id") @db.VarChar(64)
-  skuCode                String?              @map("sku_code") @db.VarChar(128)
-  productId              String               @map("product_id") @db.VarChar(128)
-  requestedQty           Int                  @map("requested_qty")
-  actualQty              Int?                 @map("actual_qty")
-  availableStockSnapshot Int                  @default(0) @map("available_stock_snapshot")
-  pickingPlanSnapshot    Json?                @map("picking_plan_snapshot")
-  bomSnapshot            Json?                @map("bom_snapshot")
-  dispatchMode           String               @default("overseas") @map("dispatch_mode") @db.VarChar(32)
-  shopName               String?              @map("shop_name") @db.VarChar(128)
-  shippingName           String?              @map("shipping_name") @db.VarChar(255)
-  shipmentTrackingNo     String?              @map("shipment_tracking_no") @db.VarChar(128)
-  pickedAt               DateTime?            @map("picked_at")
-  createdAt              DateTime             @default(now()) @map("created_at")
-  updatedAt              DateTime             @updatedAt @map("updated_at")
-  batch                  OverseasPickingBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  id                         BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
+  batchId                    BigInt               @map("batch_id") @db.UnsignedBigInt
+  source                     String               @db.VarChar(16)
+  sourceRecordId             BigInt               @map("source_record_id") @db.UnsignedBigInt
+  orderId                    String?              @map("order_id") @db.VarChar(64)
+  skuCode                    String?              @map("sku_code") @db.VarChar(128)
+  productId                  String               @map("product_id") @db.VarChar(128)
+  requestedQty               Int                  @map("requested_qty")
+  actualQty                  Int?                 @map("actual_qty")
+  availableStockSnapshot     Int                  @default(0) @map("available_stock_snapshot")
+  pickingPlanSnapshot        Json?                @map("picking_plan_snapshot")
+  pickingRequirementSnapshot Json?                @map("picking_requirement_snapshot")
+  bomSnapshot                Json?                @map("bom_snapshot")
+  dispatchMode               String               @default("overseas") @map("dispatch_mode") @db.VarChar(32)
+  shopName                   String?              @map("shop_name") @db.VarChar(128)
+  shippingName               String?              @map("shipping_name") @db.VarChar(255)
+  shipmentTrackingNo         String?              @map("shipment_tracking_no") @db.VarChar(128)
+  pickedAt                   DateTime?            @map("picked_at")
+  createdAt                  DateTime             @default(now()) @map("created_at")
+  updatedAt                  DateTime             @updatedAt @map("updated_at")
+  batch                      OverseasPickingBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
   @@unique([batchId, source, sourceRecordId], map: "uq_overseas_picking_batch_items_batch_source_record")
   @@index([batchId, productId])
@@ -1431,62 +1431,27 @@ model MasterProduct {
   syncRecords       MasterProductSyncRecord[]
   rakutenComboItems RakutenComboProductItem[]
   bomComponents     MasterProductBomItem[]      @relation("MasterProductBomParent")
+  bomUsages         MasterProductBomItem[]      @relation("MasterProductBomComponent")
 
   @@index([firstStockedAt], map: "idx_master_products_first_stocked_at")
   @@map("master_products")
 }
 
-model ShoulderStrapPart {
-  id             BigInt                           @id @default(autoincrement()) @db.UnsignedBigInt
-  partCode       String                           @unique @map("part_code") @db.VarChar(128)
-  partName       String                           @map("part_name") @db.VarChar(255)
-  stockQty       Int                              @default(0) @map("stock_qty")
-  status         Int                              @default(1) @db.TinyInt
-  createdAt      DateTime                         @default(now()) @map("created_at")
-  updatedAt      DateTime                         @updatedAt @map("updated_at")
-  bomItems       MasterProductBomItem[]
-  stockMovements ShoulderStrapPartStockMovement[]
-
-  @@index([status, partCode], map: "idx_shoulder_strap_parts_status_code")
-  @@map("shoulder_strap_parts")
-}
-
 model MasterProductBomItem {
-  id              BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
-  parentProductId String            @map("parent_product_id") @db.VarChar(128)
-  partId          BigInt            @map("part_id") @db.UnsignedBigInt
-  quantity        Int
-  position        Int
-  createdAt       DateTime          @default(now()) @map("created_at")
-  updatedAt       DateTime          @updatedAt @map("updated_at")
-  parentProduct   MasterProduct     @relation("MasterProductBomParent", fields: [parentProductId], references: [productId], onDelete: Cascade, onUpdate: Cascade)
-  part            ShoulderStrapPart @relation(fields: [partId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  id                 BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
+  parentProductId    String        @map("parent_product_id") @db.VarChar(128)
+  componentProductId String        @map("component_product_id") @db.VarChar(128)
+  quantity           Int
+  position           Int
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+  parentProduct      MasterProduct @relation("MasterProductBomParent", fields: [parentProductId], references: [productId], onDelete: Cascade, onUpdate: Cascade)
+  componentProduct   MasterProduct @relation("MasterProductBomComponent", fields: [componentProductId], references: [productId], onDelete: Restrict, onUpdate: Cascade)
 
-  @@unique([parentProductId, partId], map: "uq_master_product_bom_parent_part")
+  @@unique([parentProductId, componentProductId], map: "uq_master_product_bom_parent_component")
   @@unique([parentProductId, position], map: "uq_master_product_bom_parent_position")
-  @@index([partId], map: "idx_master_product_bom_part")
+  @@index([componentProductId], map: "idx_master_product_bom_component")
   @@map("master_product_bom_items")
-}
-
-model ShoulderStrapPartStockMovement {
-  id           BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
-  partId       BigInt            @map("part_id") @db.UnsignedBigInt
-  movementType String            @map("movement_type") @db.VarChar(32)
-  refType      String            @map("ref_type") @db.VarChar(32)
-  refId        BigInt            @map("ref_id") @db.UnsignedBigInt
-  productId    String?           @map("product_id") @db.VarChar(128)
-  qtyDelta     Int               @map("qty_delta")
-  beforeQty    Int               @map("before_qty")
-  afterQty     Int               @map("after_qty")
-  operatorId   BigInt            @map("operator_id") @db.UnsignedBigInt
-  createdAt    DateTime          @default(now()) @map("created_at")
-  part         ShoulderStrapPart @relation(fields: [partId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  operator     User              @relation(fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-
-  @@index([partId, createdAt], map: "idx_shoulder_part_movements_part_created")
-  @@index([refType, refId], map: "idx_shoulder_part_movements_ref")
-  @@index([productId, createdAt], map: "idx_shoulder_part_movements_product_created")
-  @@map("shoulder_strap_part_stock_movements")
 }
 
 model RakutenComboProduct {

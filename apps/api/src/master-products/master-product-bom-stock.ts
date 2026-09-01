@@ -9,7 +9,7 @@ export type ProductBomStockInput = {
   stockQty?: number | null;
   bomComponents?: Array<{
     quantity: number;
-    part: {
+    componentProduct: {
       stockQty?: number | null;
       status?: number | null;
     };
@@ -52,8 +52,8 @@ export function calculateProductStockAvailability(
   const assemblableStock = calculateAssemblableStock(
     (product?.bomComponents ?? []).map((item) => ({
       quantity: Number(item.quantity),
-      componentStockQty: toNonNegativeInteger(item.part?.stockQty),
-      componentStatus: Number(item.part?.status ?? 0),
+      componentStockQty: toNonNegativeInteger(item.componentProduct?.stockQty),
+      componentStatus: Number(item.componentProduct?.status ?? 0),
     })),
   );
   return {

@@ -11,7 +11,7 @@ describe('order BOM stock fallback', () => {
             productType: '肩带',
             stockQty,
             bomComponents: [
-              { quantity: 2, part: { stockQty: componentStockQty, status: 1 } },
+              { quantity: 2, componentProduct: { stockQty: componentStockQty, status: 1 } },
             ],
           },
         ]),

@@ -247,7 +247,7 @@ const state = {
   shoulderStrapProductsLoading: false,
   shoulderStrapProductsTotal: 0,
   shoulderStrapProductKeyword: "",
-  shoulderStrapParts: [],
+  shoulderStrapMaterials: [],
   shoulderStrapBomProduct: null,
   shoulderStrapBomDraftItems: [],
   inventoryLocations: new Map(),
@@ -8483,66 +8483,33 @@ function renderRakutenComboProductTable() {
       .join("") || '<tr><td colspan="5" class="muted">-</td></tr>';
 }
 
-function renderShoulderStrapPartTable() {
-  const body = $("shoulderStrapPartBody");
-  const summary = $("shoulderStrapPartSummary");
+function renderShoulderStrapMaterialTable(type, bodyId, summaryId) {
+  const body = $(bodyId);
+  const summary = $(summaryId);
   if (!body) return;
-  const rows = Array.isArray(state.shoulderStrapParts) ? state.shoulderStrapParts : [];
-  if (summary) {
-    summary.textContent = `共 ${rows.length} 个零配件，新建编号从 JD-0001 开始自动生成。`;
-  }
+  const rows = (Array.isArray(state.shoulderStrapMaterials) ? state.shoulderStrapMaterials : [])
+    .filter((item) => String(item?.productType || "").trim() === type);
+  if (summary) summary.textContent = `共 ${rows.length} 个${type}产品`;
   body.innerHTML = rows.length
     ? rows.map((item) => `<tr>
-        <td><strong>${escapeHtml(displayText(item?.partCode))}</strong></td>
-        <td>${escapeHtml(displayText(item?.partName))}</td>
+        <td><strong>${escapeHtml(displayText(item?.productId))}</strong></td>
+        <td>${escapeHtml(displayText(item?.productName))}</td>
         <td class="master-product-current-cell">${escapeHtml(displayText(item?.stockQty ?? 0))}</td>
         <td>${escapeHtml(formatDate(item?.updatedAt))}</td>
-        <td><div class="action-row compact-actions">
-          <button type="button" class="tiny-btn ghost" data-action="viewShoulderStrapPartMovements" data-id="${escapeHtml(String(item?.id || ""))}">流水</button>
-          <button type="button" class="tiny-btn" data-action="editShoulderStrapPart" data-id="${escapeHtml(String(item?.id || ""))}">修改</button>
-          <button type="button" class="tiny-btn danger" data-action="deleteShoulderStrapPart" data-id="${escapeHtml(String(item?.id || ""))}">删除</button>
-        </div></td>
       </tr>`).join("")
-    : '<tr><td colspan="5" class="muted">尚未建立肩带零配件</td></tr>';
+    : `<tr><td colspan="4" class="muted">暂无${escapeHtml(type)}主产品</td></tr>`;
 }
 
-async function loadShoulderStrapParts() {
-  const result = await request("/master-products/shoulder-strap-parts");
-  state.shoulderStrapParts = Array.isArray(result?.items) ? result.items : [];
-  renderShoulderStrapPartTable();
-  return state.shoulderStrapParts;
+function renderShoulderStrapMaterialTables() {
+  renderShoulderStrapMaterialTable("肩带本体", "shoulderStrapBodyMaterialBody", "shoulderStrapBodyMaterialSummary");
+  renderShoulderStrapMaterialTable("肩带配件", "shoulderStrapAccessoryMaterialBody", "shoulderStrapAccessoryMaterialSummary");
 }
 
-function openShoulderStrapPartEditor(part = null) {
-  $("shoulderStrapPartForm")?.reset();
-  const id = String(part?.id || "");
-  $("shoulderStrapPartEditingId").value = id;
-  $("shoulderStrapPartUpdatedAt").value = id ? String(part?.updatedAt || "") : "";
-  $("shoulderStrapPartCode").value = id ? String(part?.partCode || "") : "保存后自动生成";
-  $("shoulderStrapPartName").value = String(part?.partName || "");
-  $("shoulderStrapPartStockQty").value = String(part?.stockQty ?? 0);
-  $("shoulderStrapPartModalTitle").textContent = id ? "修改肩带零配件" : "新增肩带零配件";
-  openModal("shoulderStrapPartModal");
-  $("shoulderStrapPartName")?.focus();
-}
-
-async function openShoulderStrapPartMovements(partId) {
-  const result = await request(`/master-products/shoulder-strap-parts/${encodeURIComponent(partId)}/movements`);
-  const part = result?.part || {};
-  const rows = Array.isArray(result?.items) ? result.items : [];
-  $("shoulderStrapPartMovementsTitle").textContent = `库存流水：${displayText(part.partCode)} - ${displayText(part.partName)}`;
-  $("shoulderStrapPartMovementsBody").innerHTML = rows.length
-    ? rows.map((item) => `<tr>
-        <td>${escapeHtml(formatDate(item.createdAt))}</td>
-        <td>${escapeHtml(displayText(item.productId))}</td>
-        <td>${escapeHtml(displayText(item.refId))}</td>
-        <td>${escapeHtml(displayText(item.beforeQty))}</td>
-        <td class="${Number(item.qtyDelta) < 0 ? "danger-text" : "master-product-current-cell"}">${escapeHtml(displayText(item.qtyDelta))}</td>
-        <td>${escapeHtml(displayText(item.afterQty))}</td>
-        <td>${escapeHtml(displayText(item.operatorName))}</td>
-      </tr>`).join("")
-    : '<tr><td colspan="7" class="muted">暂无订单扣减流水</td></tr>';
-  openModal("shoulderStrapPartMovementsModal");
+async function loadShoulderStrapMaterials() {
+  const result = await request("/master-products/shoulder-strap-materials");
+  state.shoulderStrapMaterials = Array.isArray(result?.items) ? result.items : [];
+  renderShoulderStrapMaterialTables();
+  return state.shoulderStrapMaterials;
 }
 
 function renderShoulderStrapBomDraftItems() {
@@ -8551,14 +8518,18 @@ function renderShoulderStrapBomDraftItems() {
   const items = Array.isArray(state.shoulderStrapBomDraftItems) ? state.shoulderStrapBomDraftItems : [];
   container.innerHTML = items.length
     ? items.map((item, index) => {
-        const options = state.shoulderStrapParts.map((part) =>
-          `<option value="${escapeHtml(String(part.id))}" ${String(part.id) === String(item.partId) ? "selected" : ""}>${escapeHtml(`${part.partCode} - ${part.partName}（库存 ${part.stockQty}）`)}</option>`,
-        ).join("");
+        const options = ["肩带本体", "肩带配件"].map((type) => {
+          const typeOptions = state.shoulderStrapMaterials
+            .filter((material) => String(material?.productType || "").trim() === type)
+            .map((material) => `<option value="${escapeHtml(String(material.productId))}" ${String(material.productId) === String(item.componentProductId) ? "selected" : ""}>${escapeHtml(`${material.productId} - ${material.productName}（库存 ${material.stockQty}）`)}</option>`)
+            .join("");
+          return `<optgroup label="${escapeHtml(type)}">${typeOptions}</optgroup>`;
+        }).join("");
         return `<div class="master-product-bom-item shoulder-strap-bom-item" data-index="${index}">
           <span class="master-product-bom-order">${index + 1}</span>
-          <label>肩带零配件
+          <label>BOM 材料
             <select class="shoulder-strap-bom-part-select" data-index="${index}" required>
-              <option value="">请选择零配件</option>${options}
+              <option value="">请选择主产品</option>${options}
             </select>
           </label>
           <label class="master-product-bom-quantity-label">单件用量
@@ -8567,32 +8538,32 @@ function renderShoulderStrapBomDraftItems() {
           <button type="button" class="tiny-btn ghost" data-action="removeShoulderStrapBomItem" data-index="${index}">删除</button>
         </div>`;
       }).join("")
-    : '<div class="master-product-bom-empty muted">尚未设置 BOM 零配件。</div>';
+    : '<div class="master-product-bom-empty muted">尚未设置 BOM 材料。</div>';
   const addButton = $("addShoulderStrapBomItemBtn");
-  if (addButton) addButton.disabled = items.length >= 10 || state.shoulderStrapParts.length === 0;
+  if (addButton) addButton.disabled = items.length >= 10 || state.shoulderStrapMaterials.length === 0;
 }
 
 function addShoulderStrapBomDraftItem() {
   if (state.shoulderStrapBomDraftItems.length >= 10) {
-    showToast("一个 BOM 最多添加 10 个零配件", true);
+    showToast("一个 BOM 最多添加 10 个材料", true);
     return;
   }
-  if (!state.shoulderStrapParts.length) {
-    showToast("请先新增肩带零配件", true);
+  if (!state.shoulderStrapMaterials.length) {
+    showToast("请先在主产品管理中建立肩带本体或肩带配件", true);
     return;
   }
-  state.shoulderStrapBomDraftItems.push({ partId: "", quantity: 1 });
+  state.shoulderStrapBomDraftItems.push({ componentProductId: "", quantity: 1 });
   renderShoulderStrapBomDraftItems();
 }
 
 async function openShoulderStrapBomEditor(productId) {
   const [bom] = await Promise.all([
     request(`/master-products/${encodeURIComponent(productId)}/bom`),
-    loadShoulderStrapParts(),
+    loadShoulderStrapMaterials(),
   ]);
   state.shoulderStrapBomProduct = bom?.product || null;
   state.shoulderStrapBomDraftItems = (Array.isArray(bom?.bomItems) ? bom.bomItems : []).map((item) => ({
-    partId: String(item?.partId || ""),
+    componentProductId: String(item?.componentProductId || ""),
     quantity: Number(item?.quantity || 1),
   }));
   $("shoulderStrapBomModalTitle").textContent = `管理 BOM：${displayText(bom?.product?.productName)}`;
@@ -8604,8 +8575,8 @@ async function openShoulderStrapBomEditor(productId) {
 function renderShoulderStrapBomItems(items) {
   if (!Array.isArray(items) || !items.length) return '<span class="muted">未设置</span>';
   return `<div class="shoulder-strap-bom-preview">${items.map((item) => {
-      const name = String(item?.partName || "").trim();
-      const productId = String(item?.partCode || "").trim();
+      const name = String(item?.componentProductName || "").trim();
+      const productId = String(item?.componentProductId || "").trim();
     const quantity = Number(item?.quantity || 0);
     return `<span>${escapeHtml(name || productId)} <strong>×${escapeHtml(String(quantity))}</strong></span>`;
   }).join("")}</div>`;
@@ -13024,6 +12995,7 @@ function renderYamatoMergedScanSession() {
   const scanInputRow = $("yamatoMergedScanInputRow");
   const assemblySection = $("yamatoAssemblyPartSection");
   const assemblyBody = $("yamatoAssemblyPartBody");
+  const finalConfirmButton = $("confirmYamatoMergedScanBtn");
   if (!summary || !body) return;
 
   if (!session) {
@@ -13032,7 +13004,8 @@ function renderYamatoMergedScanSession() {
     if (scanInputRow) scanInputRow.classList.remove("hidden");
     if (assemblySection) assemblySection.classList.add("hidden");
     if (assemblyBody) assemblyBody.innerHTML = "";
-    if (hint) hint.textContent = "扫齐产品并确认全部组装配件后会自动打印面单。";
+    if (hint) hint.textContent = "扫齐产品并逐行确认全部 BOM 材料后，再点击打印确认。";
+    if (finalConfirmButton) finalConfirmButton.disabled = true;
     return;
   }
 
@@ -13046,8 +13019,8 @@ function renderYamatoMergedScanSession() {
   summary.textContent = remainingProducts.length
     ? `请继续扫码产品：${remainingProducts.join("、")}`
     : remainingParts.length
-      ? `产品已扫码完成，请确认剩余 ${remainingParts.length} 项组装零配件。`
-      : "产品和组装零配件已全部确认，正在打印...";
+      ? `产品已扫码完成，请确认剩余 ${remainingParts.length} 项 BOM 材料。`
+      : "产品和 BOM 材料已全部确认，请点击“确认并打印”。";
   if (hint) {
     hint.textContent = session.orderId
       ? `订单号：${session.orderId}，面单第 ${session.pageNo} 页。`
@@ -13078,8 +13051,8 @@ function renderYamatoMergedScanSession() {
     assemblyBody.innerHTML = session.assemblyParts
       .map((item) => `
         <tr>
-          <td>${escapeHtml(displayText(item.partCode))}</td>
-          <td>${escapeHtml(displayText(item.partName))}</td>
+          <td>${escapeHtml(displayText(item.componentProductId))}</td>
+          <td>${escapeHtml(displayText(item.componentProductName))}</td>
           <td>${escapeHtml(displayText(item.requiredQty))}</td>
           <td>${escapeHtml(displayText(item.stockQty))}</td>
           <td>
@@ -13087,7 +13060,7 @@ function renderYamatoMergedScanSession() {
               type="button"
               class="tiny-btn${item.confirmed ? " ghost" : ""}"
               data-action="confirmYamatoAssemblyPart"
-              data-part-id="${escapeHtml(item.partId)}"
+              data-component-product-id="${escapeHtml(item.componentProductId)}"
               ${item.confirmed ? "disabled" : ""}
             >${item.confirmed ? "已确认" : "确认"}</button>
           </td>
@@ -13095,6 +13068,7 @@ function renderYamatoMergedScanSession() {
       `)
       .join("");
   }
+  if (finalConfirmButton) finalConfirmButton.disabled = !isYamatoMergedScanComplete(session);
 }
 
 function focusYamatoMergedScanInput() {
@@ -13120,6 +13094,10 @@ function cancelYamatoMergedScanSession({ showMessage = true } = {}) {
 
 function startYamatoMergedScanSession(preview, scannedProductId) {
   const scannedKey = normalizeYamatoProductId(scannedProductId);
+  const previewAssemblyParts = Array.isArray(preview?.assemblyParts) ? preview.assemblyParts : [];
+  const scannedAssemblyMaterial = previewAssemblyParts.some(
+    (item) => normalizeYamatoProductId(item?.componentProductId) === scannedKey,
+  );
   const products = (Array.isArray(preview?.products) ? preview.products : [])
     .map((item) => {
       const productId = String(item?.productId || "").trim();
@@ -13128,7 +13106,11 @@ function startYamatoMergedScanSession(preview, scannedProductId) {
         productId,
         productName: String(item?.productName || "").trim(),
         quantity,
-        scannedQty: normalizeYamatoProductId(productId) === scannedKey ? 1 : 0,
+        scannedQty: normalizeYamatoProductId(productId) === scannedKey
+          ? 1
+          : scannedAssemblyMaterial && preview.products.length === 1
+            ? quantity
+            : 0,
       };
     })
     .filter((item) => item.productId);
@@ -13138,14 +13120,13 @@ function startYamatoMergedScanSession(preview, scannedProductId) {
     orderId: String(preview?.orderId || "").trim(),
     printProductId: String(preview?.productId || scannedProductId || products[0]?.productId || "").trim(),
     products,
-    assemblyParts: (Array.isArray(preview?.assemblyParts) ? preview.assemblyParts : []).map((item) => ({
-      partId: String(item?.partId || "").trim(),
-      partCode: String(item?.partCode || "").trim(),
-      partName: String(item?.partName || "").trim(),
+    assemblyParts: previewAssemblyParts.map((item) => ({
+      componentProductId: String(item?.componentProductId || "").trim(),
+      componentProductName: String(item?.componentProductName || "").trim(),
       requiredQty: Number(item?.requiredQty || 0),
       stockQty: Number(item?.stockQty || 0),
       confirmed: false,
-    })).filter((item) => item.partId),
+    })).filter((item) => item.componentProductId),
   };
   renderYamatoMergedScanSession();
   openModal("yamatoMergedScanModal");
@@ -13215,7 +13196,9 @@ async function finishYamatoMergedScanSession() {
   const productId = session.printProductId || session.products[0]?.productId;
   const requestOptions = {
     pageNo: session.pageNo,
-    confirmedAssemblyPartIds: session.assemblyParts.filter((item) => item.confirmed).map((item) => item.partId),
+    confirmedAssemblyComponentProductIds: session.assemblyParts
+      .filter((item) => item.confirmed)
+      .map((item) => item.componentProductId),
   };
   state.yamatoMergedScanSession = null;
   renderYamatoMergedScanSession();
@@ -13242,18 +13225,16 @@ async function finishYamatoMergedScanSession() {
   await executeYamatoPrintForProduct(batch, productId, { requestOptions });
 }
 
-async function confirmYamatoAssemblyPart(partId) {
+async function confirmYamatoAssemblyPart(componentProductId) {
   const session = state.yamatoMergedScanSession;
   if (!session) return;
-  const target = session.assemblyParts.find((item) => item.partId === String(partId || "").trim());
+  const target = session.assemblyParts.find(
+    (item) => item.componentProductId === String(componentProductId || "").trim(),
+  );
   if (!target || target.confirmed) return;
   target.confirmed = true;
   renderYamatoMergedScanSession();
-  if (isYamatoMergedScanComplete(session)) {
-    await finishYamatoMergedScanSession();
-  } else {
-    focusYamatoMergedScanInput();
-  }
+  focusYamatoMergedScanInput();
 }
 
 async function handleYamatoMergedScanValue(rawValue) {
@@ -16032,7 +16013,7 @@ function bindForms() {
   $("openShoulderStrapProductManagementPanel")?.addEventListener("click", async () => {
     try {
       switchPanel("shoulderStrapProductManagement");
-      await Promise.all([loadShoulderStrapProducts({ reset: true }), loadShoulderStrapParts()]);
+      await Promise.all([loadShoulderStrapProducts({ reset: true }), loadShoulderStrapMaterials()]);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -16040,7 +16021,7 @@ function bindForms() {
   $("refreshShoulderStrapProducts")?.addEventListener("click", async (event) => {
     try {
       await withBusyButton(event.currentTarget, "刷新中...", () =>
-        Promise.all([loadShoulderStrapProducts({ reset: true }), loadShoulderStrapParts()]),
+        Promise.all([loadShoulderStrapProducts({ reset: true }), loadShoulderStrapMaterials()]),
       );
     } catch (error) {
       showToast(error.message, true);
@@ -16068,60 +16049,6 @@ function bindForms() {
     }
   });
 
-  $("openCreateShoulderStrapPartBtn")?.addEventListener("click", () => openShoulderStrapPartEditor());
-  $("shoulderStrapPartBody")?.addEventListener("click", async (event) => {
-    const movementsButton = event.target.closest("button[data-action='viewShoulderStrapPartMovements']");
-    if (movementsButton) {
-      try {
-        await withBusyButton(movementsButton, "加载中...", () =>
-          openShoulderStrapPartMovements(String(movementsButton.dataset.id || "")),
-        );
-      } catch (error) {
-        showToast(error.message, true);
-      }
-      return;
-    }
-    const editButton = event.target.closest("button[data-action='editShoulderStrapPart']");
-    if (editButton) {
-      const part = state.shoulderStrapParts.find((item) => String(item?.id) === String(editButton.dataset.id));
-      if (part) openShoulderStrapPartEditor(part);
-      return;
-    }
-    const deleteButton = event.target.closest("button[data-action='deleteShoulderStrapPart']");
-    if (!deleteButton) return;
-    const part = state.shoulderStrapParts.find((item) => String(item?.id) === String(deleteButton.dataset.id));
-    if (!part) return;
-    const confirmed = await openDeleteConfirmModal(`确认删除零配件 ${part.partCode} - ${part.partName} 吗？`);
-    if (!confirmed) return;
-    try {
-      await request(`/master-products/shoulder-strap-parts/${encodeURIComponent(part.id)}`, { method: "DELETE" });
-      showToast("零配件已删除");
-      await Promise.all([loadShoulderStrapParts(), loadShoulderStrapProducts({ reset: true })]);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-  $("shoulderStrapPartForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const submitButton = getSubmitButton(event.currentTarget, event);
-    const id = String($("shoulderStrapPartEditingId")?.value || "");
-    const payload = {
-      partName: String($("shoulderStrapPartName")?.value || "").trim(),
-      stockQty: Number($("shoulderStrapPartStockQty")?.value),
-      ...(id ? { updatedAt: String($("shoulderStrapPartUpdatedAt")?.value || "") } : {}),
-    };
-    try {
-      await withBusyButton(submitButton, "保存中...", () => request(
-        id ? `/master-products/shoulder-strap-parts/${encodeURIComponent(id)}` : "/master-products/shoulder-strap-parts",
-        { method: id ? "PUT" : "POST", body: JSON.stringify(payload) },
-      ));
-      closeModal("shoulderStrapPartModal");
-      showToast(id ? "零配件已修改" : "零配件已新增");
-      await Promise.all([loadShoulderStrapParts(), loadShoulderStrapProducts({ reset: true })]);
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
   $("addShoulderStrapBomItemBtn")?.addEventListener("click", addShoulderStrapBomDraftItem);
   $("shoulderStrapBomItems")?.addEventListener("change", (event) => {
     const select = event.target.closest(".shoulder-strap-bom-part-select");
@@ -16130,7 +16057,7 @@ function bindForms() {
     if (!input) return;
     const item = state.shoulderStrapBomDraftItems[Number(input.dataset.index)];
     if (!item) return;
-    if (select) item.partId = String(select.value || "");
+    if (select) item.componentProductId = String(select.value || "");
     if (quantity) item.quantity = Number(quantity.value || 0);
   });
   $("shoulderStrapBomItems")?.addEventListener("click", (event) => {
@@ -16144,10 +16071,10 @@ function bindForms() {
     const submitButton = getSubmitButton(event.currentTarget, event);
     const productId = String(state.shoulderStrapBomProduct?.productId || "");
     const items = state.shoulderStrapBomDraftItems.map((item) => ({
-      partId: String(item.partId || ""), quantity: Number(item.quantity),
+      componentProductId: String(item.componentProductId || ""), quantity: Number(item.quantity),
     }));
-    if (items.some((item) => !item.partId)) return showToast("请选择所有零配件", true);
-    if (new Set(items.map((item) => item.partId)).size !== items.length) return showToast("同一零配件不能重复添加", true);
+    if (items.some((item) => !item.componentProductId)) return showToast("请选择所有 BOM 材料", true);
+    if (new Set(items.map((item) => item.componentProductId)).size !== items.length) return showToast("同一 BOM 材料不能重复添加", true);
     try {
       await withBusyButton(submitButton, "保存中...", () => request(
         `/master-products/${encodeURIComponent(productId)}/bom`,
@@ -16441,12 +16368,21 @@ function bindForms() {
   $("yamatoMergedScanModal")?.addEventListener("click", (event) => {
     const confirmPartButton = event.target.closest("button[data-action='confirmYamatoAssemblyPart']");
     if (confirmPartButton) {
-      confirmYamatoAssemblyPart(confirmPartButton.dataset.partId).catch((error) => showToast(error.message, true));
+      confirmYamatoAssemblyPart(confirmPartButton.dataset.componentProductId)
+        .catch((error) => showToast(error.message, true));
       return;
     }
     const cancelButton = event.target.closest("button[data-action='cancelYamatoMergedScan']");
     if (cancelButton) {
       cancelYamatoMergedScanSession();
+    }
+  });
+  $("confirmYamatoMergedScanBtn")?.addEventListener("click", async (event) => {
+    if (!isYamatoMergedScanComplete()) return;
+    try {
+      await withBusyButton(event.currentTarget, "打印中...", finishYamatoMergedScanSession);
+    } catch (error) {
+      showToast(error.message, true);
     }
   });
 
@@ -19586,25 +19522,11 @@ function bindDelegates() {
       closeModal("masterProductImportModal");
       return;
     }
-    const shoulderStrapPartClose = event.target.closest(
-      "button[data-action='closeShoulderStrapPartModal']",
-    );
-    if (shoulderStrapPartClose) {
-      closeModal("shoulderStrapPartModal");
-      return;
-    }
     const shoulderStrapBomClose = event.target.closest(
       "button[data-action='closeShoulderStrapBomModal']",
     );
     if (shoulderStrapBomClose) {
       closeModal("shoulderStrapBomModal");
-      return;
-    }
-    const shoulderStrapPartMovementsClose = event.target.closest(
-      "button[data-action='closeShoulderStrapPartMovementsModal']",
-    );
-    if (shoulderStrapPartMovementsClose) {
-      closeModal("shoulderStrapPartMovementsModal");
       return;
     }
     const createRakutenComboProductClose = event.target.closest(
@@ -19930,14 +19852,8 @@ function bindDelegates() {
     }
   });
 
-  $("shoulderStrapPartModal")?.addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) closeModal("shoulderStrapPartModal");
-  });
   $("shoulderStrapBomModal")?.addEventListener("click", (event) => {
     if (event.target === event.currentTarget) closeModal("shoulderStrapBomModal");
-  });
-  $("shoulderStrapPartMovementsModal")?.addEventListener("click", (event) => {
-    if (event.target === event.currentTarget) closeModal("shoulderStrapPartMovementsModal");
   });
 
   $("bulkRakutenComboProductUploadModal").addEventListener("click", (event) => {
