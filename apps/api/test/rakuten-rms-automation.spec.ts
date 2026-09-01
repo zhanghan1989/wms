@@ -472,6 +472,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
           orderId: '421951-ORDER',
           event: RakutenOrderMailEvent.japan_shipped,
           status: RakutenAutomationStatus.sent,
+          subject: '保存済み件名',
           body: '保存済み本文',
           smtpMessageId: '<message@example>',
           connection: { id: 7n, shop: { id: 3n, name: '乐天店' } },
@@ -485,11 +486,46 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
     expect(detail).toMatchObject({
       id: '54',
+      subject: '保存済み件名',
       body: '保存済み本文',
       smtpMessageId: '<message@example>',
       connection: { id: '7', shop: { id: '3', name: '乐天店' } },
     });
     expect(prisma.rakutenOrderRecord.findMany).not.toHaveBeenCalled();
+  });
+
+  it('renders both subject and body when viewing a pending mail detail', async () => {
+    const prisma = {
+      rakutenOrderMail: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 55n,
+          connectionId: 7n,
+          orderId: '421951-ORDER',
+          event: RakutenOrderMailEvent.new_order,
+          status: RakutenAutomationStatus.pending,
+          subject: null,
+          body: null,
+          connection: { id: 7n, shop: { id: 3n, name: '乐天店' } },
+        }),
+      },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([makeRow()]) },
+      rakutenMailTemplateVersion: {
+        findFirst: jest.fn().mockResolvedValue({
+          subjectTemplate: '注文 {{order_number}}',
+          bodyTemplate: '{{buyer_name}}様',
+        }),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+
+    const detail = await scopedService.getMailDetail('55') as Record<string, unknown>;
+
+    expect(detail).toMatchObject({
+      id: '55',
+      subject: '注文 421951-ORDER',
+      body: expect.stringContaining('山田 太郎様'),
+      previewError: null,
+    });
   });
 
   it('renders the active shop template with order variables', async () => {

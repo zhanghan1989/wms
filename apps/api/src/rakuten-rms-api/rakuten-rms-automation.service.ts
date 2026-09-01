@@ -473,17 +473,20 @@ export class RakutenRmsAutomationService {
       include: { connection: { select: { id: true, shop: { select: { id: true, name: true } } } } },
     });
     if (!mail) throw new NotFoundException('邮件任务不存在');
+    let subject = mail.subject;
     let body = mail.body;
     let previewError: string | null = null;
-    if (!body) {
+    if (!subject || !body) {
       try {
         const rows = await this.loadOrderRows(mail.connectionId, mail.orderId);
-        body = (await this.renderConfiguredMail(mail.connectionId, mail.event, rows)).body;
+        const rendered = await this.renderConfiguredMail(mail.connectionId, mail.event, rows);
+        subject ||= rendered.subject;
+        body ||= rendered.body;
       } catch (error) {
         previewError = this.errorMessage(error);
       }
     }
-    return { ...this.serializeMail(mail), body, previewError };
+    return { ...this.serializeMail(mail), subject, body, previewError };
   }
 
   async retryMail(idRaw: string, userId: bigint): Promise<{ retried: boolean; dependentMailsRetried: number }> {
