@@ -1496,12 +1496,20 @@ export class RakutenRmsApiService {
       where: { productId },
       select: {
         stockQty: true,
+        boxInventories: { select: { qty: true } },
         productType: true,
         bomComponents: {
           orderBy: [{ position: "asc" }, { id: "asc" }],
           select: {
             quantity: true,
-            componentProduct: { select: { stockQty: true, status: true } },
+            componentProduct: {
+              select: {
+                stockQty: true,
+                status: true,
+                productType: true,
+                boxInventories: { select: { qty: true } },
+              },
+            },
           },
         },
       },

@@ -11,7 +11,14 @@ describe('order BOM stock fallback', () => {
             productType: '肩带',
             stockQty,
             bomComponents: [
-              { quantity: 2, componentProduct: { stockQty: componentStockQty, status: 1 } },
+              {
+                quantity: 2,
+                componentProduct: {
+                  stockQty: componentStockQty,
+                  status: 1,
+                  productType: '肩带本体',
+                },
+              },
             ],
           },
         ]),
@@ -35,5 +42,35 @@ describe('order BOM stock fallback', () => {
         resolveDispatchModeForProductId: (id: string, qty: number) => Promise<string>;
       }).resolveDispatchModeForProductId('STRAP-1', 4),
     ).resolves.toBe('china_no_stock');
+  });
+
+  it('uses box inventory instead of stale cached stock for routing', async () => {
+    const service = new OrdersService({
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([{
+          productId: 'STRAP-BOX',
+          productName: '箱库存肩带',
+          productType: '肩带',
+          stockQty: 99,
+          boxInventories: [],
+          bomComponents: [{
+            quantity: 2,
+            componentProduct: {
+              stockQty: 0,
+              status: 1,
+              productType: '肩带本体',
+              boxInventories: [{ qty: 6 }],
+            },
+          }],
+        }]),
+      },
+    } as never);
+
+    await expect((service as unknown as {
+      resolveDispatchModeForProductId: (id: string, qty: number) => Promise<string>;
+    }).resolveDispatchModeForProductId('STRAP-BOX', 3)).resolves.toBe('overseas');
+    await expect((service as unknown as {
+      resolveDispatchModeForProductId: (id: string, qty: number) => Promise<string>;
+    }).resolveDispatchModeForProductId('STRAP-BOX', 4)).resolves.toBe('china_no_stock');
   });
 });

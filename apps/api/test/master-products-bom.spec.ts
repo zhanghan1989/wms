@@ -66,4 +66,74 @@ describe('master product BOM', () => {
     })).rejects.toThrow('肩带本体或肩带配件主产品不存在或已停用：BAG-1');
     expect(transaction).not.toHaveBeenCalled();
   });
+
+  it('rejects a BOM without a shoulder body', async () => {
+    const transaction = jest.fn();
+    const service = new MasterProductsService({
+      masterProduct: {
+        findUnique: jest.fn().mockResolvedValue({ id: 11n, productType: '肩带' }),
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 'HOOK-1', productType: '肩带配件' },
+        ]),
+      },
+      $transaction: transaction,
+    } as never, {} as never);
+
+    await expect(service.updateBom('STRAP-1', {
+      items: [{ componentProductId: 'HOOK-1', quantity: 1 }],
+    })).rejects.toThrow('必须且只能包含一种“肩带本体”');
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a BOM containing two different shoulder bodies', async () => {
+    const transaction = jest.fn();
+    const service = new MasterProductsService({
+      masterProduct: {
+        findUnique: jest.fn().mockResolvedValue({ id: 11n, productType: '肩带' }),
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 'BODY-1', productType: '肩带本体' },
+          { productId: 'BODY-2', productType: '肩带本体' },
+        ]),
+      },
+      $transaction: transaction,
+    } as never, {} as never);
+
+    await expect(service.updateBom('STRAP-1', {
+      items: [
+        { componentProductId: 'BODY-1', quantity: 1 },
+        { componentProductId: 'BODY-2', quantity: 1 },
+      ],
+    })).rejects.toThrow('必须且只能包含一种“肩带本体”');
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it('accepts a body-only BOM because accessories are optional', async () => {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      masterProductBomItem: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    };
+    const prisma = {
+      masterProduct: {
+        findUnique: jest.fn().mockResolvedValue({ id: 11n, productType: '肩带' }),
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 'BODY-1', productType: '肩带本体' },
+        ]),
+      },
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
+    };
+    const service = new MasterProductsService(prisma as never, {} as never);
+    jest.spyOn(service, 'getBom').mockResolvedValue({ product: {}, bomItems: [] });
+
+    await expect(service.updateBom('STRAP-1', {
+      items: [{ componentProductId: 'BODY-1', quantity: 2 }],
+    })).resolves.toEqual({ product: {}, bomItems: [] });
+    expect(tx.masterProductBomItem.createMany).toHaveBeenCalledWith({
+      data: [{
+        parentProductId: 'STRAP-1', componentProductId: 'BODY-1', quantity: 2, position: 1,
+      }],
+    });
+  });
 });

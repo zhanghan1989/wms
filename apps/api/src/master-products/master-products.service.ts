@@ -342,6 +342,7 @@ export class MasterProductsService {
           length: true,
           width: true,
           stockQty: true,
+          boxInventories: { select: { qty: true } },
           updatedAt: true,
           bomComponents: {
             orderBy: [{ position: 'asc' }, { id: 'asc' }],
@@ -349,7 +350,13 @@ export class MasterProductsService {
               componentProductId: true,
               quantity: true,
               componentProduct: {
-                select: { productName: true, stockQty: true, status: true },
+                select: {
+                  productName: true,
+                  stockQty: true,
+                  status: true,
+                  productType: true,
+                  boxInventories: { select: { qty: true } },
+                },
               },
             },
           },
@@ -369,7 +376,7 @@ export class MasterProductsService {
         style: row.style,
         length: row.length,
         width: row.width,
-        stockQty: Number(row.stockQty ?? 0),
+        stockQty: row.boxInventories.reduce((sum, item) => sum + Number(item.qty ?? 0), 0),
         updatedAt: row.updatedAt,
         bomItemCount: row.bomComponents.length,
         assemblableStock: calculateProductStockAvailability(row).assemblableStock,
@@ -397,6 +404,7 @@ export class MasterProductsService {
         productName: true,
         productType: true,
         stockQty: true,
+        boxInventories: { select: { qty: true } },
         updatedAt: true,
       },
       orderBy: [{ productType: 'desc' }, { productId: 'asc' }],
@@ -405,7 +413,8 @@ export class MasterProductsService {
       productId: row.productId,
       productName: row.productName,
       productType: row.productType,
-      stockQty: Number(row.stockQty ?? 0),
+      stockQty: (row.boxInventories ?? [{ qty: row.stockQty }])
+        .reduce((sum, item) => sum + Number(item.qty ?? 0), 0),
       updatedAt: row.updatedAt,
     }));
     return {
@@ -1080,7 +1089,11 @@ export class MasterProductsService {
     const rows = await this.prisma.masterProductBomItem.findMany({
       where: { parentProductId: productId },
       orderBy: [{ position: 'asc' }, { id: 'asc' }],
-      include: { componentProduct: true },
+      include: {
+        componentProduct: {
+          include: { boxInventories: { select: { qty: true } } },
+        },
+      },
     });
     return {
       product,
@@ -1088,7 +1101,8 @@ export class MasterProductsService {
         id: row.id.toString(),
         componentProductId: row.componentProductId,
         componentProductName: row.componentProduct.productName,
-        componentStockQty: Number(row.componentProduct.stockQty),
+        componentStockQty: (row.componentProduct.boxInventories ?? [{ qty: row.componentProduct.stockQty }])
+          .reduce((sum, item) => sum + Number(item.qty ?? 0), 0),
         componentStatus: Number(row.componentProduct.status),
         quantity: Number(row.quantity),
         position: Number(row.position),
@@ -1144,15 +1158,17 @@ export class MasterProductsService {
       throw new BadRequestException('同一 BOM 材料不能重复添加');
     }
 
-    if (items.length) {
-      const componentRows = await this.prisma.masterProduct.findMany({
+    const componentRows = items.length
+      ? await this.prisma.masterProduct.findMany({
         where: {
           productId: { in: items.map((item) => item.componentProductId) },
           productType: { in: [...SHOULDER_STRAP_MATERIAL_TYPES] },
           status: 1,
         },
-        select: { productId: true },
-      });
+        select: { productId: true, productType: true },
+      })
+      : [];
+    if (items.length) {
       const existingIds = new Set(componentRows.map((item) => item.productId));
       const missingIds = items
         .map((item) => item.componentProductId)
@@ -1160,6 +1176,10 @@ export class MasterProductsService {
       if (missingIds.length) {
         throw new BadRequestException(`肩带本体或肩带配件主产品不存在或已停用：${missingIds.join('、')}`);
       }
+    }
+    const bodyCount = componentRows.filter((item) => item.productType === '肩带本体').length;
+    if (bodyCount !== 1) {
+      throw new BadRequestException('肩带 BOM 必须且只能包含一种“肩带本体”');
     }
 
     await this.prisma.$transaction(async (tx) => {

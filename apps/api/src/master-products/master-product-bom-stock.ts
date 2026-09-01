@@ -7,11 +7,14 @@ export type BomStockItem = {
 export type ProductBomStockInput = {
   productType?: string | null;
   stockQty?: number | null;
+  boxInventories?: Array<{ qty?: number | null }> | null;
   bomComponents?: Array<{
     quantity: number;
     componentProduct: {
       stockQty?: number | null;
       status?: number | null;
+      productType?: string | null;
+      boxInventories?: Array<{ qty?: number | null }> | null;
     };
   }> | null;
 };
@@ -25,6 +28,16 @@ export type ProductStockAvailability = {
 function toNonNegativeInteger(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+}
+
+function resolveBoxBackedStock(
+  stockQty: unknown,
+  boxInventories: Array<{ qty?: number | null }> | null | undefined,
+): number {
+  if (Array.isArray(boxInventories)) {
+    return boxInventories.reduce((sum, row) => sum + toNonNegativeInteger(row?.qty), 0);
+  }
+  return toNonNegativeInteger(stockQty);
 }
 
 export function calculateAssemblableStock(items: BomStockItem[]): number | null {
@@ -44,15 +57,24 @@ export function calculateAssemblableStock(items: BomStockItem[]): number | null 
 export function calculateProductStockAvailability(
   product: ProductBomStockInput | null | undefined,
 ): ProductStockAvailability {
-  const finishedStock = toNonNegativeInteger(product?.stockQty);
+  const finishedStock = resolveBoxBackedStock(product?.stockQty, product?.boxInventories);
   if (String(product?.productType ?? '').trim() !== '肩带') {
     return { finishedStock, assemblableStock: null, fulfillableStock: finishedStock };
   }
 
-  const assemblableStock = calculateAssemblableStock(
-    (product?.bomComponents ?? []).map((item) => ({
+  const bomComponents = product?.bomComponents ?? [];
+  const bodyCount = bomComponents.filter(
+    (item) => String(item.componentProduct?.productType ?? '').trim() === '肩带本体',
+  ).length;
+  const assemblableStock = bomComponents.length > 0 && bodyCount !== 1
+    ? 0
+    : calculateAssemblableStock(
+    bomComponents.map((item) => ({
       quantity: Number(item.quantity),
-      componentStockQty: toNonNegativeInteger(item.componentProduct?.stockQty),
+      componentStockQty: resolveBoxBackedStock(
+        item.componentProduct?.stockQty,
+        item.componentProduct?.boxInventories,
+      ),
       componentStatus: Number(item.componentProduct?.status ?? 0),
     })),
   );

@@ -839,8 +839,10 @@ interface YamatoShipmentPageProductDetail {
 interface YamatoShipmentPageAssemblyPartDetail {
   componentProductId: string;
   componentProductName: string;
+  componentProductType: string;
   requiredQty: number;
   stockQty: number;
+  parentProductIds: string[];
 }
 
 interface YamatoShipmentPagePreviewResult {
@@ -1591,7 +1593,14 @@ export class OrdersService {
       throw new BadRequestException('产品ID不能为空');
     }
 
-    const batch = await this.prisma.overseasPickingBatch.findUnique({
+    return this.prisma.$transaction(async (tx) => {
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM overseas_picking_batches WHERE id = ${batchId} FOR UPDATE`,
+    );
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM overseas_picking_batch_items WHERE batch_id = ${batchId} ORDER BY id FOR UPDATE`,
+    );
+    const batch = await tx.overseasPickingBatch.findUnique({
       where: { id: batchId },
       select: {
         id: true,
@@ -1606,7 +1615,7 @@ export class OrdersService {
       throw new BadRequestException('当前拣货批次已确认，不能继续扫码拣货');
     }
 
-    const batchItems = await this.prisma.overseasPickingBatchItem.findMany({
+    const batchItems = await tx.overseasPickingBatchItem.findMany({
       where: {
         batchId,
       },
@@ -1633,6 +1642,7 @@ export class OrdersService {
       });
     const locationMetaByProductId = await this.loadOverseasPickingBatchLocationMeta(
       requirementRows.map((row) => row.requirement.productId),
+      tx,
     );
     const nextExpectedProduct = requirementRows
       .filter((row) => row.requirement.pickedQty < row.requirement.requestedQty)
@@ -1674,7 +1684,7 @@ export class OrdersService {
     const itemComplete = updatedRequirements.every(
       (requirement) => requirement.pickedQty >= requirement.requestedQty,
     );
-    const updated = await this.prisma.overseasPickingBatchItem.update({
+    const updated = await tx.overseasPickingBatchItem.update({
       where: { id: target.item.id },
       data: {
         pickingRequirementSnapshot: updatedRequirements,
@@ -1704,6 +1714,7 @@ export class OrdersService {
       requestedQty: totalRequestedQty,
       remainingQty: Math.max(totalRequestedQty - totalPickedQty, 0),
     };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   }
 
   async switchOverseasPickingBatchProductToChina(
@@ -2440,6 +2451,18 @@ export class OrdersService {
     this.assertOverseasPickingBatchMatchesOrders(normalizedItems);
 
     await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM overseas_picking_batches WHERE id = ${batch.id} FOR UPDATE`,
+      );
+      const lockedBatch = await tx.overseasPickingBatch.findUnique({
+        where: { id: batch.id },
+        select: { status: true },
+      });
+      if (!lockedBatch) throw new NotFoundException(`拣货批次不存在: ${batchIdRaw}`);
+      if (lockedBatch.status === OVERSEAS_PICKING_BATCH_STATUS.PICKED) return;
+      if (lockedBatch.status !== OVERSEAS_PICKING_BATCH_STATUS.CREATED) {
+        throw new BadRequestException('当前拣货批次已确认，不能重复扣库存');
+      }
       const demandByProductId = new Map<string, number>();
       normalizedItems.forEach((item) => {
         if (item.dispatchMode !== OVERSEAS_DISPATCH_MODE.OVERSEAS) {
@@ -2545,10 +2568,39 @@ export class OrdersService {
         }
       >();
 
+      const frozenFinishedDemandByProductId = new Map<string, number>();
+      normalizedItems.forEach((item) => {
+        if (item.dispatchMode !== OVERSEAS_DISPATCH_MODE.OVERSEAS) return;
+        const pickingRequirements = this.parseOverseasPickingRequirementSnapshot(
+          item.pickingRequirementSnapshot,
+        );
+        const frozenFinishedQty = pickingRequirements.length
+          ? pickingRequirements
+              .filter((requirement) => requirement.productId === item.productId)
+              .reduce((sum, requirement) => sum + requirement.requestedQty, 0)
+          : this.parseOverseasPickingPlanSnapshot(item.pickingPlanSnapshot)
+              .reduce((sum, plan) => sum + Number(plan.pickQty ?? 0), 0);
+        frozenFinishedDemandByProductId.set(
+          item.productId,
+          (frozenFinishedDemandByProductId.get(item.productId) ?? 0) + frozenFinishedQty,
+        );
+      });
+
       for (const [productId, totalQty] of demandByProductId.entries()) {
         const rows = inventoryRowsByProductId.get(productId) ?? [];
         const finishedStock = rows.reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
-        const finishedDemand = Math.min(finishedStock, totalQty);
+        const frozenFinishedDemand = frozenFinishedDemandByProductId.get(productId);
+        const finishedDemand = frozenFinishedDemand === undefined
+          ? Math.min(finishedStock, totalQty)
+          : frozenFinishedDemand;
+        if (finishedDemand < 0 || finishedDemand > totalQty) {
+          throw new ConflictException(`产品 ${productId} 的冻结拣货方案无效，请重新创建批次`);
+        }
+        if (finishedStock < finishedDemand) {
+          throw new ConflictException(
+            `产品 ${productId} 的成品库存与冻结拣货方案不一致，计划扣减 ${finishedDemand}，当前仅 ${finishedStock}，请重新创建批次`,
+          );
+        }
         const assemblyDemand = totalQty - finishedDemand;
         finishedDemandByProductId.set(productId, finishedDemand);
         if (assemblyDemand <= 0) continue;
@@ -2571,6 +2623,14 @@ export class OrdersService {
         if (String(product?.productType ?? '').trim() !== '肩带' || !bomItems.length) {
           throw new ConflictException(
             `产品 ${productId} 成品库存不足，当前成品 ${finishedStock}，需要 ${totalQty}`,
+          );
+        }
+        const bodyCount = bomItems.filter(
+          (item) => String(item.componentProduct.productType ?? '').trim() === '肩带本体',
+        ).length;
+        if (bodyCount !== 1) {
+          throw new ConflictException(
+            `肩带 ${productId} 的 BOM 必须且只能包含一种“肩带本体”，请重新设置 BOM 并创建批次`,
           );
         }
         const invalidComponent = bomItems.find((item) => (
@@ -5788,7 +5848,14 @@ export class OrdersService {
     const liveComponents = componentProductIds.length
       ? await db.masterProduct.findMany({
           where: { productId: { in: componentProductIds } },
-          select: { productId: true, productName: true, productType: true, stockQty: true, status: true },
+          select: {
+            productId: true,
+            productName: true,
+            productType: true,
+            stockQty: true,
+            status: true,
+            boxInventories: { select: { qty: true } },
+          },
         })
       : [];
     const liveComponentByProductId = new Map(
@@ -5805,11 +5872,13 @@ export class OrdersService {
         shortageTexts.push(`BOM材料 ${componentProductId}（${componentName}）已停用、类型错误或不存在`);
         continue;
       }
+      const boxStockQty = (component.boxInventories ?? [{ qty: component.stockQty }])
+        .reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
       const reservedDemand = reservedDemandByComponentProductId.get(componentProductId) ?? 0;
-      const availableQty = Math.max(Number(component.stockQty ?? 0) - reservedDemand, 0);
+      const availableQty = Math.max(boxStockQty - reservedDemand, 0);
       if (availableQty < newDemand) {
         shortageTexts.push(
-          `BOM材料 ${component.productId}（${component.productName ?? componentName}）库存 ${component.stockQty}，已预占 ${reservedDemand}，本批次需要 ${newDemand}`,
+          `BOM材料 ${component.productId}（${component.productName ?? componentName}）箱库存 ${boxStockQty}，已预占 ${reservedDemand}，本批次需要 ${newDemand}`,
         );
       }
     }
@@ -5956,21 +6025,32 @@ export class OrdersService {
           select: {
             componentProductId: true,
             quantity: true,
-            componentProduct: { select: { productName: true } },
+            componentProduct: { select: { productName: true, productType: true } },
           },
         },
       },
     });
-    const bomByProductId = new Map(
-      products.map((product) => [
+    const bomByProductId = new Map<string, ShoulderStrapBomSnapshotItem[]>();
+    products.forEach((product) => {
+      if (product.bomComponents.length > 0) {
+        const bodyCount = product.bomComponents.filter(
+          (item) => String(item.componentProduct.productType ?? '').trim() === '肩带本体',
+        ).length;
+        if (bodyCount !== 1) {
+          throw new BadRequestException(
+            `肩带 ${product.productId} 的 BOM 必须且只能包含一种“肩带本体”，请先修正 BOM`,
+          );
+        }
+      }
+      bomByProductId.set(
         product.productId,
         product.bomComponents.map((item) => ({
           componentProductId: item.componentProductId,
           componentProductName: item.componentProduct.productName ?? item.componentProductId,
           quantity: Number(item.quantity),
         })),
-      ] as const),
-    );
+      );
+    });
     snapshots.forEach((snapshot) => {
       snapshot.bomSnapshot = bomByProductId.get(snapshot.productId) ?? [];
     });
@@ -7566,7 +7646,13 @@ export class OrdersService {
     });
     const requiredByComponentProductId = new Map<
       string,
-      { componentProductId: string; componentProductName: string; requiredQty: number }
+      {
+        componentProductId: string;
+        componentProductName: string;
+        componentProductType: string;
+        requiredQty: number;
+        parentProductIds: Set<string>;
+      }
     >();
     items.forEach((item) => {
       const requestedQty = Math.max(0, Number(item.actualQty ?? item.requestedQty ?? 0));
@@ -7580,11 +7666,14 @@ export class OrdersService {
         const existing = requiredByComponentProductId.get(component.componentProductId);
         if (existing) {
           existing.requiredQty += requiredQty;
+          existing.parentProductIds.add(item.productId);
         } else {
           requiredByComponentProductId.set(component.componentProductId, {
             componentProductId: component.componentProductId,
             componentProductName: component.componentProductName,
+            componentProductType: '',
             requiredQty,
+            parentProductIds: new Set([item.productId]),
           });
         }
       });
@@ -7593,7 +7682,13 @@ export class OrdersService {
     const liveComponents = componentProductIds.length
       ? await this.prisma.masterProduct.findMany({
           where: { productId: { in: componentProductIds } },
-          select: { productId: true, productName: true, stockQty: true },
+          select: {
+            productId: true,
+            productName: true,
+            productType: true,
+            stockQty: true,
+            boxInventories: { select: { qty: true } },
+          },
         })
       : [];
     const liveComponentById = new Map(
@@ -7604,8 +7699,11 @@ export class OrdersService {
       return {
         componentProductId: component.componentProductId,
         componentProductName: liveComponent?.productName ?? component.componentProductName,
+        componentProductType: String(liveComponent?.productType ?? component.componentProductType),
         requiredQty: component.requiredQty,
-        stockQty: Number(liveComponent?.stockQty ?? 0),
+        stockQty: (liveComponent?.boxInventories ?? [{ qty: liveComponent?.stockQty ?? 0 }])
+          .reduce((sum, row) => sum + Number(row.qty ?? 0), 0) ?? 0,
+        parentProductIds: Array.from(component.parentProductIds),
       };
     });
   }
@@ -9261,11 +9359,19 @@ export class OrdersService {
         productName: true,
         productType: true,
         stockQty: true,
+        boxInventories: { select: { qty: true } },
         bomComponents: {
           orderBy: [{ position: 'asc' }, { id: 'asc' }],
           select: {
             quantity: true,
-            componentProduct: { select: { stockQty: true, status: true } },
+            componentProduct: {
+              select: {
+                stockQty: true,
+                status: true,
+                productType: true,
+                boxInventories: { select: { qty: true } },
+              },
+            },
           },
         },
       },

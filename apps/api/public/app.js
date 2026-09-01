@@ -13381,23 +13381,43 @@ function cancelYamatoMergedScanSession({ showMessage = true } = {}) {
 
 function startYamatoMergedScanSession(preview, scannedProductId) {
   const scannedKey = normalizeYamatoProductId(scannedProductId);
-  const previewAssemblyParts = Array.isArray(preview?.assemblyParts) ? preview.assemblyParts : [];
-  const scannedAssemblyMaterial = previewAssemblyParts.some(
-    (item) => normalizeYamatoProductId(item?.componentProductId) === scannedKey,
+  const previewAssemblyParts = (Array.isArray(preview?.assemblyParts) ? preview.assemblyParts : [])
+    .map((item) => ({
+      componentProductId: String(item?.componentProductId || "").trim(),
+      componentProductName: String(item?.componentProductName || "").trim(),
+      componentProductType: String(item?.componentProductType || "").trim(),
+      requiredQty: Number(item?.requiredQty || 0),
+      stockQty: Number(item?.stockQty || 0),
+      parentProductIds: (Array.isArray(item?.parentProductIds) ? item.parentProductIds : [])
+        .map((productId) => String(productId || "").trim())
+        .filter(Boolean),
+      confirmed: false,
+    }))
+    .filter((item) => item.componentProductId);
+  const scannedAssemblyMaterial = previewAssemblyParts.find(
+    (item) => item.componentProductType === "肩带本体"
+      && normalizeYamatoProductId(item.componentProductId) === scannedKey,
   );
+  let initialAssemblyScanApplied = false;
   const products = (Array.isArray(preview?.products) ? preview.products : [])
     .map((item) => {
       const productId = String(item?.productId || "").trim();
       const quantity = Math.max(1, Number(item?.quantity || 1));
+      let scannedQty = normalizeYamatoProductId(productId) === scannedKey ? 1 : 0;
+      if (
+        scannedQty === 0
+        && scannedAssemblyMaterial
+        && !initialAssemblyScanApplied
+        && scannedAssemblyMaterial.parentProductIds.includes(productId)
+      ) {
+        initialAssemblyScanApplied = true;
+        scannedQty = 1;
+      }
       return {
         productId,
         productName: String(item?.productName || "").trim(),
         quantity,
-        scannedQty: normalizeYamatoProductId(productId) === scannedKey
-          ? 1
-          : scannedAssemblyMaterial && preview.products.length === 1
-            ? quantity
-            : 0,
+        scannedQty,
       };
     })
     .filter((item) => item.productId);
@@ -13407,13 +13427,7 @@ function startYamatoMergedScanSession(preview, scannedProductId) {
     orderId: String(preview?.orderId || "").trim(),
     printProductId: String(preview?.productId || scannedProductId || products[0]?.productId || "").trim(),
     products,
-    assemblyParts: previewAssemblyParts.map((item) => ({
-      componentProductId: String(item?.componentProductId || "").trim(),
-      componentProductName: String(item?.componentProductName || "").trim(),
-      requiredQty: Number(item?.requiredQty || 0),
-      stockQty: Number(item?.stockQty || 0),
-      confirmed: false,
-    })).filter((item) => item.componentProductId),
+    assemblyParts: previewAssemblyParts,
   };
   renderYamatoMergedScanSession();
   openModal("yamatoMergedScanModal");
@@ -13531,7 +13545,17 @@ async function handleYamatoMergedScanValue(rawValue) {
   if (!scannedKey) {
     throw new Error("请先扫码或输入产品ID");
   }
-  const target = session.products.find((item) => normalizeYamatoProductId(item.productId) === scannedKey);
+  const directTarget = session.products.find(
+    (item) => normalizeYamatoProductId(item.productId) === scannedKey,
+  );
+  const material = session.assemblyParts.find(
+    (item) => item.componentProductType === "肩带本体"
+      && normalizeYamatoProductId(item.componentProductId) === scannedKey,
+  );
+  const target = directTarget || session.products.find(
+    (item) => material?.parentProductIds.includes(item.productId)
+      && Number(item.scannedQty || 0) < Number(item.quantity || 0),
+  );
   if (!target) {
     throw new Error("该产品不属于当前合并面单，请先完成当前面单确认或取消");
   }
@@ -16362,6 +16386,14 @@ function bindForms() {
     }));
     if (items.some((item) => !item.componentProductId)) return showToast("请选择所有 BOM 材料", true);
     if (new Set(items.map((item) => item.componentProductId)).size !== items.length) return showToast("同一 BOM 材料不能重复添加", true);
+    const bodyProductIds = new Set(
+      state.shoulderStrapMaterials
+        .filter((item) => String(item?.productType || "").trim() === "肩带本体")
+        .map((item) => String(item?.productId || "").trim()),
+    );
+    if (items.filter((item) => bodyProductIds.has(item.componentProductId)).length !== 1) {
+      return showToast("肩带 BOM 必须且只能包含一种“肩带本体”", true);
+    }
     try {
       await withBusyButton(submitButton, "保存中...", () => request(
         `/master-products/${encodeURIComponent(productId)}/bom`,
