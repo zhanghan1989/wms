@@ -30,6 +30,11 @@ const STALE_PROCESSING_MS = 30 * 60 * 1000;
 const AUTOMATION_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
 const CHINA_MODES = new Set(['china_pending', 'china_no_stock']);
+const MANUAL_REVIEW_MAIL_EVENTS = new Set<RakutenOrderMailEvent>([
+  RakutenOrderMailEvent.japan_shipped,
+  RakutenOrderMailEvent.china_customs,
+  RakutenOrderMailEvent.mixed_customs,
+]);
 const MANUALLY_IGNORED_MAIL_NOTE = '用户人工忽略邮件';
 const MANUALLY_IGNORED_SHIPPING_NOTE = '用户人工忽略单号回传';
 // 2026-09-01 00:00:00 Asia/Tokyo. Automation applies only to orders first imported after this instant.
@@ -1246,9 +1251,9 @@ export class RakutenRmsAutomationService {
         event: row.event,
         templateVersion,
         templateMissing: !templateVersion,
-        requiresManualReview: manuallyUpdatedOrderKeys.has(
-          this.automationOrderKey(row.connectionId, row.orderId),
-        ),
+        requiresManualReview:
+          MANUAL_REVIEW_MAIL_EVENTS.has(row.event) &&
+          manuallyUpdatedOrderKeys.has(this.automationOrderKey(row.connectionId, row.orderId)),
         fulfillmentType,
         status: row.status,
         attempts: row.attempts,
@@ -1328,7 +1333,7 @@ export class RakutenRmsAutomationService {
     if (!recipient) throw new BadRequestException('乐天订单没有返回可用的买家匿名邮箱');
     const smtp = this.decryptSmtpCredentials(mail.connection);
     const rendered = this.renderTemplate(template, rows);
-    const requiresManualReview = this.requiresManualMailReview(rows);
+    const requiresManualReview = this.requiresManualMailReview(mail.event, rows);
     return this.serializeMail({
       id: mail.id,
       connectionId: mail.connectionId,
@@ -1434,7 +1439,7 @@ export class RakutenRmsAutomationService {
         throw new BadRequestException(`订单 ${row.orderId} 的邮件模板已变化或未配置，请重新整理清单`);
       }
       const orderRows = await this.loadOrderRows(row.connectionId, row.orderId);
-      const requiresManualReview = this.requiresManualMailReview(orderRows);
+      const requiresManualReview = this.requiresManualMailReview(row.event, orderRows);
       if (requiresManualReview && (
         !selected?.manualReviewConfirmed ||
         !selected.orderFingerprint ||
@@ -2439,7 +2444,7 @@ export class RakutenRmsAutomationService {
           counts.blocked += 1;
           continue;
         }
-        const requiresManualReview = this.requiresManualMailReview(rows);
+        const requiresManualReview = this.requiresManualMailReview(mail.event, rows);
         const reviewedBody = reviewedBodyOverrides?.get(mail.id.toString());
         if (requiresManualReview && (!expectedOrderFingerprint || reviewedBody === undefined)) {
           await this.prisma.rakutenOrderMail.update({
@@ -3155,8 +3160,12 @@ export class RakutenRmsAutomationService {
     return createHash('sha1').update(JSON.stringify(snapshot)).digest('hex');
   }
 
-  private requiresManualMailReview(rows: RakutenOrderRecord[]): boolean {
-    return rows.some((row) => Boolean(row.rmsManualOverrideAt));
+  private requiresManualMailReview(
+    event: RakutenOrderMailEvent,
+    rows: RakutenOrderRecord[],
+  ): boolean {
+    return MANUAL_REVIEW_MAIL_EVENTS.has(event) &&
+      rows.some((row) => Boolean(row.rmsManualOverrideAt));
   }
 
   private decryptApiCredentials(connection: RakutenRmsConnection): { serviceSecret: string; licenseKey: string } {

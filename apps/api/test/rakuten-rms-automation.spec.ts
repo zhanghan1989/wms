@@ -852,7 +852,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
           id: 94n,
           connectionId: 7n,
           orderId: '421951-ORDER',
-          event: RakutenOrderMailEvent.new_order,
+          event: RakutenOrderMailEvent.japan_shipped,
           status: RakutenAutomationStatus.pending,
           connection,
         }),
@@ -877,6 +877,17 @@ describe('Rakuten RMS shipping and mail automation', () => {
     const preview = await scopedService.previewManualMailAction('94', 3) as any;
 
     expect(preview.requiresManualReview).toBe(true);
+  });
+
+  it('requires manual review only for Japan, China second, and mixed second mails', () => {
+    const manuallyUpdatedRows = [makeRow({ rmsManualOverrideAt: new Date('2026-09-02T00:00:00Z') })];
+
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, manuallyUpdatedRows)).toBe(true);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_customs, manuallyUpdatedRows)).toBe(true);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_customs, manuallyUpdatedRows)).toBe(true);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.new_order, manuallyUpdatedRows)).toBe(false);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_delay, manuallyUpdatedRows)).toBe(false);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, manuallyUpdatedRows)).toBe(false);
   });
 
   it('blocks a confirmed mail when the WMS order changes after preview', async () => {
@@ -925,7 +936,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       id: 95n,
       connectionId: 7n,
       orderId: '421951-ORDER',
-      event: RakutenOrderMailEvent.new_order,
+      event: RakutenOrderMailEvent.japan_shipped,
       attempts: 0,
       createdAt: new Date('2026-09-02T00:00:00Z'),
       connection: {
@@ -942,6 +953,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     const prisma = {
       rakutenOrderMail: {
         findMany: jest.fn().mockResolvedValue([mail]),
+        findUnique: jest.fn().mockResolvedValue({ status: RakutenAutomationStatus.sent }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
         update,
       },
@@ -1663,7 +1675,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
           id: 92n,
           connectionId: 7n,
           orderId: '421951-ORDER',
-          event: RakutenOrderMailEvent.new_order,
+          event: RakutenOrderMailEvent.japan_shipped,
           status: RakutenAutomationStatus.pending,
           attempts: 0,
           recipient: null,
@@ -1673,10 +1685,10 @@ describe('Rakuten RMS shipping and mail automation', () => {
           createdAt: new Date('2026-08-31T00:00:01Z'),
           connection,
         }]),
-        findUnique: jest.fn(),
+        findUnique: jest.fn().mockResolvedValue({ status: RakutenAutomationStatus.sent }),
       },
       rakutenMailTemplateVersion: {
-        findMany: jest.fn().mockResolvedValue([{ connectionId: 7n, event: RakutenOrderMailEvent.new_order, version: 1 }]),
+        findMany: jest.fn().mockResolvedValue([{ connectionId: 7n, event: RakutenOrderMailEvent.japan_shipped, version: 1 }]),
       },
     } as any;
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
