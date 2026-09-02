@@ -2655,6 +2655,20 @@ td {
   white-space: pre-wrap;
 }
 
+.rakuten-manual-mail-review-warning {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #d83a3a;
+  border-radius: 8px;
+  background: #fff0f0;
+  color: #a42121;
+  font-weight: 700;
+}
+
+.rakuten-mail-review-btn {
+  font-weight: 800;
+}
+
 .rakuten-manual-automation-table-wrap tr.is-disabled td {
   background: #f7f8f7;
   color: var(--muted);

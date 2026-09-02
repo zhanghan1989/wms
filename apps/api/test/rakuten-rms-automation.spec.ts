@@ -742,6 +742,39 @@ describe('Rakuten RMS shipping and mail automation', () => {
     });
   });
 
+  it('regenerates a pending mail detail from the latest WMS order instead of showing a stale send attempt', async () => {
+    const prisma = {
+      rakutenOrderMail: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 56n,
+          connectionId: 7n,
+          orderId: '421951-ORDER',
+          event: RakutenOrderMailEvent.new_order,
+          status: RakutenAutomationStatus.failed,
+          subject: '古い件名',
+          body: '古い商品名',
+          connection: { id: 7n, smtpBccAddresses: null, shop: { id: 3n, name: '乐天店' } },
+        }),
+      },
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([makeRow({ productName: 'WMSで変更した商品名' })]),
+      },
+      rakutenMailTemplateVersion: {
+        findFirst: jest.fn().mockResolvedValue({
+          subjectTemplate: '最新 {{order_number}}',
+          bodyTemplate: '{{order_summary}}',
+        }),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+
+    const detail = await scopedService.getMailDetail('56') as Record<string, unknown>;
+
+    expect(detail.subject).not.toBe('古い件名');
+    expect(detail.body).toEqual(expect.stringContaining('WMSで変更した商品名'));
+    expect(detail.body).not.toContain('古い商品名');
+  });
+
   it('renders the active shop template with order variables', async () => {
     const prisma = {
       rakutenMailTemplateVersion: {
@@ -806,8 +839,136 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(preview).toMatchObject({
       id: '92', shopName: '乐天店', recipient: 'masked@pc.fw.rakuten.ne.jp',
       fromAddress: 'shop@example.jp', bccAddresses: ['archive@example.jp'],
-      templateVersion: 3, subject: '注文 421951-ORDER',
+      templateVersion: 3, subject: '注文 421951-ORDER', orderFingerprint: expect.stringMatching(/^[a-f0-9]{40}$/),
+      requiresManualReview: false,
     });
+  });
+
+  it('marks the preview for manual review after a WMS order edit', async () => {
+    const connection = { id: 7n, shop: { id: 3n, name: '乐天店' } };
+    const prisma = {
+      rakutenOrderMail: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 94n,
+          connectionId: 7n,
+          orderId: '421951-ORDER',
+          event: RakutenOrderMailEvent.new_order,
+          status: RakutenAutomationStatus.pending,
+          connection,
+        }),
+      },
+      rakutenMailTemplateVersion: {
+        findUnique: jest.fn().mockResolvedValue({
+          version: 3,
+          subjectTemplate: '注文 {{order_number}}',
+          bodyTemplate: '{{buyer_name}}様',
+          isActive: true,
+        }),
+      },
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([makeRow({ rmsManualOverrideAt: new Date('2026-09-02T00:00:00Z') })]),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scopedService as any, 'decryptSmtpCredentials').mockReturnValue({
+      fromAddress: 'shop@example.jp', fromName: '乐天店', bccAddresses: [],
+    });
+
+    const preview = await scopedService.previewManualMailAction('94', 3) as any;
+
+    expect(preview.requiresManualReview).toBe(true);
+  });
+
+  it('blocks a confirmed mail when the WMS order changes after preview', async () => {
+    const currentRows = [makeRow({ productName: 'プレビュー後の商品名' })];
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      rakutenOrderMail: {
+        findMany: jest.fn().mockResolvedValue([{
+          id: 93n,
+          connectionId: 7n,
+          orderId: '421951-ORDER',
+          event: RakutenOrderMailEvent.new_order,
+          status: RakutenAutomationStatus.pending,
+          attempts: 0,
+          createdAt: new Date('2026-09-01T00:00:00Z'),
+          connection: {},
+        }]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update,
+      },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(currentRows) },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+
+    const result = await (scopedService as any).processMails(
+      7n,
+      [93n],
+      new Map([['93', 1]]),
+      new Map([['93', '0'.repeat(40)]]),
+    );
+
+    expect(result).toEqual({ sent: 0, failed: 0, blocked: 1 });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 93n },
+      data: expect.objectContaining({
+        status: RakutenAutomationStatus.pending,
+        attempts: { decrement: 1 },
+        lastError: '订单在预览后已发生变化，请重新预览邮件后再发送',
+      }),
+    });
+  });
+
+  it('sends and persists the operator-edited body for a manually updated order', async () => {
+    const rows = [makeRow({ rmsManualOverrideAt: new Date('2026-09-02T00:00:00Z') })];
+    const mail = {
+      id: 95n,
+      connectionId: 7n,
+      orderId: '421951-ORDER',
+      event: RakutenOrderMailEvent.new_order,
+      attempts: 0,
+      createdAt: new Date('2026-09-02T00:00:00Z'),
+      connection: {
+        smtpAuthId: '421951',
+        encryptedSmtpPassword: 'encrypted',
+        smtpPasswordIv: 'iv',
+        smtpPasswordAuthTag: 'tag',
+        smtpFromAddress: 'shop@example.jp',
+        smtpFromName: '乐天店',
+        smtpBccAddresses: null,
+      },
+    };
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      rakutenOrderMail: {
+        findMany: jest.fn().mockResolvedValue([mail]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update,
+      },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
+      rakutenMailTemplateVersion: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as any;
+    const crypto = { decrypt: jest.fn().mockReturnValue('smtp-password') } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, crypto);
+    const sendMail = jest.fn().mockResolvedValue({ messageId: '<accepted@example.jp>' });
+    jest.spyOn(scopedService as any, 'createSmtpTransport').mockReturnValue({ sendMail, close: jest.fn() });
+    const fingerprint = (scopedService as any).mailOrderFingerprint(rows);
+    const editedBody = '担当者が確認・修正したメール本文';
+
+    const result = await (scopedService as any).processMails(
+      7n,
+      [95n],
+      new Map(),
+      new Map([['95', fingerprint]]),
+      new Map([['95', editedBody]]),
+    );
+
+    expect(result).toEqual({ sent: 1, failed: 0, blocked: 0 });
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({ text: editedBody }));
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 95n },
+      data: expect.objectContaining({ status: RakutenAutomationStatus.sent, body: editedBody }),
+    }));
   });
 
   it('saves an edited template as the next active version', async () => {
@@ -1479,6 +1640,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
         findMany: jest.fn().mockResolvedValue([{
           rmsConnectionId: 7n,
           orderId: '421951-ORDER',
+          rmsManualOverrideAt: new Date('2026-09-02T00:00:00Z'),
           createdAt: new Date('2026-09-01T00:00:00Z'),
         }]),
       },
@@ -1532,7 +1694,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       summary: { shipping: 1, mail: 1 },
       items: [
         expect.objectContaining({ kind: 'shipping', id: '91', executable: true }),
-        expect.objectContaining({ kind: 'mail', id: '92', executable: true }),
+        expect.objectContaining({ kind: 'mail', id: '92', executable: true, requiresManualReview: true }),
       ],
     });
     expect(processShippingReports).not.toHaveBeenCalled();
@@ -1548,7 +1710,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     prisma.rakutenOrderShippingReport.findMany.mockClear();
     const mailOnly = await scopedService.prepareManualActions('mail') as any;
     expect(mailOnly.items).toEqual([
-      expect.objectContaining({ kind: 'mail', id: '92' }),
+      expect.objectContaining({ kind: 'mail', id: '92', requiresManualReview: true }),
     ]);
     expect(prisma.rakutenOrderShippingReport.findMany).not.toHaveBeenCalled();
     await expect(scopedService.prepareManualActions('other')).rejects.toThrow('任务类型只支持shipping或mail');
@@ -1817,7 +1979,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     ]) as any;
 
     expect(processShipping).toHaveBeenCalledWith(7n, [91n]);
-    expect(processMails).toHaveBeenCalledWith(7n, [92n], new Map([['92', 1]]));
+    expect(processMails).toHaveBeenCalledWith(7n, [92n], new Map([['92', 1]]), new Map(), new Map());
     expect(result).toMatchObject({
       executed: 2,
       results: [{ shipping: { sent: 1 }, mail: { sent: 1 }, status: RakutenAutomationRunStatus.success }],
@@ -1911,8 +2073,8 @@ describe('Rakuten RMS shipping and mail automation', () => {
       { kind: 'mail', id: '93', templateVersion: 1 },
     ]) as any;
 
-    expect(processMails).toHaveBeenNthCalledWith(1, 7n, [92n], new Map([['92', 1]]));
-    expect(processMails).toHaveBeenNthCalledWith(2, 8n, [93n], new Map([['93', 1]]));
+    expect(processMails).toHaveBeenNthCalledWith(1, 7n, [92n], new Map([['92', 1]]), new Map(), new Map());
+    expect(processMails).toHaveBeenNthCalledWith(2, 8n, [93n], new Map([['93', 1]]), new Map(), new Map());
     expect(findTemplate).toHaveBeenCalledWith(expect.objectContaining({
       where: { connectionId: 7n, event: RakutenOrderMailEvent.new_order, isActive: true },
     }));

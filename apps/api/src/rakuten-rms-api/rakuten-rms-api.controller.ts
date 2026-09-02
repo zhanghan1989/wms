@@ -187,7 +187,16 @@ export class RakutenRmsApiController {
 
   @Post('automation/manual-actions/execute')
   async executeManualAutomationActions(
-    @Body() payload: { items?: Array<{ kind?: string; id?: string; templateVersion?: number }> },
+    @Body() payload: {
+      items?: Array<{
+        kind?: string;
+        id?: string;
+        templateVersion?: number;
+        orderFingerprint?: string;
+        manualReviewConfirmed?: boolean;
+        bodyOverride?: string;
+      }>;
+    },
   ): Promise<unknown> {
     return this.automation.executeManualActions(payload?.items ?? []);
   }

@@ -130,6 +130,9 @@ interface ManualAutomationSelection {
   kind?: string;
   id?: string;
   templateVersion?: number;
+  orderFingerprint?: string;
+  manualReviewConfirmed?: boolean;
+  bodyOverride?: string;
 }
 
 type ManualAutomationKind = 'shipping' | 'mail';
@@ -490,12 +493,19 @@ export class RakutenRmsAutomationService {
     let subject = mail.subject;
     let body = mail.body;
     let previewError: string | null = null;
-    if (!subject || !body) {
+    const hasImmutableSendSnapshot =
+      mail.status === RakutenAutomationStatus.sent ||
+      mail.status === RakutenAutomationStatus.uncertain;
+    if (!hasImmutableSendSnapshot || !subject || !body) {
+      if (!hasImmutableSendSnapshot) {
+        subject = null;
+        body = null;
+      }
       try {
         const rows = await this.loadOrderRows(mail.connectionId, mail.orderId);
         const rendered = await this.renderConfiguredMail(mail.connectionId, mail.event, rows);
-        subject ||= rendered.subject;
-        body ||= rendered.body;
+        subject = rendered.subject;
+        body = rendered.body;
       } catch (error) {
         previewError = this.errorMessage(error);
       }
@@ -1086,14 +1096,22 @@ export class RakutenRmsAutomationService {
               orderId: ref.orderId,
             })),
           },
-          select: { rmsConnectionId: true, orderId: true, dispatchMode: true, createdAt: true },
+          select: {
+            rmsConnectionId: true,
+            orderId: true,
+            dispatchMode: true,
+            rmsManualOverrideAt: true,
+            createdAt: true,
+          },
         })
       : [];
     const fulfillmentFlags = new Map<string, { hasChina: boolean; hasJapan: boolean }>();
     const earliestCreatedAt = new Map<string, Date>();
+    const manuallyUpdatedOrderKeys = new Set<string>();
     for (const record of mailOrderRecords) {
       if (!record.rmsConnectionId || !record.orderId) continue;
       const key = this.automationOrderKey(record.rmsConnectionId, record.orderId);
+      if (record.rmsManualOverrideAt) manuallyUpdatedOrderKeys.add(key);
       const flags = fulfillmentFlags.get(key) ?? { hasChina: false, hasJapan: false };
       if (this.isChina(record)) flags.hasChina = true;
       else flags.hasJapan = true;
@@ -1228,6 +1246,9 @@ export class RakutenRmsAutomationService {
         event: row.event,
         templateVersion,
         templateMissing: !templateVersion,
+        requiresManualReview: manuallyUpdatedOrderKeys.has(
+          this.automationOrderKey(row.connectionId, row.orderId),
+        ),
         fulfillmentType,
         status: row.status,
         attempts: row.attempts,
@@ -1307,6 +1328,7 @@ export class RakutenRmsAutomationService {
     if (!recipient) throw new BadRequestException('乐天订单没有返回可用的买家匿名邮箱');
     const smtp = this.decryptSmtpCredentials(mail.connection);
     const rendered = this.renderTemplate(template, rows);
+    const requiresManualReview = this.requiresManualMailReview(rows);
     return this.serializeMail({
       id: mail.id,
       connectionId: mail.connectionId,
@@ -1318,6 +1340,8 @@ export class RakutenRmsAutomationService {
       fromName: smtp.fromName,
       bccAddresses: smtp.bccAddresses,
       templateVersion: template.version,
+      orderFingerprint: this.mailOrderFingerprint(rows),
+      requiresManualReview,
       subject: rendered.subject,
       body: rendered.body,
     });
@@ -1331,10 +1355,30 @@ export class RakutenRmsAutomationService {
       if (kind !== 'shipping' && kind !== 'mail') throw new BadRequestException('任务类型只支持shipping或mail');
       const id = parseId(String(selection?.id || ''), 'jobId');
       const templateVersion = kind === 'mail' ? Number(selection?.templateVersion) : undefined;
+      const orderFingerprint = kind === 'mail'
+        ? String(selection?.orderFingerprint ?? '').trim().toLowerCase()
+        : undefined;
+      const manualReviewConfirmed = kind === 'mail' && selection?.manualReviewConfirmed === true;
+      const bodyOverride = kind === 'mail' && selection?.bodyOverride !== undefined
+        ? String(selection.bodyOverride)
+        : undefined;
       if (kind === 'mail' && (!Number.isInteger(templateVersion) || Number(templateVersion) <= 0)) {
         throw new BadRequestException('邮件模板版本无效，请重新整理清单');
       }
-      return [`${kind}:${id.toString()}`, { kind, id, templateVersion }];
+      if (orderFingerprint && !/^[a-f0-9]{40}$/.test(orderFingerprint)) {
+        throw new BadRequestException('订单预览版本无效，请重新预览邮件');
+      }
+      if (bodyOverride !== undefined && (!bodyOverride.trim() || bodyOverride.length > 50_000)) {
+        throw new BadRequestException('人工确认的邮件正文不能为空或超过50000个字符');
+      }
+      return [`${kind}:${id.toString()}`, {
+        kind,
+        id,
+        templateVersion,
+        orderFingerprint,
+        manualReviewConfirmed,
+        bodyOverride,
+      }];
     })).values());
     const shippingIds = normalized.filter((item) => item.kind === 'shipping').map((item) => item.id);
     const mailIds = normalized.filter((item) => item.kind === 'mail').map((item) => item.id);
@@ -1389,6 +1433,21 @@ export class RakutenRmsAutomationService {
       if (!activeTemplate || activeTemplate.version !== selected?.templateVersion) {
         throw new BadRequestException(`订单 ${row.orderId} 的邮件模板已变化或未配置，请重新整理清单`);
       }
+      const orderRows = await this.loadOrderRows(row.connectionId, row.orderId);
+      const requiresManualReview = this.requiresManualMailReview(orderRows);
+      if (requiresManualReview && (
+        !selected?.manualReviewConfirmed ||
+        !selected.orderFingerprint ||
+        selected.bodyOverride === undefined
+      )) {
+        throw new BadRequestException(`订单 ${row.orderId} 已在WMS中人工更新，请先点击待确认、确认邮件正文后再发送`);
+      }
+      if (!requiresManualReview && (selected?.manualReviewConfirmed || selected?.bodyOverride !== undefined)) {
+        throw new BadRequestException(`订单 ${row.orderId} 无需人工修改邮件正文，请刷新清单`);
+      }
+      if (selected?.orderFingerprint && this.mailOrderFingerprint(orderRows) !== selected.orderFingerprint) {
+        throw new BadRequestException(`订单 ${row.orderId} 在预览后已发生变化，请重新预览邮件后再发送`);
+      }
     }
     const connectionIds = Array.from(new Set([
       ...shippingRows.map((row) => row.connectionId),
@@ -1420,6 +1479,14 @@ export class RakutenRmsAutomationService {
             .filter((item) => item.kind === 'mail' && item.templateVersion &&
               mailRows.some((row) => row.id === item.id && row.connectionId === connectionId))
             .map((item) => [item.id.toString(), Number(item.templateVersion)])),
+          new Map(normalized
+            .filter((item) => item.kind === 'mail' && item.orderFingerprint &&
+              mailRows.some((row) => row.id === item.id && row.connectionId === connectionId))
+            .map((item) => [item.id.toString(), String(item.orderFingerprint)])),
+          new Map(normalized
+            .filter((item) => item.kind === 'mail' && item.manualReviewConfirmed && item.bodyOverride !== undefined &&
+              mailRows.some((row) => row.id === item.id && row.connectionId === connectionId))
+            .map((item) => [item.id.toString(), String(item.bodyOverride)])),
         );
         const failedJobs = shipping.failed + mail.failed;
         const completedJobs = shipping.sent + shipping.skipped + mail.sent;
@@ -2274,6 +2341,8 @@ export class RakutenRmsAutomationService {
     connectionId?: bigint,
     selectedIds?: bigint[],
     expectedTemplateVersions?: Map<string, number>,
+    expectedOrderFingerprints?: Map<string, string>,
+    reviewedBodyOverrides?: Map<string, string>,
   ): Promise<MailRunCounts> {
     const mails = await this.prisma.rakutenOrderMail.findMany({
       where: {
@@ -2354,6 +2423,39 @@ export class RakutenRmsAutomationService {
       let smtpAccepted = false;
       try {
         const rows = await this.loadOrderRows(mail.connectionId, mail.orderId);
+        const expectedOrderFingerprint = expectedOrderFingerprints?.get(mail.id.toString());
+        if (expectedOrderFingerprint && this.mailOrderFingerprint(rows) !== expectedOrderFingerprint) {
+          await this.prisma.rakutenOrderMail.update({
+            where: { id: mail.id },
+            data: {
+              status: RakutenAutomationStatus.pending,
+              attempts: { decrement: 1 },
+              nextAttemptAt: null,
+              lastError: '订单在预览后已发生变化，请重新预览邮件后再发送',
+              failureCategory: null,
+              deadLetteredAt: null,
+            },
+          });
+          counts.blocked += 1;
+          continue;
+        }
+        const requiresManualReview = this.requiresManualMailReview(rows);
+        const reviewedBody = reviewedBodyOverrides?.get(mail.id.toString());
+        if (requiresManualReview && (!expectedOrderFingerprint || reviewedBody === undefined)) {
+          await this.prisma.rakutenOrderMail.update({
+            where: { id: mail.id },
+            data: {
+              status: RakutenAutomationStatus.pending,
+              attempts: { decrement: 1 },
+              nextAttemptAt: null,
+              lastError: '订单已在WMS中人工更新，请人工确认邮件正文后再发送',
+              failureCategory: 'manual_review',
+              deadLetteredAt: null,
+            },
+          });
+          counts.blocked += 1;
+          continue;
+        }
         if (!this.isAutomationEligibleOrder(rows)) {
           await this.prisma.rakutenOrderMail.update({
             where: { id: mail.id },
@@ -2373,9 +2475,10 @@ export class RakutenRmsAutomationService {
         const smtp = this.decryptSmtpCredentials(mail.connection);
         const bccAddresses = smtp.bccAddresses ?? [];
         const expectedTemplateVersion = expectedTemplateVersions?.get(mail.id.toString());
-        const rendered = expectedTemplateVersion
+        const generated = expectedTemplateVersion
           ? await this.renderMailTemplateVersion(mail.connectionId, mail.event, expectedTemplateVersion, rows)
           : await this.renderConfiguredMail(mail.connectionId, mail.event, rows);
+        const rendered = reviewedBody === undefined ? generated : { ...generated, body: reviewedBody };
         const smtpMessageId = this.buildSmtpMessageId(mail.id, smtp.fromAddress);
         let recordedSmtpMessageId = smtpMessageId;
         await this.prisma.rakutenOrderMail.update({
@@ -3022,6 +3125,38 @@ export class RakutenRmsAutomationService {
       where: { rmsConnectionId: connectionId, orderId },
       orderBy: { id: 'asc' },
     });
+  }
+
+  private mailOrderFingerprint(rows: RakutenOrderRecord[]): string {
+    const snapshot = rows.map((row) => ({
+      id: row.id.toString(),
+      orderId: row.orderId,
+      buyerEmail: row.buyerEmail,
+      skuCode: row.skuCode,
+      orderQuantity: row.orderQuantity,
+      productName: row.productName,
+      productNameExtra: row.productNameExtra,
+      shippingName: row.shippingName,
+      shippingPostalCode: row.shippingPostalCode,
+      shippingPrefecture: row.shippingPrefecture,
+      shippingCity: row.shippingCity,
+      shippingAddress: row.shippingAddress,
+      shippingPhone: row.shippingPhone,
+      shipmentCompany: row.shipmentCompany,
+      shipmentNo: row.shipmentNo,
+      shipmentNoRegisteredAt: row.shipmentNoRegisteredAt?.toISOString() ?? null,
+      dispatchMode: row.dispatchMode,
+      deliveryMethod: row.deliveryMethod,
+      deliveryDateRaw: row.deliveryDateRaw,
+      deliveryTimeSlot: row.deliveryTimeSlot,
+      orderRemark: row.orderRemark,
+      rawPayload: row.rawPayload,
+    }));
+    return createHash('sha1').update(JSON.stringify(snapshot)).digest('hex');
+  }
+
+  private requiresManualMailReview(rows: RakutenOrderRecord[]): boolean {
+    return rows.some((row) => Boolean(row.rmsManualOverrideAt));
   }
 
   private decryptApiCredentials(connection: RakutenRmsConnection): { serviceSecret: string; licenseKey: string } {

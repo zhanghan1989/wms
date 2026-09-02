@@ -7056,10 +7056,13 @@ function renderRakutenManualMailStage(item, emptyText) {
   const ignoreAction = status === "pending"
     ? `<button type="button" class="tiny-btn ghost" data-action="ignoreRakutenManualMail" data-id="${escapeHtml(item.id)}">忽略</button>`
     : "";
+  const requiresManualReview = item?.requiresManualReview === true;
   const sendAction = item?.executable === true
     ? `<div class="rakuten-manual-mail-stage-actions">
-        <label><input type="checkbox" data-action="selectRakutenManualAutomation" data-key="${escapeHtml(key)}" ${state.rakutenManualAutomationSelected.has(key) ? "checked" : ""} /> 选择</label>
-        <button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">${status === "failed" ? "重试" : "发送"}</button>
+        ${requiresManualReview
+          ? ""
+          : `<label><input type="checkbox" data-action="selectRakutenManualAutomation" data-key="${escapeHtml(key)}" ${state.rakutenManualAutomationSelected.has(key) ? "checked" : ""} /> 选择</label>`}
+        <button type="button" class="tiny-btn${requiresManualReview ? " danger rakuten-mail-review-btn" : ""}" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">${requiresManualReview ? "待确认" : status === "failed" ? "重试" : "发送"}</button>
         ${ignoreAction}
       </div>`
     : "";
@@ -7108,18 +7111,24 @@ function renderRakutenManualMailOrders(items) {
         : "";
     const groupItems = Array.from(group.events.values());
     const executableItems = groupItems.filter((item) => item?.executable === true);
-    const selectedCount = executableItems.filter((item) =>
+    const manualReviewCount = executableItems.filter((item) => item?.requiresManualReview === true).length;
+    const selectableItems = executableItems.filter((item) => item?.requiresManualReview !== true);
+    const selectedCount = selectableItems.filter((item) =>
       state.rakutenManualAutomationSelected.has(rakutenManualAutomationKey(item))).length;
     const attentionCount = groupItems.filter((item) =>
       ["pending", "failed", "uncertain", "dead_letter"].includes(String(item?.status || ""))).length;
     const progressText = executableItems.length
-      ? `可发送 ${executableItems.length} 封`
+      ? manualReviewCount
+        ? `待人工确认 ${manualReviewCount} 封`
+        : `可发送 ${executableItems.length} 封`
       : attentionCount
         ? "等待处理条件"
         : "无需操作";
     return `<tr class="${executableItems.length ? "" : "is-disabled"}">
-      <td>${executableItems.length
-        ? `<span class="rakuten-manual-order-selection">${selectedCount}/${executableItems.length}</span>`
+      <td>${selectableItems.length
+        ? `<span class="rakuten-manual-order-selection">${selectedCount}/${selectableItems.length}</span>`
+        : manualReviewCount
+          ? '<span class="danger-text">待确认</span>'
         : '<span class="muted">—</span>'}</td>
       <td>${escapeHtml(displayText(group.shopName))}</td>
       <td>${escapeHtml(displayText(group.orderId))}</td>
@@ -7140,7 +7149,9 @@ function renderRakutenManualAutomation() {
   const items = Array.isArray(state.rakutenManualAutomationItems)
     ? state.rakutenManualAutomationItems.filter((item) => item?.kind === state.rakutenManualAutomationKind)
     : [];
-  const executableItems = items.filter((item) => item?.executable === true);
+  const executableItems = items.filter(
+    (item) => item?.executable === true && item?.requiresManualReview !== true,
+  );
   const selectedKeys = state.rakutenManualAutomationSelected;
   const selectedCount = executableItems.filter((item) => selectedKeys.has(rakutenManualAutomationKey(item))).length;
   const selectAll = $("rakutenManualAutomationSelectAll");
@@ -7288,15 +7299,32 @@ async function previewRakutenManualMailAction(item, button) {
     `/rakuten-rms-api/automation/manual-actions/mails/${encodeURIComponent(item.id)}/preview`,
     { method: "POST", body: JSON.stringify({ templateVersion: item.templateVersion }) },
   ));
-  state.rakutenManualMailPreviewItem = item;
+  state.rakutenManualMailPreviewItem = {
+    ...item,
+    orderFingerprint: String(preview.orderFingerprint || ""),
+    requiresManualReview: preview.requiresManualReview === true,
+  };
   setTextById(
     "rakutenManualMailPreviewMeta",
     `店铺：${preview.shopName || "-"} / 订单：${preview.orderId || "-"} / 收件人：${preview.recipient || "-"} / BCC：${Array.isArray(preview.bccAddresses) && preview.bccAddresses.length ? preview.bccAddresses.join(", ") : "未设置"} / 发件人：${preview.fromName || "-"} <${preview.fromAddress || "-"}> / 模板版本：v${preview.templateVersion || "-"}`,
   );
   const subject = $("rakutenManualMailPreviewSubject");
   const body = $("rakutenManualMailPreviewBody");
+  const reviewWarning = $("rakutenManualMailReviewWarning");
+  const confirmButton = $("confirmRakutenManualMailSendBtn");
   if (subject) subject.value = preview.subject || "";
-  if (body) body.value = preview.body || "";
+  if (body) {
+    body.value = preview.body || "";
+    body.readOnly = preview.requiresManualReview !== true;
+  }
+  if (reviewWarning) {
+    reviewWarning.classList.toggle("hidden", preview.requiresManualReview !== true);
+  }
+  if (confirmButton) {
+    confirmButton.textContent = preview.requiresManualReview === true
+      ? "确认正文并发送"
+      : "确认发送这封邮件";
+  }
   openModal("rakutenManualMailPreviewModal");
 }
 
@@ -7306,7 +7334,12 @@ async function executeRakutenManualAutomationItems(items, button, options = {}) 
   ).map((item) => ({
     kind: item.kind,
     id: item.id,
-    ...(item.kind === "mail" ? { templateVersion: item.templateVersion } : {}),
+    ...(item.kind === "mail" ? {
+      templateVersion: item.templateVersion,
+      ...(item.orderFingerprint ? { orderFingerprint: item.orderFingerprint } : {}),
+      ...(item.manualReviewConfirmed ? { manualReviewConfirmed: true } : {}),
+      ...(item.bodyOverride !== undefined ? { bodyOverride: item.bodyOverride } : {}),
+    } : {}),
   }));
   if (!selections.length) return;
   const isShipping = state.rakutenManualAutomationKind === "shipping";
@@ -16880,7 +16913,14 @@ function bindForms() {
     const item = state.rakutenManualMailPreviewItem;
     if (!item) return;
     try {
-      await executeRakutenManualAutomationItems([item], event.currentTarget, { skipConfirm: true });
+      const executionItem = item.requiresManualReview === true
+        ? {
+            ...item,
+            manualReviewConfirmed: true,
+            bodyOverride: String($("rakutenManualMailPreviewBody")?.value || ""),
+          }
+        : item;
+      await executeRakutenManualAutomationItems([executionItem], event.currentTarget, { skipConfirm: true });
       state.rakutenManualMailPreviewItem = null;
       closeModal("rakutenManualMailPreviewModal");
     } catch (error) {
