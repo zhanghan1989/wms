@@ -1042,7 +1042,10 @@ export class RakutenRmsAutomationService {
     });
     for (const connection of connections) {
       if (connection.autoShippingEnabled && requestedKind !== 'mail') await this.prepareShippingReports(connection);
-      if (connection.mailNotificationsEnabled && requestedKind !== 'shipping') await this.prepareCustomsMails(connection);
+      if (connection.mailNotificationsEnabled && requestedKind !== 'shipping') {
+        await this.prepareTrackingMails(connection);
+        await this.prepareCustomsMails(connection);
+      }
     }
     const connectionIds = connections.map((connection) => connection.id);
     if (!connectionIds.length) {
@@ -1134,14 +1137,8 @@ export class RakutenRmsAutomationService {
       ...shippingRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
       ...mailRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
     ]);
-    const eligibleShippingRowsWithOrders = await Promise.all(
-      shippingRows
-        .filter((row) => eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)))
-        .map(async (row) => ({ row, orderRows: await this.loadOrderRows(row.connectionId, row.orderId) })),
-    );
-    const eligibleShippingRows = eligibleShippingRowsWithOrders
-      .filter(({ row, orderRows }) => this.isShippingCustomsReady(orderRows, row.fulfillmentType as FulfillmentType))
-      .map(({ row }) => row);
+    const eligibleShippingRows = shippingRows.filter((row) =>
+      eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
     const eligibleMailRows = mailRows.filter((row) =>
       eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
     const items: Array<Record<string, unknown>> = [];
@@ -1364,10 +1361,6 @@ export class RakutenRmsAutomationService {
       }
       if ((row.status !== RakutenAutomationStatus.pending && row.status !== RakutenAutomationStatus.failed) || (row.nextAttemptAt && row.nextAttemptAt > now)) {
         throw new BadRequestException(`订单 ${row.orderId} 的单号回传状态已变化，请刷新清单`);
-      }
-      const orderRows = await this.loadOrderRows(row.connectionId, row.orderId);
-      if (!this.isShippingCustomsReady(orderRows, row.fulfillmentType as FulfillmentType | undefined)) {
-        throw new BadRequestException(`订单 ${row.orderId} 尚未取得通関許可，当前不能回传单号`);
       }
     }
     for (const row of mailRows) {
@@ -1601,6 +1594,7 @@ export class RakutenRmsAutomationService {
       errors.push(`邮件阶段已暂停：${connection.mailCircuitReason || '检测到店铺级配置错误'}`);
     } else if (connection.mailNotificationsEnabled) {
       try {
+        await this.prepareTrackingMails(connection);
         await this.prepareCustomsMails(connection);
         Object.assign(mail, await this.processMails(connection.id));
       } catch (error) {
@@ -1997,7 +1991,6 @@ export class RakutenRmsAutomationService {
       if (existing) continue;
       const rows = await this.loadOrderRows(connection.id, orderId);
       const fulfillmentType = this.resolveFulfillmentType(rows);
-      if (!this.isShippingCustomsReady(rows, fulfillmentType)) continue;
       const reportRows = fulfillmentType === 'china' ? rows.filter((row) => this.isChina(row)) : rows.filter((row) => !this.isChina(row));
       const baskets = this.buildShippingBaskets(reportRows, false);
       if (!this.allBasketsReady(reportRows, baskets)) continue;
@@ -2048,9 +2041,6 @@ export class RakutenRmsAutomationService {
           continue;
         }
         const fulfillmentType = report.fulfillmentType as FulfillmentType;
-        if (!this.isShippingCustomsReady(orderRows, fulfillmentType)) {
-          throw new Error('中国发或日中混发订单尚未取得通関許可');
-        }
         const selectedRows = fulfillmentType === 'china'
           ? orderRows.filter((row) => this.isChina(row))
           : orderRows.filter((row) => !this.isChina(row));
@@ -2092,11 +2082,6 @@ export class RakutenRmsAutomationService {
             report.orderId,
             baskets,
           );
-        const event = fulfillmentType === 'japan'
-          ? RakutenOrderMailEvent.japan_shipped
-          : fulfillmentType === 'china'
-            ? RakutenOrderMailEvent.china_delay
-            : RakutenOrderMailEvent.mixed_partial;
         const markSent = this.prisma.rakutenOrderShippingReport.update({
           where: { id: report.id },
           data: {
@@ -2109,7 +2094,7 @@ export class RakutenRmsAutomationService {
             responsePayload: response as Prisma.InputJsonValue,
           },
         });
-        if (report.connection.mailNotificationsEnabled) {
+        if (fulfillmentType === 'japan' && report.connection.mailNotificationsEnabled) {
           await this.prisma.$transaction([
             markSent,
             this.prisma.rakutenOrderMail.upsert({
@@ -2117,10 +2102,14 @@ export class RakutenRmsAutomationService {
                 connectionId_orderId_event: {
                   connectionId: report.connectionId,
                   orderId: report.orderId,
-                  event,
+                  event: RakutenOrderMailEvent.japan_shipped,
                 },
               },
-              create: { connectionId: report.connectionId, orderId: report.orderId, event },
+              create: {
+                connectionId: report.connectionId,
+                orderId: report.orderId,
+                event: RakutenOrderMailEvent.japan_shipped,
+              },
               update: {},
             }),
           ]);
@@ -2138,6 +2127,64 @@ export class RakutenRmsAutomationService {
       }
     }
     return counts;
+  }
+
+  private async prepareTrackingMails(connection: ConnectionWithShop): Promise<void> {
+    const candidates = await this.prisma.$queryRaw<Array<{ orderId: string }>>(Prisma.sql`
+      SELECT DISTINCT records.order_id AS orderId
+      FROM rakuten_order_records records
+      LEFT JOIN rakuten_order_mails mails
+        ON mails.connection_id = records.rms_connection_id
+        AND mails.order_id = records.order_id
+        AND mails.event IN ('china_delay', 'mixed_partial')
+      WHERE records.rms_connection_id = ${connection.id}
+        AND records.source_kind = 'rms_api'
+        AND records.created_at >= ${AUTOMATION_ORDER_IMPORT_CUTOFF}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM rakuten_order_records older_records
+          WHERE older_records.rms_connection_id = records.rms_connection_id
+            AND older_records.order_id = records.order_id
+            AND older_records.created_at < ${AUTOMATION_ORDER_IMPORT_CUTOFF}
+        )
+        AND records.order_id IS NOT NULL
+        AND records.shipment_no IS NOT NULL
+        AND records.shipment_no <> ''
+        AND mails.id IS NULL
+      ORDER BY records.order_id ASC
+      LIMIT 500
+    `);
+    for (const candidate of candidates) {
+      const orderId = String(candidate.orderId ?? '').trim();
+      if (!orderId) continue;
+      const rows = await this.loadOrderRows(connection.id, orderId);
+      const fulfillmentType = this.resolveFulfillmentType(rows);
+      if (fulfillmentType === 'japan') continue;
+      const targetRows = fulfillmentType === 'china'
+        ? rows.filter((row) => this.isChina(row))
+        : rows.filter((row) => !this.isChina(row));
+      const baskets = this.buildShippingBaskets(targetRows, false);
+      if (!this.allBasketsReady(targetRows, baskets)) continue;
+      const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
+        where: {
+          connectionId_orderId_event: {
+            connectionId: connection.id,
+            orderId,
+            event: RakutenOrderMailEvent.new_order,
+          },
+        },
+        select: { status: true, resolutionNote: true },
+      });
+      if (!this.isMailPrerequisiteSatisfied(prerequisite)) continue;
+      const event = fulfillmentType === 'china'
+        ? RakutenOrderMailEvent.china_delay
+        : RakutenOrderMailEvent.mixed_partial;
+      await this.prisma.rakutenOrderMail.create({
+        data: { connectionId: connection.id, orderId, event },
+      }).catch((error: unknown) => {
+        if (!this.isUniqueConstraintError(error)) throw error;
+      });
+    }
   }
 
   private async prepareCustomsMails(connection: ConnectionWithShop): Promise<void> {
@@ -2874,15 +2921,6 @@ export class RakutenRmsAutomationService {
     const hasChina = rows.some((row) => this.isChina(row));
     const hasJapan = rows.some((row) => !this.isChina(row));
     return hasChina && hasJapan ? 'mixed' : hasChina ? 'china' : 'japan';
-  }
-
-  private isShippingCustomsReady(
-    rows: RakutenOrderRecord[],
-    fulfillmentType: FulfillmentType = this.resolveFulfillmentType(rows),
-  ): boolean {
-    if (fulfillmentType === 'japan') return true;
-    const chinaRows = rows.filter((row) => this.isChina(row));
-    return chinaRows.length > 0 && chinaRows.every((row) => row.trackingHasCustomsClearance === true);
   }
 
   private isChina(row: Pick<RakutenOrderRecord, 'dispatchMode'>): boolean {

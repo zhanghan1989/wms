@@ -294,6 +294,151 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
   });
 
+  it('reports a China tracking number before customs clearance', async () => {
+    const report = {
+      id: 91n,
+      connectionId: 7n,
+      orderId: '421951-ORDER',
+      fulfillmentType: 'china',
+      attempts: 0,
+      connection: {
+        encryptedServiceSecret: 'secret',
+        serviceSecretIv: 'iv',
+        serviceSecretAuthTag: 'tag',
+        encryptedLicenseKey: 'key',
+        licenseKeyIv: 'iv',
+        licenseKeyAuthTag: 'tag',
+        mailNotificationsEnabled: true,
+      },
+    };
+    const prisma = {
+      rakutenOrderShippingReport: {
+        findMany: jest.fn().mockResolvedValue([report]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([makeRow({
+          dispatchMode: 'china_pending',
+          shipmentCompany: 'XIYA-SAGAWA',
+          shipmentNo: '358556700110',
+          trackingHasCustomsClearance: false,
+        })]),
+      },
+    } as any;
+    const client = {
+      getOrders: jest.fn().mockResolvedValue([{
+        orderNumber: '421951-ORDER',
+        orderProgress: 300,
+        PackageModelList: [{ basketId: 1, ShippingModelList: [] }],
+      }]),
+      updateOrderShipping: jest.fn().mockResolvedValue({ MessageModelList: [] }),
+    } as any;
+    const crypto = { decrypt: jest.fn().mockReturnValue('credential') } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, client, crypto);
+
+    const result = await (scopedService as any).processShippingReports(7n);
+
+    expect(result).toEqual({ sent: 1, skipped: 0, failed: 0 });
+    expect(client.updateOrderShipping).toHaveBeenCalled();
+  });
+
+  it('queues the Japan shipment mail only after its tracking number is returned to Rakuten', async () => {
+    const report = {
+      id: 92n,
+      connectionId: 7n,
+      orderId: '421951-JAPAN',
+      fulfillmentType: 'japan',
+      attempts: 0,
+      connection: {
+        encryptedServiceSecret: 'secret',
+        serviceSecretIv: 'iv',
+        serviceSecretAuthTag: 'tag',
+        encryptedLicenseKey: 'key',
+        licenseKeyIv: 'iv',
+        licenseKeyAuthTag: 'tag',
+        mailNotificationsEnabled: true,
+      },
+    };
+    const upsert = jest.fn().mockResolvedValue({});
+    const prisma = {
+      rakutenOrderShippingReport: {
+        findMany: jest.fn().mockResolvedValue([report]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([makeRow({ orderId: '421951-JAPAN' })]) },
+      rakutenOrderMail: { upsert },
+      $transaction: jest.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
+    } as any;
+    const client = {
+      getOrders: jest.fn().mockResolvedValue([{
+        orderNumber: '421951-JAPAN',
+        orderProgress: 300,
+        PackageModelList: [{ basketId: 1, ShippingModelList: [] }],
+      }]),
+      updateOrderShipping: jest.fn().mockResolvedValue({ MessageModelList: [] }),
+    } as any;
+    const crypto = { decrypt: jest.fn().mockReturnValue('credential') } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, client, crypto);
+
+    await (scopedService as any).processShippingReports(7n);
+
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: {
+        connectionId: 7n,
+        orderId: '421951-JAPAN',
+        event: RakutenOrderMailEvent.japan_shipped,
+      },
+    }));
+  });
+
+  it('queues the first China and mixed mails when target tracking numbers are ready without waiting for Rakuten return', async () => {
+    const create = jest.fn().mockResolvedValue({});
+    const rowsByOrder = new Map<string, RakutenOrderRecord[]>([
+      ['CHINA', [makeRow({
+        orderId: 'CHINA',
+        dispatchMode: 'china_pending',
+        shipmentCompany: 'XIYA-SAGAWA',
+        shipmentNo: '358556700110',
+        trackingHasCustomsClearance: false,
+      })]],
+      ['MIXED', [
+        makeRow({ orderId: 'MIXED' }),
+        makeRow({
+          id: 2n,
+          orderId: 'MIXED',
+          rmsItemKey: 'item-2',
+          dispatchMode: 'china_pending',
+          shipmentCompany: null,
+          shipmentNo: null,
+          trackingHasCustomsClearance: false,
+        }),
+      ]],
+    ]);
+    const prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ orderId: 'CHINA' }, { orderId: 'MIXED' }]),
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockImplementation(({ where }: any) => rowsByOrder.get(where.orderId) ?? []),
+      },
+      rakutenOrderMail: {
+        findUnique: jest.fn().mockResolvedValue({ status: RakutenAutomationStatus.sent }),
+        create,
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+
+    await (scopedService as any).prepareTrackingMails({ id: 7n });
+
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(create).toHaveBeenCalledWith({
+      data: { connectionId: 7n, orderId: 'CHINA', event: RakutenOrderMailEvent.china_delay },
+    });
+    expect(create).toHaveBeenCalledWith({
+      data: { connectionId: 7n, orderId: 'MIXED', event: RakutenOrderMailEvent.mixed_partial },
+    });
+  });
+
   it('does not send a customs email before its first shipping email succeeds', async () => {
     const mail = {
       id: 52n,
@@ -904,6 +1049,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     } as any;
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
     jest.spyOn(scopedService as any, 'prepareShippingReports').mockRejectedValue(new Error('shipping unavailable'));
+    jest.spyOn(scopedService as any, 'prepareTrackingMails').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'prepareCustomsMails').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'processMails').mockResolvedValue({ sent: 1, failed: 0, blocked: 0 });
 
@@ -1308,6 +1454,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
     jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'prepareShippingReports').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'prepareTrackingMails').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'prepareCustomsMails').mockResolvedValue(undefined);
     const processShippingReports = jest.spyOn(scopedService as any, 'processShippingReports');
     const processMails = jest.spyOn(scopedService as any, 'processMails');
@@ -1398,6 +1545,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     } as any;
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
     jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'prepareTrackingMails').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'prepareCustomsMails').mockResolvedValue(undefined);
 
     const result = await scopedService.prepareManualActions('mail') as any;
@@ -1440,6 +1588,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     } as any;
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
     jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
+    jest.spyOn(scopedService as any, 'prepareTrackingMails').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'prepareCustomsMails').mockResolvedValue(undefined);
 
     const result = await scopedService.prepareManualActions('mail') as any;
@@ -1458,7 +1607,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
   });
 
-  it('shows Japan shipments immediately but waits for customs clearance on China and mixed shipments', async () => {
+  it('shows Japan, China, and mixed shipment returns without waiting for customs clearance', async () => {
     const connection = {
       id: 7n,
       status: 1,
@@ -1483,7 +1632,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     const shippingReports = [
       makeReport(91n, 'JAPAN', 'japan'),
       makeReport(92n, 'CHINA-WAITING', 'china'),
-      makeReport(93n, 'MIXED-CLEARED', 'mixed'),
+      makeReport(93n, 'MIXED-WAITING', 'mixed'),
     ];
     const prisma = {
       rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([connection]) },
@@ -1493,7 +1642,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'prepareShippingReports').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'loadEligibleAutomationOrderKeys').mockResolvedValue(new Set([
-      '7:JAPAN', '7:CHINA-WAITING', '7:MIXED-CLEARED',
+      '7:JAPAN', '7:CHINA-WAITING', '7:MIXED-WAITING',
     ]));
     jest.spyOn(scopedService as any, 'loadOrderRows').mockImplementation(async (_connectionId, orderId) => {
       if (orderId === 'JAPAN') return [{ dispatchMode: 'japan_stock' }];
@@ -1502,7 +1651,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       }
       return [
         { dispatchMode: 'japan_stock' },
-        { dispatchMode: 'china_pending', trackingHasCustomsClearance: true },
+        { dispatchMode: 'china_pending', trackingHasCustomsClearance: false },
       ];
     });
 
@@ -1511,40 +1660,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(prisma.rakutenRmsConnection.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 7n, autoShippingEnabled: true }),
     }));
-    expect(result.items.map((item: any) => item.orderId)).toEqual(['JAPAN', 'MIXED-CLEARED']);
-  });
-
-  it('rejects a stale China shipment selection when customs clearance is no longer ready', async () => {
-    const connection = {
-      id: 7n,
-      status: 1,
-      autoShippingEnabled: true,
-      mailNotificationsEnabled: false,
-      shippingCircuitOpenedAt: null,
-      shop: { id: 3n, name: '乐天店' },
-    };
-    const shippingRow = {
-      id: 91n,
-      connectionId: 7n,
-      orderId: 'CHINA-WAITING',
-      fulfillmentType: 'china',
-      status: RakutenAutomationStatus.pending,
-      nextAttemptAt: null,
-      connection,
-    };
-    const prisma = {
-      rakutenOrderShippingReport: { findMany: jest.fn().mockResolvedValue([shippingRow]) },
-      rakutenOrderMail: { findMany: jest.fn().mockResolvedValue([]) },
-    } as any;
-    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
-    jest.spyOn(scopedService as any, 'loadEligibleAutomationOrderKeys').mockResolvedValue(new Set(['7:CHINA-WAITING']));
-    jest.spyOn(scopedService as any, 'loadOrderRows').mockResolvedValue([
-      { dispatchMode: 'china_pending', trackingHasCustomsClearance: false },
-    ]);
-
-    await expect(scopedService.executeManualActions([
-      { kind: 'shipping', id: '91' },
-    ])).rejects.toThrow('尚未取得通関許可');
+    expect(result.items.map((item: any) => item.orderId)).toEqual(['CHINA-WAITING', 'JAPAN', 'MIXED-WAITING']);
   });
 
   it('limits manual shipment processing to the explicitly selected task ids', async () => {
