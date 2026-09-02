@@ -195,7 +195,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(rendered.body).toContain('合計商品数   1(個)');
   });
 
-  it('classifies a Japan/China order as mixed and reports only Japan rows', () => {
+  it('classifies a Japan/China order as mixed and selects only China rows for shipment return', () => {
     const japan = makeRow();
     const china = makeRow({
       id: 2n,
@@ -203,16 +203,19 @@ describe('Rakuten RMS shipping and mail automation', () => {
       dispatchMode: 'china_pending',
       shipmentCompany: 'XIYA-SAGAWA',
       shipmentNo: '358556700110',
+      trackingHasCustomsClearance: true,
       rawPayload: { rmsPackage: { basketId: 1 } },
     });
 
     expect((service as any).resolveFulfillmentType([japan, china])).toBe('mixed');
-    const baskets = (service as any).buildShippingBaskets([japan]);
+    expect((service as any).isShippingCustomsReady([japan, china], 'mixed')).toBe(true);
+    const selectedRows = (service as any).shippingTargetRows([japan, china], 'mixed');
+    const baskets = (service as any).buildShippingBaskets(selectedRows);
     expect(baskets).toEqual([{
       basketId: 1,
       ShippingModelList: [{
-        shippingNumber: '390853178660',
-        deliveryCompany: '1001',
+        shippingNumber: '358556700110',
+        deliveryCompany: '1002',
         shippingDate: '2026-08-21',
         shippingDeleteFlag: 0,
       }],
@@ -294,7 +297,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
   });
 
-  it('reports a China tracking number before customs clearance', async () => {
+  it('does not report a China tracking number before customs clearance', async () => {
     const report = {
       id: 91n,
       connectionId: 7n,
@@ -339,8 +342,71 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
     const result = await (scopedService as any).processShippingReports(7n);
 
+    expect(result).toEqual({ sent: 0, skipped: 0, failed: 1 });
+    expect(client.updateOrderShipping).not.toHaveBeenCalled();
+  });
+
+  it('returns only China tracking numbers for a mixed order after every China number clears customs', async () => {
+    const report = {
+      id: 92n,
+      connectionId: 7n,
+      orderId: '421951-MIXED',
+      fulfillmentType: 'mixed',
+      attempts: 0,
+      connection: {
+        encryptedServiceSecret: 'secret', serviceSecretIv: 'iv', serviceSecretAuthTag: 'tag',
+        encryptedLicenseKey: 'key', licenseKeyIv: 'iv', licenseKeyAuthTag: 'tag',
+        mailNotificationsEnabled: false,
+      },
+    };
+    const rows = [
+      makeRow({ orderId: '421951-MIXED', shipmentNo: 'JP-TRACKING' }),
+      makeRow({
+        id: 2n,
+        rmsItemKey: 'item-2',
+        orderId: '421951-MIXED',
+        dispatchMode: 'china_pending',
+        shipmentCompany: 'XIYA-SAGAWA',
+        shipmentNo: 'CN-TRACKING-1',
+        trackingHasCustomsClearance: true,
+      }),
+      makeRow({
+        id: 3n,
+        rmsItemKey: 'item-3',
+        orderId: '421951-MIXED',
+        dispatchMode: 'china_no_stock',
+        shipmentCompany: 'XIYA-SAGAWA',
+        shipmentNo: 'CN-TRACKING-2',
+        trackingHasCustomsClearance: true,
+      }),
+    ];
+    const prisma = {
+      rakutenOrderShippingReport: {
+        findMany: jest.fn().mockResolvedValue([report]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
+    } as any;
+    const client = {
+      getOrders: jest.fn().mockResolvedValue([{
+        orderNumber: '421951-MIXED',
+        orderProgress: 300,
+        PackageModelList: [{ basketId: 1, ShippingModelList: [] }],
+      }]),
+      updateOrderShipping: jest.fn().mockResolvedValue({ MessageModelList: [] }),
+    } as any;
+    const crypto = { decrypt: jest.fn().mockReturnValue('credential') } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, client, crypto);
+
+    const result = await (scopedService as any).processShippingReports(7n);
+
     expect(result).toEqual({ sent: 1, skipped: 0, failed: 0 });
-    expect(client.updateOrderShipping).toHaveBeenCalled();
+    const baskets = client.updateOrderShipping.mock.calls[0][3];
+    const numbers = baskets.flatMap((basket: any) =>
+      basket.ShippingModelList.map((shipping: any) => shipping.shippingNumber));
+    expect(numbers).toEqual(['CN-TRACKING-1', 'CN-TRACKING-2']);
+    expect(numbers).not.toContain('JP-TRACKING');
   });
 
   it('queues the Japan shipment mail only after its tracking number is returned to Rakuten', async () => {
@@ -1607,7 +1673,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
   });
 
-  it('shows Japan, China, and mixed shipment returns without waiting for customs clearance', async () => {
+  it('shows China and mixed shipment returns only after every China tracking number clears customs', async () => {
     const connection = {
       id: 7n,
       status: 1,
@@ -1633,6 +1699,8 @@ describe('Rakuten RMS shipping and mail automation', () => {
       makeReport(91n, 'JAPAN', 'japan'),
       makeReport(92n, 'CHINA-WAITING', 'china'),
       makeReport(93n, 'MIXED-WAITING', 'mixed'),
+      makeReport(94n, 'CHINA-READY', 'china'),
+      makeReport(95n, 'MIXED-READY', 'mixed'),
     ];
     const prisma = {
       rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([connection]) },
@@ -1642,16 +1710,26 @@ describe('Rakuten RMS shipping and mail automation', () => {
     jest.spyOn(scopedService as any, 'recoverStaleJobs').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'prepareShippingReports').mockResolvedValue(undefined);
     jest.spyOn(scopedService as any, 'loadEligibleAutomationOrderKeys').mockResolvedValue(new Set([
-      '7:JAPAN', '7:CHINA-WAITING', '7:MIXED-WAITING',
+      '7:JAPAN', '7:CHINA-WAITING', '7:MIXED-WAITING', '7:CHINA-READY', '7:MIXED-READY',
     ]));
     jest.spyOn(scopedService as any, 'loadOrderRows').mockImplementation(async (_connectionId, orderId) => {
       if (orderId === 'JAPAN') return [{ dispatchMode: 'japan_stock' }];
       if (orderId === 'CHINA-WAITING') {
-        return [{ dispatchMode: 'china_pending', trackingHasCustomsClearance: false }];
+        return [{ dispatchMode: 'china_pending', shipmentNo: 'CN-WAITING', trackingHasCustomsClearance: false }];
       }
+      if (orderId === 'MIXED-WAITING') return [
+        { dispatchMode: 'japan_stock', shipmentNo: 'JP-1' },
+        { dispatchMode: 'china_pending', shipmentNo: 'CN-CLEARED', trackingHasCustomsClearance: true },
+        { dispatchMode: 'china_pending', shipmentNo: 'CN-WAITING', trackingHasCustomsClearance: false },
+      ];
+      if (orderId === 'CHINA-READY') return [
+        { dispatchMode: 'china_pending', shipmentNo: 'CN-1', trackingHasCustomsClearance: true },
+        { dispatchMode: 'china_no_stock', shipmentNo: 'CN-2', trackingHasCustomsClearance: true },
+      ];
       return [
-        { dispatchMode: 'japan_stock' },
-        { dispatchMode: 'china_pending', trackingHasCustomsClearance: false },
+        { dispatchMode: 'japan_stock', shipmentNo: 'JP-1' },
+        { dispatchMode: 'china_pending', shipmentNo: 'CN-1', trackingHasCustomsClearance: true },
+        { dispatchMode: 'china_no_stock', shipmentNo: 'CN-2', trackingHasCustomsClearance: true },
       ];
     });
 
@@ -1660,7 +1738,10 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(prisma.rakutenRmsConnection.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 7n, autoShippingEnabled: true }),
     }));
-    expect(result.items.map((item: any) => item.orderId)).toEqual(['CHINA-WAITING', 'JAPAN', 'MIXED-WAITING']);
+    expect(result.items.map((item: any) => item.orderId)).toEqual(['CHINA-READY', 'JAPAN', 'MIXED-READY']);
+    expect(result.items.find((item: any) => item.orderId === 'MIXED-READY')).toMatchObject({
+      actionLabel: '回传混发订单的中国快递单号',
+    });
   });
 
   it('limits manual shipment processing to the explicitly selected task ids', async () => {

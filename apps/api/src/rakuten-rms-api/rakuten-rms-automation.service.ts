@@ -1137,8 +1137,14 @@ export class RakutenRmsAutomationService {
       ...shippingRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
       ...mailRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
     ]);
-    const eligibleShippingRows = shippingRows.filter((row) =>
-      eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
+    const eligibleShippingRowsWithOrders = await Promise.all(
+      shippingRows
+        .filter((row) => eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)))
+        .map(async (row) => ({ row, orderRows: await this.loadOrderRows(row.connectionId, row.orderId) })),
+    );
+    const eligibleShippingRows = eligibleShippingRowsWithOrders
+      .filter(({ row, orderRows }) => this.isShippingCustomsReady(orderRows, row.fulfillmentType as FulfillmentType))
+      .map(({ row }) => row);
     const eligibleMailRows = mailRows.filter((row) =>
       eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
     const items: Array<Record<string, unknown>> = [];
@@ -1161,7 +1167,7 @@ export class RakutenRmsAutomationService {
           ? '回传日本快递单号'
           : row.fulfillmentType === 'china'
             ? '回传中国快递单号'
-            : '回传混发订单的日本快递单号',
+            : '回传混发订单的中国快递单号',
         event: null,
         status: row.status,
         attempts: row.attempts,
@@ -1361,6 +1367,10 @@ export class RakutenRmsAutomationService {
       }
       if ((row.status !== RakutenAutomationStatus.pending && row.status !== RakutenAutomationStatus.failed) || (row.nextAttemptAt && row.nextAttemptAt > now)) {
         throw new BadRequestException(`订单 ${row.orderId} 的单号回传状态已变化，请刷新清单`);
+      }
+      const orderRows = await this.loadOrderRows(row.connectionId, row.orderId);
+      if (!this.isShippingCustomsReady(orderRows, row.fulfillmentType as FulfillmentType)) {
+        throw new BadRequestException(`订单 ${row.orderId} 的中国侧快递单号尚未全部达到通関許可，当前不能回传`);
       }
     }
     for (const row of mailRows) {
@@ -1991,7 +2001,8 @@ export class RakutenRmsAutomationService {
       if (existing) continue;
       const rows = await this.loadOrderRows(connection.id, orderId);
       const fulfillmentType = this.resolveFulfillmentType(rows);
-      const reportRows = fulfillmentType === 'china' ? rows.filter((row) => this.isChina(row)) : rows.filter((row) => !this.isChina(row));
+      if (!this.isShippingCustomsReady(rows, fulfillmentType)) continue;
+      const reportRows = this.shippingTargetRows(rows, fulfillmentType);
       const baskets = this.buildShippingBaskets(reportRows, false);
       if (!this.allBasketsReady(reportRows, baskets)) continue;
       const fingerprint = createHash('sha1').update(JSON.stringify(baskets)).digest('hex');
@@ -2041,9 +2052,10 @@ export class RakutenRmsAutomationService {
           continue;
         }
         const fulfillmentType = report.fulfillmentType as FulfillmentType;
-        const selectedRows = fulfillmentType === 'china'
-          ? orderRows.filter((row) => this.isChina(row))
-          : orderRows.filter((row) => !this.isChina(row));
+        if (!this.isShippingCustomsReady(orderRows, fulfillmentType)) {
+          throw new Error('中国发或日中混发订单的中国侧快递单号尚未全部达到通関許可');
+        }
+        const selectedRows = this.shippingTargetRows(orderRows, fulfillmentType);
         const baskets = this.buildShippingBaskets(selectedRows);
         if (!this.allBasketsReady(selectedRows, baskets)) {
           throw new Error('自动回传仍在等待同一订单全部目标包裹取得快递单号');
@@ -2921,6 +2933,23 @@ export class RakutenRmsAutomationService {
     const hasChina = rows.some((row) => this.isChina(row));
     const hasJapan = rows.some((row) => !this.isChina(row));
     return hasChina && hasJapan ? 'mixed' : hasChina ? 'china' : 'japan';
+  }
+
+  private shippingTargetRows(rows: RakutenOrderRecord[], fulfillmentType: FulfillmentType): RakutenOrderRecord[] {
+    return fulfillmentType === 'japan'
+      ? rows.filter((row) => !this.isChina(row))
+      : rows.filter((row) => this.isChina(row));
+  }
+
+  private isShippingCustomsReady(
+    rows: RakutenOrderRecord[],
+    fulfillmentType: FulfillmentType = this.resolveFulfillmentType(rows),
+  ): boolean {
+    if (fulfillmentType === 'japan') return true;
+    const chinaRows = rows.filter((row) => this.isChina(row));
+    if (!chinaRows.length) return false;
+    return chinaRows.every((row) =>
+      Boolean(String(row.shipmentNo ?? '').trim()) && row.trackingHasCustomsClearance === true);
   }
 
   private isChina(row: Pick<RakutenOrderRecord, 'dispatchMode'>): boolean {
