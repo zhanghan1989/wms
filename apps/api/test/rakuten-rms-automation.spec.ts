@@ -876,16 +876,28 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
     const preview = await scopedService.previewManualMailAction('94', 3) as any;
 
-    expect(preview.requiresManualReview).toBe(true);
+    expect(preview).toMatchObject({
+      requiresManualReview: true,
+      manualReviewReason: 'manual_update',
+    });
   });
 
-  it('requires manual review only for Japan, China second, and mixed second mails', () => {
+  it('requires review for manual edits or combo orders only in Japan, China second, and mixed second mails', () => {
     const manuallyUpdatedRows = [makeRow({ rmsManualOverrideAt: new Date('2026-09-02T00:00:00Z') })];
+    const comboRows = [makeRow({ isComboOrder: true })];
+    const bothRows = [makeRow({
+      isComboOrder: true,
+      rmsManualOverrideAt: new Date('2026-09-02T00:00:00Z'),
+    })];
 
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, manuallyUpdatedRows)).toBe(true);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_customs, manuallyUpdatedRows)).toBe(true);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_customs, manuallyUpdatedRows)).toBe(true);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, comboRows)).toBe(true);
+    expect((service as any).manualMailReviewReason(RakutenOrderMailEvent.japan_shipped, comboRows)).toBe('combo_order');
+    expect((service as any).manualMailReviewReason(RakutenOrderMailEvent.japan_shipped, bothRows)).toBe('manual_update_and_combo');
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.new_order, manuallyUpdatedRows)).toBe(false);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.new_order, comboRows)).toBe(false);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_delay, manuallyUpdatedRows)).toBe(false);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, manuallyUpdatedRows)).toBe(false);
   });
@@ -1652,7 +1664,8 @@ describe('Rakuten RMS shipping and mail automation', () => {
         findMany: jest.fn().mockResolvedValue([{
           rmsConnectionId: 7n,
           orderId: '421951-ORDER',
-          rmsManualOverrideAt: new Date('2026-09-02T00:00:00Z'),
+          isComboOrder: true,
+          rmsManualOverrideAt: null,
           createdAt: new Date('2026-09-01T00:00:00Z'),
         }]),
       },
@@ -1706,7 +1719,13 @@ describe('Rakuten RMS shipping and mail automation', () => {
       summary: { shipping: 1, mail: 1 },
       items: [
         expect.objectContaining({ kind: 'shipping', id: '91', executable: true }),
-        expect.objectContaining({ kind: 'mail', id: '92', executable: true, requiresManualReview: true }),
+        expect.objectContaining({
+          kind: 'mail',
+          id: '92',
+          executable: true,
+          requiresManualReview: true,
+          manualReviewReason: 'combo_order',
+        }),
       ],
     });
     expect(processShippingReports).not.toHaveBeenCalled();
@@ -1722,7 +1741,12 @@ describe('Rakuten RMS shipping and mail automation', () => {
     prisma.rakutenOrderShippingReport.findMany.mockClear();
     const mailOnly = await scopedService.prepareManualActions('mail') as any;
     expect(mailOnly.items).toEqual([
-      expect.objectContaining({ kind: 'mail', id: '92', requiresManualReview: true }),
+      expect.objectContaining({
+        kind: 'mail',
+        id: '92',
+        requiresManualReview: true,
+        manualReviewReason: 'combo_order',
+      }),
     ]);
     expect(prisma.rakutenOrderShippingReport.findMany).not.toHaveBeenCalled();
     await expect(scopedService.prepareManualActions('other')).rejects.toThrow('任务类型只支持shipping或mail');

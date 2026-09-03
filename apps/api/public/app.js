@@ -7303,6 +7303,7 @@ async function previewRakutenManualMailAction(item, button) {
     ...item,
     orderFingerprint: String(preview.orderFingerprint || ""),
     requiresManualReview: preview.requiresManualReview === true,
+    manualReviewReason: String(preview.manualReviewReason || ""),
   };
   setTextById(
     "rakutenManualMailPreviewMeta",
@@ -7318,6 +7319,13 @@ async function previewRakutenManualMailAction(item, button) {
     body.readOnly = preview.requiresManualReview !== true;
   }
   if (reviewWarning) {
+    const warningByReason = {
+      manual_update: "该订单在API导入后已由人工更新。请核对并按需要修改正文，确认后才会实际发送。",
+      combo_order: "该订单包含组合产品。请核对并按需要修改正文，确认后才会实际发送。",
+      manual_update_and_combo: "该订单在API导入后已由人工更新，并且包含组合产品。请核对并按需要修改正文，确认后才会实际发送。",
+    };
+    reviewWarning.textContent = warningByReason[preview.manualReviewReason]
+      || "该订单需要人工确认。请核对并按需要修改正文，确认后才会实际发送。";
     reviewWarning.classList.toggle("hidden", preview.requiresManualReview !== true);
   }
   if (confirmButton) {

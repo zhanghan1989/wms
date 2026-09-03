@@ -41,6 +41,7 @@ const MANUALLY_IGNORED_SHIPPING_NOTE = '用户人工忽略单号回传';
 const AUTOMATION_ORDER_IMPORT_CUTOFF = new Date('2026-08-31T15:00:00.000Z');
 
 type FulfillmentType = 'japan' | 'china' | 'mixed';
+type ManualMailReviewReason = 'manual_update' | 'combo_order' | 'manual_update_and_combo';
 type ConnectionWithShop = RakutenRmsConnection & { shop: { id: bigint; name: string } };
 
 interface ShippingBasket {
@@ -1105,6 +1106,7 @@ export class RakutenRmsAutomationService {
             rmsConnectionId: true,
             orderId: true,
             dispatchMode: true,
+            isComboOrder: true,
             rmsManualOverrideAt: true,
             createdAt: true,
           },
@@ -1113,10 +1115,12 @@ export class RakutenRmsAutomationService {
     const fulfillmentFlags = new Map<string, { hasChina: boolean; hasJapan: boolean }>();
     const earliestCreatedAt = new Map<string, Date>();
     const manuallyUpdatedOrderKeys = new Set<string>();
+    const comboOrderKeys = new Set<string>();
     for (const record of mailOrderRecords) {
       if (!record.rmsConnectionId || !record.orderId) continue;
       const key = this.automationOrderKey(record.rmsConnectionId, record.orderId);
       if (record.rmsManualOverrideAt) manuallyUpdatedOrderKeys.add(key);
+      if (record.isComboOrder) comboOrderKeys.add(key);
       const flags = fulfillmentFlags.get(key) ?? { hasChina: false, hasJapan: false };
       if (this.isChina(record)) flags.hasChina = true;
       else flags.hasJapan = true;
@@ -1241,6 +1245,13 @@ export class RakutenRmsAutomationService {
         : flags?.hasChina
           ? 'china'
           : 'japan';
+      const orderKey = this.automationOrderKey(row.connectionId, row.orderId);
+      const manualReviewReason = MANUAL_REVIEW_MAIL_EVENTS.has(row.event)
+        ? this.resolveManualMailReviewReason(
+            manuallyUpdatedOrderKeys.has(orderKey),
+            comboOrderKeys.has(orderKey),
+          )
+        : null;
       items.push({
         kind: 'mail',
         id: row.id.toString(),
@@ -1251,9 +1262,8 @@ export class RakutenRmsAutomationService {
         event: row.event,
         templateVersion,
         templateMissing: !templateVersion,
-        requiresManualReview:
-          MANUAL_REVIEW_MAIL_EVENTS.has(row.event) &&
-          manuallyUpdatedOrderKeys.has(this.automationOrderKey(row.connectionId, row.orderId)),
+        requiresManualReview: Boolean(manualReviewReason),
+        manualReviewReason,
         fulfillmentType,
         status: row.status,
         attempts: row.attempts,
@@ -1333,7 +1343,7 @@ export class RakutenRmsAutomationService {
     if (!recipient) throw new BadRequestException('乐天订单没有返回可用的买家匿名邮箱');
     const smtp = this.decryptSmtpCredentials(mail.connection);
     const rendered = this.renderTemplate(template, rows);
-    const requiresManualReview = this.requiresManualMailReview(mail.event, rows);
+    const manualReviewReason = this.manualMailReviewReason(mail.event, rows);
     return this.serializeMail({
       id: mail.id,
       connectionId: mail.connectionId,
@@ -1346,7 +1356,8 @@ export class RakutenRmsAutomationService {
       bccAddresses: smtp.bccAddresses,
       templateVersion: template.version,
       orderFingerprint: this.mailOrderFingerprint(rows),
-      requiresManualReview,
+      requiresManualReview: Boolean(manualReviewReason),
+      manualReviewReason,
       subject: rendered.subject,
       body: rendered.body,
     });
@@ -1445,7 +1456,7 @@ export class RakutenRmsAutomationService {
         !selected.orderFingerprint ||
         selected.bodyOverride === undefined
       )) {
-        throw new BadRequestException(`订单 ${row.orderId} 已在WMS中人工更新，请先点击待确认、确认邮件正文后再发送`);
+        throw new BadRequestException(`订单 ${row.orderId} 需要人工确认，请先点击待确认、确认邮件正文后再发送`);
       }
       if (!requiresManualReview && (selected?.manualReviewConfirmed || selected?.bodyOverride !== undefined)) {
         throw new BadRequestException(`订单 ${row.orderId} 无需人工修改邮件正文，请刷新清单`);
@@ -2453,7 +2464,7 @@ export class RakutenRmsAutomationService {
               status: RakutenAutomationStatus.pending,
               attempts: { decrement: 1 },
               nextAttemptAt: null,
-              lastError: '订单已在WMS中人工更新，请人工确认邮件正文后再发送',
+              lastError: '订单需要人工确认，请确认邮件正文后再发送',
               failureCategory: 'manual_review',
               deadLetteredAt: null,
             },
@@ -3164,8 +3175,28 @@ export class RakutenRmsAutomationService {
     event: RakutenOrderMailEvent,
     rows: RakutenOrderRecord[],
   ): boolean {
-    return MANUAL_REVIEW_MAIL_EVENTS.has(event) &&
-      rows.some((row) => Boolean(row.rmsManualOverrideAt));
+    return Boolean(this.manualMailReviewReason(event, rows));
+  }
+
+  private manualMailReviewReason(
+    event: RakutenOrderMailEvent,
+    rows: RakutenOrderRecord[],
+  ): ManualMailReviewReason | null {
+    if (!MANUAL_REVIEW_MAIL_EVENTS.has(event)) return null;
+    return this.resolveManualMailReviewReason(
+      rows.some((row) => Boolean(row.rmsManualOverrideAt)),
+      rows.some((row) => row.isComboOrder),
+    );
+  }
+
+  private resolveManualMailReviewReason(
+    manuallyUpdated: boolean,
+    comboOrder: boolean,
+  ): ManualMailReviewReason | null {
+    if (manuallyUpdated && comboOrder) return 'manual_update_and_combo';
+    if (manuallyUpdated) return 'manual_update';
+    if (comboOrder) return 'combo_order';
+    return null;
   }
 
   private decryptApiCredentials(connection: RakutenRmsConnection): { serviceSecret: string; licenseKey: string } {
