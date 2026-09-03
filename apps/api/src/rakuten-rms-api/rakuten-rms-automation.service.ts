@@ -33,6 +33,7 @@ const CHINA_MODES = new Set(['china_pending', 'china_no_stock']);
 const MANUAL_REVIEW_MAIL_EVENTS = new Set<RakutenOrderMailEvent>([
   RakutenOrderMailEvent.japan_shipped,
   RakutenOrderMailEvent.china_customs,
+  RakutenOrderMailEvent.mixed_partial,
   RakutenOrderMailEvent.mixed_customs,
 ]);
 const MANUALLY_IGNORED_MAIL_NOTE = '用户人工忽略邮件';

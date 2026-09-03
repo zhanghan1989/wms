@@ -882,7 +882,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     });
   });
 
-  it('requires review for manual edits or combo orders only in Japan, China second, and mixed second mails', () => {
+  it('reviews manual edits or combo orders in Japan, China second, mixed first, and mixed second mails', () => {
     const manuallyUpdatedRows = [makeRow({ rmsManualOverrideAt: new Date('2026-09-02T00:00:00Z') })];
     const comboRows = [makeRow({ isComboOrder: true })];
     const bothRows = [makeRow({
@@ -892,14 +892,16 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, manuallyUpdatedRows)).toBe(true);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_customs, manuallyUpdatedRows)).toBe(true);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, manuallyUpdatedRows)).toBe(true);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_customs, manuallyUpdatedRows)).toBe(true);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, comboRows)).toBe(true);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, comboRows)).toBe(true);
     expect((service as any).manualMailReviewReason(RakutenOrderMailEvent.japan_shipped, comboRows)).toBe('combo_order');
     expect((service as any).manualMailReviewReason(RakutenOrderMailEvent.japan_shipped, bothRows)).toBe('manual_update_and_combo');
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.new_order, manuallyUpdatedRows)).toBe(false);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.new_order, comboRows)).toBe(false);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_delay, manuallyUpdatedRows)).toBe(false);
-    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, manuallyUpdatedRows)).toBe(false);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_delay, comboRows)).toBe(false);
   });
 
   it('blocks a confirmed mail when the WMS order changes after preview', async () => {
