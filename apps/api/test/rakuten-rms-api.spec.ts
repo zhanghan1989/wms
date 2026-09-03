@@ -566,6 +566,71 @@ describe("Rakuten RMS API integration", () => {
     expect(plan).toMatchObject({ action: "update", changedFields: [] });
   });
 
+  it("preserves the first import time when an existing RMS item is synced again", async () => {
+    const firstImportedAt = new Date("2026-09-02T05:08:11.000Z");
+    const syncedAt = new Date("2026-09-03T02:46:08.000Z");
+    const service = new RakutenRmsApiService(
+      {} as PrismaService,
+      {} as RakutenRmsApiClient,
+      {} as RakutenRmsApiCryptoService,
+    );
+
+    const data = await (service as any).buildOrderWriteData(
+      {},
+      { id: 7n, shop: { id: 3n, name: "乐天店" } },
+      {
+        orderId: "421951-20260902-0113701603",
+        itemKey: "421951-20260902-0113701603|item-1",
+        skuCode: "98610",
+        comboLookupSku: null,
+        isComboOrder: false,
+        comboOrderSku: null,
+        setComponentSkuCode: null,
+        orderQuantity: 1,
+      },
+      {
+        csvImportedAt: firstImportedAt,
+        dispatchMode: "china_no_stock",
+      },
+      syncedAt,
+    );
+
+    expect(data.csvImportedAt).toEqual(firstImportedAt);
+    expect(data.rmsLastSyncedAt).toEqual(syncedAt);
+  });
+
+  it("uses the sync time as the import time for a newly created RMS item", async () => {
+    const syncedAt = new Date("2026-09-03T02:46:08.000Z");
+    const prisma = {
+      masterProduct: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(
+      prisma,
+      {} as RakutenRmsApiClient,
+      {} as RakutenRmsApiCryptoService,
+    );
+
+    const data = await (service as any).buildOrderWriteData(
+      prisma,
+      { id: 7n, shop: { id: 3n, name: "乐天店" } },
+      {
+        orderId: "421951-new",
+        itemKey: "421951-new|item-1",
+        skuCode: "98610",
+        comboLookupSku: null,
+        isComboOrder: false,
+        comboOrderSku: null,
+        setComponentSkuCode: null,
+        orderQuantity: 1,
+      },
+      null,
+      syncedAt,
+    );
+
+    expect(data.csvImportedAt).toEqual(syncedAt);
+    expect(data.rmsLastSyncedAt).toEqual(syncedAt);
+  });
+
   it("reports only changed business fields for an existing RMS order", async () => {
     const existing = {
       id: 9n,

@@ -1461,7 +1461,10 @@ export class RakutenRmsApiService {
       sourceFileName: "Rakuten RMS API",
       sourceFilePath: `rms-api:${connection.id.toString()}`,
       rawPayload: item.rawPayload,
-      csvImportedAt: syncedAt,
+      // csvImportedAt is the first time this record entered WMS. Re-syncing an
+      // existing RMS item must only advance rmsLastSyncedAt; otherwise the UI's
+      // "导入时间" changes whenever Rakuten returns the order again.
+      csvImportedAt: existing?.csvImportedAt ?? syncedAt,
       rmsLastSyncedAt: syncedAt,
     };
   }
