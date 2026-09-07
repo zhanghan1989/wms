@@ -40,6 +40,9 @@ const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
 const IMPORTABLE_ORDER_PROGRESS = [PENDING_SHIPMENT_ORDER_PROGRESS];
 const CONNECTION_TEST_LOOKBACK_DAYS = 62;
 const PREVIEW_EXPIRY_MS = 30 * 60 * 1000;
+// A confirmed batch performs several queries per item and saves rollback snapshots.
+// Use the same bounded budget as other bulk imports instead of Prisma's 5s default.
+const SYNC_TRANSACTION_OPTIONS = { maxWait: 10000, timeout: 120000 };
 const MANUAL_OVERRIDE_KEY = "_wmsManualOverrideFields";
 const LEGACY_RAKUTEN_DEFAULT_SHOP_NAME = "乐天-1号店";
 const RAKUTEN_FACTORY_LOOKBACK_DAYS = 90;
@@ -850,7 +853,7 @@ export class RakutenRmsApiService {
         where: { id },
         data: { rolledBackAt },
       });
-    });
+    }, SYNC_TRANSACTION_OPTIONS);
     return {
       syncRunId: id.toString(),
       rolledBackAt: rolledBackAt.toISOString(),
@@ -997,7 +1000,7 @@ export class RakutenRmsApiService {
           },
         });
         return snapshots;
-      });
+      }, SYNC_TRANSACTION_OPTIONS);
       return {
         syncRunId: activeRun.id.toString(),
         connectionId: connectionKey,

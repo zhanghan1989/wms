@@ -1055,9 +1055,13 @@ describe("Rakuten RMS API integration", () => {
       where: { id: 21n },
     });
     expect(result.restoredCount).toBe(1);
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      maxWait: 10000,
+      timeout: 120000,
+    });
   });
 
-  it("writes all confirmed order changes and the rollback snapshot in one transaction", async () => {
+  it.each([1, 220])("writes %i confirmed items and their rollback snapshot in one transaction", async (itemCount) => {
     const startedAt = new Date("2026-08-18T01:00:00.000Z");
     const tx = {
       rakutenRmsSyncRun: { update: jest.fn().mockResolvedValue({}) },
@@ -1097,19 +1101,28 @@ describe("Rakuten RMS API integration", () => {
         shop: { id: 3n, name: "乐天店" },
       },
       {
-        mappedItems: [item],
-        searchedOrderCount: 1,
+        mappedItems: Array.from({ length: itemCount }, (_, index) => ({
+          ...item,
+          orderId: `421951-${index}`,
+          itemKey: `item-${index}`,
+        })),
+        searchedOrderCount: itemCount,
         reconciledOrderCount: 0,
-        requestedOrderCount: 1,
+        requestedOrderCount: itemCount,
       },
     );
 
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      maxWait: 10000,
+      timeout: 120000,
+    });
+    expect((service as any).applyOrderPlan).toHaveBeenCalledTimes(itemCount);
     expect(tx.rakutenRmsSyncRun.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 11n },
         data: expect.objectContaining({
-          createdCount: 1,
+          createdCount: itemCount,
           changeSnapshot: expect.anything(),
         }),
       }),
@@ -1117,7 +1130,7 @@ describe("Rakuten RMS API integration", () => {
     expect(tx.rakutenRmsConnection.update).toHaveBeenCalled();
     expect(result).toMatchObject({
       syncRunId: "11",
-      created: 1,
+      created: itemCount,
       rollbackAvailable: true,
     });
   });
