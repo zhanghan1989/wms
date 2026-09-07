@@ -205,6 +205,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       shipmentCompany: 'XIYA-SAGAWA',
       shipmentNo: '358556700110',
       trackingHasCustomsClearance: true,
+      trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z'),
       rawPayload: { rmsPackage: { basketId: 1 } },
     });
 
@@ -217,7 +218,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
       ShippingModelList: [{
         shippingNumber: '358556700110',
         deliveryCompany: '1002',
-        shippingDate: '2026-08-21',
+        shippingDate: '2026-09-06',
         shippingDeleteFlag: 0,
       }],
     }]);
@@ -409,6 +410,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
         shipmentCompany: 'XIYA-SAGAWA',
         shipmentNo: 'CN-TRACKING-1',
         trackingHasCustomsClearance: true,
+        trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z'),
       }),
       makeRow({
         id: 3n,
@@ -418,6 +420,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
         shipmentCompany: 'XIYA-SAGAWA',
         shipmentNo: 'CN-TRACKING-2',
         trackingHasCustomsClearance: true,
+        trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z'),
       }),
     ];
     const prisma = {
@@ -1959,17 +1962,17 @@ describe('Rakuten RMS shipping and mail automation', () => {
       }
       if (orderId === 'MIXED-WAITING') return [
         { dispatchMode: 'japan_stock', shipmentNo: 'JP-1' },
-        { dispatchMode: 'china_pending', shipmentNo: 'CN-CLEARED', trackingHasCustomsClearance: true },
+        { dispatchMode: 'china_pending', shipmentNo: 'CN-CLEARED', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z') },
         { dispatchMode: 'china_pending', shipmentNo: 'CN-WAITING', trackingHasCustomsClearance: false },
       ];
       if (orderId === 'CHINA-READY') return [
-        { dispatchMode: 'china_pending', shipmentNo: 'CN-1', trackingHasCustomsClearance: true },
-        { dispatchMode: 'china_no_stock', shipmentNo: 'CN-2', trackingHasCustomsClearance: true },
+        { dispatchMode: 'china_pending', shipmentNo: 'CN-1', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z') },
+        { dispatchMode: 'china_no_stock', shipmentNo: 'CN-2', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z') },
       ];
       return [
         { dispatchMode: 'japan_stock', shipmentNo: 'JP-1' },
-        { dispatchMode: 'china_pending', shipmentNo: 'CN-1', trackingHasCustomsClearance: true },
-        { dispatchMode: 'china_no_stock', shipmentNo: 'CN-2', trackingHasCustomsClearance: true },
+        { dispatchMode: 'china_pending', shipmentNo: 'CN-1', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z') },
+        { dispatchMode: 'china_no_stock', shipmentNo: 'CN-2', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z') },
       ];
     });
 
@@ -2182,6 +2185,17 @@ describe('Rakuten RMS shipping and mail automation', () => {
       .toContain('[発送日] 確認中');
     expect((service as any).renderTrackingLines([makeRow({ dispatchMode: 'japan' })]))
       .toContain('[発送日] 2026年08月21日');
+  });
+
+  it('waits for the China clearance node date before reporting any shipments', () => {
+    const china = makeRow({ dispatchMode: 'china_pending', trackingHasCustomsClearance: true });
+    expect((service as any).isShippingCustomsReady([china], 'china')).toBe(false);
+    expect((service as any).isShippingCustomsReady([makeRow(), china], 'mixed')).toBe(false);
+    expect((service as any).buildShippingBaskets([china])).toEqual([]);
+    const ready = { ...china, trackingCustomsClearanceDate: new Date('2026-09-06T00:00:00Z') };
+    expect((service as any).isShippingCustomsReady([ready], 'china')).toBe(true);
+    expect((service as any).buildShippingBaskets([ready])[0].ShippingModelList[0].shippingDate).toBe('2026-09-06');
+    expect((service as any).buildShippingBaskets([makeRow()])[0].ShippingModelList[0].shippingDate).toBe('2026-08-21');
   });
 
 });

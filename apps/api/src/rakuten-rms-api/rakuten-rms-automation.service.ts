@@ -2139,7 +2139,7 @@ export class RakutenRmsAutomationService {
         }
         const fulfillmentType = report.fulfillmentType as FulfillmentType;
         if (!this.isShippingCustomsReady(orderRows, fulfillmentType)) {
-          throw new Error('中国发或日中混发订单的中国侧快递单号尚未全部达到通関許可');
+          throw new Error('中国发或日中混发订单的中国侧快递单号尚未全部达到通関許可或缺少节点日期');
         }
         const selectedRows = this.shippingTargetRows(orderRows, fulfillmentType);
         const baskets = this.buildShippingBaskets(selectedRows);
@@ -2261,7 +2261,8 @@ export class RakutenRmsAutomationService {
       const targetRows = fulfillmentType === 'china'
         ? rows.filter((row) => this.isChina(row))
         : rows.filter((row) => !this.isChina(row));
-      const baskets = this.buildShippingBaskets(targetRows, false);
+      // Pre-clearance notification readiness only requires registered tracking numbers.
+      const baskets = this.buildShippingBaskets(targetRows, false, false);
       if (!this.allBasketsReady(targetRows, baskets)) continue;
       const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
         where: {
@@ -2673,8 +2674,8 @@ export class RakutenRmsAutomationService {
       order_summary: this.renderOrderSummary(rows),
       tracking_sections: this.renderTrackingSections(rows),
       china_tracking_sections: this.renderTrackingSections(chinaRows),
-      japan_items: this.renderItemLines(japanRows, false, false),
-      china_items: this.renderItemLines(chinaRows, false, false),
+      japan_items: this.renderItemLines(japanRows, false, false, '\n\n'),
+      china_items: this.renderItemLines(chinaRows, false, false, '\n\n'),
       japan_tracking: this.renderCompactTrackingLines(japanRows),
       signature: this.renderSignature(),
     };
@@ -2768,7 +2769,12 @@ export class RakutenRmsAutomationService {
     return lines.filter((line, index, values) => line !== '' || values[index - 1] !== '').join('\n');
   }
 
-  private renderItemLines(rows: RakutenOrderRecord[], includeProductName = true, includePrice = true): string {
+  private renderItemLines(
+    rows: RakutenOrderRecord[],
+    includeProductName = true,
+    includePrice = true,
+    itemSeparator = '\n',
+  ): string {
     return this.uniquePurchasedRows(rows).map((row) => {
       const raw = this.jsonObject(row.rawPayload);
       const rawItem = this.jsonObject(raw?.rmsItem);
@@ -2785,7 +2791,7 @@ export class RakutenRmsAutomationService {
         itemUrl ? `      ${itemUrl}` : '',
         !includePrice || price === null ? '' : `      価格 ${this.formatYen(price)} x ${quantity}(個) = ${this.formatYen(subtotal ?? price * quantity)} (税込)`,
       ].filter(Boolean).join('\n');
-    }).join('\n');
+    }).join(itemSeparator);
   }
 
   private renderTrackingLines(rows: RakutenOrderRecord[]): string {
@@ -2963,12 +2969,14 @@ export class RakutenRmsAutomationService {
     ].join('\n');
   }
 
-  private buildShippingBaskets(rows: RakutenOrderRecord[], strictCarrier = true): ShippingBasket[] {
+  private buildShippingBaskets(rows: RakutenOrderRecord[], strictCarrier = true, useCustomsDate = true): ShippingBasket[] {
     const byBasket = new Map<number, Map<string, RakutenOrderRecord>>();
     for (const row of rows) {
       const trackingNo = String(row.shipmentNo ?? '').trim();
       const basketId = this.resolveBasketId(row.rawPayload);
-      if (!trackingNo || basketId === null || !row.shipmentNoRegisteredAt) continue;
+      if (!trackingNo || basketId === null) continue;
+      const shippingDate = useCustomsDate && this.isChina(row) ? row.trackingCustomsClearanceDate : row.shipmentNoRegisteredAt;
+      if (!shippingDate) continue;
       const trackingRows = byBasket.get(basketId) ?? new Map<string, RakutenOrderRecord>();
       if (!trackingRows.has(trackingNo)) trackingRows.set(trackingNo, row);
       byBasket.set(basketId, trackingRows);
@@ -2980,7 +2988,7 @@ export class RakutenRmsAutomationService {
         deliveryCompany: strictCarrier
           ? this.deliveryCompanyCode(row)
           : String(row.shipmentCompany ?? '').trim(),
-        shippingDate: this.formatShippingDate(row.shipmentNoRegisteredAt),
+        shippingDate: this.formatShippingDate(useCustomsDate && this.isChina(row) ? row.trackingCustomsClearanceDate : row.shipmentNoRegisteredAt),
         shippingDeleteFlag: 0,
       })),
     }));
@@ -3082,7 +3090,8 @@ export class RakutenRmsAutomationService {
     const chinaRows = rows.filter((row) => this.isChina(row));
     if (!chinaRows.length) return false;
     return chinaRows.every((row) =>
-      Boolean(String(row.shipmentNo ?? '').trim()) && row.trackingHasCustomsClearance === true);
+      Boolean(String(row.shipmentNo ?? '').trim()) && row.trackingHasCustomsClearance === true
+      && Boolean(row.trackingCustomsClearanceDate));
   }
 
   private isChina(row: Pick<RakutenOrderRecord, 'dispatchMode'>): boolean {
