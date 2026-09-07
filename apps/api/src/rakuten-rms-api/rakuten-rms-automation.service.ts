@@ -37,6 +37,8 @@ const MANUAL_REVIEW_MAIL_EVENTS = new Set<RakutenOrderMailEvent>([
   RakutenOrderMailEvent.mixed_customs,
 ]);
 const MANUALLY_IGNORED_MAIL_NOTE = '用户人工忽略邮件';
+// Keep this exact value compatible with previously verified skipped reports.
+const VERIFIED_EXISTING_SHIPPING_NOTE = '乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理';
 const MANUALLY_IGNORED_SHIPPING_NOTE = '用户人工忽略单号回传';
 // 2026-09-01 00:00:00 Asia/Tokyo. Automation applies only to orders first imported after this instant.
 const AUTOMATION_ORDER_IMPORT_CUTOFF = new Date('2026-08-31T15:00:00.000Z');
@@ -2154,7 +2156,7 @@ export class RakutenRmsAutomationService {
         if (!currentOrder) throw new Error('乐天 getOrder 未返回目标订单，已停止回传并等待重试');
         const alreadyReported = this.shippingAlreadyReported([currentOrder], baskets);
         if (alreadyReported && report.attempts === 0) {
-          await this.markShippingSkipped(report.id, '乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理');
+          await this.markShippingSkipped(report.id, VERIFIED_EXISTING_SHIPPING_NOTE);
           counts.skipped += 1;
           continue;
         }
@@ -2290,7 +2292,10 @@ export class RakutenRmsAutomationService {
       INNER JOIN rakuten_order_shipping_reports reports
         ON reports.connection_id = records.rms_connection_id
         AND reports.order_id = records.order_id
-        AND reports.status = 'sent'
+        AND (
+          reports.status = 'sent'
+          OR (reports.status = 'skipped' AND reports.last_error = ${VERIFIED_EXISTING_SHIPPING_NOTE})
+        )
       INNER JOIN rakuten_order_mails prerequisite
         ON prerequisite.connection_id = records.rms_connection_id
         AND prerequisite.order_id = records.order_id
@@ -2328,7 +2333,10 @@ export class RakutenRmsAutomationService {
       const report = await this.prisma.rakutenOrderShippingReport.findUnique({
         where: { connectionId_orderId: { connectionId: connection.id, orderId } },
       });
-      if (report?.status !== RakutenAutomationStatus.sent) continue;
+      if (report?.status !== RakutenAutomationStatus.sent && !(
+        report?.status === RakutenAutomationStatus.skipped &&
+        report.lastError === VERIFIED_EXISTING_SHIPPING_NOTE
+      )) continue;
       const event = this.resolveFulfillmentType(rows) === 'mixed'
         ? RakutenOrderMailEvent.mixed_customs
         : RakutenOrderMailEvent.china_customs;

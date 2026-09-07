@@ -297,6 +297,45 @@ describe('Rakuten RMS shipping and mail automation', () => {
     }));
   });
 
+  it.each([
+    ['china', 'sent', null, true, 'sent', true],
+    ['china', 'skipped', '乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理', true, 'sent', true],
+    ['mixed', 'skipped', '乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理', true, 'sent', true],
+    ['china', 'skipped', '用户人工忽略单号回传', true, 'sent', false],
+    ['china', 'skipped', '乐天订单当前状态不是待発送', true, 'sent', false],
+    ['china', 'pending', null, true, 'sent', false],
+    ['china', 'skipped', '乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理', false, 'sent', false],
+    ['china', 'skipped', '乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理', true, 'pending', false],
+  ])('prepares customs mail for %s / %s / %s / cleared=%s / first=%s: %s', async (
+    fulfillment, status, lastError, cleared, firstStatus, expected,
+  ) => {
+    const rows = [makeRow({ dispatchMode: 'china_pending', trackingHasCustomsClearance: cleared })];
+    if (fulfillment === 'mixed') rows.push(makeRow({ id: 2n, dispatchMode: 'overseas' }));
+    const prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ orderId: '421951-ORDER' }]),
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
+      rakutenOrderShippingReport: { findUnique: jest.fn().mockResolvedValue({ status, lastError }) },
+      rakutenOrderMail: {
+        findUnique: jest.fn().mockResolvedValue({ status: firstStatus }),
+        create: jest.fn().mockResolvedValue({}),
+      },
+    } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    await (scopedService as any).prepareCustomsMails({ id: 7n });
+    // The SQL prefilter must admit the same verified legacy skip as the per-order check.
+    const query = prisma.$queryRaw.mock.calls[0][0];
+    expect(query.sql).toContain("reports.status = 'skipped' AND reports.last_error = ?");
+    expect(query.values).toContain('乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理');
+    if (expected) {
+      expect(prisma.rakutenOrderMail.create).toHaveBeenCalledWith({ data: {
+        connectionId: 7n, orderId: '421951-ORDER',
+        event: fulfillment === 'mixed' ? RakutenOrderMailEvent.mixed_customs : RakutenOrderMailEvent.china_customs,
+      } });
+    } else {
+      expect(prisma.rakutenOrderMail.create).not.toHaveBeenCalled();
+    }
+  });
+
   it('does not report a China tracking number before customs clearance', async () => {
     const report = {
       id: 91n,
