@@ -11014,6 +11014,10 @@ function openOrderEditModal(source, id) {
     throw new Error("未找到对应订单");
   }
 
+  openOrderEditModalFromItem(normalizedSource, item);
+}
+
+function openOrderEditModalFromItem(normalizedSource, item) {
   const isManual = normalizedSource === "manual";
   const isAmazon = normalizedSource === "amazon" || isManual;
   const isShipmentRegistered = hasRegisteredShipmentNo(item);
@@ -11208,8 +11212,9 @@ function formatUnifiedOrderSearchMode(mode) {
 }
 
 function buildOrderSearchRowsHtml(rows, emptyText) {
+  const canEdit = canCurrentUserEditOrders();
   if (!Array.isArray(rows) || rows.length === 0) {
-    return `<tr><td colspan="13" class="muted">${escapeHtml(emptyText || "暂无订单数据")}</td></tr>`;
+    return `<tr><td colspan="${canEdit ? 14 : 13}" class="muted">${escapeHtml(emptyText || "暂无订单数据")}</td></tr>`;
   }
   return rows
     .map(
@@ -11237,6 +11242,7 @@ function buildOrderSearchRowsHtml(rows, emptyText) {
           <td>${escapeHtml(displayText(formatUnifiedOrderSearchMode(item.fulfillmentMode)))}</td>
           <td>${escapeHtml(displayText(item.shipmentCompany))}</td>
           <td>${escapeHtml(displayText(item.shipmentNo))}</td>
+          ${canEdit ? `<td>${source && id ? `<button type="button" class="ghost compact-btn admin-order-edit-only" data-action="editOrderSearchOrder" data-source="${escapeHtml(source)}" data-id="${escapeHtml(id)}">编辑</button>` : ""}</td>` : ""}
         </tr>
       `;
       })
@@ -14953,9 +14959,19 @@ function bindForms() {
     $("orderSearchInput")?.focus();
   });
   const handleOrderSearchDetailClick = async (event) => {
-    const trigger = event.target.closest("button[data-action='openOrderSearchOrderDetail']");
+    const trigger = event.target.closest("button[data-action='openOrderSearchOrderDetail'], button[data-action='editOrderSearchOrder']");
     if (!trigger) return;
     try {
+      if (trigger.dataset.action === "editOrderSearchOrder") {
+        if (!canCurrentUserEditOrders()) return;
+        await withBusyButton(trigger, "打开中...", async () => {
+          const source = trigger.dataset.source || "";
+          const id = trigger.dataset.id || "";
+          const item = await request(`/orders/detail/${encodeURIComponent(source)}/${encodeURIComponent(id)}`);
+          openOrderEditModalFromItem(source, item);
+        });
+        return;
+      }
       await openOrderSearchOrderDetail(trigger.dataset.source || "", trigger.dataset.id || "");
     } catch (error) {
       showToast(error.message, true);
@@ -15277,6 +15293,14 @@ function bindForms() {
           await loadOrders();
         }
         await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
+        if (state.orderSearchResult?.query) {
+          const previousResult = state.orderSearchResult;
+          const refreshedResult = await searchAllOrders(previousResult.query);
+          if (state.orderSearchResult === previousResult) {
+            state.orderSearchResult = refreshedResult;
+            renderOrderSearchResults();
+          }
+        }
         closeModal("orderEditModal");
         showToast("订单已更新");
       });
