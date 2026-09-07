@@ -15040,15 +15040,22 @@ function bindForms() {
         }
         const result = await createOverseasPickingBatch(items);
         state.selectedOverseasOrderKeys = new Set();
+        if (result?.batches?.length > 1) {
+          state.overseasPickingBatchView = "list";
+          state.selectedOverseasPickingBatchId = "";
+          state.selectedOverseasPickingBatchDetail = null;
+        }
         await Promise.all([loadOverseasOrderProcessingOrders(), loadOverseasPickingBatches(), loadYamatoShipmentBatches(),
         ]);
         switchPanel("overseasPickingBatchManagement");
-        if (result?.id) {
+        if (result?.id && (result?.batches?.length || 1) === 1) {
           await openOverseasPickingBatchDetail(String(result.id || ""), { focusScan: true,
           });
         }
         showToast(
-          result?.batchNo
+          result?.batches?.length > 1
+            ? `已创建 ${result.batches.length} 个拣货批次（每批订单数：${result.batches.map((batch) => batch.orderCount).join("、")}），每批最多 30 单，请在批次列表中处理`
+            : result?.batchNo
             ? `已创建拣货批次 ${result.batchNo}，请按货架顺序扫码拣货`
             : "拣货批次已创建");
       });

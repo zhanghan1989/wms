@@ -669,6 +669,8 @@ interface OverseasPickingScopePickedItem {
 }
 
 interface OverseasPickingBatchCreateResult {
+  batches?: OverseasPickingBatchCreateResult[];
+  orderCount?: number;
   id: string;
   batchNo: string;
   status: string;
@@ -1060,10 +1062,18 @@ export class OrdersService {
   async listOverseasPickingBatches(limitParam?: string): Promise<OverseasPickingBatchSummary[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 50) : 20;
-    const [rows, yamatoBatches] = await Promise.all([
+    const [recentRows, activeRows, yamatoBatches] = await Promise.all([
       this.prisma.overseasPickingBatch.findMany({
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
+      }),
+      this.prisma.overseasPickingBatch.findMany({
+        where: { status: { in: [
+          OVERSEAS_PICKING_BATCH_STATUS.CREATED,
+          OVERSEAS_PICKING_BATCH_STATUS.PICKED,
+          OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED,
+        ] } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.yamatoShipmentBatch.findMany({
         where: {
@@ -1083,6 +1093,9 @@ export class OrdersService {
       }),
     ]);
 
+    // Always retain unfinished work, even when one request creates more than the history limit.
+    const rows = Array.from(new Map([...recentRows, ...activeRows].map((row) => [row.id.toString(), row])).values())
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
     const yamatoBatchByPickingBatchId = new Map(
       yamatoBatches
         .filter((row) => row.pickingBatchId !== null)
@@ -1516,10 +1529,6 @@ export class OrdersService {
     operatorId?: bigint,
   ): Promise<OverseasPickingBatchCreateResult> {
     const snapshots = await this.collectOverseasPickingBatchItemSnapshots(payload?.items);
-    const batchNo = this.buildOverseasPickingBatchNo();
-    const orderCount = new Set(snapshots.map((item) => item.orderId)).size;
-    const itemCount = snapshots.length;
-    const totalQty = snapshots.reduce((sum, item) => sum + item.requestedQty, 0);
     const remark = String(payload?.remark ?? '').trim() || null;
 
     return this.prisma.$transaction(async (tx) => {
@@ -1547,40 +1556,49 @@ export class OrdersService {
         throw new ConflictException(
           `以下订单已在进行中的拣货批次内：${activeDuplicates.join('、')}`);
       }
-      const created = await tx.overseasPickingBatch.create({
-        data: {
-          batchNo,
-          status: OVERSEAS_PICKING_BATCH_STATUS.CREATED,
-          orderCount,
-          itemCount,
-          totalQty,
-          createdBy: operatorId ?? null,
-          remark,
-          items: {
-            create: snapshots.map((item) => ({
-              source: item.source,
-              sourceRecordId: item.sourceRecordId,
-              orderId: item.orderId,
-              skuCode: item.skuCode,
-              productId: item.productId,
-              requestedQty: item.requestedQty,
-              availableStockSnapshot: item.availableStockSnapshot,
-              pickingPlanSnapshot: item.pickingPlanSnapshot ?? [],
-              pickingRequirementSnapshot: item.pickingRequirementSnapshot ?? [],
-              bomSnapshot: item.bomSnapshot ?? [],
-              shopName: item.shopName,
-              shippingName: item.shippingName,
-            })),
+      const groups = this.splitOverseasPickingBatches(snapshots);
+      const batches: OverseasPickingBatchCreateResult[] = [];
+      for (const group of groups) {
+        const orderCount = new Set(group.map((item) => JSON.stringify([item.source, item.orderId]))).size;
+        const itemCount = group.length;
+        const totalQty = group.reduce((sum, item) => sum + item.requestedQty, 0);
+        const created = await tx.overseasPickingBatch.create({
+          data: {
+            batchNo: this.buildOverseasPickingBatchNo(),
+            status: OVERSEAS_PICKING_BATCH_STATUS.CREATED,
+            orderCount,
+            itemCount,
+            totalQty,
+            createdBy: operatorId ?? null,
+            remark,
+            items: {
+              create: group.map((item) => ({
+                source: item.source,
+                sourceRecordId: item.sourceRecordId,
+                orderId: item.orderId,
+                skuCode: item.skuCode,
+                productId: item.productId,
+                requestedQty: item.requestedQty,
+                availableStockSnapshot: item.availableStockSnapshot,
+                pickingPlanSnapshot: item.pickingPlanSnapshot ?? [],
+                pickingRequirementSnapshot: item.pickingRequirementSnapshot ?? [],
+                bomSnapshot: item.bomSnapshot ?? [],
+                shopName: item.shopName,
+                shippingName: item.shippingName,
+              })),
+            },
           },
-        },
-      });
-      return {
-        id: created.id.toString(),
-        batchNo: created.batchNo,
-        status: created.status,
-        itemCount,
-      };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+        });
+        batches.push({
+          id: created.id.toString(),
+          batchNo: created.batchNo,
+          status: created.status,
+          itemCount,
+          orderCount,
+        });
+      }
+      return { ...batches[0], batches };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 60000 });
   }
 
   async scanOverseasPickingBatchProduct(
@@ -5602,6 +5620,30 @@ export class OrdersService {
     return parseId(text, fieldName);
   }
 
+  private splitOverseasPickingBatches(items: OverseasPickingBatchItemSnapshot[]): OverseasPickingBatchItemSnapshot[][] {
+    const orders = new Map<string, OverseasPickingBatchItemSnapshot[]>();
+    for (const item of items) {
+      const key = JSON.stringify([item.source, item.orderId]);
+      const lines = orders.get(key) ?? [];
+      lines.push(item);
+      orders.set(key, lines);
+    }
+    const batches: OverseasPickingBatchItemSnapshot[][] = [];
+    let current: OverseasPickingBatchItemSnapshot[] = [];
+    let orderCount = 0;
+    for (const lines of orders.values()) {
+      if (orderCount === 30) {
+        batches.push(current);
+        current = [];
+        orderCount = 0;
+      }
+      current.push(...lines);
+      orderCount += 1;
+    }
+    if (current.length) batches.push(current);
+    return batches;
+  }
+
   private async collectOverseasPickingBatchItemSnapshots(
     selectedItemsRaw: SelectedOverseasWarehouseOrderRef[] | undefined,
   ): Promise<OverseasPickingBatchItemSnapshot[]> {
@@ -5676,6 +5718,7 @@ export class OrdersService {
     );
 
     const items: OverseasPickingBatchItemSnapshot[] = [];
+    const seen = new Set<string>();
     selectedItems.forEach((item, index) => {
       const source = item?.source;
       const id = String(item?.id ?? '').trim();
@@ -5683,6 +5726,9 @@ export class OrdersService {
         throw new BadRequestException(`items[${index}] 缺少有效的 source 或 id`);
       }
 
+      const selectionKey = `${source}:${id}`;
+      if (seen.has(selectionKey)) return;
+      seen.add(selectionKey);
       if (source === 'rakuten') {
         const row = rakutenMap.get(id);
         if (!row) {
@@ -8258,7 +8304,7 @@ export class OrdersService {
 
   private buildOverseasPickingBatchNo(date: Date = new Date()): string {
     const parts = getZonedDateParts(date, APP_TIMEZONE);
-    return `PK-${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}-${randomUUID().slice(0, 4).toUpperCase()}`;
+    return `PK-${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}-${randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`;
   }
 
   async importUploadedCsv(
