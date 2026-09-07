@@ -1102,6 +1102,7 @@ model RakutenOrderRecord {
   trackingStatusLabel            String?               @map("tracking_status_label") @db.VarChar(128)
   trackingHasCustomsClearance    Boolean               @default(false) @map("tracking_has_customs_clearance")
   trackingIsDelivered            Boolean               @default(false) @map("tracking_is_delivered")
+  trackingCustomsClearanceDate   DateTime?             @map("tracking_customs_clearance_date") @db.Date
   trackingStatusOccurredAt       DateTime?             @map("tracking_status_occurred_at")
   trackingCheckedAt              DateTime?             @map("tracking_checked_at")
   trackingError                  String?               @map("tracking_error") @db.Text

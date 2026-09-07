@@ -184,6 +184,7 @@ interface RakutenTrackingClearanceStatus {
   hasCustomsClearance: boolean;
   isDelivered: boolean;
   occurredAt: string | null;
+  customsClearanceDate?: string | null;
   checkedAt: string | null;
   error?: string | null;
 }
@@ -8634,7 +8635,7 @@ export class OrdersService {
       const rows = await this.prisma.rakutenOrderRecord.findMany({
         where: {
           shipmentNo: { not: null, notIn: [''] },
-          trackingIsDelivered: false,
+          OR: [{ trackingIsDelivered: false }, { trackingCustomsClearanceDate: null }],
           ...this.buildRakutenChinaDispatchWhere(),
         },
         orderBy: [
@@ -8676,7 +8677,7 @@ export class OrdersService {
       this.prisma.rakutenOrderRecord.findMany({
         where: {
           shipmentNo: { not: null, notIn: [''] },
-          trackingIsDelivered: false,
+          OR: [{ trackingIsDelivered: false }, { trackingCustomsClearanceDate: null }],
           ...this.buildRakutenChinaDispatchWhere(),
         },
         distinct: ['shipmentNo'],
@@ -8902,6 +8903,7 @@ export class OrdersService {
         | 'trackingStatusLabel'
         | 'trackingHasCustomsClearance'
         | 'trackingIsDelivered'
+        | 'trackingCustomsClearanceDate'
         | 'trackingStatusOccurredAt'
         | 'trackingCheckedAt'
         | 'trackingError'
@@ -8924,6 +8926,7 @@ export class OrdersService {
 
     const trackingNumbersToFetch = Array.from(rowsByTrackingNo.entries())
       .filter(([trackingNo, row]) => {
+        if (!row.trackingCustomsClearanceDate) return true;
         if (this.isDeliveredRakutenTrackingStatus(this.resolveRakutenTrackingClearanceStatusFromRow(row))) {
           return false;
         }
@@ -8980,6 +8983,7 @@ export class OrdersService {
         | 'trackingStatusLabel'
         | 'trackingHasCustomsClearance'
         | 'trackingIsDelivered'
+        | 'trackingCustomsClearanceDate'
         | 'trackingStatusOccurredAt'
         | 'trackingCheckedAt'
         | 'trackingError'
@@ -9003,6 +9007,7 @@ export class OrdersService {
       label: label || '未取得',
       hasCustomsClearance: Boolean(row.trackingHasCustomsClearance),
       isDelivered: Boolean(row.trackingIsDelivered),
+      customsClearanceDate: row.trackingCustomsClearanceDate?.toISOString().slice(0, 10) ?? null,
       occurredAt: row.trackingStatusOccurredAt ? row.trackingStatusOccurredAt.toISOString() : null,
       checkedAt: row.trackingCheckedAt ? row.trackingCheckedAt.toISOString() : null,
       error: String(row.trackingError ?? '').trim() || null,
@@ -9020,6 +9025,9 @@ export class OrdersService {
         trackingHasCustomsClearance: status.hasCustomsClearance,
         trackingIsDelivered: status.isDelivered,
         trackingStatusOccurredAt: this.parseUofTrackingOccurredAt(status.occurredAt),
+        ...(status.customsClearanceDate ? {
+          trackingCustomsClearanceDate: new Date(`${status.customsClearanceDate}T00:00:00.000Z`),
+        } : {}),
         trackingCheckedAt: new Date(),
         trackingError: status.error ?? null,
       },
@@ -9117,6 +9125,7 @@ export class OrdersService {
         hasCustomsClearance: true,
         isDelivered,
         occurredAt: latestOccurredAt || String(detail.track_occur_date ?? '').trim() || null,
+        customsClearanceDate: this.parseUofCustomsClearanceDate(detail.track_occur_date),
         checkedAt: new Date().toISOString(),
         error: null,
       };
@@ -9132,6 +9141,14 @@ export class OrdersService {
       checkedAt: new Date().toISOString(),
       error: null,
     };
+  }
+
+  private parseUofCustomsClearanceDate(value: unknown): string | null {
+    // Preserve the calendar date reported by the clearance node, regardless of server timezone.
+    const date = String(value ?? '').trim().match(/^(\d{4}-\d{2}-\d{2})(?:[ T]|$)/)?.[1];
+    if (!date) return null;
+    const parsed = new Date(`${date}T00:00:00.000Z`);
+    return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date ? date : null;
   }
 
   private getUofTrackingConfig(): { apiUrl: string; appToken: string; appKey: string;

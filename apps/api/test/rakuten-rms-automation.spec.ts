@@ -61,6 +61,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     trackingStatusLabel: null,
     trackingHasCustomsClearance: false,
     trackingIsDelivered: false,
+    trackingCustomsClearanceDate: null,
     trackingStatusOccurredAt: null,
     trackingCheckedAt: null,
     trackingError: null,
@@ -2170,4 +2171,17 @@ describe('Rakuten RMS shipping and mail automation', () => {
       ],
     });
   });
+  it('renders the clearance node date for China while preserving the shipping label and Japan date', () => {
+    const china = makeRow({
+      dispatchMode: 'china_pending',
+      trackingCustomsClearanceDate: new Date('2026-09-04T00:00:00Z'),
+      trackingStatusOccurredAt: new Date('2026-09-07T00:00:00Z'),
+    });
+    expect((service as any).renderTrackingLines([china])).toContain('[発送日] 2026年09月04日');
+    expect((service as any).renderTrackingLines([{ ...china, trackingCustomsClearanceDate: null }]))
+      .toContain('[発送日] 確認中');
+    expect((service as any).renderTrackingLines([makeRow({ dispatchMode: 'japan' })]))
+      .toContain('[発送日] 2026年08月21日');
+  });
+
 });

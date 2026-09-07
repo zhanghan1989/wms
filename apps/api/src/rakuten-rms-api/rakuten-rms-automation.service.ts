@@ -2673,8 +2673,8 @@ export class RakutenRmsAutomationService {
       order_summary: this.renderOrderSummary(rows),
       tracking_sections: this.renderTrackingSections(rows),
       china_tracking_sections: this.renderTrackingSections(chinaRows),
-      japan_items: this.renderItemLines(japanRows, false),
-      china_items: this.renderItemLines(chinaRows, false),
+      japan_items: this.renderItemLines(japanRows, false, false),
+      china_items: this.renderItemLines(chinaRows, false, false),
       japan_tracking: this.renderCompactTrackingLines(japanRows),
       signature: this.renderSignature(),
     };
@@ -2768,7 +2768,7 @@ export class RakutenRmsAutomationService {
     return lines.filter((line, index, values) => line !== '' || values[index - 1] !== '').join('\n');
   }
 
-  private renderItemLines(rows: RakutenOrderRecord[], includeProductName = true): string {
+  private renderItemLines(rows: RakutenOrderRecord[], includeProductName = true, includePrice = true): string {
     return this.uniquePurchasedRows(rows).map((row) => {
       const raw = this.jsonObject(row.rawPayload);
       const rawItem = this.jsonObject(raw?.rmsItem);
@@ -2778,10 +2778,12 @@ export class RakutenRmsAutomationService {
       const itemUrl = this.pickObjectText(rawItem, 'itemUrl', 'itemURL');
       return [
         includeProductName ? `      ${String(row.productName ?? row.skuCode ?? '')}` : '',
-        row.productNameExtra ? `      ${row.productNameExtra}` : '',
+        row.productNameExtra
+          ? row.productNameExtra.split(/\r\n|\n|\r/).map((line) => `      ${line}`).join('\n')
+          : '',
         `      数量: ${quantity}`,
         itemUrl ? `      ${itemUrl}` : '',
-        price === null ? '' : `      価格 ${this.formatYen(price)} x ${quantity}(個) = ${this.formatYen(subtotal ?? price * quantity)} (税込)`,
+        !includePrice || price === null ? '' : `      価格 ${this.formatYen(price)} x ${quantity}(個) = ${this.formatYen(subtotal ?? price * quantity)} (税込)`,
       ].filter(Boolean).join('\n');
     }).join('\n');
   }
@@ -2793,7 +2795,10 @@ export class RakutenRmsAutomationService {
       const trackingNo = String(row.shipmentNo ?? '').trim();
       if (!trackingNo || seen.has(trackingNo)) continue;
       seen.add(trackingNo);
-      lines.push(`[発送日] ${this.formatMailDate(row.shipmentNoRegisteredAt)}`);
+      const shippingDate = this.isChina(row)
+        ? (row.trackingCustomsClearanceDate ? this.formatMailDate(row.trackingCustomsClearanceDate) : '確認中')
+        : this.formatMailDate(row.shipmentNoRegisteredAt);
+      lines.push(`[発送日] ${shippingDate}`);
       lines.push(`[お荷物伝票番号] ${trackingNo}`);
       lines.push(`[配送会社] ${this.deliveryCompanyName(row)}`);
     }

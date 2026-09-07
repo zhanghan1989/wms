@@ -1056,3 +1056,44 @@ describe('OrdersService', () => {
     });
   });
 });
+
+
+describe('Rakuten customs clearance node date', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('keeps the clearance date separate from a later delivered status', async () => {
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const service = new OrdersService({ rakutenOrderRecord: { updateMany } } as any);
+    jest.spyOn(service as any, 'getUofTrackingConfig').mockReturnValue({
+      apiUrl: 'https://tracking.example.test', appToken: 'test', appKey: 'test',
+    });
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ success: 1, data: [{ details: [
+        { track_description: '配達完了', track_occur_date: '2026-09-07 15:00:00' },
+        { track_description: '通関許可', track_occur_date: '2026-09-04 23:30:00' },
+      ] }] }),
+    } as Response);
+    const status = await (service as any).fetchUofTrackingClearanceStatus('123');
+    expect(status.customsClearanceDate).toBe('2026-09-04');
+    expect(status.occurredAt).toBe('2026-09-07 15:00:00');
+    await (service as any).persistRakutenTrackingStatus('123', status);
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ trackingCustomsClearanceDate: new Date('2026-09-04T00:00:00Z') }),
+    }));
+    updateMany.mockClear();
+    await (service as any).persistRakutenTrackingStatus('123', { ...status, customsClearanceDate: null });
+    expect(updateMany.mock.calls[0][0].data).not.toHaveProperty('trackingCustomsClearanceDate');
+  });
+
+  it('refetches a delivered historical parcel when its clearance date is missing', async () => {
+    const service = new OrdersService({} as any);
+    const status = { trackingNo: '123', label: '配達完了', isDelivered: true, customsClearanceDate: '2026-09-04' };
+    const fetchStatus = jest.spyOn(service as any, 'fetchUofTrackingClearanceStatus').mockResolvedValue(status);
+    jest.spyOn(service as any, 'persistRakutenTrackingStatus').mockResolvedValue(undefined);
+    await (service as any).refreshRakutenTrackingStatusesForRows([
+      { shipmentNo: '123', trackingIsDelivered: true, trackingCustomsClearanceDate: null },
+    ]);
+    expect(fetchStatus).toHaveBeenCalledWith('123');
+  });
+});
