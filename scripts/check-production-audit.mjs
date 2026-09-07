@@ -61,17 +61,6 @@ const approvedExceptions = new Map([
         'Transitive propagation of GHSA-ggr8-5vv4-36mx through the dev-only Prisma CLI; awaiting an upstream Prisma fix.',
     },
   ],
-  [
-    'xlsx',
-    {
-      severity: 'high',
-      advisorySources: new Set([1108110, 1108111]),
-      viaPackages: new Set(),
-      allowFixAvailable: false,
-      expiresAt: new Date('2026-09-04T00:00:00Z'),
-      reason: 'No patched npm release is available; replacement work is tracked for the Amazon SP-API launch.',
-    },
-  ],
 ]);
 
 const vulnerabilities = report.vulnerabilities ?? {};
