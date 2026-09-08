@@ -6464,9 +6464,11 @@ export class OrdersService {
           productId: item.productId,
           printerValue: printerValueByProductId.get(item.productId) ?? '0',
           quantity,
-          deliveryDate: String(
-            this.getJsonField(row.rawPayload, RAKUTEN_ORDER_HEADERS.deliveryDateRaw) ?? row.deliveryDateRaw ?? '',
-          ).trim(),
+          deliveryDate: this.formatYamatoDeliveryDate(
+            String(
+              this.getJsonField(row.rawPayload, RAKUTEN_ORDER_HEADERS.deliveryDateRaw) ?? row.deliveryDateRaw ?? '',
+            ),
+          ),
           deliveryTimeSlot: String(
             this.getJsonField(row.rawPayload, RAKUTEN_ORDER_HEADERS.deliveryTimeSlot) ?? row.deliveryTimeSlot ?? '',
           ).trim(),
@@ -8136,6 +8138,18 @@ export class OrdersService {
     return `${parts.year}/${parts.month}/${parts.day}`;
   }
 
+  private formatYamatoDeliveryDate(value: string | null | undefined): string {
+    const normalized = String(value ?? '').trim();
+    if (!normalized || normalized === '-') {
+      return '-';
+    }
+    const match = normalized.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    if (!match) {
+      return normalized;
+    }
+    return `${match[1]}/${match[2].padStart(2, '0')}/${match[3].padStart(2, '0')}`;
+  }
+
   private formatAmazonShipmentConfirmationDate(date: Date): string {
     const parts = getZonedDateParts(date, APP_TIMEZONE);
     return `${parts.year}-${parts.month}-${parts.day}`;
@@ -9759,9 +9773,29 @@ export class OrdersService {
     const parsedRows = await this.expandRakutenComboRows(this.parseCsv(fileBuffer));
     const uniqueRowsMap = new Map<string, ParsedOrderCsvRow>();
     for (const row of parsedRows) {
-      if (!uniqueRowsMap.has(row.rowHash)) {
+      const existing = uniqueRowsMap.get(row.rowHash);
+      if (!existing) {
         uniqueRowsMap.set(row.rowHash, row);
+        continue;
       }
+
+      // Rakuten may export the same item on multiple lines (one line per unit).
+      // Do not discard those lines as duplicates: preserve the line identity while
+      // accumulating the purchased quantity.
+      const quantity = (existing.orderQuantity ?? 0) + (row.orderQuantity ?? 0);
+      const mergedRawPayload = {
+        ...existing.rawPayload,
+        [RAKUTEN_ORDER_HEADERS.orderQuantity]: String(quantity),
+      };
+      const mergedRowWithoutHash = {
+        ...existing,
+        orderQuantity: quantity || existing.orderQuantity,
+        rawPayload: mergedRawPayload,
+      };
+      const mergedRowHash = this.buildRowHash(mergedRowWithoutHash);
+      // Keep the source hash as the lookup key so a third (or later) identical
+      // line is accumulated into the same logical item as well.
+      uniqueRowsMap.set(row.rowHash, { ...mergedRowWithoutHash, rowHash: mergedRowHash });
     }
 
     const uniqueRows = Array.from(uniqueRowsMap.values());
