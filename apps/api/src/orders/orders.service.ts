@@ -940,6 +940,9 @@ const UOF_TRACKING_SYNC_MAX_PER_RUN =
     ? Math.min(UOF_TRACKING_SYNC_MAX_PER_RUN_RAW, 5000)
     : 500;
 const RAKUTEN_TRACKING_STATUS_SYNC_CRON = '0 0 5 * * *';
+const RAKUTEN_TRACKING_SYNC_LOCK_ID = 'rakuten-tracking-status-sync';
+const RAKUTEN_TRACKING_SYNC_LOCK_STALE_MS = 10 * 60 * 1000;
+const RAKUTEN_TRACKING_SYNC_LOCK_HEARTBEAT_MS = 60 * 1000;
 const MANUAL_ORDER_UPLOAD_HEADERS = {
   orderId: ['订单号', '注文番号', 'orderId', 'order-id'],
   orderItemId: ['order-item-id', 'orderItemId', '订单商品ID', '明细ID'],
@@ -1048,7 +1051,6 @@ function normalizeAmazonSkuLookupKey(value: string | null | undefined): string {
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
   private xiyaTrackingSyncRunning = false;
-  private rakutenTrackingStatusSyncRunning = false;
   private readonly deliveredRakutenTrackingStatusCache = new Map<string, RakutenTrackingClearanceStatus>();
 
   constructor(private readonly prisma: PrismaService) {}
@@ -8623,19 +8625,20 @@ export class OrdersService {
     maxPerRun: number;
     deliveredCount: number;
     customsClearanceCount: number;
+    failedCount: number;
     latestCheckedAt: string | null;
     pendingTrackingNoCount: number;
   }> {
-    if (this.rakutenTrackingStatusSyncRunning) {
+    const lockToken = randomUUID();
+    if (!(await this.acquireRakutenTrackingSyncLock(lockToken))) {
       throw new ConflictException('当前已有乐天快递状态同步任务正在执行，请稍后再试');
     }
-
-    this.rakutenTrackingStatusSyncRunning = true;
+    const heartbeat = this.startRakutenTrackingSyncLockHeartbeat(lockToken);
     try {
       const rows = await this.prisma.rakutenOrderRecord.findMany({
         where: {
           shipmentNo: { not: null, notIn: [''] },
-          OR: [{ trackingIsDelivered: false }, { trackingCustomsClearanceDate: null }],
+          trackingIsDelivered: false,
           ...this.buildRakutenChinaDispatchWhere(),
         },
         orderBy: [
@@ -8655,11 +8658,13 @@ export class OrdersService {
         maxPerRun: UOF_TRACKING_SYNC_MAX_PER_RUN,
         deliveredCount: statuses.filter((status) => this.isDeliveredRakutenTrackingStatus(status)).length,
         customsClearanceCount: statuses.filter((status) => status.hasCustomsClearance).length,
+        failedCount: statuses.filter((status) => Boolean(status.error)).length,
         latestCheckedAt: summary.latestCheckedAt,
         pendingTrackingNoCount: summary.pendingTrackingNoCount,
       };
     } finally {
-      this.rakutenTrackingStatusSyncRunning = false;
+      clearInterval(heartbeat);
+      await this.releaseRakutenTrackingSyncLock(lockToken);
     }
   }
 
@@ -8668,35 +8673,31 @@ export class OrdersService {
     pendingTrackingNoCount: number;
     uncheckedTrackingNoCount: number;
   }> {
-    const [latestRow, pendingRows, uncheckedRows] = await Promise.all([
+    const [latestRow, pendingCountRows, uncheckedCountRows] = await Promise.all([
       this.prisma.rakutenOrderRecord.findFirst({
         where: { trackingCheckedAt: { not: null } },
         orderBy: { trackingCheckedAt: 'desc' },
         select: { trackingCheckedAt: true },
       }),
-      this.prisma.rakutenOrderRecord.findMany({
-        where: {
-          shipmentNo: { not: null, notIn: [''] },
-          OR: [{ trackingIsDelivered: false }, { trackingCustomsClearanceDate: null }],
-          ...this.buildRakutenChinaDispatchWhere(),
-        },
-        distinct: ['shipmentNo'],
-        select: { shipmentNo: true },
-      }),
-      this.prisma.rakutenOrderRecord.findMany({
-        where: {
-          shipmentNo: { not: null, notIn: [''] },
-          trackingCheckedAt: null,
-          ...this.buildRakutenChinaDispatchWhere(),
-        },
-        distinct: ['shipmentNo'],
-        select: { shipmentNo: true },
-      }),
+      this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+        SELECT COUNT(DISTINCT shipment_no) AS count
+        FROM rakuten_order_records
+        WHERE shipment_no IS NOT NULL AND shipment_no <> ''
+          AND tracking_is_delivered = 0
+          AND dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
+      `),
+      this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+        SELECT COUNT(DISTINCT shipment_no) AS count
+        FROM rakuten_order_records
+        WHERE shipment_no IS NOT NULL AND shipment_no <> ''
+          AND tracking_checked_at IS NULL
+          AND dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
+      `),
     ]);
     return {
       latestCheckedAt: latestRow?.trackingCheckedAt?.toISOString() ?? null,
-      pendingTrackingNoCount: pendingRows.length,
-      uncheckedTrackingNoCount: uncheckedRows.length,
+      pendingTrackingNoCount: Number(pendingCountRows[0]?.count ?? 0),
+      uncheckedTrackingNoCount: Number(uncheckedCountRows[0]?.count ?? 0),
     };
   }
 
@@ -8708,7 +8709,7 @@ export class OrdersService {
     try {
       const result = await this.syncRakutenTrackingStatuses();
       this.logger.log(
-        `daily Rakuten tracking status sync completed: candidates=${result.candidateCount}, trackingNos=${result.trackingNoCount}, delivered=${result.deliveredCount}, customsClearance=${result.customsClearanceCount}`,
+        `daily Rakuten tracking status sync completed: candidates=${result.candidateCount}, trackingNos=${result.trackingNoCount}, delivered=${result.deliveredCount}, customsClearance=${result.customsClearanceCount}, failed=${result.failedCount}`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -8950,16 +8951,18 @@ export class OrdersService {
           return [trackingNo, status] as const;
         } catch (error) {
           const message = error instanceof Error ? error.message : '未知错误';
+          const sourceRow = rowsByTrackingNo.get(trackingNo);
           if (options.throwOnFetchError) {
             throw new BadRequestException(`快递单号 ${trackingNo} 状态取得失败：${message}`);
           }
           this.logger.warn(`UOF tracking lookup failed for ${trackingNo}: ${message}`);
           const failedStatus = {
             trackingNo,
-            label: '状态取得失败',
-            hasCustomsClearance: false,
-            isDelivered: false,
-            occurredAt: null,
+            label: sourceRow?.trackingStatusLabel || '状态取得失败',
+            hasCustomsClearance: sourceRow?.trackingHasCustomsClearance ?? false,
+            isDelivered: sourceRow?.trackingIsDelivered ?? false,
+            customsClearanceDate: sourceRow?.trackingCustomsClearanceDate?.toISOString().slice(0, 10) ?? null,
+            occurredAt: sourceRow?.trackingStatusOccurredAt?.toISOString() ?? null,
             checkedAt: new Date().toISOString(),
             error: message,
           };
@@ -9019,7 +9022,10 @@ export class OrdersService {
     status: RakutenTrackingClearanceStatus,
   ): Promise<void> {
     await this.prisma.rakutenOrderRecord.updateMany({
-      where: { shipmentNo: trackingNo },
+      where: {
+        shipmentNo: trackingNo,
+        ...this.buildRakutenChinaDispatchWhere(),
+      },
       data: {
         trackingStatusLabel: status.label,
         trackingHasCustomsClearance: status.hasCustomsClearance,
@@ -9031,6 +9037,36 @@ export class OrdersService {
         trackingCheckedAt: new Date(),
         trackingError: status.error ?? null,
       },
+    });
+  }
+
+  private async acquireRakutenTrackingSyncLock(lockToken: string): Promise<boolean> {
+    const staleBefore = new Date(Date.now() - RAKUTEN_TRACKING_SYNC_LOCK_STALE_MS);
+    const result = await this.prisma.rakutenTrackingSyncLock.updateMany({
+      where: {
+        id: RAKUTEN_TRACKING_SYNC_LOCK_ID,
+        OR: [{ lockToken: null }, { lockedAt: null }, { lockedAt: { lt: staleBefore } }],
+      },
+      data: { lockToken, lockedAt: new Date() },
+    });
+    return result.count === 1;
+  }
+
+  private startRakutenTrackingSyncLockHeartbeat(lockToken: string): ReturnType<typeof setInterval> {
+    return setInterval(() => {
+      void this.prisma.rakutenTrackingSyncLock.updateMany({
+        where: { id: RAKUTEN_TRACKING_SYNC_LOCK_ID, lockToken },
+        data: { lockedAt: new Date() },
+      }).catch((error) => {
+        this.logger.error(`Rakuten tracking sync lock heartbeat failed: ${String(error)}`);
+      });
+    }, RAKUTEN_TRACKING_SYNC_LOCK_HEARTBEAT_MS);
+  }
+
+  private async releaseRakutenTrackingSyncLock(lockToken: string): Promise<void> {
+    await this.prisma.rakutenTrackingSyncLock.updateMany({
+      where: { id: RAKUTEN_TRACKING_SYNC_LOCK_ID, lockToken },
+      data: { lockToken: null, lockedAt: null },
     });
   }
 

@@ -15364,7 +15364,7 @@ function bindForms() {
               result?.trackingNoCount || 0,
             )} 个，配達完了 ${Number(result?.deliveredCount || 0)} 个，通関許可 ${Number(
               result?.customsClearanceCount || 0,
-            )} 个，剩余未完成 ${Number(result?.pendingTrackingNoCount || 0)} 个`,
+            )} 个，失败 ${Number(result?.failedCount || 0)} 个，剩余未完成 ${Number(result?.pendingTrackingNoCount || 0)} 个`,
           );
         });
       } catch (error) {

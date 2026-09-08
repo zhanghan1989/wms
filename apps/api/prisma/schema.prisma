@@ -1140,6 +1140,14 @@ model RakutenOrderRecord {
   @@map("rakuten_order_records")
 }
 
+model RakutenTrackingSyncLock {
+  id        String   @id @db.VarChar(64)
+  lockToken String?  @map("lock_token") @db.VarChar(64)
+  lockedAt  DateTime? @map("locked_at")
+
+  @@map("rakuten_tracking_sync_locks")
+}
+
 model AmazonOrderRecord {
   id                     BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   rowHash                String                 @unique @map("row_hash") @db.Char(40)
