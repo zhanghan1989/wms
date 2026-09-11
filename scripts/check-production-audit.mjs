@@ -26,6 +26,54 @@ if (report.error || !report.auditReportVersion || !report.metadata?.vulnerabilit
 
 const approvedExceptions = new Map([
   [
+    'multer',
+    {
+      severity: 'high',
+      advisorySources: new Set([1193790, 1193791, 1193792, 1193793]),
+      viaPackages: new Set(),
+      allowFixAvailable: true,
+      expiresAt: new Date('2026-09-18T00:00:00Z'),
+      reason:
+        '@nestjs/platform-express 11.1.28 pins multer 2.2.0; the application overrides multer to 2.3.0, while awaiting a Nest release that updates its pinned dependency.',
+    },
+  ],
+  [
+    '@nestjs/core',
+    {
+      severity: 'high',
+      advisorySources: new Set(),
+      viaPackages: new Set(['@nestjs/platform-express']),
+      allowFixAvailable: true,
+      expiresAt: new Date('2026-09-18T00:00:00Z'),
+      reason:
+        'npm audit propagates the pinned multer advisory through the Nest dependency graph; tracked with the multer exception while awaiting an upstream dependency update.',
+    },
+  ],
+  [
+    '@nestjs/platform-express',
+    {
+      severity: 'high',
+      advisorySources: new Set(),
+      viaPackages: new Set(['@nestjs/core', 'multer']),
+      allowFixAvailable: true,
+      expiresAt: new Date('2026-09-18T00:00:00Z'),
+      reason:
+        'npm audit aggregates the core and pinned multer findings under the platform adapter; tracked while awaiting an upstream dependency update.',
+    },
+  ],
+  [
+    '@nestjs/schedule',
+    {
+      severity: 'high',
+      advisorySources: new Set(),
+      viaPackages: new Set(['@nestjs/core']),
+      allowFixAvailable: true,
+      expiresAt: new Date('2026-09-18T00:00:00Z'),
+      reason:
+        'npm audit propagates the Nest dependency-graph finding to the scheduler; tracked while awaiting an upstream dependency update.',
+    },
+  ],
+  [
     'deepmerge-ts',
     {
       severity: 'high',
