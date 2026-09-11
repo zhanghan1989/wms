@@ -1035,6 +1035,11 @@ const YAMATO_COLUMNS = {
 const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
 type AmazonTxtEncodingCandidate = (typeof AMAZON_TXT_ENCODING_CANDIDATES)[number];
 
+// Rakuten RMS exports CSV in Shift_JIS, while files that have been opened and
+// saved by spreadsheet software are commonly UTF-8.  Pick the decoding whose
+// header row actually matches the Rakuten export schema.
+const RAKUTEN_CSV_ENCODING_CANDIDATES = ['shift_jis', 'utf8'] as const;
+
 let pdfJsModulePromise: Promise<{
   getDocument: (source: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<unknown>;
   };
@@ -9999,13 +10004,7 @@ export class OrdersService {
   }
 
   private parseCsv(fileBuffer: Buffer): ParsedOrderCsvRow[] {
-    const workbook = XLSX.read(fileBuffer, {
-      type: 'buffer',
-      codepage: 932,
-      dense: true,
-      raw: true,
-      cellText: true,
-    });
+    const workbook = this.readRakutenCsvWorkbook(fileBuffer);
     const firstSheetName = workbook.SheetNames[0];
     if (!firstSheetName) {
       throw new BadRequestException('订单CSV没有可读取的工作表');
@@ -10115,6 +10114,35 @@ export class OrdersService {
     return parsedRows;
   }
 
+  private readRakutenCsvWorkbook(fileBuffer: Buffer): XLSX.WorkBook {
+    const evaluated = RAKUTEN_CSV_ENCODING_CANDIDATES.map((encoding, index) => {
+      const content = this.decodeTextBuffer(fileBuffer, encoding).replace(/^\uFEFF/, '');
+      const workbook = XLSX.read(content, {
+        type: 'string',
+        dense: true,
+        raw: true,
+        cellText: true,
+      });
+      return {
+        workbook,
+        score: this.scoreRakutenCsvHeaders(workbook) - index,
+      };
+    }).sort((left, right) => right.score - left.score);
+
+    return evaluated[0]?.workbook ?? XLSX.read(fileBuffer, { type: 'buffer', dense: true });
+  }
+
+  private scoreRakutenCsvHeaders(workbook: XLSX.WorkBook): number {
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) return -1_000;
+
+    const headerSet = new Set(
+      (this.extractSheetRows(workbook.Sheets[firstSheetName])[0] ?? [])
+        .map((cell) => String(cell ?? '').replace(/^\uFEFF/, '').trim()),
+    );
+    return RAKUTEN_ORDER_COLUMNS.filter((column) => headerSet.has(column.header)).length;
+  }
+
   private extractSheetRows(sheet: XLSX.WorkSheet): Array<Array<string | number | boolean | null>> {
     const sheetRange = sheet['!ref'];
     if (!sheetRange) {
@@ -10123,7 +10151,11 @@ export class OrdersService {
 
     const range = XLSX.utils.decode_range(sheetRange);
     const rows: Array<Array<string | number | boolean | null>> = [];
-    const denseSheet = sheet as unknown as Array<Array<XLSX.CellObject | undefined>>;
+    // SheetJS 0.20 stores dense worksheet cells in `!data`; older versions
+    // expose the worksheet itself as an array.  Support both layouts.
+    const denseSheet = Array.isArray(sheet)
+      ? (sheet as unknown as Array<Array<XLSX.CellObject | undefined>>)
+      : (sheet as unknown as { '!data'?: Array<Array<XLSX.CellObject | undefined>> })['!data'];
 
     for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
       const row: Array<string | number | boolean | null> = [];
