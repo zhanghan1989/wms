@@ -570,7 +570,11 @@ export class AmazonSpApiService {
     const queryStart = new Date(now.getTime() - queryDays * 24 * 60 * 60 * 1000);
     const [fbaOrders, fbmOrderRows, inventory, skus, latestRun] = await Promise.all([
       this.prisma.amazonFbaOrderItem.findMany({
-        where: { connectionId: connection.id, purchaseDate: { gte: queryStart } },
+        where: {
+          connectionId: connection.id,
+          purchaseDate: { gte: queryStart },
+          dashboardVisibleAt: { not: null },
+        },
         select: {
           amazonOrderId: true,
           sellerSku: true,
@@ -1291,7 +1295,6 @@ export class AmazonSpApiService {
       orderStatus: orderStatus || null,
       fulfillmentChannel: 'MFN',
       amazonLastUpdatedAt: lastUpdatedAt,
-      spApiDashboardVisibleAt: new Date(),
       sourceKind: 'sp_api',
       sourceFileName: 'Amazon SP-API Orders v2026-01-01',
       sourceFilePath: `sp-api:${connection.id.toString()}`,
@@ -1314,6 +1317,7 @@ export class AmazonSpApiService {
     const created = await this.prisma.amazonOrderRecord.create({
       data: {
         ...data,
+        spApiDashboardVisibleAt: new Date(),
         csvImportedAt: new Date(),
         rowHash: createHash('sha1')
           .update(`${connection.id.toString()}|${order.orderId}|${item.orderItemId}`)
@@ -1506,6 +1510,7 @@ export class AmazonSpApiService {
             itemAmount: new Prisma.Decimal(itemAmount),
             purchaseDate: this.parseOptionalDate(order.createdTime),
             lastUpdateDate: this.parseOptionalDate(order.lastUpdatedTime),
+            dashboardVisibleAt: new Date(),
             rawPayload: JSON.parse(JSON.stringify({ order, item })) as Prisma.InputJsonValue,
           },
           update: {

@@ -129,7 +129,7 @@ describe('Amazon SP-API FBM order reconciliation', () => {
     });
   });
 
-  it('refreshes an SP-API dashboard row independently of legacy manual overrides', async () => {
+  it('refreshes an existing SP-API row without making historical data dashboard-visible', async () => {
     const update = jest.fn().mockResolvedValue({});
     const observationUpsert = jest.fn().mockResolvedValue({});
     const existing = record({
@@ -174,9 +174,9 @@ describe('Amazon SP-API FBM order reconciliation', () => {
     expect(update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         sku: 'AMAZON-SKU',
-        spApiDashboardVisibleAt: expect.any(Date),
       }),
     }));
+    expect(update.mock.calls[0][0].data).not.toHaveProperty('spApiDashboardVisibleAt');
     expect(observationUpsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({ freezeReason: null, orderStatus: 'UNSHIPPED' }),
     }));
@@ -224,8 +224,9 @@ describe('Amazon SP-API FBM order reconciliation', () => {
 
     expect(result).toBe('updated');
     expect(update).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ spApiDashboardVisibleAt: expect.any(Date) }),
+      data: expect.objectContaining({ sourceKind: 'sp_api' }),
     }));
+    expect(update.mock.calls[0][0].data).not.toHaveProperty('spApiDashboardVisibleAt');
   });
 
   it('creates a separate API row when an imported row has the same item id', async () => {

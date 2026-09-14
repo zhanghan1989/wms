@@ -648,31 +648,33 @@ model AmazonSpApiSyncRun {
 }
 
 model AmazonFbaOrderItem {
-  id                BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
-  connectionId      BigInt                @map("connection_id") @db.UnsignedBigInt
-  amazonOrderId     String                @map("amazon_order_id") @db.VarChar(64)
-  amazonOrderItemId String                @map("amazon_order_item_id") @db.VarChar(64)
-  marketplaceId     String?               @map("marketplace_id") @db.VarChar(32)
-  sellerSku         String?               @map("seller_sku") @db.VarChar(128)
-  asin              String?               @db.VarChar(32)
-  productName       String?               @map("product_name") @db.Text
-  orderStatus       String?               @map("order_status") @db.VarChar(32)
-  quantityOrdered   Int                   @default(0) @map("quantity_ordered")
-  quantityShipped   Int                   @default(0) @map("quantity_shipped")
-  currency          String?               @db.VarChar(8)
-  itemAmount        Decimal               @default(0) @map("item_amount") @db.Decimal(16, 2)
-  purchaseDate      DateTime?             @map("purchase_date")
-  lastUpdateDate    DateTime?             @map("last_update_date")
-  rawPayload        Json?                 @map("raw_payload")
-  createdAt         DateTime              @default(now()) @map("created_at")
-  updatedAt         DateTime              @updatedAt @map("updated_at")
-  connection        AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  id                 BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId       BigInt                @map("connection_id") @db.UnsignedBigInt
+  amazonOrderId      String                @map("amazon_order_id") @db.VarChar(64)
+  amazonOrderItemId  String                @map("amazon_order_item_id") @db.VarChar(64)
+  marketplaceId      String?               @map("marketplace_id") @db.VarChar(32)
+  sellerSku          String?               @map("seller_sku") @db.VarChar(128)
+  asin               String?               @db.VarChar(32)
+  productName        String?               @map("product_name") @db.Text
+  orderStatus        String?               @map("order_status") @db.VarChar(32)
+  quantityOrdered    Int                   @default(0) @map("quantity_ordered")
+  quantityShipped    Int                   @default(0) @map("quantity_shipped")
+  currency           String?               @db.VarChar(8)
+  itemAmount         Decimal               @default(0) @map("item_amount") @db.Decimal(16, 2)
+  purchaseDate       DateTime?             @map("purchase_date")
+  lastUpdateDate     DateTime?             @map("last_update_date")
+  dashboardVisibleAt DateTime?             @map("dashboard_visible_at")
+  rawPayload         Json?                 @map("raw_payload")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+  connection         AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
   @@unique([connectionId, amazonOrderId, amazonOrderItemId], map: "uq_amazon_fba_order_item")
   @@index([purchaseDate])
   @@index([sellerSku])
   @@index([orderStatus])
   @@index([orderStatus, purchaseDate], map: "idx_fba_orders_status_purchase")
+  @@index([connectionId, dashboardVisibleAt], map: "idx_fba_orders_dashboard_visible")
   @@map("amazon_fba_order_items")
 }
 
@@ -1141,68 +1143,68 @@ model RakutenOrderRecord {
 }
 
 model RakutenTrackingSyncLock {
-  id        String   @id @db.VarChar(64)
-  lockToken String?  @map("lock_token") @db.VarChar(64)
+  id        String    @id @db.VarChar(64)
+  lockToken String?   @map("lock_token") @db.VarChar(64)
   lockedAt  DateTime? @map("locked_at")
 
   @@map("rakuten_tracking_sync_locks")
 }
 
 model AmazonOrderRecord {
-  id                     BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
-  rowHash                String                 @unique @map("row_hash") @db.Char(40)
-  orderId                String?                @map("order_id") @db.VarChar(64)
-  orderItemId            String?                @map("order_item_id") @db.VarChar(64)
-  purchaseDateRaw        String?                @map("purchase_date_raw") @db.VarChar(64)
-  paymentsDateRaw        String?                @map("payments_date_raw") @db.VarChar(64)
-  reportingDateRaw       String?                @map("reporting_date_raw") @db.VarChar(64)
-  promiseDateRaw         String?                @map("promise_date_raw") @db.VarChar(64)
-  daysPastPromise        Int?                   @map("days_past_promise")
-  buyerEmail             String?                @map("buyer_email") @db.VarChar(255)
-  buyerName              String?                @map("buyer_name") @db.VarChar(255)
-  buyerPhoneNumber       String?                @map("buyer_phone_number") @db.VarChar(64)
-  sku                    String?                @db.VarChar(128)
-  productName            String?                @map("product_name") @db.Text
-  quantityPurchased      Int?                   @map("quantity_purchased")
-  quantityShipped        Int?                   @map("quantity_shipped")
-  quantityToShip         Int?                   @map("quantity_to_ship")
-  shipServiceLevel       String?                @map("ship_service_level") @db.VarChar(128)
-  recipientName          String?                @map("recipient_name") @db.VarChar(255)
-  shippingOrigin         String?                @map("shipping_origin") @db.VarChar(32)
-  shipAddress1           String?                @map("ship_address_1") @db.Text
-  shipAddress2           String?                @map("ship_address_2") @db.Text
-  shipAddress3           String?                @map("ship_address_3") @db.Text
-  shipCity               String?                @map("ship_city") @db.VarChar(255)
-  shipState              String?                @map("ship_state") @db.VarChar(255)
-  shipPostalCode         String?                @map("ship_postal_code") @db.VarChar(32)
-  shipCountry            String?                @map("ship_country") @db.VarChar(32)
-  customizedUrl          String?                @map("customized_url") @db.Text
-  customizedPage         String?                @map("customized_page") @db.Text
-  isBusinessOrder        Boolean?               @map("is_business_order")
-  purchaseOrderNumber    String?                @map("purchase_order_number") @db.VarChar(128)
-  priceDesignation       String?                @map("price_designation") @db.VarChar(128)
-  vergeOfCancellation    Boolean?               @map("verge_of_cancellation")
-  vergeOfLateShipment    Boolean?               @map("verge_of_late_shipment")
-  mallName               String?                @map("mall_name") @db.VarChar(128)
-  shopName               String?                @map("shop_name") @db.VarChar(128)
-  shipmentCompany        String?                @map("shipment_company") @db.VarChar(128)
-  shipmentNo             String?                @map("shipment_no") @db.VarChar(128)
-  shipmentNoRegisteredAt DateTime?              @map("shipment_no_registered_at")
-  dispatchMode           String?                @map("dispatch_mode") @db.VarChar(32)
-  xiyaExportedAt         DateTime?              @map("xiya_exported_at")
-  sourceFileName         String?                @map("source_file_name") @db.VarChar(255)
-  sourceFilePath         String?                @map("source_file_path") @db.VarChar(512)
-  rawPayload             Json?                  @map("raw_payload")
-  csvImportedAt          DateTime               @default(now()) @map("csv_imported_at")
-  createdAt              DateTime               @default(now()) @map("created_at")
-  updatedAt              DateTime               @updatedAt @map("updated_at")
-  spApiConnectionId      BigInt?                @map("sp_api_connection_id") @db.UnsignedBigInt
-  orderStatus            String?                @map("order_status") @db.VarChar(32)
-  fulfillmentChannel     String?                @map("fulfillment_channel") @db.VarChar(16)
-  amazonLastUpdatedAt    DateTime?              @map("amazon_last_updated_at")
-  spApiDashboardVisibleAt DateTime?             @map("sp_api_dashboard_visible_at")
-  sourceKind             String                 @default("file") @map("source_kind") @db.VarChar(16)
-  spApiConnection        AmazonSpApiConnection? @relation(fields: [spApiConnectionId], references: [id], onDelete: SetNull)
+  id                      BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  rowHash                 String                 @unique @map("row_hash") @db.Char(40)
+  orderId                 String?                @map("order_id") @db.VarChar(64)
+  orderItemId             String?                @map("order_item_id") @db.VarChar(64)
+  purchaseDateRaw         String?                @map("purchase_date_raw") @db.VarChar(64)
+  paymentsDateRaw         String?                @map("payments_date_raw") @db.VarChar(64)
+  reportingDateRaw        String?                @map("reporting_date_raw") @db.VarChar(64)
+  promiseDateRaw          String?                @map("promise_date_raw") @db.VarChar(64)
+  daysPastPromise         Int?                   @map("days_past_promise")
+  buyerEmail              String?                @map("buyer_email") @db.VarChar(255)
+  buyerName               String?                @map("buyer_name") @db.VarChar(255)
+  buyerPhoneNumber        String?                @map("buyer_phone_number") @db.VarChar(64)
+  sku                     String?                @db.VarChar(128)
+  productName             String?                @map("product_name") @db.Text
+  quantityPurchased       Int?                   @map("quantity_purchased")
+  quantityShipped         Int?                   @map("quantity_shipped")
+  quantityToShip          Int?                   @map("quantity_to_ship")
+  shipServiceLevel        String?                @map("ship_service_level") @db.VarChar(128)
+  recipientName           String?                @map("recipient_name") @db.VarChar(255)
+  shippingOrigin          String?                @map("shipping_origin") @db.VarChar(32)
+  shipAddress1            String?                @map("ship_address_1") @db.Text
+  shipAddress2            String?                @map("ship_address_2") @db.Text
+  shipAddress3            String?                @map("ship_address_3") @db.Text
+  shipCity                String?                @map("ship_city") @db.VarChar(255)
+  shipState               String?                @map("ship_state") @db.VarChar(255)
+  shipPostalCode          String?                @map("ship_postal_code") @db.VarChar(32)
+  shipCountry             String?                @map("ship_country") @db.VarChar(32)
+  customizedUrl           String?                @map("customized_url") @db.Text
+  customizedPage          String?                @map("customized_page") @db.Text
+  isBusinessOrder         Boolean?               @map("is_business_order")
+  purchaseOrderNumber     String?                @map("purchase_order_number") @db.VarChar(128)
+  priceDesignation        String?                @map("price_designation") @db.VarChar(128)
+  vergeOfCancellation     Boolean?               @map("verge_of_cancellation")
+  vergeOfLateShipment     Boolean?               @map("verge_of_late_shipment")
+  mallName                String?                @map("mall_name") @db.VarChar(128)
+  shopName                String?                @map("shop_name") @db.VarChar(128)
+  shipmentCompany         String?                @map("shipment_company") @db.VarChar(128)
+  shipmentNo              String?                @map("shipment_no") @db.VarChar(128)
+  shipmentNoRegisteredAt  DateTime?              @map("shipment_no_registered_at")
+  dispatchMode            String?                @map("dispatch_mode") @db.VarChar(32)
+  xiyaExportedAt          DateTime?              @map("xiya_exported_at")
+  sourceFileName          String?                @map("source_file_name") @db.VarChar(255)
+  sourceFilePath          String?                @map("source_file_path") @db.VarChar(512)
+  rawPayload              Json?                  @map("raw_payload")
+  csvImportedAt           DateTime               @default(now()) @map("csv_imported_at")
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
+  spApiConnectionId       BigInt?                @map("sp_api_connection_id") @db.UnsignedBigInt
+  orderStatus             String?                @map("order_status") @db.VarChar(32)
+  fulfillmentChannel      String?                @map("fulfillment_channel") @db.VarChar(16)
+  amazonLastUpdatedAt     DateTime?              @map("amazon_last_updated_at")
+  spApiDashboardVisibleAt DateTime?              @map("sp_api_dashboard_visible_at")
+  sourceKind              String                 @default("file") @map("source_kind") @db.VarChar(16)
+  spApiConnection         AmazonSpApiConnection? @relation(fields: [spApiConnectionId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
   @@index([orderItemId])

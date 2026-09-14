@@ -6,6 +6,7 @@ describe('Amazon store dashboard analytics', () => {
 
   it('loads FBM dashboard rows exclusively from SP-API for the selected connection', async () => {
     const amazonOrderFindMany = jest.fn().mockResolvedValue([]);
+    const amazonFbaOrderFindMany = jest.fn().mockResolvedValue([]);
     const service = new AmazonSpApiService({
       amazonSpApiConnection: { findMany: jest.fn().mockResolvedValue([{
         id: 3n,
@@ -15,7 +16,7 @@ describe('Amazon store dashboard analytics', () => {
         syncFbaInventory: true,
         lastSyncError: null,
       }]) },
-      amazonFbaOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
+      amazonFbaOrderItem: { findMany: amazonFbaOrderFindMany },
       amazonOrderRecord: { findMany: amazonOrderFindMany },
       amazonFbaInventoryItem: { findMany: jest.fn().mockResolvedValue([]) },
       sku: { findMany: jest.fn().mockResolvedValue([]) },
@@ -30,6 +31,12 @@ describe('Amazon store dashboard analytics', () => {
         sourceKind: 'sp_api',
         spApiDashboardVisibleAt: { not: null },
       },
+    }));
+    expect(amazonFbaOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        connectionId: 3n,
+        dashboardVisibleAt: { not: null },
+      }),
     }));
   });
 
@@ -175,8 +182,12 @@ describe('Amazon store dashboard analytics', () => {
       }],
       fbmOrders: [{
         orderId: 'FBM-1', sku: 'FBM-SKU-1', productName: 'Item 1', orderStatus: 'SHIPPED',
-        quantityPurchased: 5, quantityShipped: 5, quantityToShip: 0,
+        quantityPurchased: 3, quantityShipped: 3, quantityToShip: 0,
         purchaseDateRaw: '2026-06-20T03:00:00.000Z',
+      }, {
+        orderId: 'RB-1', sku: 'RB-SKU-1', productName: 'Item 1', orderStatus: 'SHIPPED',
+        quantityPurchased: 2, quantityShipped: 2, quantityToShip: 0,
+        purchaseDateRaw: '2026-06-21T03:00:00.000Z',
       }],
       inventory: [{
         sellerSku: 'FBA-SKU-1', asin: 'ASIN-1', productName: 'Item 1', fulfillableQty: 2,
@@ -184,7 +195,7 @@ describe('Amazon store dashboard analytics', () => {
         reservedQty: 20, unfulfillableQty: 30, totalQty: 55, snapshotAt: now,
       }],
       skus: [{
-        sku: 'FBA-SKU-1', fbmSku: 'FBM-SKU-1', rbSku: null, asin: 'ASIN-1', fnsku: null,
+        sku: 'FBA-SKU-1', fbmSku: 'FBM-SKU-1', rbSku: 'RB-SKU-1', asin: 'ASIN-1', fnsku: null,
         productId: 'P-1', productName: 'Item 1',
       }],
     }) as any;

@@ -2514,11 +2514,11 @@ function renderAmazonStoreDashboard(payload) {
     },
     { label: "90天无销量SKU", value: inventory.available ? formatMetricNumber(inventory.noSales90dSkuCount) : "-",
     },
-    { label: "疑似超期可售库存", value: inventory.available ? `${formatMetricNumber(inventory.noSales90dQty)} 件` : "-",
+    { label: "90天无销量库存", value: inventory.available ? `${formatMetricNumber(inventory.noSales90dQty)} 件` : "-",
     },
   ]);
   $("amazonStoreDashboardStatusMeta").textContent = inventory.available
-    ? `库存快照：${inventory.snapshotAt ? formatDate(inventory.snapshotAt) : "-"}；“疑似超期”按最近90天无销量判断，不代表Amazon官方库龄。`
+    ? `库存快照：${inventory.snapshotAt ? formatDate(inventory.snapshotAt) : "-"}；滞销提醒按最近90天无销量判断，不代表Amazon官方库龄。`
     : "当前销售分析来自 SP-API 订单数据；库存字段不会以 0 冒充真实库存。补充 Amazon Fulfillment 或 Product Listing 权限并重新授权后可自动显示。";
   renderAmazonDashboardTable(
     "amazonStoreInventoryAlertBody",
