@@ -4,8 +4,8 @@ import { AmazonSpApiService } from '../src/amazon-sp-api/amazon-sp-api.service';
 describe('Amazon store dashboard analytics', () => {
   const now = new Date('2026-08-06T12:00:00.000Z');
 
-  it('loads FBM dashboard rows exclusively from SP-API for the selected connection', async () => {
-    const amazonOrderFindMany = jest.fn().mockResolvedValue([]);
+  it('loads FBM dashboard rows exclusively from the dedicated API table', async () => {
+    const amazonFbmOrderFindMany = jest.fn().mockResolvedValue([]);
     const amazonFbaOrderFindMany = jest.fn().mockResolvedValue([]);
     const service = new AmazonSpApiService({
       amazonSpApiConnection: { findMany: jest.fn().mockResolvedValue([{
@@ -17,7 +17,7 @@ describe('Amazon store dashboard analytics', () => {
         lastSyncError: null,
       }]) },
       amazonFbaOrderItem: { findMany: amazonFbaOrderFindMany },
-      amazonOrderRecord: { findMany: amazonOrderFindMany },
+      amazonFbmOrderItem: { findMany: amazonFbmOrderFindMany },
       amazonFbaInventoryItem: { findMany: jest.fn().mockResolvedValue([]) },
       sku: { findMany: jest.fn().mockResolvedValue([]) },
       amazonSpApiSyncRun: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -25,12 +25,10 @@ describe('Amazon store dashboard analytics', () => {
 
     await service.getStoreDashboard('3', '30');
 
-    expect(amazonOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: {
-        spApiConnectionId: 3n,
-        sourceKind: 'sp_api',
-        spApiDashboardVisibleAt: { not: null },
-      },
+    expect(amazonFbmOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        connectionId: 3n,
+      }),
     }));
     expect(amazonFbaOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({

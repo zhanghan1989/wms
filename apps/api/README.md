@@ -42,9 +42,9 @@
 - `AMAZON_SP_API_SYNC_TIMEZONE`: Amazon同步任务时区，默认 `Asia/Shanghai`（中国时间）。
 - `AMAZON_SP_API_INCLUDE_RECIPIENT`: 默认 `false`。取得FBM收件地址需要获批Direct-to-Consumer Shipping受限角色并完成PII安全控制后才能设为`true`。
 
-管理员通过 `POST /api/amazon-sp-api/oauth/start` 获取Amazon官方授权地址。每个法律主体的Seller Central主用户分别确认授权；公开回调接口用一次性、10分钟有效且不可重放的state校验请求，再以授权码换取Refresh Token。Token使用AES-256-GCM加密落库，接口和浏览器均不会取得明文。公开应用授权记录365天后进入续期状态。同步采用Orders API `v2026-01-01`，`MERCHANT`作为仅供“亚马逊店铺看板”展示的数据写入亚马逊订单数据表（`sourceKind=sp_api`），不会进入订单处理、库存总览需求统计、拣货、发货、导出或第三方推送；`AMAZON`写入FBA订单表；库存来自FBA Inventory API。
+管理员通过 `POST /api/amazon-sp-api/oauth/start` 获取Amazon官方授权地址。每个法律主体的Seller Central主用户分别确认授权；公开回调接口用一次性、10分钟有效且不可重放的state校验请求，再以授权码换取Refresh Token。Token使用AES-256-GCM加密落库，接口和浏览器均不会取得明文。公开应用授权记录365天后进入续期状态。同步采用Orders API `v2026-01-01`，`MERCHANT`写入独立的FBM API订单表，`AMAZON`写入独立的FBA API订单表，两者仅供“亚马逊店铺看板”使用，不会进入订单处理、库存总览需求统计、拣货、发货、导出或第三方推送；库存来自FBA Inventory API。
 
-FBM订单采用“API看板数据与人工处理数据隔离”规则：亚马逊店铺看板只读取SP-API订单；需要实际处理的订单仍由人工报告导入，并且不会出现在店铺看板中。两类数据互不混用。
+FBM订单采用数据库物理隔离规则：亚马逊店铺看板只读取 `amazon_fbm_order_items` 中的新SP-API数据；需要实际处理的订单仍由人工报告导入 `amazon_order_records`，并且不会出现在店铺看板中。旧订单表中已有的 `sourceKind=sp_api` 历史行保留但不再读取或更新。
 
 “工厂备货建议”完全按Amazon侧数据计算，不读取WMS海外仓库存：建议数量 = 最近90天FBA与FBM销量合计 − FBA可售库存 − FBA入库中库存；仅展示90天销量合计超过10件且建议数量大于0的产品。
 

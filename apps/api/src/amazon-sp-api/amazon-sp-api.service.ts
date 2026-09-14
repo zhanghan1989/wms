@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
-  AmazonOrderRecord,
   AmazonSpApiConnection,
   AmazonSpApiSyncStatus,
   AmazonSpApiSyncType,
@@ -70,10 +69,6 @@ interface SyncCounters {
   frozen: number;
   excluded: number;
   conflicts: number;
-}
-
-interface FbmPageContext {
-  candidatesByOrderId: Map<string, AmazonOrderRecord[]>;
 }
 
 interface AmazonSyncResult {
@@ -588,24 +583,20 @@ export class AmazonSpApiService {
           purchaseDate: true,
         },
       }),
-      this.prisma.amazonOrderRecord.findMany({
+      this.prisma.amazonFbmOrderItem.findMany({
         where: {
-          spApiConnectionId: connection.id,
-          sourceKind: 'sp_api',
-          spApiDashboardVisibleAt: { not: null },
+          connectionId: connection.id,
+          purchaseDate: { gte: queryStart },
         },
         select: {
-          orderId: true,
-          orderItemId: true,
-          sku: true,
+          amazonOrderId: true,
+          sellerSku: true,
           productName: true,
           orderStatus: true,
-          quantityPurchased: true,
+          quantityOrdered: true,
           quantityShipped: true,
-          quantityToShip: true,
-          purchaseDateRaw: true,
-          sourceKind: true,
-          rawPayload: true,
+          quantityUnfulfilled: true,
+          purchaseDate: true,
         },
       }),
       this.prisma.amazonFbaInventoryItem.findMany({
@@ -658,17 +649,6 @@ export class AmazonSpApiService {
       }),
     ]);
 
-    const deduplicatedFbmOrders = new Map<string, (typeof fbmOrderRows)[number]>();
-    for (const row of fbmOrderRows) {
-      // Dashboard snapshots must never mix manually imported fulfilment rows.
-      if (row.sourceKind !== 'sp_api') continue;
-      const orderId = String(row.orderId ?? '').trim();
-      const originalItemId = this.getOriginalAmazonOrderItemId(row.rawPayload);
-      const itemKey = originalItemId || String(row.orderItemId ?? '').trim() || this.normalizeSku(row.sku);
-      const key = `${orderId}|${itemKey}`;
-      if (!deduplicatedFbmOrders.has(key)) deduplicatedFbmOrders.set(key, row);
-    }
-
     const dashboard = buildAmazonStoreDashboard({
       now,
       days,
@@ -684,7 +664,16 @@ export class AmazonSpApiService {
         currency: row.currency,
         purchaseDate: row.purchaseDate,
       })),
-      fbmOrders: Array.from(deduplicatedFbmOrders.values()),
+      fbmOrders: fbmOrderRows.map((row) => ({
+        orderId: row.amazonOrderId,
+        sku: row.sellerSku,
+        productName: row.productName,
+        orderStatus: row.orderStatus,
+        quantityPurchased: row.quantityOrdered,
+        quantityShipped: row.quantityShipped,
+        quantityToShip: row.quantityUnfulfilled,
+        purchaseDateRaw: row.purchaseDate?.toISOString() ?? null,
+      })),
       inventory,
       skus: skus.map((row) => ({
         sku: row.sku,
@@ -1160,29 +1149,41 @@ export class AmazonSpApiService {
     marketplaceIds: string[],
     lastUpdatedAfter: Date,
   ): Promise<SyncCounters> {
-    const includeRecipient = String(process.env.AMAZON_SP_API_INCLUDE_RECIPIENT ?? 'false').toLowerCase() === 'true';
     const counters = this.emptySyncCounters();
-    const shop = await this.prisma.shop.findUnique({ where: { id: connection.shopId }, select: { name: true } });
     await this.client.forEachOrderPage({
       accessToken,
       region,
       marketplaceIds,
       fulfilledBy: 'MERCHANT',
       lastUpdatedAfter,
-      includeRecipient,
+      includeRecipient: false,
     }, async (orders) => {
-      const context = await this.loadFbmPageContext(connection.id, orders);
+      const pageItems = orders.flatMap((order) =>
+        (order.orderItems ?? []).map((item) => ({ order, item })));
+      const existingRows = pageItems.length
+        ? await this.prisma.amazonFbmOrderItem.findMany({
+            where: {
+              connectionId: connection.id,
+              OR: pageItems.map(({ order, item }) => ({
+                amazonOrderId: order.orderId,
+                amazonOrderItemId: item.orderItemId,
+              })),
+            },
+            select: {
+              amazonOrderId: true,
+              amazonOrderItemId: true,
+              lastUpdateDate: true,
+            },
+          })
+        : [];
+      const existingByKey = new Map(existingRows.map((row) => [
+        this.amazonOrderItemKey(row.amazonOrderId, row.amazonOrderItemId),
+        row,
+      ]));
       for (const order of orders) {
         for (const item of order.orderItems ?? []) {
           counters.fetched += 1;
-          const result = await this.upsertFbmOrderItem(
-            connection,
-            shop?.name ?? null,
-            order,
-            item,
-            undefined,
-            context,
-          );
+          const result = await this.upsertFbmOrderItem(connection.id, order, item, existingByKey);
           if (result) counters[result] += 1;
         }
       }
@@ -1190,262 +1191,73 @@ export class AmazonSpApiService {
     return counters;
   }
 
-  private async loadFbmPageContext(
-    connectionId: bigint,
-    orders: AmazonOrderPayload[],
-  ): Promise<FbmPageContext> {
-    const orderIds = Array.from(new Set(orders.map((order) => String(order.orderId ?? '').trim()).filter(Boolean)));
-    if (!orderIds.length) {
-      return { candidatesByOrderId: new Map() };
-    }
-    const candidates = await this.prisma.amazonOrderRecord.findMany({
-      where: { orderId: { in: orderIds }, spApiConnectionId: connectionId, sourceKind: 'sp_api' },
-      orderBy: { id: 'asc' },
-    });
-    const candidatesByOrderId = new Map<string, AmazonOrderRecord[]>();
-    for (const candidate of candidates) {
-      const orderId = String(candidate.orderId ?? '').trim();
-      const rows = candidatesByOrderId.get(orderId) ?? [];
-      rows.push(candidate);
-      candidatesByOrderId.set(orderId, rows);
-    }
-    return { candidatesByOrderId };
-  }
-
   private amazonOrderItemKey(orderId: unknown, orderItemId: unknown): string {
     return `${String(orderId ?? '').trim()}\u0000${String(orderItemId ?? '').trim()}`;
   }
 
   private async upsertFbmOrderItem(
-    connection: AmazonSpApiConnection,
-    shopName: string | null,
+    connectionId: bigint,
     order: AmazonOrderPayload,
     item: AmazonOrderItemPayload,
-    _legacyDispatchMode?: string,
-    context?: FbmPageContext,
-  ): Promise<'created' | 'updated' | 'unchanged' | 'frozen' | 'excluded' | 'conflicts' | null> {
-    const address = order.recipient?.deliveryAddress;
+    existingByKey?: Map<string, { lastUpdateDate: Date | null }>,
+  ): Promise<'created' | 'updated' | 'unchanged'> {
     const fulfillment = order.fulfillment;
     const itemFulfillment = item.fulfillment;
-    const candidates = (context?.candidatesByOrderId.get(order.orderId)
-      ?? await this.prisma.amazonOrderRecord.findMany({
-        where: { orderId: order.orderId, spApiConnectionId: connection.id, sourceKind: 'sp_api' },
-        orderBy: { id: 'asc' },
-      })).filter((candidate) =>
-        candidate.spApiConnectionId === connection.id && candidate.sourceKind === 'sp_api');
-    const match = this.resolveFbmOrderMatch(candidates, connection.id, item);
-    const existing = match.existing;
     const orderStatus = String(fulfillment?.fulfillmentStatus ?? '').trim();
     const quantityOrdered = this.nonNegativeInt(item.quantityOrdered);
     const quantityShipped = this.nonNegativeInt(itemFulfillment?.quantityFulfilled);
-    const quantityToShip = ['SHIPPED', 'CANCELLED', 'UNFULFILLABLE'].includes(orderStatus)
+    const quantityUnfulfilled = ['SHIPPED', 'CANCELLED', 'UNFULFILLABLE'].includes(orderStatus)
       ? 0
       : itemFulfillment?.quantityUnfulfilled === undefined
         ? Math.max(0, quantityOrdered - quantityShipped)
         : this.nonNegativeInt(itemFulfillment.quantityUnfulfilled);
-    const freezeReason = match.conflictReason ? 'matching_conflict' : null;
-    await this.recordFbmObservation(connection.id, order, item, {
+    const lastUpdateDate = this.parseOptionalDate(order.lastUpdatedTime);
+    const itemKey = this.amazonOrderItemKey(order.orderId, item.orderItemId);
+    const existing = existingByKey?.get(itemKey)
+      ?? await this.prisma.amazonFbmOrderItem.findUnique({
+        where: {
+          connectionId_amazonOrderId_amazonOrderItemId: {
+            connectionId,
+            amazonOrderId: order.orderId,
+            amazonOrderItemId: item.orderItemId,
+          },
+        },
+        select: { lastUpdateDate: true },
+      });
+    if (existing?.lastUpdateDate && lastUpdateDate
+      && existing.lastUpdateDate.getTime() >= lastUpdateDate.getTime()) {
+      return 'unchanged';
+    }
+    const data = {
+      marketplaceId: order.salesChannel?.marketplaceId ?? null,
+      sellerSku: item.product?.sellerSku ?? null,
+      asin: item.product?.asin ?? null,
+      productName: item.product?.title ?? null,
       orderStatus: orderStatus || null,
       quantityOrdered,
       quantityShipped,
-      quantityToShip,
-      freezeReason,
-    });
-    if (match.conflictReason) {
-      this.logger.warn(
-        `Amazon FBM order matching conflict: connection=${connection.id.toString()} order=${order.orderId} item=${item.orderItemId} reason=${match.conflictReason}`,
-      );
-      return 'conflicts';
-    }
-    if (freezeReason) return 'frozen';
-    const manualOverrides = this.readManualOverrideFields(existing?.rawPayload ?? null);
-    const mayUpdate = (field: string): boolean => !manualOverrides.has(field);
-    const lastUpdatedAt = this.parseOptionalDate(order.lastUpdatedTime);
-    const data = {
-      spApiConnectionId: connection.id,
-      orderId: order.orderId,
-      orderItemId: item.orderItemId,
-      purchaseDateRaw: order.createdTime ?? null,
-      buyerEmail: order.buyer?.buyerEmail ?? null,
-      buyerName: order.buyer?.buyerName ?? null,
-      ...(mayUpdate('buyerPhoneNumber') ? { buyerPhoneNumber: address?.phone ?? null } : {}),
-      sku: item.product?.sellerSku ?? null,
-      productName: item.product?.title ?? null,
-      customizedUrl: item.product?.customization?.customizedUrl ?? null,
-      quantityPurchased: quantityOrdered,
-      quantityShipped,
-      quantityToShip,
-      shipServiceLevel: fulfillment?.fulfillmentServiceLevel ?? null,
-      ...(mayUpdate('recipientName') ? { recipientName: address?.name ?? null } : {}),
-      ...(mayUpdate('shipAddress1') ? { shipAddress1: address?.addressLine1 ?? null } : {}),
-      ...(mayUpdate('shipAddress2') ? { shipAddress2: address?.addressLine2 ?? null } : {}),
-      ...(mayUpdate('shipAddress3') ? { shipAddress3: address?.addressLine3 ?? null } : {}),
-      shipCity: address?.city ?? null,
-      ...(mayUpdate('shipState') ? { shipState: address?.stateOrRegion ?? null } : {}),
-      ...(mayUpdate('shipPostalCode') ? { shipPostalCode: address?.postalCode ?? null } : {}),
-      shipCountry: address?.countryCode ?? null,
-      isBusinessOrder: order.programs?.includes('AMAZON_BUSINESS') ?? false,
-      purchaseOrderNumber: order.buyer?.buyerPurchaseOrderNumber ?? null,
-      priceDesignation: item.product?.price?.priceDesignation ?? null,
-      vergeOfCancellation: Boolean(item.cancellation?.cancellationRequest),
-      ...(mayUpdate('mallName') ? {
-        mallName: order.salesChannel?.marketplaceName ?? order.salesChannel?.marketplaceId ?? null,
-      } : {}),
-      ...(mayUpdate('shopName') ? { shopName } : {}),
-      orderStatus: orderStatus || null,
-      fulfillmentChannel: 'MFN',
-      amazonLastUpdatedAt: lastUpdatedAt,
-      sourceKind: 'sp_api',
-      sourceFileName: 'Amazon SP-API Orders v2026-01-01',
-      sourceFilePath: `sp-api:${connection.id.toString()}`,
-      rawPayload: this.mergeSpApiRawPayload(existing?.rawPayload ?? null, order, item),
-    } satisfies Prisma.AmazonOrderRecordUncheckedUpdateInput;
-
-    if (existing) {
-      if (
-        existing.amazonLastUpdatedAt &&
-        lastUpdatedAt &&
-        lastUpdatedAt.getTime() < existing.amazonLastUpdatedAt.getTime()
-      ) {
-        return 'unchanged';
-      }
-      const changedFields = this.changedAmazonFields(existing, data);
-      if (changedFields.length === 0) return 'unchanged';
-      await this.prisma.amazonOrderRecord.update({ where: { id: existing.id }, data });
-      return 'updated';
-    }
-    const created = await this.prisma.amazonOrderRecord.create({
-      data: {
-        ...data,
-        spApiDashboardVisibleAt: new Date(),
-        csvImportedAt: new Date(),
-        rowHash: createHash('sha1')
-          .update(`${connection.id.toString()}|${order.orderId}|${item.orderItemId}`)
-          .digest('hex'),
-      },
-    });
-    if (context && created?.id) {
-      const rows = context.candidatesByOrderId.get(order.orderId) ?? [];
-      rows.push(created);
-      context.candidatesByOrderId.set(order.orderId, rows);
-    }
-    return 'created';
-  }
-
-  selectExistingFbmOrderItem(
-    candidates: AmazonOrderRecord[],
-    connectionId: bigint,
-    item: AmazonOrderItemPayload,
-  ): AmazonOrderRecord | null {
-    return this.resolveFbmOrderMatch(candidates, connectionId, item).existing;
-  }
-
-  private resolveFbmOrderMatch(
-    candidates: AmazonOrderRecord[],
-    connectionId: bigint,
-    item: AmazonOrderItemPayload,
-  ): { existing: AmazonOrderRecord | null; conflictReason: string | null } {
-    if (candidates.length === 0) return { existing: null, conflictReason: null };
-    const incomingItemId = String(item.orderItemId ?? '').trim();
-    const incomingSku = this.normalizeSku(item.product?.sellerSku);
-    const exact = candidates.filter((candidate) => {
-      const currentItemId = String(candidate.orderItemId ?? '').trim();
-      const originalItemId = this.getOriginalAmazonOrderItemId(candidate.rawPayload);
-      return Boolean(incomingItemId && (currentItemId === incomingItemId || originalItemId === incomingItemId));
-    });
-    if (exact.length > 1) {
-      return { existing: null, conflictReason: '同一订单明细 ID 匹配到多条系统记录' };
-    }
-    if (exact.length === 1) return { existing: exact[0], conflictReason: null };
-    const skuMatches = candidates.filter((candidate) => {
-      if (!incomingSku || this.normalizeSku(candidate.sku) !== incomingSku) return false;
-      const candidateItemId = String(candidate.orderItemId ?? '').trim()
-        || this.getOriginalAmazonOrderItemId(candidate.rawPayload);
-      return !incomingItemId || !candidateItemId;
-    });
-    if (skuMatches.length > 1) {
-      return { existing: null, conflictReason: '同一订单号和 SKU 匹配到多条系统记录' };
-    }
-    if (skuMatches.length === 1) return { existing: skuMatches[0], conflictReason: null };
-    const onlySiblingApiItems = candidates.every(
-      (candidate) => candidate.spApiConnectionId === connectionId && candidate.sourceKind === 'sp_api',
-    );
-    return onlySiblingApiItems
-      ? { existing: null, conflictReason: null }
-      : { existing: null, conflictReason: '同一订单号已存在，但订单明细 ID 和 SKU 均不一致' };
-  }
-
-  private changedAmazonFields(
-    existing: AmazonOrderRecord,
-    data: Prisma.AmazonOrderRecordUncheckedUpdateInput,
-  ): string[] {
-    return Object.entries(data)
-      .filter(
-        ([key, value]) =>
-          this.comparableValue(existing[key as keyof AmazonOrderRecord]) !== this.comparableValue(value),
-      )
-      .map(([key]) => key);
-  }
-
-  private comparableValue(value: unknown): string {
-    if (value instanceof Date) return value.toISOString();
-    if (value === undefined || value === null) return '';
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
-  }
-
-  private async recordFbmObservation(
-    connectionId: bigint,
-    order: AmazonOrderPayload,
-    item: AmazonOrderItemPayload,
-    state: {
-      orderStatus: string | null;
-      quantityOrdered: number;
-      quantityShipped: number;
-      quantityToShip: number;
-      freezeReason: string | null;
-    },
-  ): Promise<void> {
-    const key = {
-      spApiConnectionId: connectionId,
-      orderId: order.orderId,
-      orderItemId: item.orderItemId,
-    };
-    const data = {
-      ...state,
+      quantityUnfulfilled,
+      purchaseDate: this.parseOptionalDate(order.createdTime),
+      lastUpdateDate,
       rawPayload: JSON.parse(JSON.stringify({ order, item })) as Prisma.InputJsonValue,
-      observedAt: new Date(),
-    };
-    await this.prisma.amazonOrderSyncObservation.upsert({
-      where: { spApiConnectionId_orderId_orderItemId: key },
-      create: { ...key, ...data },
+    } satisfies Prisma.AmazonFbmOrderItemUncheckedUpdateInput;
+    await this.prisma.amazonFbmOrderItem.upsert({
+      where: {
+        connectionId_amazonOrderId_amazonOrderItemId: {
+          connectionId,
+          amazonOrderId: order.orderId,
+          amazonOrderItemId: item.orderItemId,
+        },
+      },
+      create: {
+        connectionId,
+        amazonOrderId: order.orderId,
+        amazonOrderItemId: item.orderItemId,
+        ...data,
+      },
       update: data,
     });
-  }
-
-  private getOriginalAmazonOrderItemId(rawPayload: Prisma.JsonValue | null): string {
-    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return '';
-    const item = (rawPayload as Prisma.JsonObject).item;
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return '';
-    return String((item as Prisma.JsonObject).orderItemId ?? '').trim();
-  }
-
-  private readManualOverrideFields(rawPayload: Prisma.JsonValue | null): Set<string> {
-    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return new Set();
-    const value = (rawPayload as Prisma.JsonObject)._wmsManualOverrideFields;
-    if (typeof value !== 'string') return new Set();
-    return new Set(value.split(',').map((field) => field.trim()).filter(Boolean));
-  }
-
-  private mergeSpApiRawPayload(
-    rawPayload: Prisma.JsonValue | null,
-    order: AmazonOrderPayload,
-    item: AmazonOrderItemPayload,
-  ): Prisma.InputJsonValue {
-    const base = rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
-      ? { ...(rawPayload as Prisma.JsonObject) }
-      : {};
-    return JSON.parse(JSON.stringify({ ...base, order, item })) as Prisma.InputJsonValue;
+    return existing ? 'updated' : 'created';
   }
 
   private async syncFbaOrders(
@@ -1644,10 +1456,6 @@ export class AmazonSpApiService {
 
   private shopSkuKey(shop: unknown, sku: unknown): string {
     return `${String(shop ?? '').trim()}\u0000${String(sku ?? '').trim()}`;
-  }
-
-  private normalizeSku(value: unknown): string {
-    return String(value ?? '').trim().toUpperCase();
   }
 
   private readMarketplaceIds(value: Prisma.JsonValue): string[] {

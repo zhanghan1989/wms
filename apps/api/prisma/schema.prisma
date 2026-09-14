@@ -592,6 +592,7 @@ model AmazonSpApiConnection {
   shop                   Shop                     @relation(fields: [shopId], references: [id], onDelete: Cascade)
   syncRuns               AmazonSpApiSyncRun[]
   fbaOrderItems          AmazonFbaOrderItem[]
+  fbmOrderItems          AmazonFbmOrderItem[]
   fbaInventoryItems      AmazonFbaInventoryItem[]
   fbmOrderRecords        AmazonOrderRecord[]
 
@@ -676,6 +677,33 @@ model AmazonFbaOrderItem {
   @@index([orderStatus, purchaseDate], map: "idx_fba_orders_status_purchase")
   @@index([connectionId, dashboardVisibleAt], map: "idx_fba_orders_dashboard_visible")
   @@map("amazon_fba_order_items")
+}
+
+model AmazonFbmOrderItem {
+  id                  BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId        BigInt                @map("connection_id") @db.UnsignedBigInt
+  amazonOrderId       String                @map("amazon_order_id") @db.VarChar(64)
+  amazonOrderItemId   String                @map("amazon_order_item_id") @db.VarChar(64)
+  marketplaceId       String?               @map("marketplace_id") @db.VarChar(32)
+  sellerSku           String?               @map("seller_sku") @db.VarChar(128)
+  asin                String?               @db.VarChar(32)
+  productName         String?               @map("product_name") @db.Text
+  orderStatus         String?               @map("order_status") @db.VarChar(32)
+  quantityOrdered     Int                   @default(0) @map("quantity_ordered")
+  quantityShipped     Int                   @default(0) @map("quantity_shipped")
+  quantityUnfulfilled Int                   @default(0) @map("quantity_unfulfilled")
+  purchaseDate        DateTime?             @map("purchase_date")
+  lastUpdateDate      DateTime?             @map("last_update_date")
+  rawPayload          Json?                 @map("raw_payload")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  updatedAt           DateTime              @updatedAt @map("updated_at")
+  connection          AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, amazonOrderId, amazonOrderItemId], map: "uq_amazon_fbm_order_item")
+  @@index([connectionId, purchaseDate], map: "idx_fbm_orders_connection_purchase")
+  @@index([sellerSku])
+  @@index([orderStatus, purchaseDate], map: "idx_fbm_orders_status_purchase")
+  @@map("amazon_fbm_order_items")
 }
 
 model AmazonFbaInventoryItem {
