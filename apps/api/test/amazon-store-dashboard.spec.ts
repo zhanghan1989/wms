@@ -14,10 +14,11 @@ describe('Amazon store dashboard analytics', () => {
         shop: { id: 7n, name: 'Amazon JP', status: 1 },
         marketplaceIds: ['A1VC38T7YXB528'],
         syncFbaInventory: true,
+        dashboardTrackingStartedAt: new Date('2026-09-01T00:00:00.000Z'),
         lastSyncError: null,
       }]) },
-      amazonFbaOrderItem: { findMany: amazonFbaOrderFindMany },
-      amazonFbmOrderItem: { findMany: amazonFbmOrderFindMany },
+      amazonFbaOrderItem: { findMany: amazonFbaOrderFindMany, groupBy: jest.fn().mockResolvedValue([]) },
+      amazonFbmOrderItem: { findMany: amazonFbmOrderFindMany, groupBy: jest.fn().mockResolvedValue([]) },
       amazonFbaInventoryItem: { findMany: jest.fn().mockResolvedValue([]) },
       sku: { findMany: jest.fn().mockResolvedValue([]) },
       amazonSpApiSyncRun: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -28,6 +29,7 @@ describe('Amazon store dashboard analytics', () => {
     expect(amazonFbmOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         connectionId: 3n,
+        purchaseDate: { gte: new Date('2026-09-01T00:00:00.000Z') },
       }),
     }));
     expect(amazonFbaOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -224,6 +226,7 @@ describe('Amazon store dashboard analytics', () => {
     const dashboard = buildAmazonStoreDashboard({
       now,
       days: 30,
+      trackingStartedAt: new Date('2026-04-28T12:00:00.000Z'),
       fbaOrders: [],
       fbmOrders: [],
       inventory: [{
@@ -245,6 +248,7 @@ describe('Amazon store dashboard analytics', () => {
         productId: 'P-STALE',
         totalUnitCount90d: 0,
         availableQty: 12,
+        noSalesDays: 100,
       })],
     });
   });

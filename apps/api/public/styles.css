@@ -672,6 +672,48 @@ button.ghost {
   line-height: 1.55;
 }
 
+.amazon-sync-progress {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #b9d8ca;
+  border-radius: 10px;
+  background: #f2faf6;
+}
+
+.amazon-sync-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.amazon-sync-progress-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #dcebe4;
+  margin-bottom: 7px;
+}
+
+.amazon-sync-progress-track span {
+  display: block;
+  width: 35%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: amazon-sync-progress-moving 1.4s ease-in-out infinite alternate;
+}
+
+.amazon-sync-progress.complete .amazon-sync-progress-track span {
+  width: 100%;
+  animation: none;
+}
+
+@keyframes amazon-sync-progress-moving {
+  from { transform: translateX(-20%); }
+  to { transform: translateX(205%); }
+}
+
 .amazon-store-dashboard-comparison {
   display: flex;
   gap: 8px;

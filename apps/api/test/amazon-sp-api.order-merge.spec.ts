@@ -80,4 +80,42 @@ describe('Amazon SP-API FBM order isolation', () => {
     expect(result).toBe('unchanged');
     expect(upsert).not.toHaveBeenCalled();
   });
+
+  it('processes FBA inventory page-by-page with one existing-row lookup per page', async () => {
+    const findMany = jest.fn().mockResolvedValue([{ sellerSku: 'SKU-OLD' }]);
+    const upsert = jest.fn().mockResolvedValue({});
+    const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
+    const prisma = {
+      amazonFbaInventoryItem: { findMany, upsert, deleteMany },
+      $transaction: jest.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
+    };
+    const client = {
+      forEachInventorySummaryPage: jest.fn(async (_options, onPage) => {
+        await onPage([
+          { sellerSku: 'SKU-OLD', totalQuantity: 5, inventoryDetails: { fulfillableQuantity: 4 } },
+          { sellerSku: 'SKU-NEW', totalQuantity: 3, inventoryDetails: { fulfillableQuantity: 3 } },
+        ]);
+      }),
+    };
+    const service = new AmazonSpApiService(
+      prisma as unknown as PrismaService,
+      client as unknown as AmazonSpApiClient,
+      {} as AmazonSpApiCryptoService,
+    );
+
+    const result = await (service as any).syncFbaInventory(
+      { id: 3n },
+      'token',
+      'FE',
+      ['A1VC38T7YXB528'],
+      new Date('2026-09-14T03:00:00.000Z'),
+    );
+
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(upsert).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ fetched: 2, created: 1, updated: 1 });
+    expect(deleteMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ sellerSku: { notIn: ['SKU-OLD', 'SKU-NEW'] } }),
+    }));
+  });
 });

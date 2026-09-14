@@ -34,6 +34,7 @@ const DEFAULT_LOOKBACK_DAYS = 90;
 const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
 const SYNC_LOCK_STALE_MS = 30 * 60 * 1000;
 const SYNC_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
+const MANUAL_SYNC_COOLDOWN_MS = 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_AUTHORIZATION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const AMAZON_CALLBACK_PATH_PREFIX = '/apps/authorize/confirm/';
@@ -70,6 +71,8 @@ interface SyncCounters {
   excluded: number;
   conflicts: number;
 }
+
+type SyncProgressCallback = (counters: SyncCounters) => Promise<void>;
 
 interface AmazonSyncResult {
   runId: string;
@@ -119,6 +122,11 @@ interface AmazonAllConnectionsSyncResult {
 export class AmazonSpApiService {
   private readonly logger = new Logger(AmazonSpApiService.name);
   private readonly runningConnections = new Set<string>();
+  private readonly queuedConnections = new Set<string>();
+  private readonly lastManualSyncQueuedAt = new Map<string, number>();
+  private allConnectionsSyncQueued = false;
+  private syncQueueTail: Promise<void> = Promise.resolve();
+  private queuedSyncTaskCount = 0;
   private lastAllSyncStartedAt = 0;
 
   constructor(
@@ -300,6 +308,55 @@ export class AmazonSpApiService {
     return { success: true, marketplaces };
   }
 
+  async enqueueConnectionSync(idRaw: string, payload: SyncAmazonConnectionDto = {}): Promise<unknown> {
+    const connection = await this.getConnection(idRaw);
+    const key = connection.id.toString();
+    if (this.runningConnections.has(key) || this.queuedConnections.has(key)) {
+      throw new ConflictException('该店铺的Amazon同步任务正在运行或排队');
+    }
+    const now = Date.now();
+    const lastQueuedAt = this.lastManualSyncQueuedAt.get(key) ?? 0;
+    if (now - lastQueuedAt < MANUAL_SYNC_COOLDOWN_MS) {
+      throw new ConflictException('Amazon同步操作过于频繁，请在60秒后重试');
+    }
+    this.lastManualSyncQueuedAt.set(key, now);
+    this.queuedConnections.add(key);
+    const queuedAt = new Date();
+    const queuePosition = this.queuedSyncTaskCount + 1;
+    void this.enqueueSyncTask(async () => {
+        try {
+          await this.syncConnection(key, payload);
+        } catch (error) {
+          this.logger.error(`Amazon queued sync failed for connection ${key}: ${this.errorMessage(error)}`);
+        } finally {
+          this.queuedConnections.delete(key);
+        }
+      }).catch(() => undefined);
+    return {
+      accepted: true,
+      connectionId: key,
+      queuedAt: queuedAt.toISOString(),
+      queuePosition,
+    };
+  }
+
+  async enqueueAllConnectionsSync(trigger: AmazonSyncTrigger = 'manual'): Promise<unknown> {
+    if (this.allConnectionsSyncQueued) {
+      throw new ConflictException('全部Amazon店铺同步任务正在运行或排队');
+    }
+    this.allConnectionsSyncQueued = true;
+    const queuedAt = new Date();
+    const queuePosition = this.queuedSyncTaskCount + 1;
+    void this.enqueueSyncTask(() => this.syncAllConnections(trigger === 'scheduled', trigger))
+      .catch((error) => {
+        this.logger.error(`Amazon queued all-store sync failed: ${this.errorMessage(error)}`);
+      })
+      .finally(() => {
+        this.allConnectionsSyncQueued = false;
+      });
+    return { accepted: true, queuedAt: queuedAt.toISOString(), queuePosition };
+  }
+
   async syncConnection(idRaw: string, payload: SyncAmazonConnectionDto = {}): Promise<unknown> {
     const connection = await this.getConnection(idRaw);
     const key = connection.id.toString();
@@ -318,9 +375,6 @@ export class AmazonSpApiService {
         (payload.syncType ?? 'full') as AmazonSpApiSyncType,
         payload.initialLookbackDays ?? DEFAULT_LOOKBACK_DAYS,
       );
-      if ((payload.syncType ?? 'full') === 'full' && result.status === AmazonSpApiSyncStatus.success) {
-        await this.materializeDashboardSnapshotIfComplete();
-      }
       return result;
     } finally {
       clearInterval(heartbeat);
@@ -449,7 +503,9 @@ export class AmazonSpApiService {
         await this.releaseConnectionLock(connection.id, lockToken);
       }
     }
-    await this.materializeDashboardSnapshotIfComplete();
+    if (trigger === 'scheduled') {
+      await this.materializeDashboardSnapshotIfComplete();
+    }
     return summary;
   }
 
@@ -477,6 +533,7 @@ export class AmazonSpApiService {
       frozenCount: row.frozenCount,
       excludedCount: row.excludedCount,
       conflictCount: row.conflictCount,
+      progressStage: row.progressStage,
       trigger: row.trigger,
       errorMessage: row.errorMessage,
     }));
@@ -563,6 +620,8 @@ export class AmazonSpApiService {
     const now = new Date();
     const queryDays = Math.max(days * 2, 90);
     const queryStart = new Date(now.getTime() - queryDays * 24 * 60 * 60 * 1000);
+    const trackingStartedAt = connection.dashboardTrackingStartedAt ?? now;
+    const fbmQueryStart = trackingStartedAt > queryStart ? trackingStartedAt : queryStart;
     const [fbaOrders, fbmOrderRows, inventory, skus, latestRun] = await Promise.all([
       this.prisma.amazonFbaOrderItem.findMany({
         where: {
@@ -586,7 +645,7 @@ export class AmazonSpApiService {
       this.prisma.amazonFbmOrderItem.findMany({
         where: {
           connectionId: connection.id,
-          purchaseDate: { gte: queryStart },
+          purchaseDate: { gte: fbmQueryStart },
         },
         select: {
           amazonOrderId: true,
@@ -643,9 +702,33 @@ export class AmazonSpApiService {
           frozenCount: true,
           excludedCount: true,
           conflictCount: true,
+          progressStage: true,
           trigger: true,
           errorMessage: true,
         },
+      }),
+    ]);
+    const [fbaLastSales, fbmLastSales] = await Promise.all([
+      this.prisma.amazonFbaOrderItem.groupBy({
+        by: ['sellerSku'],
+        where: {
+          connectionId: connection.id,
+          sellerSku: { not: null },
+          dashboardVisibleAt: { not: null },
+          orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
+          purchaseDate: { gte: trackingStartedAt },
+        },
+        _max: { purchaseDate: true },
+      }),
+      this.prisma.amazonFbmOrderItem.groupBy({
+        by: ['sellerSku'],
+        where: {
+          connectionId: connection.id,
+          sellerSku: { not: null },
+          orderStatus: { notIn: ['CANCELLED', 'UNFULFILLABLE'] },
+          purchaseDate: { gte: trackingStartedAt },
+        },
+        _max: { purchaseDate: true },
       }),
     ]);
 
@@ -675,6 +758,11 @@ export class AmazonSpApiService {
         purchaseDateRaw: row.purchaseDate?.toISOString() ?? null,
       })),
       inventory,
+      trackingStartedAt,
+      lastSales: [
+        ...fbaLastSales.map((row) => ({ sellerSku: row.sellerSku, lastSaleAt: row._max.purchaseDate })),
+        ...fbmLastSales.map((row) => ({ sellerSku: row.sellerSku, lastSaleAt: row._max.purchaseDate })),
+      ],
       skus: skus.map((row) => ({
         sku: row.sku,
         fbmSku: row.fbmSku,
@@ -707,6 +795,7 @@ export class AmazonSpApiService {
         authorizedAt: connection.authorizedAt?.toISOString() ?? null,
         authorizationExpiresAt: connection.authorizationExpiresAt?.toISOString() ?? null,
         lastOrdersSyncedAt: connection.lastOrdersSyncedAt?.toISOString() ?? null,
+        lastFbmOrdersSyncedAt: connection.lastFbmOrdersSyncedAt?.toISOString() ?? null,
         lastInventorySyncedAt: connection.lastInventorySyncedAt?.toISOString() ?? null,
         lastSuccessfulSyncAt: connection.lastSuccessfulSyncAt?.toISOString() ?? null,
         syncFbmOrders: connection.syncFbmOrders,
@@ -735,6 +824,7 @@ export class AmazonSpApiService {
             frozenCount: latestRun.frozenCount,
             excludedCount: latestRun.excludedCount,
             conflictCount: latestRun.conflictCount,
+            progressStage: latestRun.progressStage,
             trigger: latestRun.trigger,
             hasError: Boolean(latestRun.errorMessage),
           }
@@ -821,7 +911,7 @@ export class AmazonSpApiService {
   async runScheduledSync(): Promise<void> {
     if (!AMAZON_SCHEDULED_SYNC_ENABLED) return;
     try {
-      const result = await this.syncAllConnections(true, 'scheduled');
+      const result = await this.enqueueSyncTask(() => this.syncAllConnections(true, 'scheduled'));
       for (const row of result.results) {
         if (row.errors.length) {
           this.logger.error(
@@ -1014,45 +1104,78 @@ export class AmazonSpApiService {
     };
     const errors: string[] = [];
     const now = new Date();
+    const reportProgress = async (stage: string, phaseCounters?: SyncCounters): Promise<void> => {
+      const phase = phaseCounters ?? this.emptySyncCounters();
+      try {
+        await this.prisma.amazonSpApiSyncRun.update({
+          where: { id: run.id },
+          data: {
+            progressStage: stage,
+            fetchedCount: counters.fetched + phase.fetched,
+            createdCount: counters.created + phase.created,
+            updatedCount: counters.updated + phase.updated,
+            unchangedCount: counters.unchanged + phase.unchanged,
+          },
+        });
+      } catch (error) {
+        this.logger.warn(`Amazon sync progress update failed: ${this.errorMessage(error)}`);
+      }
+    };
     try {
+      if (!connection.dashboardTrackingStartedAt) {
+        await this.prisma.amazonSpApiConnection.updateMany({
+          where: { id: connection.id, dashboardTrackingStartedAt: null },
+          data: { dashboardTrackingStartedAt: now },
+        });
+      }
       const accessToken = await this.getAccessToken(connection);
       const marketplaceIds = this.readMarketplaceIds(connection.marketplaceIds);
       const region = this.normalizeRegion(connection.region);
       const orderWatermark = connection.lastOrdersSyncedAt
         ? new Date(connection.lastOrdersSyncedAt.getTime() - ORDER_SYNC_OVERLAP_MS)
         : new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
-      let attemptedOrderSync = false;
-      let orderSyncSuccessful = true;
+      const fbmOrderWatermark = connection.lastFbmOrdersSyncedAt
+        ? new Date(connection.lastFbmOrdersSyncedAt.getTime() - ORDER_SYNC_OVERLAP_MS)
+        : now;
+      let attemptedFbmOrderSync = false;
+      let fbmOrderSyncSuccessful = true;
+      let attemptedFbaOrderSync = false;
+      let fbaOrderSyncSuccessful = true;
 
       if ((syncType === AmazonSpApiSyncType.full || syncType === AmazonSpApiSyncType.fbm_orders)
           && connection.syncFbmOrders) {
-        attemptedOrderSync = true;
+        attemptedFbmOrderSync = true;
         try {
+          await reportProgress('fbm_orders');
           const fbmCounters = await this.syncFbmOrders(
             connection,
             accessToken,
             region,
             marketplaceIds,
-            orderWatermark,
+            fbmOrderWatermark,
+            (progress) => reportProgress('fbm_orders', progress),
           );
           this.addCounters(counters, fbmCounters);
-          if (fbmCounters.conflicts > 0) {
-            errors.push(
-              `FBM订单：${fbmCounters.conflicts} 条订单明细存在严格匹配冲突，已保留待重试记录并推进主同步水位`,
-            );
-          }
         } catch (error) {
-          orderSyncSuccessful = false;
+          fbmOrderSyncSuccessful = false;
           errors.push(`FBM订单：${this.errorMessage(error)}`);
         }
       }
       if ((syncType === AmazonSpApiSyncType.full || syncType === AmazonSpApiSyncType.fba_orders)
           && connection.syncFbaOrders) {
-        attemptedOrderSync = true;
+        attemptedFbaOrderSync = true;
         try {
-          this.addCounters(counters, await this.syncFbaOrders(connection, accessToken, region, marketplaceIds, orderWatermark));
+          await reportProgress('fba_orders');
+          this.addCounters(counters, await this.syncFbaOrders(
+            connection,
+            accessToken,
+            region,
+            marketplaceIds,
+            orderWatermark,
+            (progress) => reportProgress('fba_orders', progress),
+          ));
         } catch (error) {
-          orderSyncSuccessful = false;
+          fbaOrderSyncSuccessful = false;
           errors.push(`FBA订单：${this.errorMessage(error)}`);
         }
       }
@@ -1063,7 +1186,15 @@ export class AmazonSpApiService {
           && connection.syncFbaInventory) {
         attemptedInventorySync = true;
         try {
-          this.addCounters(counters, await this.syncFbaInventory(connection, accessToken, region, marketplaceIds, now));
+          await reportProgress('fba_inventory');
+          this.addCounters(counters, await this.syncFbaInventory(
+            connection,
+            accessToken,
+            region,
+            marketplaceIds,
+            now,
+            (progress) => reportProgress('fba_inventory', progress),
+          ));
         } catch (error) {
           inventorySyncSuccessful = false;
           errors.push(`FBA库存：${this.errorMessage(error)}`);
@@ -1076,6 +1207,7 @@ export class AmazonSpApiService {
           ? AmazonSpApiSyncStatus.partial
           : AmazonSpApiSyncStatus.failed;
       const finishedAt = new Date();
+      await reportProgress('finalizing');
       await this.prisma.$transaction([
         this.prisma.amazonSpApiSyncRun.update({
           where: { id: run.id },
@@ -1089,13 +1221,15 @@ export class AmazonSpApiService {
             frozenCount: counters.frozen,
             excludedCount: counters.excluded,
             conflictCount: counters.conflicts,
+            progressStage: 'completed',
             errorMessage: errors.length ? errors.join('\n').slice(0, 10000) : null,
           },
         }),
         this.prisma.amazonSpApiConnection.update({
           where: { id: connection.id },
           data: {
-            ...(attemptedOrderSync && orderSyncSuccessful ? { lastOrdersSyncedAt: now } : {}),
+            ...(attemptedFbaOrderSync && fbaOrderSyncSuccessful ? { lastOrdersSyncedAt: now } : {}),
+            ...(attemptedFbmOrderSync && fbmOrderSyncSuccessful ? { lastFbmOrdersSyncedAt: now } : {}),
             ...(attemptedInventorySync && inventorySyncSuccessful ? { lastInventorySyncedAt: now } : {}),
             ...(status === AmazonSpApiSyncStatus.success ? { lastSuccessfulSyncAt: finishedAt } : {}),
             lastSyncError: errors.length ? errors.join('\n').slice(0, 10000) : null,
@@ -1130,6 +1264,7 @@ export class AmazonSpApiService {
             frozenCount: counters.frozen,
             excludedCount: counters.excluded,
             conflictCount: counters.conflicts,
+            progressStage: 'failed',
             errorMessage: message.slice(0, 10000),
           },
         }),
@@ -1148,6 +1283,7 @@ export class AmazonSpApiService {
     region: AmazonSpApiRegion,
     marketplaceIds: string[],
     lastUpdatedAfter: Date,
+    onProgress?: SyncProgressCallback,
   ): Promise<SyncCounters> {
     const counters = this.emptySyncCounters();
     await this.client.forEachOrderPage({
@@ -1187,6 +1323,7 @@ export class AmazonSpApiService {
           if (result) counters[result] += 1;
         }
       }
+      await onProgress?.(counters);
     });
     return counters;
   }
@@ -1266,6 +1403,7 @@ export class AmazonSpApiService {
     region: AmazonSpApiRegion,
     marketplaceIds: string[],
     lastUpdatedAfter: Date,
+    onProgress?: SyncProgressCallback,
   ): Promise<SyncCounters> {
     const counters = this.emptySyncCounters();
     await this.client.forEachOrderPage({
@@ -1342,6 +1480,7 @@ export class AmazonSpApiService {
         });
         counters[exists ? 'updated' : 'created'] += 1;
       }
+      await onProgress?.(counters);
     });
     return counters;
   }
@@ -1352,43 +1491,54 @@ export class AmazonSpApiService {
     region: AmazonSpApiRegion,
     marketplaceIds: string[],
     snapshotAt: Date,
+    onProgress?: SyncProgressCallback,
   ): Promise<SyncCounters> {
     const counters = this.emptySyncCounters();
     for (const marketplaceId of marketplaceIds) {
-      const rows = await this.client.getInventorySummaries({ accessToken, region, marketplaceId });
       const currentSellerSkus: string[] = [];
-      for (const row of rows) {
-        const sellerSku = String(row.sellerSku ?? '').trim();
-        if (!sellerSku) continue;
-        currentSellerSkus.push(sellerSku);
-        counters.fetched += 1;
-        const key = { connectionId: connection.id, marketplaceId, sellerSku };
-        const existing = await this.prisma.amazonFbaInventoryItem.findUnique({
-          where: { connectionId_marketplaceId_sellerSku: key },
-          select: { id: true },
-        });
-        const inventory = row.inventoryDetails;
-        const values = {
-          fnSku: row.fnSku ?? null,
-          asin: row.asin ?? null,
-          productName: row.productName ?? null,
-          fulfillableQty: this.nonNegativeInt(inventory?.fulfillableQuantity),
-          inboundWorkingQty: this.nonNegativeInt(inventory?.inboundWorkingQuantity),
-          inboundShippedQty: this.nonNegativeInt(inventory?.inboundShippedQuantity),
-          inboundReceivingQty: this.nonNegativeInt(inventory?.inboundReceivingQuantity),
-          reservedQty: this.nonNegativeInt(inventory?.reservedQuantity?.totalReservedQuantity),
-          unfulfillableQty: this.nonNegativeInt(inventory?.unfulfillableQuantity?.totalUnfulfillableQuantity),
-          totalQty: this.nonNegativeInt(row.totalQuantity),
-          snapshotAt,
-          rawPayload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue,
-        };
-        await this.prisma.amazonFbaInventoryItem.upsert({
-          where: { connectionId_marketplaceId_sellerSku: key },
-          create: { ...key, ...values },
-          update: values,
-        });
-        counters[existing ? 'updated' : 'created'] += 1;
-      }
+      await this.client.forEachInventorySummaryPage(
+        { accessToken, region, marketplaceId },
+        async (rows) => {
+          const pageRows = rows
+            .map((row) => ({ row, sellerSku: String(row.sellerSku ?? '').trim() }))
+            .filter(({ sellerSku }) => Boolean(sellerSku));
+          if (!pageRows.length) return;
+          const sellerSkus = pageRows.map(({ sellerSku }) => sellerSku);
+          currentSellerSkus.push(...sellerSkus);
+          counters.fetched += pageRows.length;
+          const existingRows = await this.prisma.amazonFbaInventoryItem.findMany({
+            where: { connectionId: connection.id, marketplaceId, sellerSku: { in: sellerSkus } },
+            select: { sellerSku: true },
+          });
+          const existingSkus = new Set(existingRows.map((row) => row.sellerSku));
+          const operations = pageRows.map(({ row, sellerSku }) => {
+            const key = { connectionId: connection.id, marketplaceId, sellerSku };
+            const inventory = row.inventoryDetails;
+            const values = {
+              fnSku: row.fnSku ?? null,
+              asin: row.asin ?? null,
+              productName: row.productName ?? null,
+              fulfillableQty: this.nonNegativeInt(inventory?.fulfillableQuantity),
+              inboundWorkingQty: this.nonNegativeInt(inventory?.inboundWorkingQuantity),
+              inboundShippedQty: this.nonNegativeInt(inventory?.inboundShippedQuantity),
+              inboundReceivingQty: this.nonNegativeInt(inventory?.inboundReceivingQuantity),
+              reservedQty: this.nonNegativeInt(inventory?.reservedQuantity?.totalReservedQuantity),
+              unfulfillableQty: this.nonNegativeInt(inventory?.unfulfillableQuantity?.totalUnfulfillableQuantity),
+              totalQty: this.nonNegativeInt(row.totalQuantity),
+              snapshotAt,
+              rawPayload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue,
+            };
+            counters[existingSkus.has(sellerSku) ? 'updated' : 'created'] += 1;
+            return this.prisma.amazonFbaInventoryItem.upsert({
+              where: { connectionId_marketplaceId_sellerSku: key },
+              create: { ...key, ...values },
+              update: values,
+            });
+          });
+          await this.prisma.$transaction(operations);
+          await onProgress?.(counters);
+        },
+      );
       await this.prisma.amazonFbaInventoryItem.deleteMany({
         where: {
           connectionId: connection.id,
@@ -1432,6 +1582,7 @@ export class AmazonSpApiService {
       syncFbaOrders: row.syncFbaOrders,
       syncFbaInventory: row.syncFbaInventory,
       lastOrdersSyncedAt: row.lastOrdersSyncedAt?.toISOString() ?? null,
+      lastFbmOrdersSyncedAt: row.lastFbmOrdersSyncedAt?.toISOString() ?? null,
       lastInventorySyncedAt: row.lastInventorySyncedAt?.toISOString() ?? null,
       lastSuccessfulSyncAt: row.lastSuccessfulSyncAt?.toISOString() ?? null,
       lastSyncError: row.lastSyncError,
@@ -1575,6 +1726,18 @@ export class AmazonSpApiService {
     target.frozen += value.frozen;
     target.excluded += value.excluded;
     target.conflicts += value.conflicts;
+  }
+
+  private enqueueSyncTask<T>(task: () => Promise<T>): Promise<T> {
+    this.queuedSyncTaskCount += 1;
+    const result = this.syncQueueTail
+      .catch(() => undefined)
+      .then(task)
+      .finally(() => {
+        this.queuedSyncTaskCount = Math.max(0, this.queuedSyncTaskCount - 1);
+      });
+    this.syncQueueTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   private async acquireConnectionLock(connectionId: bigint, lockToken: string): Promise<boolean> {

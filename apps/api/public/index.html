@@ -470,6 +470,14 @@
             <button type="button" id="reloadAmazonStoreDashboardBtn" class="admin-access-only hidden">从Amazon拉取最新数据</button>
           </div>
           <div id="amazonStoreDashboardMeta" class="amazon-dashboard-file-meta muted">正在读取已授权店铺…</div>
+          <div id="amazonStoreDashboardSyncProgress" class="amazon-sync-progress hidden" role="status" aria-live="polite">
+            <div class="amazon-sync-progress-head">
+              <strong id="amazonStoreDashboardSyncProgressTitle">Amazon同步准备中</strong>
+              <span id="amazonStoreDashboardSyncProgressElapsed" class="muted"></span>
+            </div>
+            <div class="amazon-sync-progress-track"><span id="amazonStoreDashboardSyncProgressBar"></span></div>
+            <div id="amazonStoreDashboardSyncProgressDetail" class="muted"></div>
+          </div>
           <div id="amazonStoreDashboardIssue" class="amazon-store-dashboard-issue hidden" role="status"></div>
         </article>
 
@@ -568,6 +576,7 @@
                     <th>90天销量</th>
                     <th>FBA可售</th>
                     <th>FBA入库中</th>
+                    <th>连续无销量</th>
                     <th>状态</th>
                   </tr>
                 </thead>

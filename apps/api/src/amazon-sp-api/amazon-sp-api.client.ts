@@ -15,6 +15,7 @@ const REGION_ENDPOINTS: Record<AmazonSpApiRegion, string> = {
 };
 const MAX_REQUEST_ATTEMPTS = 3;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_PAGES_PER_OPERATION = 500;
 const MAX_RETRY_DELAY_MS = 30_000;
 
 @Injectable()
@@ -114,8 +115,13 @@ export class AmazonSpApiClient {
     onPage: (orders: AmazonOrderPayload[]) => Promise<void> | void,
   ): Promise<void> {
     let paginationToken: string | undefined;
+    let pageCount = 0;
     const seenTokens = new Set<string>();
     do {
+      pageCount += 1;
+      if (pageCount > MAX_PAGES_PER_OPERATION) {
+        throw new ServiceUnavailableException('Amazon SP-API订单分页超过安全上限，已停止同步');
+      }
       const params = new URLSearchParams({
         marketplaceIds: options.marketplaceIds.join(','),
         fulfilledBy: options.fulfilledBy,
@@ -147,9 +153,28 @@ export class AmazonSpApiClient {
     marketplaceId: string;
   }): Promise<AmazonInventorySummaryPayload[]> {
     const rows: AmazonInventorySummaryPayload[] = [];
+    await this.forEachInventorySummaryPage(options, (page) => {
+      rows.push(...page);
+    });
+    return rows;
+  }
+
+  async forEachInventorySummaryPage(
+    options: {
+      accessToken: string;
+      region: AmazonSpApiRegion;
+      marketplaceId: string;
+    },
+    onPage: (rows: AmazonInventorySummaryPayload[]) => Promise<void> | void,
+  ): Promise<void> {
     let nextToken: string | undefined;
+    let pageCount = 0;
     const seenTokens = new Set<string>();
     do {
+      pageCount += 1;
+      if (pageCount > MAX_PAGES_PER_OPERATION) {
+        throw new ServiceUnavailableException('Amazon SP-API库存分页超过安全上限，已停止同步');
+      }
       const params = new URLSearchParams({
         details: 'true',
         granularityType: 'Marketplace',
@@ -162,7 +187,7 @@ export class AmazonSpApiClient {
         options.region,
         `/fba/inventory/v1/summaries?${params.toString()}`,
       );
-      rows.push(...(response.payload?.inventorySummaries ?? []));
+      await onPage(response.payload?.inventorySummaries ?? []);
       const responseNextToken = response.pagination?.nextToken ?? response.payload?.pagination?.nextToken;
       if (responseNextToken && seenTokens.has(responseNextToken)) {
         throw new ServiceUnavailableException('Amazon SP-API库存分页令牌重复，已停止拉取以避免死循环');
@@ -170,7 +195,6 @@ export class AmazonSpApiClient {
       if (responseNextToken) seenTokens.add(responseNextToken);
       nextToken = responseNextToken;
     } while (nextToken);
-    return rows;
   }
 
   private async requestJson<T = unknown>(

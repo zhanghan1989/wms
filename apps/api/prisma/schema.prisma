@@ -584,6 +584,8 @@ model AmazonSpApiConnection {
   syncLockToken          String?                  @map("sync_lock_token") @db.VarChar(64)
   syncLockedAt           DateTime?                @map("sync_locked_at")
   lastOrdersSyncedAt     DateTime?                @map("last_orders_synced_at")
+  lastFbmOrdersSyncedAt  DateTime?                @map("last_fbm_orders_synced_at")
+  dashboardTrackingStartedAt DateTime?            @map("dashboard_tracking_started_at")
   lastInventorySyncedAt  DateTime?                @map("last_inventory_synced_at")
   lastSuccessfulSyncAt   DateTime?                @map("last_successful_sync_at")
   lastSyncError          String?                  @map("last_sync_error") @db.Text
@@ -640,6 +642,7 @@ model AmazonSpApiSyncRun {
   frozenCount    Int                   @default(0) @map("frozen_count")
   excludedCount  Int                   @default(0) @map("excluded_count")
   conflictCount  Int                   @default(0) @map("conflict_count")
+  progressStage  String?               @map("progress_stage") @db.VarChar(32)
   errorMessage   String?               @map("error_message") @db.Text
   connection     AmazonSpApiConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 

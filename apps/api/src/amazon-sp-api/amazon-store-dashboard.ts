@@ -46,6 +46,11 @@ export interface AmazonDashboardSkuRow {
   productName: string | null;
 }
 
+export interface AmazonDashboardLastSaleRow {
+  sellerSku: string | null;
+  lastSaleAt: Date | null;
+}
+
 interface PeriodMetrics {
   orderCount: number;
   unitCount: number;
@@ -134,8 +139,12 @@ export function buildAmazonStoreDashboard(input: {
   fbmOrders: AmazonDashboardFbmOrderRow[];
   inventory: AmazonDashboardInventoryRow[];
   skus: AmazonDashboardSkuRow[];
+  trackingStartedAt?: Date;
+  lastSales?: AmazonDashboardLastSaleRow[];
 }): unknown {
   const { now, days, fbaOrders, fbmOrders, inventory, skus } = input;
+  const trackingStartedAt = input.trackingStartedAt ?? now;
+  const lastSales = input.lastSales ?? [];
   const periodMs = days * 24 * 60 * 60 * 1000;
   const periodStart = new Date(now.getTime() - periodMs);
   const previousStart = new Date(periodStart.getTime() - periodMs);
@@ -168,6 +177,7 @@ export function buildAmazonStoreDashboard(input: {
     fbmUnitCount90d: number;
     availableQty: number;
     inboundQty: number;
+    lastSaleAt: Date | null;
   };
   const factoryMetrics = new Map<string, FactoryRecommendationMetric>();
   const resolveFactoryIdentity = (sellerSkuRaw: string | null, asinRaw: string | null) => {
@@ -200,6 +210,7 @@ export function buildAmazonStoreDashboard(input: {
         fbmUnitCount90d: 0,
         availableQty: 0,
         inboundQty: 0,
+        lastSaleAt: null,
       };
       factoryMetrics.set(identity.key, metric);
     }
@@ -226,6 +237,11 @@ export function buildAmazonStoreDashboard(input: {
     if (!skuLookup.get(normalize(row.sku))?.sku) continue;
     const metric = factoryMetricFor(row.sku, null, row.productName);
     if (metric) metric.fbmUnitCount90d += nonNegative(row.quantityPurchased);
+  }
+  for (const row of lastSales) {
+    const metric = factoryMetricFor(row.sellerSku, null, null);
+    if (!metric || !row.lastSaleAt) continue;
+    if (!metric.lastSaleAt || row.lastSaleAt > metric.lastSaleAt) metric.lastSaleAt = row.lastSaleAt;
   }
 
   const factoryRecommendations = inventory.length
@@ -255,9 +271,14 @@ export function buildAmazonStoreDashboard(input: {
       totalUnitCount90d: row.fbaUnitCount90d + row.fbmUnitCount90d,
       availableQty: row.availableQty,
       inboundQty: row.inboundQty,
+      lastSaleAt: row.lastSaleAt?.toISOString() ?? null,
+      noSalesDays: Math.max(0, Math.floor(
+        (now.getTime() - (row.lastSaleAt ?? trackingStartedAt).getTime()) / (24 * 60 * 60 * 1000),
+      )),
     }))
-    .filter((row) => row.availableQty > 0 && row.totalUnitCount90d === 0)
+    .filter((row) => row.availableQty > 0 && row.totalUnitCount90d === 0 && row.noSalesDays >= 90)
     .sort((left, right) => right.availableQty - left.availableQty
+      || right.noSalesDays - left.noSalesDays
       || left.sellerSku.localeCompare(right.sellerSku, 'en', { numeric: true }));
 
   type ProductMetric = {

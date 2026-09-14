@@ -2397,8 +2397,12 @@ function renderAmazonStoreDashboard(payload) {
   const daily = Array.isArray(dashboard.daily) ? dashboard.daily : [];
   const currency = period.currency || "JPY";
   const generatedAt = payload.generatedAt ? formatDate(payload.generatedAt) : "-";
-  const lastOrdersSync = selectedShop.lastOrdersSyncedAt ? formatDate(selectedShop.lastOrdersSyncedAt) : "尚未同步";
+  const orderSyncTimes = [selectedShop.lastOrdersSyncedAt, selectedShop.lastFbmOrdersSyncedAt]
+    .map((value) => new Date(value || 0).getTime())
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const lastOrdersSync = orderSyncTimes.length ? formatDate(new Date(Math.max(...orderSyncTimes))) : "尚未同步";
   $("amazonStoreDashboardMeta").textContent = `${selectedShop.shopName} / 近${period.days || payload.days || 30}天 / 订单同步 ${lastOrdersSync} / 看板生成 ${generatedAt}`;
+  renderAmazonSyncProgress(payload.latestSyncRun);
 
   const issue = selectedShop.syncIssue;
   const issueBox = $("amazonStoreDashboardIssue");
@@ -2530,6 +2534,7 @@ function renderAmazonStoreDashboard(payload) {
       (row) => escapeHtml(formatMetricNumber(row.totalUnitCount90d)),
       (row) => `<strong>${escapeHtml(formatMetricNumber(row.availableQty))}</strong>`,
       (row) => escapeHtml(formatMetricNumber(row.inboundQty)),
+      (row) => `<strong>${escapeHtml(formatMetricNumber(row.noSalesDays))} 天</strong>`,
       () => '<span class="amazon-dashboard-chip warning">90天无销量</span>',
     ],
     inventory.available ? "当前没有FBA可售库存连续90天无销量的SKU" : "尚无该店铺的FBA库存数据",
@@ -2565,6 +2570,60 @@ async function loadAmazonStoreDashboard(options = {}) {
       state.amazonStoreDashboardLoading = false;
     }
   }
+}
+
+function renderAmazonSyncProgress(run) {
+  const box = $("amazonStoreDashboardSyncProgress");
+  if (!box) return;
+  if (!run) {
+    box.classList.add("hidden");
+    return;
+  }
+  const stageLabels = {
+    queued: "等待其他Amazon同步任务完成",
+    fbm_orders: "正在同步FBM订单",
+    fba_orders: "正在同步FBA订单",
+    fba_inventory: "正在同步FBA库存",
+    finalizing: "正在保存同步结果",
+    completed: "Amazon同步已完成",
+    failed: "Amazon同步失败",
+  };
+  const running = run.status === "running" || run.status === "queued";
+  const stage = String(run.progressStage || (run.status === "queued" ? "queued" : run.status || ""));
+  if (!running && !["success", "partial", "failed"].includes(String(run.status || ""))) {
+    box.classList.add("hidden");
+    return;
+  }
+  const startedAt = new Date(run.startedAt || run.queuedAt || Date.now()).getTime();
+  const finishedAt = run.finishedAt ? new Date(run.finishedAt).getTime() : Date.now();
+  const elapsedSeconds = Math.max(0, Math.floor((finishedAt - startedAt) / 1000));
+  const elapsedText = elapsedSeconds >= 60
+    ? `${Math.floor(elapsedSeconds / 60)}分${elapsedSeconds % 60}秒`
+    : `${elapsedSeconds}秒`;
+  box.classList.remove("hidden");
+  box.classList.toggle("complete", !running);
+  $("amazonStoreDashboardSyncProgressTitle").textContent = stageLabels[stage]
+    || (run.status === "partial" ? "Amazon同步部分完成" : run.status === "success" ? "Amazon同步已完成" : "Amazon同步中");
+  $("amazonStoreDashboardSyncProgressElapsed").textContent = `耗时 ${elapsedText}`;
+  $("amazonStoreDashboardSyncProgressDetail").textContent = running && stage === "queued"
+    ? `队列位置：${formatOverviewNumber(run.queuePosition || 1)}`
+    : `已读取 ${formatOverviewNumber(run.fetchedCount)} 条；新增 ${formatOverviewNumber(run.createdCount)} 条；更新 ${formatOverviewNumber(run.updatedCount)} 条；无变化 ${formatOverviewNumber(run.unchangedCount)} 条`;
+}
+
+async function waitForAmazonSyncCompletion(connectionId, queuedAt, onProgress, timeoutMs = 15 * 60 * 1000) {
+  const queuedTime = new Date(queuedAt || Date.now()).getTime();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = await request(`/amazon-sp-api/sync-runs?connectionId=${encodeURIComponent(connectionId)}&limit=5`);
+    const run = (Array.isArray(rows) ? rows : []).find((row) => {
+      const startedTime = new Date(row?.startedAt || 0).getTime();
+      return Number.isFinite(startedTime) && startedTime >= queuedTime - 5000;
+    });
+    if (run) onProgress?.(run);
+    if (run && run.status !== "running") return run;
+    await delay(3000);
+  }
+  throw new Error("Amazon同步仍在后台运行，请稍后刷新看板查看结果");
 }
 
 function renderRakutenStoreDashboard(payload) {
@@ -14917,19 +14976,32 @@ function bindForms() {
       return;
     }
     try {
-      const result = await withBusyButton(button, "同步中...", () =>
+      const accepted = await withBusyButton(button, "提交中...", () =>
         request(`/amazon-sp-api/connections/${encodeURIComponent(connectionId)}/sync`, {
           method: "POST",
           body: JSON.stringify({ syncType: "full" }),
         }),
       );
-      if (String($("amazonStoreDashboardShop")?.value || "") === connectionId) {
-        await loadAmazonStoreDashboard({ connectionId });
-      }
       startAmazonPullCooldown(button);
-      const errors = Array.isArray(result?.errors) ? result.errors.filter(Boolean) : [];
-      const message = `Amazon数据同步完成：读取 ${formatOverviewNumber(result?.fetchedCount)} 条，新增 ${formatOverviewNumber(result?.createdCount)} 条，更新 ${formatOverviewNumber(result?.updatedCount)} 条${errors.length ? `；${errors.join("；")}` : ""}`;
-      showToast(message, errors.length > 0 || result?.status === "failed");
+      renderAmazonSyncProgress({
+        status: "queued",
+        progressStage: "queued",
+        queuedAt: accepted?.queuedAt,
+        queuePosition: accepted?.queuePosition,
+      });
+      showToast(`Amazon同步已进入后台队列${accepted?.queuePosition ? `，当前排队位置 ${accepted.queuePosition}` : ""}`);
+      void waitForAmazonSyncCompletion(
+        connectionId,
+        accepted?.queuedAt,
+        renderAmazonSyncProgress,
+      ).then(async (result) => {
+        if (String($("amazonStoreDashboardShop")?.value || "") === connectionId) {
+          await loadAmazonStoreDashboard({ connectionId });
+        }
+        const errors = String(result?.errorMessage || "").split("\n").filter(Boolean);
+        const message = `Amazon数据同步完成：读取 ${formatOverviewNumber(result?.fetchedCount)} 条，新增 ${formatOverviewNumber(result?.createdCount)} 条，更新 ${formatOverviewNumber(result?.updatedCount)} 条${errors.length ? `；${errors.join("；")}` : ""}`;
+        showToast(message, errors.length > 0 || result?.status === "failed");
+      }).catch((error) => showToast(error.message, true));
     } catch (error) {
       showToast(error.message, true);
     }
@@ -18875,7 +18947,7 @@ function bindDelegates() {
     const connectionId = String($('amazonSpApiConnectionId').value || '').trim();
     if (!connectionId) return;
     try {
-      const result = await withBusyButton(event.currentTarget, '同步中...', () =>
+      const accepted = await withBusyButton(event.currentTarget, '提交中...', () =>
         request(`/amazon-sp-api/connections/${connectionId}/sync`, {
           method: 'POST',
           body: JSON.stringify({ syncType: 'full', initialLookbackDays: 90 }),
@@ -18883,7 +18955,7 @@ function bindDelegates() {
       );
       await loadAmazonSpApiConnections();
       openAmazonSpApiConnectionModal($('amazonSpApiShopId').value);
-      showToast(`同步完成：取得 ${formatOverviewNumber(result?.fetchedCount)} 行`);
+      showToast(`Amazon同步已进入后台队列${accepted?.queuePosition ? `，当前排队位置 ${accepted.queuePosition}` : ''}`);
     } catch (error) {
       showToast(error.message, true);
     }

@@ -62,7 +62,7 @@ export class AmazonSpApiController {
     @Param('id') id: string,
     @Body() payload: SyncAmazonConnectionDto,
   ): Promise<unknown> {
-    return this.service.syncConnection(id, payload);
+    return this.service.enqueueConnectionSync(id, payload);
   }
 
   @Post('sync-all')
@@ -71,7 +71,7 @@ export class AmazonSpApiController {
     if (String(user.username ?? '').trim() !== 'admin') {
       throw new ForbiddenException('仅用户名为 admin 的账号可以执行 Amazon API 订单拉取');
     }
-    return this.service.syncAllConnections();
+    return this.service.enqueueAllConnectionsSync();
   }
 
   @Get('sync-runs')

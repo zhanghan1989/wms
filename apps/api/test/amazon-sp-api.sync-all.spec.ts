@@ -86,7 +86,7 @@ describe('Amazon all-store synchronization', () => {
     expect(runSync).not.toHaveBeenCalled();
   });
 
-  it('advances the main order watermark while retaining FBM conflicts for retry', async () => {
+  it('advances the independent FBM watermark after a successful sync', async () => {
     const updateRun = jest.fn().mockResolvedValue({});
     const updateConnection = jest.fn().mockResolvedValue({});
     const prisma = {
@@ -94,7 +94,10 @@ describe('Amazon all-store synchronization', () => {
         create: jest.fn().mockResolvedValue({ id: 9n }),
         update: updateRun,
       },
-      amazonSpApiConnection: { update: updateConnection },
+      amazonSpApiConnection: {
+        update: updateConnection,
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       $transaction: jest.fn(async (operations: Array<Promise<unknown>>) => Promise.all(operations)),
     } as unknown as PrismaService;
     const service = new AmazonSpApiService(
@@ -110,7 +113,7 @@ describe('Amazon all-store synchronization', () => {
       unchanged: 0,
       frozen: 0,
       excluded: 0,
-      conflicts: 1,
+      conflicts: 0,
     });
 
     const result = await (service as any).runSync(
@@ -127,10 +130,35 @@ describe('Amazon all-store synchronization', () => {
       7,
     );
 
-    expect(result.status).toBe(AmazonSpApiSyncStatus.partial);
+    expect(result.status).toBe(AmazonSpApiSyncStatus.success);
     expect(updateConnection).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ lastOrdersSyncedAt: expect.any(Date) }),
+      data: expect.objectContaining({ lastFbmOrdersSyncedAt: expect.any(Date) }),
     }));
+    expect(updateConnection.mock.calls[0][0].data).not.toHaveProperty('lastOrdersSyncedAt');
+  });
+
+  it('queues manual syncs and rejects duplicate requests for the same store', async () => {
+    const prisma = {
+      amazonSpApiConnection: {
+        findUnique: jest.fn().mockResolvedValue({ id: 3n, status: 1 }),
+      },
+    } as unknown as PrismaService;
+    const service = new AmazonSpApiService(
+      prisma,
+      {} as AmazonSpApiClient,
+      {} as AmazonSpApiCryptoService,
+    );
+    let finishSync: ((value: unknown) => void) | undefined;
+    jest.spyOn(service, 'syncConnection').mockImplementation(() => new Promise((resolve) => {
+      finishSync = resolve;
+    }));
+
+    const accepted = await service.enqueueConnectionSync('3', { syncType: 'full' });
+
+    expect(accepted).toMatchObject({ accepted: true, connectionId: '3', queuePosition: 1 });
+    await expect(service.enqueueConnectionSync('3', { syncType: 'full' }))
+      .rejects.toThrow('正在运行或排队');
+    finishSync?.({ status: 'success' });
   });
 
   it('rejects repeated all-store pulls within 60 seconds', async () => {
