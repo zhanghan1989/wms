@@ -86,7 +86,7 @@ describe('Amazon all-store synchronization', () => {
     expect(runSync).not.toHaveBeenCalled();
   });
 
-  it('advances the independent FBM watermark after a successful sync', async () => {
+  it('establishes the independent FBM watermark without requesting historical orders', async () => {
     const updateRun = jest.fn().mockResolvedValue({});
     const updateConnection = jest.fn().mockResolvedValue({});
     const prisma = {
@@ -106,7 +106,7 @@ describe('Amazon all-store synchronization', () => {
       {} as AmazonSpApiCryptoService,
     );
     jest.spyOn(service as any, 'getAccessToken').mockResolvedValue('token');
-    jest.spyOn(service as any, 'syncFbmOrders').mockResolvedValue({
+    const syncFbmOrders = jest.spyOn(service as any, 'syncFbmOrders').mockResolvedValue({
       fetched: 1,
       created: 0,
       updated: 0,
@@ -135,6 +135,7 @@ describe('Amazon all-store synchronization', () => {
       data: expect.objectContaining({ lastFbmOrdersSyncedAt: expect.any(Date) }),
     }));
     expect(updateConnection.mock.calls[0][0].data).not.toHaveProperty('lastOrdersSyncedAt');
+    expect(syncFbmOrders).not.toHaveBeenCalled();
   });
 
   it('queues manual syncs and rejects duplicate requests for the same store', async () => {

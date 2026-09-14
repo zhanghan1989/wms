@@ -1136,7 +1136,7 @@ export class AmazonSpApiService {
         : new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000);
       const fbmOrderWatermark = connection.lastFbmOrdersSyncedAt
         ? new Date(connection.lastFbmOrdersSyncedAt.getTime() - ORDER_SYNC_OVERLAP_MS)
-        : now;
+        : null;
       let attemptedFbmOrderSync = false;
       let fbmOrderSyncSuccessful = true;
       let attemptedFbaOrderSync = false;
@@ -1147,15 +1147,19 @@ export class AmazonSpApiService {
         attemptedFbmOrderSync = true;
         try {
           await reportProgress('fbm_orders');
-          const fbmCounters = await this.syncFbmOrders(
-            connection,
-            accessToken,
-            region,
-            marketplaceIds,
-            fbmOrderWatermark,
-            (progress) => reportProgress('fbm_orders', progress),
-          );
-          this.addCounters(counters, fbmCounters);
+          // The first independent FBM run establishes the "from now on" boundary only.
+          // Amazon rejects lastUpdatedAfter values newer than its two-minute safety window.
+          if (fbmOrderWatermark) {
+            const fbmCounters = await this.syncFbmOrders(
+              connection,
+              accessToken,
+              region,
+              marketplaceIds,
+              fbmOrderWatermark,
+              (progress) => reportProgress('fbm_orders', progress),
+            );
+            this.addCounters(counters, fbmCounters);
+          }
         } catch (error) {
           fbmOrderSyncSuccessful = false;
           errors.push(`FBM订单：${this.errorMessage(error)}`);
