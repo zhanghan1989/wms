@@ -2365,6 +2365,48 @@ function formatAmazonStoreComparison(value) {
   return `${number > 0 ? "+" : ""}${formatMetricNumber(number, 1)}%`;
 }
 
+function renderAmazonStoreSummary(summary, currency) {
+  const container = $("amazonStoreDashboardSummary");
+  if (!container) return;
+  const rows = [
+    {
+      label: "合计",
+      orders: summary.orderCount,
+      units: summary.unitCount,
+      sales: summary.fbaSalesAmount,
+      pending: summary.fbmPendingUnitCount,
+    },
+    {
+      label: "FBA",
+      orders: summary.fbaOrderCount,
+      units: summary.fbaUnitCount,
+      sales: summary.fbaSalesAmount,
+      pending: null,
+    },
+    {
+      label: "FBM",
+      orders: summary.fbmOrderCount,
+      units: summary.fbmUnitCount,
+      sales: null,
+      pending: summary.fbmPendingUnitCount,
+    },
+  ];
+  container.innerHTML = `
+    <table>
+      <thead><tr><th>配送方式</th><th>订单</th><th>销量</th><th>商品销售额（仅FBA）</th><th>待发货</th></tr></thead>
+      <tbody>${rows.map((row) => `
+        <tr>
+          <th scope="row">${escapeHtml(row.label)}</th>
+          <td><strong>${escapeHtml(formatMetricNumber(row.orders))}</strong> 单</td>
+          <td><strong>${escapeHtml(formatMetricNumber(row.units))}</strong> 件</td>
+          <td><strong>${row.sales === null ? "—" : escapeHtml(formatAmazonStoreCurrency(row.sales, currency))}</strong></td>
+          <td><strong>${row.pending === null ? "—" : escapeHtml(formatMetricNumber(row.pending))}</strong>${row.pending === null ? "" : " 件"}</td>
+        </tr>
+      `).join("")}</tbody>
+    </table>
+  `;
+}
+
 function renderAmazonStoreDashboard(payload) {
   state.amazonStoreDashboard = payload || null;
   const shops = Array.isArray(payload?.shops) ? payload.shops : [];
@@ -2411,20 +2453,7 @@ function renderAmazonStoreDashboard(payload) {
     issueBox.textContent = issue?.message || "";
   }
 
-  renderAmazonMetricCards("amazonStoreDashboardSummary", [
-    { label: "总订单（FBA+FBM）", value: formatMetricNumber(summary.orderCount),
-    },
-    { label: "总销量（FBA+FBM）", value: `${formatMetricNumber(summary.unitCount)} 件`,
-    },
-    { label: "FBA商品销售额", value: formatAmazonStoreCurrency(summary.fbaSalesAmount, currency),
-    },
-    { label: "FBA订单", value: `${formatMetricNumber(summary.fbaOrderCount)} 单`,
-    },
-    { label: "FBA销量", value: `${formatMetricNumber(summary.fbaUnitCount)} 件`,
-    },
-    { label: "FBM待发货", value: `${formatMetricNumber(summary.fbmPendingUnitCount)} 件`,
-    },
-  ]);
+  renderAmazonStoreSummary(summary, currency);
 
   const comparisonBox = $("amazonStoreDashboardComparison");
   if (comparisonBox) {
@@ -2442,11 +2471,11 @@ function renderAmazonStoreDashboard(payload) {
   const trend = $("amazonStoreDashboardTrend");
   if (trend) {
     const visibleDaily = daily.slice(-30);
-    const maxSales = Math.max(...visibleDaily.map((row) => Number(row.fbaSalesAmount || 0)), 1);
+    const maxUnits = Math.max(...visibleDaily.map((row) => Number(row.unitCount || 0)), 1);
     trend.innerHTML = visibleDaily.length
       ? visibleDaily.map((row) => {
-          const height = Math.max(4, Math.round((Number(row.fbaSalesAmount || 0) / maxSales) * 100));
-          return `<div class="amazon-store-dashboard-day" title="${escapeHtml(row.date)} / ${formatMetricNumber(row.orderCount)}单 / ${formatMetricNumber(row.unitCount)}件 / ${escapeHtml(formatAmazonStoreCurrency(row.fbaSalesAmount, currency))}">
+          const height = Math.max(4, Math.round((Number(row.unitCount || 0) / maxUnits) * 100));
+          return `<div class="amazon-store-dashboard-day" title="${escapeHtml(row.date)} / FBA+FBM合计 ${formatMetricNumber(row.orderCount)}单 / ${formatMetricNumber(row.unitCount)}件">
             <span class="amazon-store-dashboard-bar-value">${escapeHtml(formatMetricNumber(row.unitCount))}</span>
             <span class="amazon-store-dashboard-bar" style="height:${height}%"></span>
             <span class="amazon-store-dashboard-day-label">${escapeHtml(String(row.date || "").slice(5))}</span>
@@ -2454,7 +2483,7 @@ function renderAmazonStoreDashboard(payload) {
         }).join("")
       : '<p class="muted">所选周期暂无已配送销售数据</p>';
   }
-  $("amazonStoreDashboardTrendMeta").textContent = `按日本时间显示最近 ${Math.min(daily.length, 30)} 个有销量的日期；柱高为FBA商品销售额，数字为销量`;
+  $("amazonStoreDashboardTrendMeta").textContent = `按日本时间显示最近 ${Math.min(daily.length, 30)} 个有销量的日期；柱高和数字均为FBA+FBM合计销量`;
 
   const matchCoverage = dashboard.matchCoverage || {};
   $("amazonStoreDashboardProductMeta").textContent = `按FBA商品销售额排序 / 系统SKU已匹配 ${formatMetricNumber(matchCoverage.matchedCount)} / 未匹配 ${formatMetricNumber(matchCoverage.unmatchedCount)}`;

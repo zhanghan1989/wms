@@ -621,7 +621,6 @@ export class AmazonSpApiService {
     const queryDays = Math.max(days * 2, 90);
     const queryStart = new Date(now.getTime() - queryDays * 24 * 60 * 60 * 1000);
     const trackingStartedAt = connection.dashboardTrackingStartedAt ?? now;
-    const fbmQueryStart = trackingStartedAt > queryStart ? trackingStartedAt : queryStart;
     const [fbaOrders, fbmOrderRows, inventory, skus, latestRun] = await Promise.all([
       this.prisma.amazonFbaOrderItem.findMany({
         where: {
@@ -645,7 +644,7 @@ export class AmazonSpApiService {
       this.prisma.amazonFbmOrderItem.findMany({
         where: {
           connectionId: connection.id,
-          purchaseDate: { gte: fbmQueryStart },
+          purchaseDate: { gte: queryStart },
         },
         select: {
           amazonOrderId: true,
@@ -726,7 +725,7 @@ export class AmazonSpApiService {
           connectionId: connection.id,
           sellerSku: { not: null },
           orderStatus: { notIn: ['CANCELLED', 'UNFULFILLABLE'] },
-          purchaseDate: { gte: trackingStartedAt },
+          purchaseDate: { gte: queryStart },
         },
         _max: { purchaseDate: true },
       }),

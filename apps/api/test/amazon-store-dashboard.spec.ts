@@ -4,7 +4,7 @@ import { AmazonSpApiService } from '../src/amazon-sp-api/amazon-sp-api.service';
 describe('Amazon store dashboard analytics', () => {
   const now = new Date('2026-08-06T12:00:00.000Z');
 
-  it('loads FBM dashboard rows exclusively from the dedicated API table', async () => {
+  it('loads historical FBM dashboard rows exclusively from the dedicated API table', async () => {
     const amazonFbmOrderFindMany = jest.fn().mockResolvedValue([]);
     const amazonFbaOrderFindMany = jest.fn().mockResolvedValue([]);
     const service = new AmazonSpApiService({
@@ -29,9 +29,11 @@ describe('Amazon store dashboard analytics', () => {
     expect(amazonFbmOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         connectionId: 3n,
-        purchaseDate: { gte: new Date('2026-09-01T00:00:00.000Z') },
+        purchaseDate: { gte: expect.any(Date) },
       }),
     }));
+    const fbmQueryStart = amazonFbmOrderFindMany.mock.calls[0][0].where.purchaseDate.gte as Date;
+    expect(fbmQueryStart.getTime()).toBeLessThan(new Date('2026-09-01T00:00:00.000Z').getTime());
     expect(amazonFbaOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         connectionId: 3n,

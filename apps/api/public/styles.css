@@ -828,6 +828,53 @@ button.ghost {
   grid-template-columns: repeat(6, minmax(120px, 1fr));
 }
 
+.amazon-dashboard-summary-table {
+  margin-bottom: 14px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fbf8;
+}
+
+.amazon-dashboard-summary-table table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+}
+
+.amazon-dashboard-summary-table th,
+.amazon-dashboard-summary-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.amazon-dashboard-summary-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.amazon-dashboard-summary-table th:first-child {
+  text-align: left;
+}
+
+.amazon-dashboard-summary-table tbody tr:last-child th,
+.amazon-dashboard-summary-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.amazon-dashboard-summary-table tbody th {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.amazon-dashboard-summary-table td strong {
+  color: var(--ink);
+  font-size: 18px;
+}
+
 .amazon-dashboard-metric-row {
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
 }
