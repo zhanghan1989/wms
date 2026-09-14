@@ -3,6 +3,42 @@ import * as XLSX from 'xlsx';
 import * as iconv from 'iconv-lite';
 
 describe('OrdersService', () => {
+  it('keeps SP-API FBM rows out of the Amazon order-processing list', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new OrdersService({ amazonOrderRecord: { findMany } } as any);
+
+    await service.listAmazon();
+
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { sourceKind: { not: 'sp_api' } },
+    }));
+  });
+
+  it('keeps SP-API FBM rows out of China order processing', async () => {
+    const amazonFindMany = jest.fn().mockResolvedValue([]);
+    const service = new OrdersService({
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
+      amazonOrderRecord: { findMany: amazonFindMany },
+      manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any);
+
+    await service.listChinaOrderProcessing();
+
+    expect(amazonFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ sourceKind: { not: 'sp_api' } }),
+    }));
+  });
+
+  it('does not allow an SP-API FBM row to be opened from order processing', async () => {
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const service = new OrdersService({ amazonOrderRecord: { findFirst } } as any);
+
+    await expect(service.getOrderDetail('amazon', '9')).rejects.toThrow('亚马逊订单不存在');
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { sourceKind: { not: 'sp_api' }, id: 9n },
+    });
+  });
+
   it("includes China shipment detail labels in the Rakuten daily email CSV without applying the customs gate", async () => {
     const importedAt = new Date();
     const rows = [

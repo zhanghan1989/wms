@@ -17,7 +17,6 @@ import {
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import * as XLSX from 'xlsx';
 import { parseId } from '../common/utils';
-import { calculateProductStockAvailability } from '../master-products/master-product-bom-stock';
 import { PrismaService } from '../prisma/prisma.service';
 import { AmazonSpApiClient } from './amazon-sp-api.client';
 import { AmazonSpApiCryptoService } from './amazon-sp-api-crypto.service';
@@ -36,8 +35,6 @@ const DEFAULT_LOOKBACK_DAYS = 90;
 const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
 const SYNC_LOCK_STALE_MS = 30 * 60 * 1000;
 const SYNC_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
-const DISPATCH_OVERSEAS = 'overseas';
-const DISPATCH_CHINA_NO_STOCK = 'china_no_stock';
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_AUTHORIZATION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const AMAZON_CALLBACK_PATH_PREFIX = '/apps/authorize/confirm/';
@@ -76,13 +73,7 @@ interface SyncCounters {
 }
 
 interface FbmPageContext {
-  exclusions: Array<{
-    spApiConnectionId: bigint | null;
-    orderId: string;
-    orderItemId: string | null;
-  }>;
   candidatesByOrderId: Map<string, AmazonOrderRecord[]>;
-  pickedRecordIds: Set<string>;
 }
 
 interface AmazonSyncResult {
@@ -595,10 +586,9 @@ export class AmazonSpApiService {
       }),
       this.prisma.amazonOrderRecord.findMany({
         where: {
-          OR: [
-            { spApiConnectionId: connection.id, sourceKind: 'sp_api' },
-            { sourceKind: { not: 'sp_api' }, shopName: connection.shop.name },
-          ],
+          spApiConnectionId: connection.id,
+          sourceKind: 'sp_api',
+          spApiDashboardVisibleAt: { not: null },
         },
         select: {
           orderId: true,
@@ -666,14 +656,13 @@ export class AmazonSpApiService {
 
     const deduplicatedFbmOrders = new Map<string, (typeof fbmOrderRows)[number]>();
     for (const row of fbmOrderRows) {
+      // Dashboard snapshots must never mix manually imported fulfilment rows.
+      if (row.sourceKind !== 'sp_api') continue;
       const orderId = String(row.orderId ?? '').trim();
       const originalItemId = this.getOriginalAmazonOrderItemId(row.rawPayload);
       const itemKey = originalItemId || String(row.orderItemId ?? '').trim() || this.normalizeSku(row.sku);
       const key = `${orderId}|${itemKey}`;
-      const current = deduplicatedFbmOrders.get(key);
-      if (!current || (row.sourceKind !== 'sp_api' && current.sourceKind === 'sp_api')) {
-        deduplicatedFbmOrders.set(key, row);
-      }
+      if (!deduplicatedFbmOrders.has(key)) deduplicatedFbmOrders.set(key, row);
     }
 
     const dashboard = buildAmazonStoreDashboard({
@@ -1170,48 +1159,6 @@ export class AmazonSpApiService {
     const includeRecipient = String(process.env.AMAZON_SP_API_INCLUDE_RECIPIENT ?? 'false').toLowerCase() === 'true';
     const counters = this.emptySyncCounters();
     const shop = await this.prisma.shop.findUnique({ where: { id: connection.shopId }, select: { name: true } });
-    const shopSkus = await this.prisma.sku.findMany({
-      where: { status: 1, shop: shop?.name ?? '', productId: { not: null } },
-      select: {
-        sku: true,
-        fbmSku: true,
-        rbSku: true,
-        masterProduct: {
-          select: {
-            stockQty: true,
-            boxInventories: { select: { qty: true } },
-            productType: true,
-            bomComponents: {
-              orderBy: [{ position: 'asc' }, { id: 'asc' }],
-              select: {
-                quantity: true,
-                componentProduct: {
-                  select: {
-                    stockQty: true,
-                    status: true,
-                    productType: true,
-                    boxInventories: { select: { qty: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    const availableStockBySku = new Map<string, number>();
-    for (const sku of shopSkus) {
-      for (const candidate of [sku.sku, sku.fbmSku, sku.rbSku]) {
-        const key = this.normalizeSku(candidate);
-        if (key && !availableStockBySku.has(key)) {
-          availableStockBySku.set(
-            key,
-            calculateProductStockAvailability(sku.masterProduct).fulfillableStock,
-          );
-        }
-      }
-    }
-    const currentItemKeys = new Set<string>();
     await this.client.forEachOrderPage({
       accessToken,
       region,
@@ -1222,94 +1169,21 @@ export class AmazonSpApiService {
     }, async (orders) => {
       const context = await this.loadFbmPageContext(connection.id, orders);
       for (const order of orders) {
-        const dispatchMode = (order.orderItems ?? []).some((item) => {
-          const stockQty = availableStockBySku.get(this.normalizeSku(item.product?.sellerSku));
-          const requestedQty = Math.max(1, this.nonNegativeInt(item.quantityOrdered));
-          return stockQty === undefined || stockQty < requestedQty;
-        })
-          ? DISPATCH_CHINA_NO_STOCK
-          : DISPATCH_OVERSEAS;
         for (const item of order.orderItems ?? []) {
-          currentItemKeys.add(this.amazonOrderItemKey(order.orderId, item.orderItemId));
           counters.fetched += 1;
           const result = await this.upsertFbmOrderItem(
             connection,
             shop?.name ?? null,
             order,
             item,
-            dispatchMode,
+            undefined,
             context,
           );
           if (result) counters[result] += 1;
         }
       }
     });
-    this.addCounters(
-      counters,
-      await this.retryStoredFbmConflicts(
-        connection,
-        shop?.name ?? null,
-        availableStockBySku,
-        currentItemKeys,
-      ),
-    );
     return counters;
-  }
-
-  private async retryStoredFbmConflicts(
-    connection: AmazonSpApiConnection,
-    shopName: string | null,
-    availableStockBySku: Map<string, number>,
-    currentItemKeys: Set<string>,
-  ): Promise<SyncCounters> {
-    const counters = this.emptySyncCounters();
-    const observations = await this.prisma.amazonOrderSyncObservation.findMany({
-      where: { spApiConnectionId: connection.id, freezeReason: 'matching_conflict' },
-      orderBy: { updatedAt: 'asc' },
-      take: 200,
-      select: { orderId: true, orderItemId: true, rawPayload: true },
-    });
-    for (const observation of observations) {
-      if (currentItemKeys.has(this.amazonOrderItemKey(observation.orderId, observation.orderItemId))) continue;
-      const payload = this.readObservedAmazonOrder(observation.rawPayload);
-      if (!payload) continue;
-      const dispatchMode = (payload.order.orderItems ?? [payload.item]).some((item) => {
-        const stockQty = availableStockBySku.get(this.normalizeSku(item.product?.sellerSku));
-        const requestedQty = Math.max(1, this.nonNegativeInt(item.quantityOrdered));
-        return stockQty === undefined || stockQty < requestedQty;
-      })
-        ? DISPATCH_CHINA_NO_STOCK
-        : DISPATCH_OVERSEAS;
-      const result = await this.upsertFbmOrderItem(
-        connection,
-        shopName,
-        payload.order,
-        payload.item,
-        dispatchMode,
-      );
-      if (result) counters[result] += 1;
-    }
-    return counters;
-  }
-
-  private readObservedAmazonOrder(
-    rawPayload: Prisma.JsonValue | null,
-  ): { order: AmazonOrderPayload; item: AmazonOrderItemPayload } | null {
-    if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) return null;
-    const order = (rawPayload as Prisma.JsonObject).order;
-    const item = (rawPayload as Prisma.JsonObject).item;
-    if (!order || typeof order !== 'object' || Array.isArray(order)) return null;
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
-    if (!String((order as Prisma.JsonObject).orderId ?? '').trim()) return null;
-    if (!String((item as Prisma.JsonObject).orderItemId ?? '').trim()) return null;
-    return {
-      order: order as unknown as AmazonOrderPayload,
-      item: item as unknown as AmazonOrderItemPayload,
-    };
-  }
-
-  private amazonOrderItemKey(orderId: unknown, orderItemId: unknown): string {
-    return `${String(orderId ?? '').trim()}\u0000${String(orderItemId ?? '').trim()}`;
   }
 
   private async loadFbmPageContext(
@@ -1318,25 +1192,12 @@ export class AmazonSpApiService {
   ): Promise<FbmPageContext> {
     const orderIds = Array.from(new Set(orders.map((order) => String(order.orderId ?? '').trim()).filter(Boolean)));
     if (!orderIds.length) {
-      return { exclusions: [], candidatesByOrderId: new Map(), pickedRecordIds: new Set() };
+      return { candidatesByOrderId: new Map() };
     }
-    const [exclusions, candidates] = await Promise.all([
-      this.prisma.amazonOrderSyncExclusion.findMany({
-        where: {
-          isActive: true,
-          orderId: { in: orderIds },
-          OR: [{ spApiConnectionId: connectionId }, { spApiConnectionId: null }],
-        },
-        select: { spApiConnectionId: true, orderId: true, orderItemId: true },
-      }),
-      this.prisma.amazonOrderRecord.findMany({
-        where: {
-          orderId: { in: orderIds },
-          OR: [{ spApiConnectionId: connectionId }, { spApiConnectionId: null }],
-        },
-        orderBy: { id: 'asc' },
-      }),
-    ]);
+    const candidates = await this.prisma.amazonOrderRecord.findMany({
+      where: { orderId: { in: orderIds }, spApiConnectionId: connectionId, sourceKind: 'sp_api' },
+      orderBy: { id: 'asc' },
+    });
     const candidatesByOrderId = new Map<string, AmazonOrderRecord[]>();
     for (const candidate of candidates) {
       const orderId = String(candidate.orderId ?? '').trim();
@@ -1344,17 +1205,11 @@ export class AmazonSpApiService {
       rows.push(candidate);
       candidatesByOrderId.set(orderId, rows);
     }
-    const pickedRows = candidates.length
-      ? await this.prisma.overseasPickingBatchItem.findMany({
-          where: { source: 'amazon', sourceRecordId: { in: candidates.map((row) => row.id) } },
-          select: { sourceRecordId: true },
-        })
-      : [];
-    return {
-      exclusions,
-      candidatesByOrderId,
-      pickedRecordIds: new Set(pickedRows.map((row) => row.sourceRecordId.toString())),
-    };
+    return { candidatesByOrderId };
+  }
+
+  private amazonOrderItemKey(orderId: unknown, orderItemId: unknown): string {
+    return `${String(orderId ?? '').trim()}\u0000${String(orderItemId ?? '').trim()}`;
   }
 
   private async upsertFbmOrderItem(
@@ -1362,37 +1217,18 @@ export class AmazonSpApiService {
     shopName: string | null,
     order: AmazonOrderPayload,
     item: AmazonOrderItemPayload,
-    dispatchMode: string,
+    _legacyDispatchMode?: string,
     context?: FbmPageContext,
   ): Promise<'created' | 'updated' | 'unchanged' | 'frozen' | 'excluded' | 'conflicts' | null> {
     const address = order.recipient?.deliveryAddress;
     const fulfillment = order.fulfillment;
     const itemFulfillment = item.fulfillment;
-    const excluded = context
-      ? context.exclusions.some((row) =>
-          row.orderId === order.orderId
-          && (row.spApiConnectionId === null || row.spApiConnectionId === connection.id)
-          && (row.orderItemId === null || row.orderItemId === item.orderItemId))
-      : await this.prisma.amazonOrderSyncExclusion.findFirst({
-          where: {
-            isActive: true,
-            orderId: order.orderId,
-            AND: [
-              { OR: [{ spApiConnectionId: connection.id }, { spApiConnectionId: null }] },
-              { OR: [{ orderItemId: item.orderItemId }, { orderItemId: null }] },
-            ],
-          },
-          select: { id: true },
-        });
-    if (excluded) return 'excluded';
-    const candidates = context?.candidatesByOrderId.get(order.orderId)
+    const candidates = (context?.candidatesByOrderId.get(order.orderId)
       ?? await this.prisma.amazonOrderRecord.findMany({
-        where: {
-          orderId: order.orderId,
-          OR: [{ spApiConnectionId: connection.id }, { spApiConnectionId: null }],
-        },
+        where: { orderId: order.orderId, spApiConnectionId: connection.id, sourceKind: 'sp_api' },
         orderBy: { id: 'asc' },
-      });
+      })).filter((candidate) =>
+        candidate.spApiConnectionId === connection.id && candidate.sourceKind === 'sp_api');
     const match = this.resolveFbmOrderMatch(candidates, connection.id, item);
     const existing = match.existing;
     const orderStatus = String(fulfillment?.fulfillmentStatus ?? '').trim();
@@ -1403,11 +1239,7 @@ export class AmazonSpApiService {
       : itemFulfillment?.quantityUnfulfilled === undefined
         ? Math.max(0, quantityOrdered - quantityShipped)
         : this.nonNegativeInt(itemFulfillment.quantityUnfulfilled);
-    const freezeReason = match.conflictReason
-      ? 'matching_conflict'
-      : existing
-        ? await this.resolveExistingFbmFreezeReason(existing, context?.pickedRecordIds)
-        : null;
+    const freezeReason = match.conflictReason ? 'matching_conflict' : null;
     await this.recordFbmObservation(connection.id, order, item, {
       orderStatus: orderStatus || null,
       quantityOrdered,
@@ -1422,22 +1254,21 @@ export class AmazonSpApiService {
       return 'conflicts';
     }
     if (freezeReason) return 'frozen';
-    if (!existing && !['UNSHIPPED', 'PARTIALLY_SHIPPED'].includes(orderStatus)) return null;
     const manualOverrides = this.readManualOverrideFields(existing?.rawPayload ?? null);
     const mayUpdate = (field: string): boolean => !manualOverrides.has(field);
     const lastUpdatedAt = this.parseOptionalDate(order.lastUpdatedTime);
     const data = {
       spApiConnectionId: connection.id,
       orderId: order.orderId,
-      ...(mayUpdate('orderItemId') ? { orderItemId: item.orderItemId } : {}),
+      orderItemId: item.orderItemId,
       purchaseDateRaw: order.createdTime ?? null,
       buyerEmail: order.buyer?.buyerEmail ?? null,
       buyerName: order.buyer?.buyerName ?? null,
       ...(mayUpdate('buyerPhoneNumber') ? { buyerPhoneNumber: address?.phone ?? null } : {}),
-      ...(mayUpdate('sku') ? { sku: item.product?.sellerSku ?? null } : {}),
-      ...(mayUpdate('productName') ? { productName: item.product?.title ?? null } : {}),
+      sku: item.product?.sellerSku ?? null,
+      productName: item.product?.title ?? null,
       customizedUrl: item.product?.customization?.customizedUrl ?? null,
-      ...(mayUpdate('quantityPurchased') ? { quantityPurchased: quantityOrdered } : {}),
+      quantityPurchased: quantityOrdered,
       quantityShipped,
       quantityToShip,
       shipServiceLevel: fulfillment?.fulfillmentServiceLevel ?? null,
@@ -1457,13 +1288,10 @@ export class AmazonSpApiService {
         mallName: order.salesChannel?.marketplaceName ?? order.salesChannel?.marketplaceId ?? null,
       } : {}),
       ...(mayUpdate('shopName') ? { shopName } : {}),
-      ...(!existing?.dispatchMode && mayUpdate('dispatchMode') && mayUpdate('shippingOrigin') ? {
-        dispatchMode,
-        shippingOrigin: dispatchMode === DISPATCH_OVERSEAS ? '日本発' : '中国発',
-      } : {}),
       orderStatus: orderStatus || null,
       fulfillmentChannel: 'MFN',
       amazonLastUpdatedAt: lastUpdatedAt,
+      spApiDashboardVisibleAt: new Date(),
       sourceKind: 'sp_api',
       sourceFileName: 'Amazon SP-API Orders v2026-01-01',
       sourceFilePath: `sp-api:${connection.id.toString()}`,
@@ -1541,28 +1369,6 @@ export class AmazonSpApiService {
     return onlySiblingApiItems
       ? { existing: null, conflictReason: null }
       : { existing: null, conflictReason: '同一订单号已存在，但订单明细 ID 和 SKU 均不一致' };
-  }
-
-  private async resolveExistingFbmFreezeReason(
-    existing: AmazonOrderRecord,
-    pickedRecordIds?: Set<string>,
-  ): Promise<string | null> {
-    if (String(existing.shipmentNo ?? '').trim()) return 'tracking_registered';
-    if (existing.xiyaExportedAt) return 'xiya_exported';
-    if (this.readManualOverrideFields(existing.rawPayload).size > 0) return 'manual_edit';
-    if (String(existing.sourceFilePath ?? '').startsWith('manual:')) return 'manual_created';
-    if (pickedRecordIds) return pickedRecordIds.has(existing.id.toString()) ? 'picking_started' : null;
-    const pickingStore = (this.prisma as PrismaService & {
-      overseasPickingBatchItem?: PrismaService['overseasPickingBatchItem'];
-    }).overseasPickingBatchItem;
-    if (pickingStore) {
-      const pickingItem = await pickingStore.findFirst({
-        where: { source: 'amazon', sourceRecordId: existing.id },
-        select: { id: true },
-      });
-      if (pickingItem) return 'picking_started';
-    }
-    return null;
   }
 
   private changedAmazonFields(

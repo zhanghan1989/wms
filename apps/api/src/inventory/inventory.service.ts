@@ -2664,14 +2664,9 @@ async function getOverviewDashboardByProduct(
   const amazonShipmentOrderFilter: Prisma.AmazonOrderRecordWhereInput = {
     AND: [
       {
-        OR: [
-          { sourceKind: 'sp_api', amazonLastUpdatedAt: { gte: from90d } },
-          {
-            sourceKind: { not: 'sp_api' },
-            AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-            shipmentNoRegisteredAt: { gte: from90d },
-          },
-        ],
+        sourceKind: { not: 'sp_api' },
+        AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
+        shipmentNoRegisteredAt: { gte: from90d },
       },
       { OR: [{ fulfillmentChannel: null }, { fulfillmentChannel: { not: 'AFN' } }] },
     ],
@@ -2892,7 +2887,7 @@ async function getOverviewDashboardByProduct(
     return String((item as Prisma.JsonObject).orderItemId ?? '').trim();
   };
   const amazonRowsByItem = new Map<string, (typeof rawSystemAmazonRows)[number]>();
-  rawSystemAmazonRows.forEach((row) => {
+  rawSystemAmazonRows.filter((row) => row.sourceKind !== 'sp_api').forEach((row) => {
     const orderId = String(row.orderId ?? '').trim() || `row:${row.id.toString()}`;
     const itemId = getOriginalAmazonItemId(row.rawPayload)
       || String(row.orderItemId ?? '').trim()
@@ -3672,10 +3667,10 @@ async function getOverviewDashboardByProduct(
             periodEnd: null,
           },
       fbm: {
-        mode: 'sp_api_with_manual_fallback',
-        label: 'Amazon SP-API FBM订单 + 历史手动导入',
+        mode: 'manual_import',
+        label: 'Amazon手动导入订单',
         orderRows90d: amazonDemandRows.length,
-        apiRows90d: amazonDemandRows.filter(({ row }) => row.sourceKind === 'sp_api').length,
+        apiRows90d: 0,
         manualRows90d: amazonDemandRows.filter(({ row }) => row.sourceKind !== 'sp_api').length,
       },
       rakuten: {

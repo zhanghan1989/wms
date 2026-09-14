@@ -1,7 +1,37 @@
 import { buildAmazonStoreDashboard } from '../src/amazon-sp-api/amazon-store-dashboard';
+import { AmazonSpApiService } from '../src/amazon-sp-api/amazon-sp-api.service';
 
 describe('Amazon store dashboard analytics', () => {
   const now = new Date('2026-08-06T12:00:00.000Z');
+
+  it('loads FBM dashboard rows exclusively from SP-API for the selected connection', async () => {
+    const amazonOrderFindMany = jest.fn().mockResolvedValue([]);
+    const service = new AmazonSpApiService({
+      amazonSpApiConnection: { findMany: jest.fn().mockResolvedValue([{
+        id: 3n,
+        shopId: 7n,
+        shop: { id: 7n, name: 'Amazon JP', status: 1 },
+        marketplaceIds: ['A1VC38T7YXB528'],
+        syncFbaInventory: true,
+        lastSyncError: null,
+      }]) },
+      amazonFbaOrderItem: { findMany: jest.fn().mockResolvedValue([]) },
+      amazonOrderRecord: { findMany: amazonOrderFindMany },
+      amazonFbaInventoryItem: { findMany: jest.fn().mockResolvedValue([]) },
+      sku: { findMany: jest.fn().mockResolvedValue([]) },
+      amazonSpApiSyncRun: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as any, {} as any, {} as any);
+
+    await service.getStoreDashboard('3', '30');
+
+    expect(amazonOrderFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        spApiConnectionId: 3n,
+        sourceKind: 'sp_api',
+        spApiDashboardVisibleAt: { not: null },
+      },
+    }));
+  });
 
   it('combines FBA and FBM units while keeping revenue explicitly FBA-only', () => {
     const dashboard = buildAmazonStoreDashboard({

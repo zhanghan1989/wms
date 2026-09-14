@@ -63,6 +63,7 @@ describe('Amazon SP-API FBM order reconciliation', () => {
     orderStatus: null,
     fulfillmentChannel: null,
     amazonLastUpdatedAt: null,
+    spApiDashboardVisibleAt: null,
     sourceKind: 'file',
     ...overrides,
   });
@@ -128,7 +129,7 @@ describe('Amazon SP-API FBM order reconciliation', () => {
     });
   });
 
-  it('does not update an SP-API order at all after it has been manually edited', async () => {
+  it('refreshes an SP-API dashboard row independently of legacy manual overrides', async () => {
     const update = jest.fn().mockResolvedValue({});
     const observationUpsert = jest.fn().mockResolvedValue({});
     const existing = record({
@@ -169,18 +170,28 @@ describe('Amazon SP-API FBM order reconciliation', () => {
       'overseas',
     );
 
-    expect(result).toBe('frozen');
-    expect(update).not.toHaveBeenCalled();
+    expect(result).toBe('updated');
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        sku: 'AMAZON-SKU',
+        spApiDashboardVisibleAt: expect.any(Date),
+      }),
+    }));
     expect(observationUpsert).toHaveBeenCalledWith(expect.objectContaining({
-      update: expect.objectContaining({ freezeReason: 'manual_edit', orderStatus: 'UNSHIPPED' }),
+      update: expect.objectContaining({ freezeReason: null, orderStatus: 'UNSHIPPED' }),
     }));
   });
 
   it.each([
-    ['an order with a tracking number', record({ sourceKind: 'sp_api', shipmentNo: 'TRACK-1' })],
-    ['an order exported to Xiya', record({ sourceKind: 'sp_api', xiyaExportedAt: new Date('2026-08-07T00:00:00Z') })],
-    ['a manually created order', record({ sourceKind: 'file', sourceFilePath: 'manual:amazon-order' })],
-  ])('does not update %s', async (_label, existing) => {
+    ['an order with a tracking number', record({
+      spApiConnectionId: 3n, sourceKind: 'sp_api', shipmentNo: 'TRACK-1',
+    })],
+    ['an order exported to Xiya', record({
+      spApiConnectionId: 3n,
+      sourceKind: 'sp_api',
+      xiyaExportedAt: new Date('2026-08-07T00:00:00Z'),
+    })],
+  ])('refreshes %s as dashboard-only API data', async (_label, existing) => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
       amazonOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -211,18 +222,20 @@ describe('Amazon SP-API FBM order reconciliation', () => {
       'overseas',
     );
 
-    expect(result).toBe('frozen');
-    expect(update).not.toHaveBeenCalled();
+    expect(result).toBe('updated');
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ spApiDashboardVisibleAt: expect.any(Date) }),
+    }));
   });
 
-  it('claims an untouched CSV row when order item id matches exactly', async () => {
-    const update = jest.fn().mockResolvedValue({});
+  it('creates a separate API row when an imported row has the same item id', async () => {
+    const create = jest.fn().mockResolvedValue({});
     const prisma = {
       amazonOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue(null) },
       amazonOrderSyncObservation: { upsert: jest.fn().mockResolvedValue({}) },
       amazonOrderRecord: {
         findMany: jest.fn().mockResolvedValue([record({ sourceKind: 'file' })]),
-        update,
+        create,
       },
     };
     const testService = new AmazonSpApiService(
@@ -239,8 +252,8 @@ describe('Amazon SP-API FBM order reconciliation', () => {
       'overseas',
     );
 
-    expect(result).toBe('updated');
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(result).toBe('created');
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ spApiConnectionId: 3n, sourceKind: 'sp_api' }),
     }));
   });
@@ -315,7 +328,7 @@ describe('Amazon SP-API FBM order reconciliation', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('freezes an order that has entered an overseas picking batch', async () => {
+  it('refreshes a dashboard row even if the historical row entered a picking batch', async () => {
     const update = jest.fn().mockResolvedValue({});
     const prisma = {
       amazonOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -340,11 +353,11 @@ describe('Amazon SP-API FBM order reconciliation', () => {
       'overseas',
     );
 
-    expect(result).toBe('frozen');
-    expect(update).not.toHaveBeenCalled();
+    expect(result).toBe('updated');
+    expect(update).toHaveBeenCalled();
   });
 
-  it('does not create another line when the same order number was imported manually first', async () => {
+  it('creates an independent API line when the same order number was imported manually first', async () => {
     const create = jest.fn().mockResolvedValue({});
     const prisma = {
       amazonOrderSyncExclusion: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -370,40 +383,13 @@ describe('Amazon SP-API FBM order reconciliation', () => {
       'overseas',
     );
 
-    expect(result).toBe('conflicts');
-    expect(create).not.toHaveBeenCalled();
+    expect(result).toBe('created');
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        sourceKind: 'sp_api',
+        spApiDashboardVisibleAt: expect.any(Date),
+      }),
+    }));
   });
 
-  it('retries a stored matching conflict that was not returned in the current API window', async () => {
-    const prisma = {
-      amazonOrderSyncObservation: {
-        findMany: jest.fn().mockResolvedValue([
-          {
-            orderId: '503-1',
-            orderItemId: 'item-1',
-            rawPayload: {
-              order: { orderId: '503-1', fulfillment: { fulfillmentStatus: 'UNSHIPPED' } },
-              item: { orderItemId: 'item-1', quantityOrdered: 1, product: { sellerSku: 'SKU-1' } },
-            },
-          },
-        ]),
-      },
-    };
-    const testService = new AmazonSpApiService(
-      prisma as unknown as PrismaService,
-      {} as AmazonSpApiClient,
-      {} as AmazonSpApiCryptoService,
-    );
-    const upsert = jest.spyOn(testService as any, 'upsertFbmOrderItem').mockResolvedValue('updated');
-
-    const counters = await (testService as any).retryStoredFbmConflicts(
-      { id: 3n },
-      'Arcdiary',
-      new Map([['SKU-1', 10]]),
-      new Set(),
-    );
-
-    expect(counters.updated).toBe(1);
-    expect(upsert).toHaveBeenCalledTimes(1);
-  });
 });

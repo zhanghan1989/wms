@@ -229,19 +229,23 @@ describe('inventory dashboard no-sales age classification', () => {
       }),
     );
 
-    expect(dashboard.demand.systemOrderQty90d).toBe(15);
+    expect(dashboard.demand.systemOrderQty90d).toBe(10);
     expect(dashboard.demand.rakutenOrderedQty90d).toBe(7);
-    expect(dashboard.demand.amazonFbmOrderedQty90d).toBe(8);
+    expect(dashboard.demand.amazonFbmOrderedQty90d).toBe(3);
     expect(dashboard.demand.manualOrderedQty90d).toBe(0);
     expect(dashboard.demand.outboundProductCount90d).toBe(2);
     expect(dashboard.demand.unmatchedSystemOrderRowCount90d).toBe(0);
     expect(dashboard.demand.topSkus).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ productId: 'P1', systemOrderQty90d: 5 }),
-        expect.objectContaining({ productId: 'P2', systemOrderQty90d: 10 }),
+        expect.objectContaining({ productId: 'P2', systemOrderQty90d: 5 }),
       ]),
     );
-    expect(dashboard.dataSources.fbm).toEqual(expect.objectContaining({ apiRows90d: 1, manualRows90d: 1 }));
+    expect(dashboard.dataSources.fbm).toEqual(expect.objectContaining({
+      mode: 'manual_import',
+      apiRows90d: 0,
+      manualRows90d: 1,
+    }));
 
     const dashboardWithFba = (await service.getOverviewDashboard({
       includeFba: true,
@@ -287,40 +291,16 @@ describe('inventory dashboard no-sales age classification', () => {
     expect(dashboard30d.demand.avgDailyOutbound90d).toBeCloseTo(
       dashboard30d.demand.outboundQty90d / 30,
     );
-    expect(dashboard30d.obsolete.noSales90dSkus).not.toEqual(
+    expect(dashboard30d.obsolete.noSales90dSkus).toEqual(
       expect.arrayContaining([expect.objectContaining({ productId: 'P3' })]),
     );
-    expect(dashboard30d.production.recommendations).toEqual(
+    expect(dashboard30d.production.recommendations).not.toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          productId: 'P3',
-          fbmOrderQty90d: 20,
-          rakutenOrderQty90d: 0,
-          systemOrderQty90d: 20,
-          totalOrderQty90d: 20,
-          avgDailyOutbound90d: 20 / 90,
-          suggestedProductionQty: 10,
-        }),
+        expect.objectContaining({ productId: 'P2' }),
+        expect.objectContaining({ productId: 'P3' }),
       ]),
     );
-    expect(dashboard30d.production.recommendations).not.toEqual(
-      expect.arrayContaining([expect.objectContaining({ productId: 'P2' })]),
-    );
     expect(dashboard30d.production.minimumTotalOrderQty90dExclusive).toBe(10);
-    const production90P3 = dashboardWithFba.production.recommendations.find(
-      (item: { productId: string }) => item.productId === 'P3',
-    );
-    const production30P3 = dashboard30d.production.recommendations.find(
-      (item: { productId: string }) => item.productId === 'P3',
-    );
-    expect(production30P3).toEqual(
-      expect.objectContaining({
-        systemOrderQty90d: production90P3.systemOrderQty90d,
-        totalOrderQty90d: production90P3.totalOrderQty90d,
-        avgDailyOutbound90d: production90P3.avgDailyOutbound90d,
-        suggestedProductionQty: production90P3.suggestedProductionQty,
-      }),
-    );
     expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
         by: ['connectionId', 'sellerSku'],

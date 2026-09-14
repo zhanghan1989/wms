@@ -1200,6 +1200,7 @@ model AmazonOrderRecord {
   orderStatus            String?                @map("order_status") @db.VarChar(32)
   fulfillmentChannel     String?                @map("fulfillment_channel") @db.VarChar(16)
   amazonLastUpdatedAt    DateTime?              @map("amazon_last_updated_at")
+  spApiDashboardVisibleAt DateTime?             @map("sp_api_dashboard_visible_at")
   sourceKind             String                 @default("file") @map("source_kind") @db.VarChar(16)
   spApiConnection        AmazonSpApiConnection? @relation(fields: [spApiConnectionId], references: [id], onDelete: SetNull)
 
@@ -1211,6 +1212,7 @@ model AmazonOrderRecord {
   @@index([xiyaExportedAt])
   @@index([spApiConnectionId, amazonLastUpdatedAt], map: "idx_amz_orders_conn_updated")
   @@index([sourceKind, amazonLastUpdatedAt], map: "idx_amz_orders_source_updated")
+  @@index([spApiConnectionId, spApiDashboardVisibleAt], map: "idx_amz_orders_dashboard_visible")
   @@index([sourceKind, shipmentNoRegisteredAt], map: "idx_amz_orders_source_shipment")
   @@map("amazon_order_records")
 }

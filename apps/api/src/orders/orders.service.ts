@@ -33,6 +33,13 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const execFileAsync = promisify(execFile);
 
+// SP-API FBM rows are analytics-only because the Orders API does not provide the
+// recipient details required by the fulfilment workflow. Keep this boundary in
+// the order-processing service; the Amazon dashboard reads those rows directly.
+const PROCESSABLE_AMAZON_ORDER_WHERE = {
+  sourceKind: { not: 'sp_api' },
+} satisfies Prisma.AmazonOrderRecordWhereInput;
+
 const ORDER_CSV_COLUMNS = [
   { header: '注文ID', key: 'orderId' },
   { header: '商品明細ステータス', key: 'itemDetailStatus' },
@@ -1263,6 +1270,7 @@ export class OrdersService {
       amazonSourceIds.length
         ? this.prisma.amazonOrderRecord.findMany({
             where: {
+              ...PROCESSABLE_AMAZON_ORDER_WHERE,
               id: {
                 in: amazonSourceIds,
               },
@@ -2100,6 +2108,7 @@ export class OrdersService {
 
     const seedRows = await this.prisma.amazonOrderRecord.findMany({
       where: {
+        ...PROCESSABLE_AMAZON_ORDER_WHERE,
         id: {
           in: normalizedSeedIds,
         },
@@ -2118,6 +2127,7 @@ export class OrdersService {
 
     const scopedRows = await this.prisma.amazonOrderRecord.findMany({
       where: {
+        ...PROCESSABLE_AMAZON_ORDER_WHERE,
         orderId: {
           in: orderIds,
         },
@@ -2888,6 +2898,7 @@ export class OrdersService {
     const parsedOffset = Number(offsetParam);
     const offset = Number.isInteger(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
     const rows = await this.prisma.amazonOrderRecord.findMany({
+      where: PROCESSABLE_AMAZON_ORDER_WHERE,
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
       skip: offset,
@@ -2972,7 +2983,7 @@ export class OrdersService {
         : Promise.resolve([] as RakutenOrderRecord[]),
       amazonExactIds.length
         ? this.prisma.amazonOrderRecord.findMany({
-            where: { id: { in: amazonExactIds } },
+            where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, id: { in: amazonExactIds } },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
           })
         : Promise.resolve([] as AmazonOrderRecord[]),
@@ -3052,7 +3063,8 @@ export class OrdersService {
     }
 
     if (source === 'amazon') {
-      const row = await this.prisma.amazonOrderRecord.findUnique({ where: { id },
+      const row = await this.prisma.amazonOrderRecord.findFirst({
+        where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, id },
       });
       if (!row) {
         throw new NotFoundException(`亚马逊订单不存在: ${idRaw}`);
@@ -3103,10 +3115,14 @@ export class OrdersService {
         : `REGEXP_REPLACE(COALESCE(value_column_placeholder, ''), '[^0-9]', '')`;
     const rowsBySource = await Promise.all(
       configs.map(async (config) => {
+        const sourceFilter = config.tableName === 'amazon_order_records'
+          ? "AND source_kind <> 'sp_api'"
+          : '';
         const rows = await this.prisma.$queryRawUnsafe<Array<{ value: string | null }>>(
           `SELECT ${config.valueColumn} AS value
            FROM ${config.tableName}
            WHERE ${normalizedSql.replace('value_column_placeholder', config.valueColumn)} LIKE ?
+             ${sourceFilter}
              AND ${config.valueColumn} IS NOT NULL
              AND ${config.valueColumn} <> ''
            ORDER BY csv_imported_at DESC, id DESC
@@ -3144,7 +3160,7 @@ export class OrdersService {
         take: normalizedLimit,
       }),
       this.prisma.amazonOrderRecord.findMany({
-        where: { recipientName: { contains: keyword } },
+        where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, recipientName: { contains: keyword } },
         select: { recipientName: true },
         orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
         take: normalizedLimit,
@@ -3240,7 +3256,9 @@ export class OrdersService {
         : Promise.resolve([] as RakutenOrderRecord[]),
       names.length
         ? this.prisma.amazonOrderRecord.findMany({
-            where: { OR: names.map((name) => ({ recipientName: { contains: name } })),
+            where: {
+              ...PROCESSABLE_AMAZON_ORDER_WHERE,
+              OR: names.map((name) => ({ recipientName: { contains: name } })),
               },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
             take: limit,
@@ -3268,7 +3286,7 @@ export class OrdersService {
         : Promise.resolve([] as RakutenOrderRecord[]),
       amazonPhoneIds.length
         ? this.prisma.amazonOrderRecord.findMany({
-            where: { id: { in: amazonPhoneIds } },
+            where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, id: { in: amazonPhoneIds } },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
           })
         : Promise.resolve([] as AmazonOrderRecord[]),
@@ -3340,8 +3358,9 @@ export class OrdersService {
       matchMode === 'exact'
         ? `${normalizedPhoneSql} IN (${phoneDigits.map(() => '?').join(', ')})`
         : `${normalizedPhoneSql} LIKE ?`;
+    const sourceFilter = source === 'amazon' ? " AND source_kind <> 'sp_api'" : '';
     const rows = await this.prisma.$queryRawUnsafe<Array<{ id: bigint | number | string }>>(
-      `SELECT id FROM ${tableConfig.tableName} WHERE ${whereSql} ORDER BY csv_imported_at DESC, id DESC LIMIT ?`,
+      `SELECT id FROM ${tableConfig.tableName} WHERE ${whereSql}${sourceFilter} ORDER BY csv_imported_at DESC, id DESC LIMIT ?`,
       ...params,
     );
     return rows
@@ -3364,9 +3383,11 @@ export class OrdersService {
       manual: 'manual_order_records',
     }[source];
     const normalizedLimit = Math.max(1, Math.min(Number(limit) || 300, 1000));
+    const sourceFilter = source === 'amazon' ? " AND source_kind <> 'sp_api'" : '';
     const rows = await this.prisma.$queryRawUnsafe<Array<{ id: bigint | number | string }>>(
       `SELECT id FROM ${tableName}
        WHERE UPPER(REGEXP_REPLACE(COALESCE(order_id, ''), '[^0-9A-Za-z]', '')) = ?
+       ${sourceFilter}
        ORDER BY csv_imported_at DESC, id DESC
        LIMIT ?`,
       normalizedOrderId,
@@ -3673,7 +3694,8 @@ export class OrdersService {
 
   async updateAmazonOrder(idRaw: string, payload: UpdateAmazonOrderPayload): Promise<AmazonEnrichedOrderListItem> {
     const id = parseId(idRaw, 'id');
-    const current = await this.prisma.amazonOrderRecord.findUnique({ where: { id },
+    const current = await this.prisma.amazonOrderRecord.findFirst({
+      where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, id },
     });
     if (!current) {
       throw new NotFoundException(`亚马逊订单不存在: ${idRaw}`);
@@ -4444,6 +4466,7 @@ export class OrdersService {
           : this.prisma.amazonOrderRecord.findMany({
               where: includeAll
                 ? {
+                    ...PROCESSABLE_AMAZON_ORDER_WHERE,
                     OR: [
                       { dispatchMode: null },
                       { dispatchMode: '' },
@@ -4452,6 +4475,7 @@ export class OrdersService {
                   }
                 : {
                     AND: [
+                      PROCESSABLE_AMAZON_ORDER_WHERE,
                       { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
                       {
                         OR: [
@@ -4700,6 +4724,7 @@ export class OrdersService {
       source === 'amazon'
         ? await this.prisma.amazonOrderRecord.findFirst({
             where: {
+              ...PROCESSABLE_AMAZON_ORDER_WHERE,
               id,
               AND: [
                 { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
@@ -4750,6 +4775,7 @@ export class OrdersService {
       const scopedRows = orderId
         ? await this.prisma.amazonOrderRecord.findMany({
             where: {
+              ...PROCESSABLE_AMAZON_ORDER_WHERE,
               orderId,
               AND: [
                 { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
@@ -4841,6 +4867,7 @@ export class OrdersService {
           ? Promise.resolve([] as AmazonOrderRecord[])
           : this.prisma.amazonOrderRecord.findMany({
               where: {
+                ...PROCESSABLE_AMAZON_ORDER_WHERE,
                 ...this.buildChinaOrderShipmentNoFilter(scope),
               },
               orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
@@ -5120,12 +5147,13 @@ export class OrdersService {
     await this.assertOrderRecordsHaveNoShipmentNo('amazon', ids);
     await this.assertOrderRecordsNotInOverseasPickingBatch('amazon', ids);
     const selectedRows = await this.prisma.amazonOrderRecord.findMany({
-      where: { id: { in: ids } },
+      where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, id: { in: ids } },
     });
     const orderIds = Array.from(
       new Set(selectedRows.map((row) => String(row.orderId ?? '').trim()).filter(Boolean)));
     const allRows = orderIds.length
-      ? await this.prisma.amazonOrderRecord.findMany({ where: { orderId: { in: orderIds } },
+      ? await this.prisma.amazonOrderRecord.findMany({
+          where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, orderId: { in: orderIds } },
         })
       : [];
     const selectedIdSet = new Set(selectedRows.map((row) => row.id.toString()));
@@ -5170,7 +5198,8 @@ export class OrdersService {
           },
         });
       }
-      const result = await tx.amazonOrderRecord.deleteMany({ where: { id: { in: ids } },
+      const result = await tx.amazonOrderRecord.deleteMany({
+        where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, id: { in: ids } },
       });
       return { deletedCount: result.count };
     });
@@ -5243,6 +5272,7 @@ export class OrdersService {
 
     const rows = await this.prisma.amazonOrderRecord.findMany({
       where: {
+        ...PROCESSABLE_AMAZON_ORDER_WHERE,
         shipmentNo: { not: null },
         shipmentNoRegisteredAt: { not: null },
         ...(importedAtStart ? { csvImportedAt: { gte: importedAtStart } } : {}),
@@ -5751,7 +5781,7 @@ export class OrdersService {
         : Promise.resolve([] as RakutenOrderRecord[]),
       amazonIds.length
         ? this.prisma.amazonOrderRecord.findMany({
-            where: { id: { in: amazonIds } },
+            where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, id: { in: amazonIds } },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
           })
         : Promise.resolve([] as AmazonOrderRecord[]),
@@ -6482,7 +6512,7 @@ export class OrdersService {
         : Promise.resolve([] as RakutenOrderRecord[]),
       amazonIds.length
         ? this.prisma.amazonOrderRecord.findMany({
-            where: { id: { in: amazonIds } },
+            where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, id: { in: amazonIds } },
           })
         : Promise.resolve([] as AmazonOrderRecord[]),
       manualIds.length
@@ -8418,6 +8448,7 @@ export class OrdersService {
       }),
       this.prisma.amazonOrderRecord.findMany({
         where: {
+          ...PROCESSABLE_AMAZON_ORDER_WHERE,
           OR: [{ shipmentNo: null }, { shipmentNo: '' }],
         },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -8528,6 +8559,7 @@ export class OrdersService {
       amazonIds.length
         ? this.prisma.amazonOrderRecord.findMany({
             where: {
+              ...PROCESSABLE_AMAZON_ORDER_WHERE,
               id: { in: amazonIds },
               AND: [
                 { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
@@ -9410,6 +9442,7 @@ export class OrdersService {
         : source === 'amazon'
           ? await this.prisma.amazonOrderRecord.findMany({
               where: {
+                ...PROCESSABLE_AMAZON_ORDER_WHERE,
                 orderId: { in: orderIds },
                 OR: [{ shipmentNo: null }, { shipmentNo: '' }],
               },
@@ -9781,6 +9814,7 @@ export class OrdersService {
     }
     const relatedRows = await this.prisma.amazonOrderRecord.findMany({
       where: {
+        ...PROCESSABLE_AMAZON_ORDER_WHERE,
         orderId: { in: orderIds },
       },
     });
@@ -10283,6 +10317,7 @@ export class OrdersService {
     if (importOrderIds.length) {
       const existingRows = await this.prisma.amazonOrderRecord.findMany({
         where: {
+          ...PROCESSABLE_AMAZON_ORDER_WHERE,
           orderId: {
             in: importOrderIds,
           },
