@@ -82,7 +82,19 @@ describe('Amazon SP-API FBM order isolation', () => {
   });
 
   it('processes FBA inventory page-by-page with one existing-row lookup per page', async () => {
-    const findMany = jest.fn().mockResolvedValue([{ sellerSku: 'SKU-OLD' }]);
+    const findMany = jest.fn().mockResolvedValue([{
+      sellerSku: 'SKU-OLD',
+      fnSku: null,
+      asin: null,
+      productName: null,
+      fulfillableQty: 4,
+      inboundWorkingQty: 0,
+      inboundShippedQty: 0,
+      inboundReceivingQty: 0,
+      reservedQty: 0,
+      unfulfillableQty: 0,
+      totalQty: 5,
+    }]);
     const upsert = jest.fn().mockResolvedValue({});
     const deleteMany = jest.fn().mockResolvedValue({ count: 0 });
     const prisma = {
@@ -112,8 +124,8 @@ describe('Amazon SP-API FBM order isolation', () => {
     );
 
     expect(findMany).toHaveBeenCalledTimes(1);
-    expect(upsert).toHaveBeenCalledTimes(2);
-    expect(result).toMatchObject({ fetched: 2, created: 1, updated: 1 });
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ fetched: 2, created: 1, updated: 0, unchanged: 1 });
     expect(deleteMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ sellerSku: { notIn: ['SKU-OLD', 'SKU-NEW'] } }),
     }));

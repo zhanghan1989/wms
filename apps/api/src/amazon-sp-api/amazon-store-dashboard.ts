@@ -138,6 +138,7 @@ export function buildAmazonStoreDashboard(input: {
   fbaOrders: AmazonDashboardFbaOrderRow[];
   fbmOrders: AmazonDashboardFbmOrderRow[];
   inventory: AmazonDashboardInventoryRow[];
+  inventorySnapshotAt?: Date | null;
   skus: AmazonDashboardSkuRow[];
   trackingStartedAt?: Date;
   lastSales?: AmazonDashboardLastSaleRow[];
@@ -426,7 +427,9 @@ export function buildAmazonStoreDashboard(input: {
       noSales90dSkuCount: noSales90dInventoryRows.length,
       noSales90dQty: noSales90dInventoryRows.reduce((sum, row) => sum + row.availableQty, 0),
       noSales90dRows: noSales90dInventoryRows,
-      snapshotAt: inventory.reduce<Date | null>((latest, row) => !latest || row.snapshotAt > latest ? row.snapshotAt : latest, null)?.toISOString() ?? null,
+      snapshotAt: (input.inventorySnapshotAt
+        ?? inventory.reduce<Date | null>((latest, row) => !latest || row.snapshotAt > latest ? row.snapshotAt : latest, null))
+        ?.toISOString() ?? null,
     },
     factoryRecommendations: {
       periodDays: FACTORY_RECOMMENDATION_DAYS,

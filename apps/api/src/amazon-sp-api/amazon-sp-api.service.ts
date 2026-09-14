@@ -758,6 +758,7 @@ export class AmazonSpApiService {
         purchaseDateRaw: row.purchaseDate?.toISOString() ?? null,
       })),
       inventory,
+      inventorySnapshotAt: connection.lastInventorySyncedAt,
       trackingStartedAt,
       lastSales: [
         ...fbaLastSales.map((row) => ({ sellerSku: row.sellerSku, lastSaleAt: row._max.purchaseDate })),
@@ -1429,11 +1430,13 @@ export class AmazonSpApiService {
                 amazonOrderItemId: item.orderItemId,
               })),
             },
-            select: { amazonOrderId: true, amazonOrderItemId: true },
+            select: { amazonOrderId: true, amazonOrderItemId: true, lastUpdateDate: true },
           })
         : [];
-      const existingKeys = new Set(existingRows.map((row) =>
-        this.amazonOrderItemKey(row.amazonOrderId, row.amazonOrderItemId)));
+      const existingByKey = new Map(existingRows.map((row) => [
+        this.amazonOrderItemKey(row.amazonOrderId, row.amazonOrderItemId),
+        row,
+      ]));
       for (const { order, item } of pageItems) {
         counters.fetched += 1;
         const key = {
@@ -1441,7 +1444,13 @@ export class AmazonSpApiService {
           amazonOrderId: order.orderId,
           amazonOrderItemId: item.orderItemId,
         };
-        const exists = existingKeys.has(this.amazonOrderItemKey(order.orderId, item.orderItemId));
+        const existing = existingByKey.get(this.amazonOrderItemKey(order.orderId, item.orderItemId));
+        const lastUpdateDate = this.parseOptionalDate(order.lastUpdatedTime);
+        if (existing?.lastUpdateDate && lastUpdateDate
+          && existing.lastUpdateDate.getTime() >= lastUpdateDate.getTime()) {
+          counters.unchanged += 1;
+          continue;
+        }
         const proceeds = item.proceeds?.proceedsTotal;
         const itemSubtotal = item.proceeds?.breakdowns?.find((row) => row.type === 'ITEM')?.subtotal;
         const money = proceeds ?? itemSubtotal ?? item.product?.price?.unitPrice ?? item.product?.price?.listingPrice;
@@ -1463,7 +1472,7 @@ export class AmazonSpApiService {
             currency: money?.currencyCode ?? null,
             itemAmount: new Prisma.Decimal(itemAmount),
             purchaseDate: this.parseOptionalDate(order.createdTime),
-            lastUpdateDate: this.parseOptionalDate(order.lastUpdatedTime),
+            lastUpdateDate,
             dashboardVisibleAt: new Date(),
             rawPayload: JSON.parse(JSON.stringify({ order, item })) as Prisma.InputJsonValue,
           },
@@ -1478,11 +1487,11 @@ export class AmazonSpApiService {
             currency: money?.currencyCode ?? null,
             itemAmount: new Prisma.Decimal(itemAmount),
             purchaseDate: this.parseOptionalDate(order.createdTime),
-            lastUpdateDate: this.parseOptionalDate(order.lastUpdatedTime),
+            lastUpdateDate,
             rawPayload: JSON.parse(JSON.stringify({ order, item })) as Prisma.InputJsonValue,
           },
         });
-        counters[exists ? 'updated' : 'created'] += 1;
+        counters[existing ? 'updated' : 'created'] += 1;
       }
       await onProgress?.(counters);
     });
@@ -1512,10 +1521,22 @@ export class AmazonSpApiService {
           counters.fetched += pageRows.length;
           const existingRows = await this.prisma.amazonFbaInventoryItem.findMany({
             where: { connectionId: connection.id, marketplaceId, sellerSku: { in: sellerSkus } },
-            select: { sellerSku: true },
+            select: {
+              sellerSku: true,
+              fnSku: true,
+              asin: true,
+              productName: true,
+              fulfillableQty: true,
+              inboundWorkingQty: true,
+              inboundShippedQty: true,
+              inboundReceivingQty: true,
+              reservedQty: true,
+              unfulfillableQty: true,
+              totalQty: true,
+            },
           });
-          const existingSkus = new Set(existingRows.map((row) => row.sellerSku));
-          const operations = pageRows.map(({ row, sellerSku }) => {
+          const existingBySku = new Map(existingRows.map((row) => [row.sellerSku, row]));
+          const operations = pageRows.flatMap(({ row, sellerSku }) => {
             const key = { connectionId: connection.id, marketplaceId, sellerSku };
             const inventory = row.inventoryDetails;
             const values = {
@@ -1532,14 +1553,30 @@ export class AmazonSpApiService {
               snapshotAt,
               rawPayload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue,
             };
-            counters[existingSkus.has(sellerSku) ? 'updated' : 'created'] += 1;
-            return this.prisma.amazonFbaInventoryItem.upsert({
+            const existing = existingBySku.get(sellerSku);
+            const unchanged = existing
+              && existing.fnSku === values.fnSku
+              && existing.asin === values.asin
+              && existing.productName === values.productName
+              && existing.fulfillableQty === values.fulfillableQty
+              && existing.inboundWorkingQty === values.inboundWorkingQty
+              && existing.inboundShippedQty === values.inboundShippedQty
+              && existing.inboundReceivingQty === values.inboundReceivingQty
+              && existing.reservedQty === values.reservedQty
+              && existing.unfulfillableQty === values.unfulfillableQty
+              && existing.totalQty === values.totalQty;
+            if (unchanged) {
+              counters.unchanged += 1;
+              return [];
+            }
+            counters[existing ? 'updated' : 'created'] += 1;
+            return [this.prisma.amazonFbaInventoryItem.upsert({
               where: { connectionId_marketplaceId_sellerSku: key },
               create: { ...key, ...values },
               update: values,
-            });
+            })];
           });
-          await this.prisma.$transaction(operations);
+          if (operations.length) await this.prisma.$transaction(operations);
           await onProgress?.(counters);
         },
       );
