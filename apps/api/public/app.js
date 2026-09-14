@@ -13714,7 +13714,7 @@ async function restoreAmazonDeletedOrder(id) {
   });
 }
 
-function startAmazonPullCooldown(button, seconds = 60) {
+function startAmazonPullCooldown(button, seconds = 60, idleText = "从Amazon拉取最新数据") {
   if (!button) return;
   let remaining = seconds;
   button.disabled = true;
@@ -13724,7 +13724,7 @@ function startAmazonPullCooldown(button, seconds = 60) {
     if (remaining <= 0) {
       window.clearInterval(timer);
       button.disabled = false;
-      button.textContent = "订单拉取";
+      button.textContent = idleText;
       return;
     }
     button.textContent = `请等待 ${remaining} 秒`;
@@ -14882,8 +14882,28 @@ function bindForms() {
   $("refreshAmazonStoreDashboardBtn")?.addEventListener("click", (event) => {
     refreshAmazonStoreDashboard(event.currentTarget);
   });
-  $("reloadAmazonStoreDashboardBtn")?.addEventListener("click", (event) => {
-    refreshAmazonStoreDashboard(event.currentTarget);
+  $("reloadAmazonStoreDashboardBtn")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const connectionId = String($("amazonStoreDashboardShop")?.value || "").trim();
+    if (!connectionId) {
+      showToast("请先选择Amazon店铺", true);
+      return;
+    }
+    try {
+      const result = await withBusyButton(button, "同步中...", () =>
+        request(`/amazon-sp-api/connections/${encodeURIComponent(connectionId)}/sync`, {
+          method: "POST",
+          body: JSON.stringify({ syncType: "full" }),
+        }),
+      );
+      await loadAmazonStoreDashboard({ connectionId });
+      startAmazonPullCooldown(button);
+      const errors = Array.isArray(result?.errors) ? result.errors.filter(Boolean) : [];
+      const message = `Amazon数据同步完成：读取 ${formatOverviewNumber(result?.fetchedCount)} 条，新增 ${formatOverviewNumber(result?.createdCount)} 条，更新 ${formatOverviewNumber(result?.updatedCount)} 条${errors.length ? `；${errors.join("；")}` : ""}`;
+      showToast(message, errors.length > 0 || result?.status === "failed");
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
   $("downloadAmazonStoreFactoryExcelBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
@@ -17167,25 +17187,6 @@ function bindForms() {
 
   $("openAmazonOrderImportModal").addEventListener("click", () => {
     openModal("amazonOrderImportModal");
-  });
-
-  $("pullAmazonOrdersBtn")?.addEventListener("click", async (event) => {
-    try {
-      const result = await withBusyButton(event.currentTarget, "拉取中…", () =>
-        request("/amazon-sp-api/sync-all", { method: "POST", body: "{}" }),
-      );
-      startAmazonPullCooldown(event.currentTarget);
-      await loadAmazonOrders();
-      const failedCount = Number(result?.failedCount || 0);
-      const partialCount = Number(result?.partialCount || 0);
-      const skippedCount = Number(result?.skippedCount || 0);
-      const frozenCount = Number(result?.frozenCount || 0);
-      const excludedCount = Number(result?.excludedCount || 0);
-      const message = `订单拉取完成：${formatOverviewNumber(result?.completedCount)} 家店铺，读取 ${formatOverviewNumber(result?.fetchedCount)} 条，人工冻结 ${formatOverviewNumber(frozenCount)} 条，删除排除 ${formatOverviewNumber(excludedCount)} 条${partialCount ? `，部分成功 ${formatOverviewNumber(partialCount)} 家` : ""}${failedCount ? `，失败 ${formatOverviewNumber(failedCount)} 家` : ""}${skippedCount ? `，任务跳过 ${formatOverviewNumber(skippedCount)} 家` : ""}`;
-      showToast(message, failedCount > 0 || partialCount > 0);
-    } catch (error) {
-      showToast(error.message, true);
-    }
   });
 
   $("openAmazonDeletedOrdersBtn")?.addEventListener("click", async () => {
