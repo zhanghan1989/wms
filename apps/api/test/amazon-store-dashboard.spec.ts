@@ -210,4 +210,33 @@ describe('Amazon store dashboard analytics', () => {
       }),
     ]);
   });
+
+  it('flags FBA sellable inventory with no Amazon sales in the last 90 days', () => {
+    const dashboard = buildAmazonStoreDashboard({
+      now,
+      days: 30,
+      fbaOrders: [],
+      fbmOrders: [],
+      inventory: [{
+        sellerSku: 'STALE-SKU', asin: 'STALE-ASIN', productName: 'Slow item', fulfillableQty: 12,
+        inboundWorkingQty: 1, inboundShippedQty: 0, inboundReceivingQty: 0,
+        reservedQty: 2, unfulfillableQty: 3, totalQty: 18, snapshotAt: now,
+      }],
+      skus: [{
+        sku: 'STALE-SKU', fbmSku: null, rbSku: null, asin: 'STALE-ASIN', fnsku: null,
+        productId: 'P-STALE', productName: 'Slow item',
+      }],
+    }) as any;
+
+    expect(dashboard.inventory).toMatchObject({
+      noSales90dSkuCount: 1,
+      noSales90dQty: 12,
+      noSales90dRows: [expect.objectContaining({
+        sellerSku: 'STALE-SKU',
+        productId: 'P-STALE',
+        totalUnitCount90d: 0,
+        availableQty: 12,
+      })],
+    });
+  });
 });

@@ -2512,14 +2512,27 @@ function renderAmazonStoreDashboard(payload) {
     },
     { label: "不可售", value: inventory.available ? formatMetricNumber(inventory.unfulfillableQty) : "-",
     },
+    { label: "90天无销量SKU", value: inventory.available ? formatMetricNumber(inventory.noSales90dSkuCount) : "-",
+    },
+    { label: "疑似超期可售库存", value: inventory.available ? `${formatMetricNumber(inventory.noSales90dQty)} 件` : "-",
+    },
   ]);
-  const latestRun = payload.latestSyncRun;
-  $("amazonStoreDashboardSyncStatus").textContent = latestRun
-    ? `最近任务：${displayText(latestRun.status)} / 读取 ${formatMetricNumber(latestRun.fetchedCount)} 条`
-    : "尚无同步任务";
   $("amazonStoreDashboardStatusMeta").textContent = inventory.available
-    ? `库存快照：${inventory.snapshotAt ? formatDate(inventory.snapshotAt) : "-"}`
+    ? `库存快照：${inventory.snapshotAt ? formatDate(inventory.snapshotAt) : "-"}；“疑似超期”按最近90天无销量判断，不代表Amazon官方库龄。`
     : "当前销售分析来自 SP-API 订单数据；库存字段不会以 0 冒充真实库存。补充 Amazon Fulfillment 或 Product Listing 权限并重新授权后可自动显示。";
+  renderAmazonDashboardTable(
+    "amazonStoreInventoryAlertBody",
+    Array.isArray(inventory.noSales90dRows) ? inventory.noSales90dRows : [],
+    [
+      (row) => `<strong>${escapeHtml(displayText(row.sellerSku))}</strong><br><span class="muted">${escapeHtml(displayText(row.asin))}</span>`,
+      (row) => `${row.productId ? renderMasterProductDetailLink(row.productId) : '<span class="amazon-dashboard-chip warning">未匹配</span>'}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
+      (row) => escapeHtml(formatMetricNumber(row.totalUnitCount90d)),
+      (row) => `<strong>${escapeHtml(formatMetricNumber(row.availableQty))}</strong>`,
+      (row) => escapeHtml(formatMetricNumber(row.inboundQty)),
+      () => '<span class="amazon-dashboard-chip warning">90天无销量</span>',
+    ],
+    inventory.available ? "当前没有FBA可售库存连续90天无销量的SKU" : "尚无该店铺的FBA库存数据",
+  );
   hydrateResponsiveTableLabels($("amazonDashboard"));
 }
 

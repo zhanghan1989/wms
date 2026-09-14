@@ -244,6 +244,21 @@ export function buildAmazonStoreDashboard(input: {
         || right.totalUnitCount90d - left.totalUnitCount90d
         || left.sellerSku.localeCompare(right.sellerSku, 'en', { numeric: true }))
     : [];
+  const noSales90dInventoryRows = Array.from(factoryMetrics.values())
+    .map((row) => ({
+      sellerSku: row.sellerSku,
+      asin: row.asin,
+      productId: row.productId,
+      productName: row.productName,
+      fbaUnitCount90d: row.fbaUnitCount90d,
+      fbmUnitCount90d: row.fbmUnitCount90d,
+      totalUnitCount90d: row.fbaUnitCount90d + row.fbmUnitCount90d,
+      availableQty: row.availableQty,
+      inboundQty: row.inboundQty,
+    }))
+    .filter((row) => row.availableQty > 0 && row.totalUnitCount90d === 0)
+    .sort((left, right) => right.availableQty - left.availableQty
+      || left.sellerSku.localeCompare(right.sellerSku, 'en', { numeric: true }));
 
   type ProductMetric = {
     sellerSku: string;
@@ -387,6 +402,9 @@ export function buildAmazonStoreDashboard(input: {
         + nonNegative(row.inboundReceivingQty), 0),
       reservedQty: inventory.reduce((sum, row) => sum + nonNegative(row.reservedQty), 0),
       unfulfillableQty: inventory.reduce((sum, row) => sum + nonNegative(row.unfulfillableQty), 0),
+      noSales90dSkuCount: noSales90dInventoryRows.length,
+      noSales90dQty: noSales90dInventoryRows.reduce((sum, row) => sum + row.availableQty, 0),
+      noSales90dRows: noSales90dInventoryRows,
       snapshotAt: inventory.reduce<Date | null>((latest, row) => !latest || row.snapshotAt > latest ? row.snapshotAt : latest, null)?.toISOString() ?? null,
     },
     factoryRecommendations: {
