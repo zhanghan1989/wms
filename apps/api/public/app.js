@@ -241,6 +241,7 @@ const state = {
   masterProductExportFilterOptionsRequest: null,
   amazonStoreDashboard: null,
   amazonStoreDashboardLoading: false,
+  amazonStoreDashboardRequestId: 0,
   rakutenStoreDashboard: null,
   rakutenStoreDashboardLoading: false,
   rakutenComboProducts: [],
@@ -2537,20 +2538,32 @@ function renderAmazonStoreDashboard(payload) {
 }
 
 async function loadAmazonStoreDashboard(options = {}) {
-  if (!state.token || state.amazonStoreDashboardLoading) return;
+  if (!state.token) return;
+  const requestId = Number(state.amazonStoreDashboardRequestId || 0) + 1;
+  state.amazonStoreDashboardRequestId = requestId;
   state.amazonStoreDashboardLoading = true;
   const shopSelect = $("amazonStoreDashboardShop");
   const daysSelect = $("amazonStoreDashboardDays");
   const connectionId = String(options.connectionId || shopSelect?.value || state.amazonStoreDashboard?.selectedShop?.connectionId || "",
   ).trim();
   const days = String(options.days || daysSelect?.value || state.amazonStoreDashboard?.days || "30").trim();
+  if (options.clearExisting) {
+    state.amazonStoreDashboard = null;
+    $("amazonStoreDashboardResult")?.classList.add("hidden");
+    $("amazonStoreDashboardIssue")?.classList.add("hidden");
+    $("amazonStoreDashboardEmpty")?.classList.add("hidden");
+    $("amazonStoreDashboardMeta").textContent = "正在读取所选店铺数据…";
+  }
   try {
     const query = new URLSearchParams({ days });
     if (connectionId) query.set("connectionId", connectionId);
     const payload = await request(`/amazon-sp-api/store-dashboard?${query.toString()}`);
+    if (requestId !== state.amazonStoreDashboardRequestId) return;
     renderAmazonStoreDashboard(payload);
   } finally {
-    state.amazonStoreDashboardLoading = false;
+    if (requestId === state.amazonStoreDashboardRequestId) {
+      state.amazonStoreDashboardLoading = false;
+    }
   }
 }
 
@@ -14616,6 +14629,7 @@ async function reloadAll() {
   if (!state.token) {
     state.amazonStoreDashboard = null;
     state.amazonStoreDashboardLoading = false;
+    state.amazonStoreDashboardRequestId += 1;
     state.rakutenStoreDashboard = null;
     state.rakutenStoreDashboardLoading = false;
     clearStats();
@@ -14909,7 +14923,9 @@ function bindForms() {
           body: JSON.stringify({ syncType: "full" }),
         }),
       );
-      await loadAmazonStoreDashboard({ connectionId });
+      if (String($("amazonStoreDashboardShop")?.value || "") === connectionId) {
+        await loadAmazonStoreDashboard({ connectionId });
+      }
       startAmazonPullCooldown(button);
       const errors = Array.isArray(result?.errors) ? result.errors.filter(Boolean) : [];
       const message = `Amazon数据同步完成：读取 ${formatOverviewNumber(result?.fetchedCount)} 条，新增 ${formatOverviewNumber(result?.createdCount)} 条，更新 ${formatOverviewNumber(result?.updatedCount)} 条${errors.length ? `；${errors.join("；")}` : ""}`;
@@ -14928,7 +14944,7 @@ function bindForms() {
   });
   $("amazonStoreDashboardShop")?.addEventListener("change", async (event) => {
     try {
-      await loadAmazonStoreDashboard({ connectionId: event.currentTarget.value,
+      await loadAmazonStoreDashboard({ connectionId: event.currentTarget.value, clearExisting: true,
       });
     } catch (error) {
       showToast(error.message, true);
@@ -14936,7 +14952,7 @@ function bindForms() {
   });
   $("amazonStoreDashboardDays")?.addEventListener("change", async (event) => {
     try {
-      await loadAmazonStoreDashboard({ days: event.currentTarget.value });
+      await loadAmazonStoreDashboard({ days: event.currentTarget.value, clearExisting: true });
     } catch (error) {
       showToast(error.message, true);
     }
