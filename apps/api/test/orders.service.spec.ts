@@ -327,6 +327,50 @@ describe('OrdersService', () => {
     });
   });
 
+  it("changes the order number for selected rows that share one Rakuten order number", async () => {
+    const rows = [
+      { id: 1n, orderId: "ORDER-OLD", shipmentNo: null, rawPayload: { 注文番号: "ORDER-OLD" } },
+      { id: 2n, orderId: "ORDER-OLD", shipmentNo: null, rawPayload: { 注文番号: "ORDER-OLD" } },
+    ];
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValueOnce(rows).mockResolvedValueOnce(rows),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn(async (callback) => callback({ rakutenOrderRecord: { update } })),
+    };
+    const service = new OrdersService(prisma as any);
+
+    await expect(
+      service.changeRakutenOrderIdBatch({ ids: [1, 2], newOrderId: "ORDER-NEW" }, "operator"),
+    ).resolves.toEqual({ updatedCount: 2, previousOrderId: "ORDER-OLD", newOrderId: "ORDER-NEW" });
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 1n },
+        data: expect.objectContaining({ orderId: "ORDER-NEW", rmsManualOverrideBy: "operator" }),
+      }),
+    );
+  });
+
+  it("rejects a batch order-number change when selected Rakuten rows have different order numbers", async () => {
+    const prisma = {
+      rakutenOrderRecord: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 1n, orderId: "ORDER-1" },
+          { id: 2n, orderId: "ORDER-2" },
+        ]),
+      },
+    };
+    const service = new OrdersService(prisma as any);
+
+    await expect(
+      service.changeRakutenOrderIdBatch({ ids: [1, 2], newOrderId: "ORDER-NEW" }, "operator"),
+    ).rejects.toThrow("请选择订单号相同的乐天订单");
+  });
+
   it('includes processed overseas orders in an all-order download query', async () => {
     const processedOrder = {
       id: 1n,

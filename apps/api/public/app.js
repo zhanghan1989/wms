@@ -13076,6 +13076,13 @@ async function deleteRakutenOrders(ids) {
   });
 }
 
+async function changeRakutenOrderIds(ids, newOrderId) {
+  return request("/orders/rakuten/change-order-id-batch", {
+    method: "POST",
+    body: JSON.stringify({ ids, newOrderId }),
+  });
+}
+
 function focusOverseasYamatoScanInput() {
   const input = $("overseasYamatoScanInput");
   if (!input) return;
@@ -14154,6 +14161,11 @@ function updateRakutenBatchDeleteButtonState() {
   const count = state.selectedRakutenOrderIds.size;
   button.disabled = count <= 0;
   button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
+  const changeButton = $("rakutenBatchChangeOrderIdBtn");
+  if (changeButton) {
+    changeButton.disabled = count <= 0;
+    changeButton.textContent = count > 0 ? `批量修改订单号（${count}）` : "批量修改订单号";
+  }
 }
 
 function syncSelectedOverseasOrderKeys() {
@@ -15022,6 +15034,48 @@ function bindForms() {
         await loadOrders();
         await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
         showToast(`已删除 ${Number(result?.deletedCount || 0)} 条乐天订单记录`);
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenBatchChangeOrderIdBtn")?.addEventListener("click", () => {
+    try {
+      const selectedRows = state.orders.filter((item) => state.selectedRakutenOrderIds.has(String(item.id)));
+      if (!selectedRows.length) throw new Error("请先选择要修改订单号的乐天订单");
+      const currentOrderIds = new Set(selectedRows.map((item) => String(item.orderId || "").trim()));
+      if (currentOrderIds.size !== 1 || currentOrderIds.has("")) throw new Error("请选择订单号相同的乐天订单");
+      const currentOrderId = Array.from(currentOrderIds)[0];
+      $("rakutenBatchCurrentOrderId").value = currentOrderId;
+      $("rakutenBatchNewOrderId").value = "";
+      $("rakutenBatchChangeOrderIdSummary").textContent = `将修改所选 ${selectedRows.length} 条订单明细。`;
+      openModal("rakutenBatchChangeOrderIdModal");
+      requestAnimationFrame(() => $("rakutenBatchNewOrderId")?.focus());
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
+  $("rakutenBatchChangeOrderIdForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = getSubmitButton(form, event);
+    try {
+      await withBusyButton(submitButton, "修改中...", async () => {
+        const ids = Array.from(state.selectedRakutenOrderIds)
+          .map((id) => Number(id))
+          .filter((id) => Number.isInteger(id) && id > 0);
+        const currentOrderId = $("rakutenBatchCurrentOrderId").value.trim();
+        const newOrderId = $("rakutenBatchNewOrderId").value.trim();
+        if (!newOrderId) throw new Error("请输入新订单号");
+        if (newOrderId === currentOrderId) throw new Error("新订单号不能与当前订单号相同");
+        const result = await changeRakutenOrderIds(ids, newOrderId);
+        state.selectedRakutenOrderIds = new Set();
+        await loadOrders();
+        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
+        closeModal("rakutenBatchChangeOrderIdModal");
+        showToast(`已将 ${Number(result?.updatedCount || 0)} 条订单明细修改为 ${newOrderId}`);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -17097,6 +17151,14 @@ function bindForms() {
 
   $("cancelRakutenOrderImportModal").addEventListener("click", () => {
     closeModal("rakutenOrderImportModal");
+  });
+
+  $("closeRakutenBatchChangeOrderIdModal")?.addEventListener("click", () => {
+    closeModal("rakutenBatchChangeOrderIdModal");
+  });
+
+  $("cancelRakutenBatchChangeOrderIdModal")?.addEventListener("click", () => {
+    closeModal("rakutenBatchChangeOrderIdModal");
   });
 
   $("backToOrderProcessingFromRakutenBtn").addEventListener("click", () => {

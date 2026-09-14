@@ -5530,6 +5530,66 @@ export class OrdersService {
   });
   }
 
+  async changeRakutenOrderIdBatch(
+    payload: { ids?: Array<string | number>; newOrderId?: string | null },
+    operatorUsername = 'unknown',
+  ): Promise<{ updatedCount: number; previousOrderId: string; newOrderId: string }> {
+    const rawIds = Array.isArray(payload?.ids) ? payload.ids : [];
+    const ids = Array.from(
+      new Set(
+        rawIds.map((value, index) => parseId(String(value ?? '').trim(), `ids[${index}]`)),
+      ),
+    );
+    if (!ids.length) throw new BadRequestException('请至少选择一条乐天订单记录');
+
+    const newOrderId = this.normalizeEditableText(payload?.newOrderId, '新订单号', 64);
+    if (!newOrderId) throw new BadRequestException('请输入新订单号');
+
+    const rows = await this.prisma.rakutenOrderRecord.findMany({ where: { id: { in: ids } } });
+    if (rows.length !== ids.length) throw new NotFoundException('部分乐天订单记录不存在，请刷新列表后重试');
+    const previousOrderIds = new Set(rows.map((row) => String(row.orderId ?? '').trim()));
+    if (previousOrderIds.size !== 1 || previousOrderIds.has('')) {
+      throw new BadRequestException('请选择订单号相同的乐天订单');
+    }
+    const previousOrderId = Array.from(previousOrderIds)[0];
+    if (newOrderId === previousOrderId) throw new BadRequestException('新订单号不能与当前订单号相同');
+
+    const rowWithShipment = rows.find((row) => String(row.shipmentNo ?? '').trim());
+    if (rowWithShipment) {
+      throw new ConflictException(
+        `订单 ${String(rowWithShipment.orderId ?? rowWithShipment.id.toString()).trim()} 已有运单号，不能修改订单号`,
+      );
+    }
+    await this.assertOrderRecordsNotInOverseasPickingBatch('rakuten', ids);
+    const conflicting = await this.prisma.rakutenOrderRecord.findFirst({
+      where: { orderId: newOrderId, id: { notIn: ids } },
+      select: { id: true },
+    });
+    if (conflicting) throw new ConflictException(`乐天订单 ${newOrderId} 已存在，不能使用相同订单号`);
+
+    const manualOverrideAt = new Date();
+    const operator = this.normalizeRakutenManualOperator(operatorUsername);
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        await tx.rakutenOrderRecord.update({
+          where: { id: row.id },
+          data: {
+            orderId: newOrderId,
+            rmsManualOverrideAt: manualOverrideAt,
+            rmsManualOverrideBy: operator,
+            rawPayload: this.mergeRawPayload(row.rawPayload, {
+              _wmsManualOverrideFields: 'orderId',
+              _wmsManualOverrideUpdatedAt: manualOverrideAt.toISOString(),
+              注文番号: newOrderId,
+              注文ID: newOrderId,
+            }),
+          },
+        });
+      }
+    });
+    return { updatedCount: rows.length, previousOrderId, newOrderId };
+  }
+
   async buildOverseasPickingBatchYamatoImport(batchIdRaw: string): Promise<YamatoImportFileResult> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const batch = await this.prisma.overseasPickingBatch.findUnique({

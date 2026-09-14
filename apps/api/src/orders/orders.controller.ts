@@ -634,6 +634,15 @@ export class OrdersController {
     return this.ordersService.deleteRakutenBatch(payload, user.id);
   }
 
+  @Post('rakuten/change-order-id-batch')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async changeRakutenOrderIdBatch(
+    @Body() payload: { ids?: Array<string | number>; newOrderId?: string | null },
+    @CurrentUser() user: AuthUser,
+  ): Promise<{ updatedCount: number; previousOrderId: string; newOrderId: string }> {
+    return this.ordersService.changeRakutenOrderIdBatch(payload, user.username);
+  }
+
   @Post('rakuten/import-csv')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @UseInterceptors(FileInterceptor('file'))

@@ -1393,6 +1393,7 @@
               <div class="action-row">
                 <button id="openRakutenOrderImportModal">订单导入</button>
                 <button id="rakutenBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
+                <button id="rakutenBatchChangeOrderIdBtn" type="button" disabled>批量修改订单号</button>
                 <button id="openRakutenApiImportModal" type="button">API导入</button>
                 <button id="openRakutenManualShippingModal" type="button">单号回传</button>
                 <button id="openRakutenManualMailModal" type="button">邮件发送</button>
@@ -2343,6 +2344,26 @@
         <div class="actions order-import-actions">
           <button type="submit" id="uploadRakutenOrdersBtn">上传并导入</button>
           <button type="button" class="ghost" id="cancelRakutenOrderImportModal">取消</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="rakutenBatchChangeOrderIdModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>批量修改订单号</h3>
+        <button id="closeRakutenBatchChangeOrderIdModal" type="button" class="ghost">关闭</button>
+      </div>
+      <form id="rakutenBatchChangeOrderIdForm" class="form-grid">
+        <div class="modal-body">
+          <p id="rakutenBatchChangeOrderIdSummary" class="muted"></p>
+          <label>当前订单号<input id="rakutenBatchCurrentOrderId" type="text" readonly /></label>
+          <label>新订单号<input id="rakutenBatchNewOrderId" type="text" maxlength="64" autocomplete="off" required /></label>
+        </div>
+        <div class="modal-actions">
+          <button id="cancelRakutenBatchChangeOrderIdModal" type="button" class="ghost">取消</button>
+          <button type="submit">确认修改</button>
         </div>
       </form>
     </div>
