@@ -253,6 +253,7 @@ const state = {
   rakutenComboProductKeyword: "",
   rakutenComboProductDraftItems: [],
   rakutenComboProductEditingId: "",
+  bulkProductUploadMode: "rakutenCombo",
   shoulderStrapProducts: [],
   shoulderStrapProductsPage: 0,
   shoulderStrapProductsPageSize: 30,
@@ -16002,7 +16003,11 @@ function bindForms() {
   });
 
   $("openBulkRakutenComboProductUploadModal").addEventListener("click", () => {
+    state.bulkProductUploadMode = "rakutenCombo";
     $("bulkRakutenComboProductUploadForm")?.reset();
+    $("bulkProductUploadModalTitle").textContent = "批量上传组合产品";
+    $("bulkProductUploadFileLabel").textContent = "组合产品 Excel 文件";
+    $("bulkProductUploadHint").textContent = "格式：组合名、产品ID1、产品ID2……产品ID10；组合名已存在时会替换该组合的产品明细。";
     openModal("bulkRakutenComboProductUploadModal");
   });
 
@@ -16099,10 +16104,13 @@ function bindForms() {
     const button = event.currentTarget;
     try {
       await withBusyButton(button, "下载中...", async () => {
+        const isShoulderStrapBom = state.bulkProductUploadMode === "shoulderStrapBom";
         await downloadAuthorizedFile(
-          "/rakuten-combo-products/upload-template",
+          isShoulderStrapBom
+            ? "/master-products/shoulder-strap-bom-upload-template"
+            : "/rakuten-combo-products/upload-template",
           {},
-          "乐天组合产品上传模板.xlsx");
+          isShoulderStrapBom ? "肩带BOM批量导入模板.xlsx" : "乐天组合产品上传模板.xlsx");
       });
     } catch (error) {
       showToast(error.message, true);
@@ -16120,16 +16128,20 @@ function bindForms() {
       await withBusyButton(submitButton, "上传中...", async () => {
         const formData = new FormData();
         formData.append("file", file);
-        const result = await request("/rakuten-combo-products/import-excel", {
+        const isShoulderStrapBom = state.bulkProductUploadMode === "shoulderStrapBom";
+        const result = await request(isShoulderStrapBom
+          ? "/master-products/shoulder-strap-bom-import-excel"
+          : "/rakuten-combo-products/import-excel", {
           method: "POST",
           body: formData,
         });
-        showToast(
-          `组合产品上传完成：共 ${result?.importedCount || 0} 行，新增 ${result?.createdCount || 0} 行，更新 ${result?.updatedCount || 0} 行`,
-        );
+        showToast(isShoulderStrapBom
+          ? `肩带 BOM 导入完成：共 ${result?.importedCount || 0} 行`
+          : `组合产品上传完成：共 ${result?.importedCount || 0} 行，新增 ${result?.createdCount || 0} 行，更新 ${result?.updatedCount || 0} 行`);
         $("bulkRakutenComboProductUploadForm").reset();
         closeModal("bulkRakutenComboProductUploadModal");
-        await loadRakutenComboProducts({ reset: true });
+        if (isShoulderStrapBom) await loadShoulderStrapProducts({ reset: true });
+        else await loadRakutenComboProducts({ reset: true });
       });
     } catch (error) {
       showToast(error.message, true);
@@ -16623,6 +16635,14 @@ function bindForms() {
     state.shoulderStrapProductKeyword = "";
     if ($("shoulderStrapProductKeyword")) $("shoulderStrapProductKeyword").value = "";
     await loadShoulderStrapProducts({ reset: true });
+  });
+  $("openBulkShoulderStrapBomUploadModal")?.addEventListener("click", () => {
+    state.bulkProductUploadMode = "shoulderStrapBom";
+    $("bulkRakutenComboProductUploadForm")?.reset();
+    $("bulkProductUploadModalTitle").textContent = "批量导入肩带 BOM";
+    $("bulkProductUploadFileLabel").textContent = "肩带 BOM Excel 文件";
+    $("bulkProductUploadHint").textContent = "格式：第一列为肩带成品，第二列为肩带本体，第三列起按“肩带配件1、数量1、肩带配件2、数量2……”排列（最多 9 种）；肩带本体数量为 1，已有 BOM 会被替换。";
+    openModal("bulkRakutenComboProductUploadModal");
   });
   $("shoulderStrapProductBody")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action='manageShoulderStrapBom']");

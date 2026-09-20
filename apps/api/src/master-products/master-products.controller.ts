@@ -64,6 +64,25 @@ export class MasterProductsController {
     return this.masterProductsService.listShoulderStrapMaterials();
   }
 
+  @Get('shoulder-strap-bom-upload-template')
+  async downloadShoulderStrapBomUploadTemplate(@Res() res: Response): Promise<void> {
+    const file = this.masterProductsService.getShoulderStrapBomUploadTemplate();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
+  @Post('shoulder-strap-bom-import-excel')
+  @UseInterceptors(FileInterceptor('file'))
+  async importShoulderStrapBomExcel(
+    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
+  ): Promise<unknown> {
+    if (!file?.buffer) throw new BadRequestException('请选择肩带 BOM Excel 文件');
+    return this.masterProductsService.importShoulderStrapBomExcel(file.buffer, file.originalname);
+  }
+
   @Get(':productId/bom')
   async getBom(@Param('productId') productId: string): Promise<unknown> {
     return this.masterProductsService.getBom(productId);

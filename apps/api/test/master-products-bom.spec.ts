@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { MasterProductsService } from '../src/master-products/master-products.service';
 import { calculateAssemblableStock } from '../src/master-products/master-product-bom-stock';
+import * as XLSX from 'xlsx';
 
 describe('master product BOM', () => {
   it('calculates the maximum assemblable quantity from the limiting component', () => {
@@ -134,6 +135,55 @@ describe('master product BOM', () => {
       data: [{
         parentProductId: 'STRAP-1', componentProductId: 'BODY-1', quantity: 2, position: 1,
       }],
+    });
+  });
+
+  it('provides a shoulder strap BOM template with the requested column order', () => {
+    const service = new MasterProductsService({} as never, {} as never);
+    const file = service.getShoulderStrapBomUploadTemplate();
+    const workbook = XLSX.read(file.content, { type: 'buffer' });
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
+    expect(file.fileName).toBe('肩带BOM批量导入模板.xlsx');
+    expect(rows[0]?.slice(0, 6)).toEqual(['肩带成品', '肩带本体', '肩带配件1', '数量1', '肩带配件2', '数量2']);
+  });
+
+  it('imports shoulder strap BOM rows atomically and keeps the requested component order', async () => {
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ['肩带成品', '肩带本体', '肩带配件1', '数量1', '肩带配件2', '数量2'],
+      ['STRAP-1', 'BODY-1', 'HOOK-1', '2', 'HOOK-2', '3'],
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '肩带BOM');
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      masterProductBomItem: {
+        deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
+        createMany: jest.fn().mockResolvedValue({ count: 3 }),
+      },
+    };
+    const prisma = {
+      masterProduct: {
+        findMany: jest.fn().mockResolvedValue([
+          { productId: 'STRAP-1', productType: '肩带', status: 1 },
+          { productId: 'BODY-1', productType: '肩带本体', status: 1 },
+          { productId: 'HOOK-1', productType: '肩带配件', status: 1 },
+          { productId: 'HOOK-2', productType: '肩带配件', status: 1 },
+        ]),
+      },
+      $transaction: jest.fn().mockImplementation((callback) => callback(tx)),
+    };
+    const service = new MasterProductsService(prisma as never, {} as never);
+
+    await expect(service.importShoulderStrapBomExcel(
+      XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+      'bom.xlsx',
+    )).resolves.toEqual({ importedCount: 1, sourceFileName: 'bom.xlsx' });
+    expect(tx.masterProductBomItem.createMany).toHaveBeenCalledWith({
+      data: [
+        { parentProductId: 'STRAP-1', componentProductId: 'BODY-1', quantity: 1, position: 1 },
+        { parentProductId: 'STRAP-1', componentProductId: 'HOOK-1', quantity: 2, position: 2 },
+        { parentProductId: 'STRAP-1', componentProductId: 'HOOK-2', quantity: 3, position: 3 },
+      ],
     });
   });
 });

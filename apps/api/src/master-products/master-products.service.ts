@@ -32,6 +32,15 @@ import { calculateProductStockAvailability } from './master-product-bom-stock';
 export { shouldArchivePlaceholderProduct } from './master-product-archive';
 
 const SHOULDER_STRAP_MATERIAL_TYPES = ['肩带本体', '肩带配件'] as const;
+const SHOULDER_STRAP_BOM_MAX_ACCESSORY_COUNT = 9;
+const SHOULDER_STRAP_BOM_UPLOAD_TEMPLATE_FILE = '肩带BOM批量导入模板.xlsx';
+
+type ShoulderStrapBomImportRow = {
+  parentProductId: string;
+  bodyProductId: string;
+  accessories: Array<{ productId: string; quantity: number }>;
+  rowNo: number;
+};
 
 type MasterProductListResult = {
   items: unknown[];
@@ -1200,6 +1209,151 @@ export class MasterProductsService {
     });
 
     return this.getBom(productId);
+  }
+
+  getShoulderStrapBomUploadTemplate(): { fileName: string; content: Buffer } {
+    const headers = [
+      '肩带成品',
+      '肩带本体',
+      ...Array.from({ length: SHOULDER_STRAP_BOM_MAX_ACCESSORY_COUNT }, (_, index) => [
+        `肩带配件${index + 1}`,
+        `数量${index + 1}`,
+      ]).flat(),
+    ];
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      headers,
+      ['STRAP-001', 'BODY-001', 'ACCESSORY-001', '2', 'ACCESSORY-002', '1'],
+    ]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, '肩带BOM');
+    return {
+      fileName: SHOULDER_STRAP_BOM_UPLOAD_TEMPLATE_FILE,
+      content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer,
+    };
+  }
+
+  async importShoulderStrapBomExcel(fileBuffer: Buffer, sourceFileName?: string): Promise<unknown> {
+    const rows = this.parseShoulderStrapBomImportRows(fileBuffer);
+    const allProductIds = [...new Set(rows.flatMap((row) => [
+      row.parentProductId,
+      row.bodyProductId,
+      ...row.accessories.map((item) => item.productId),
+    ]))];
+    const products = await this.prisma.masterProduct.findMany({
+      where: { productId: { in: allProductIds } },
+      select: { productId: true, productType: true, status: true },
+    });
+    const productById = new Map(products.map((product) => [product.productId, product]));
+    const errors: string[] = [];
+    for (const row of rows) {
+      const parent = productById.get(row.parentProductId);
+      if (!parent || String(parent.productType ?? '').trim() !== '肩带') {
+        errors.push(`第 ${row.rowNo} 行：肩带成品不存在或产品类型不是“肩带”：${row.parentProductId}`);
+      }
+      const body = productById.get(row.bodyProductId);
+      if (!body || Number(body.status) !== 1 || String(body.productType ?? '').trim() !== '肩带本体') {
+        errors.push(`第 ${row.rowNo} 行：肩带本体不存在、已停用或类型不正确：${row.bodyProductId}`);
+      }
+      for (const item of row.accessories) {
+        const accessory = productById.get(item.productId);
+        if (!accessory || Number(accessory.status) !== 1 || String(accessory.productType ?? '').trim() !== '肩带配件') {
+          errors.push(`第 ${row.rowNo} 行：肩带配件不存在、已停用或类型不正确：${item.productId}`);
+        }
+      }
+    }
+    if (errors.length) {
+      throw new BadRequestException(errors.slice(0, 20).join('；'));
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        await tx.$queryRaw(
+          Prisma.sql`SELECT product_id FROM master_products WHERE product_id = ${row.parentProductId} FOR UPDATE`,
+        );
+        await tx.masterProductBomItem.deleteMany({ where: { parentProductId: row.parentProductId } });
+        await tx.masterProductBomItem.createMany({
+          data: [
+            { componentProductId: row.bodyProductId, quantity: 1 },
+            ...row.accessories.map((item) => ({
+              componentProductId: item.productId,
+              quantity: item.quantity,
+            })),
+          ].map((item, index) => ({
+            parentProductId: row.parentProductId,
+            ...item,
+            position: index + 1,
+          })),
+        });
+      }
+    });
+
+    return { importedCount: rows.length, sourceFileName: sourceFileName ?? null };
+  }
+
+  private parseShoulderStrapBomImportRows(fileBuffer: Buffer): ShoulderStrapBomImportRow[] {
+    let workbook: XLSX.WorkBook;
+    try {
+      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+    } catch {
+      throw new BadRequestException('无法解析肩带 BOM Excel 文件');
+    }
+    const firstSheet = workbook.SheetNames[0];
+    if (!firstSheet) throw new BadRequestException('Excel 中未找到可读取的工作表');
+    const values = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[firstSheet], {
+      header: 1,
+      defval: '',
+      raw: false,
+    });
+    if (values.length < 2) throw new BadRequestException('Excel 中没有数据');
+    const normalize = (value: unknown) => String(value ?? '').trim();
+    const headers = (values[0] ?? []).map(normalize);
+    if (headers[0] !== '肩带成品' || headers[1] !== '肩带本体') {
+      throw new BadRequestException('Excel 第一列必须是“肩带成品”，第二列必须是“肩带本体”');
+    }
+    const rows: ShoulderStrapBomImportRow[] = [];
+    const errors: string[] = [];
+    values.slice(1).forEach((rawRow, index) => {
+      const cells = (Array.isArray(rawRow) ? rawRow : []).map(normalize);
+      if (!cells.some(Boolean)) return;
+      const rowNo = index + 2;
+      const parentProductId = cells[0] ?? '';
+      const bodyProductId = cells[1] ?? '';
+      const accessories: Array<{ productId: string; quantity: number }> = [];
+      for (let accessoryIndex = 0; accessoryIndex < SHOULDER_STRAP_BOM_MAX_ACCESSORY_COUNT; accessoryIndex += 1) {
+        const productId = cells[2 + accessoryIndex * 2] ?? '';
+        const quantityText = cells[3 + accessoryIndex * 2] ?? '';
+        if (!productId && !quantityText) continue;
+        if (!productId) {
+          errors.push(`第 ${rowNo} 行：肩带配件${accessoryIndex + 1}不能为空`);
+          continue;
+        }
+        const quantity = Number(quantityText);
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > 9999) {
+          errors.push(`第 ${rowNo} 行：数量${accessoryIndex + 1}必须是 1 到 9999 的整数`);
+          continue;
+        }
+        accessories.push({ productId, quantity });
+      }
+      if (!parentProductId) errors.push(`第 ${rowNo} 行：肩带成品不能为空`);
+      if (!bodyProductId) errors.push(`第 ${rowNo} 行：肩带本体不能为空`);
+      if (cells.slice(2 + SHOULDER_STRAP_BOM_MAX_ACCESSORY_COUNT * 2).some(Boolean)) {
+        errors.push(`第 ${rowNo} 行：肩带配件最多 ${SHOULDER_STRAP_BOM_MAX_ACCESSORY_COUNT} 种`);
+      }
+      const components = [bodyProductId, ...accessories.map((item) => item.productId)].filter(Boolean);
+      if (new Set(components).size !== components.length) errors.push(`第 ${rowNo} 行：BOM 材料不能重复`);
+      if (components.includes(parentProductId)) errors.push(`第 ${rowNo} 行：肩带成品不能作为自身的 BOM 材料`);
+      rows.push({ parentProductId, bodyProductId, accessories, rowNo });
+    });
+    if (!rows.length) errors.push('Excel 中没有数据');
+    const seenParents = new Set<string>();
+    for (const row of rows) {
+      if (row.parentProductId && seenParents.has(row.parentProductId)) {
+        errors.push(`Excel 中肩带成品重复：${row.parentProductId}`);
+      }
+      seenParents.add(row.parentProductId);
+    }
+    if (errors.length) throw new BadRequestException(errors.slice(0, 20).join('；'));
+    return rows;
   }
 
   async updatePrintSettings(

@@ -801,6 +801,7 @@
             <label><input id="shoulderStrapProductKeyword" placeholder="输入产品ID / 产品名称 / 颜色 / 款式" /></label>
             <button type="submit">检索</button>
             <button type="button" id="resetShoulderStrapProductKeywordBtn" class="ghost">重置</button>
+            <button type="button" id="openBulkShoulderStrapBomUploadModal">批量导入</button>
           </form>
           <div id="shoulderStrapProductTableWrap" class="master-product-table-wrap">
             <table class="shoulder-strap-product-table">
@@ -2735,15 +2736,15 @@
   <div id="bulkRakutenComboProductUploadModal" class="modal hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>批量上传组合产品</h3>
+        <h3 id="bulkProductUploadModalTitle">批量上传组合产品</h3>
         <button type="button" class="ghost" data-action="closeBulkRakutenComboProductUploadModal">关闭</button>
       </div>
       <form id="bulkRakutenComboProductUploadForm" class="form-grid modal-grid">
         <label class="create-sku-full-row">
-          组合产品 Excel 文件
+          <span id="bulkProductUploadFileLabel">组合产品 Excel 文件</span>
           <input id="bulkRakutenComboProductUploadFile" type="file" accept=".xlsx,.xls" required />
         </label>
-        <p class="create-sku-full-row muted">格式：组合名、产品ID1、产品ID2……产品ID10；组合名已存在时会替换该组合的产品明细。</p>
+        <p id="bulkProductUploadHint" class="create-sku-full-row muted">格式：组合名、产品ID1、产品ID2……产品ID10；组合名已存在时会替换该组合的产品明细。</p>
         <div class="modal-actions modal-actions-split">
           <button id="downloadRakutenComboProductTemplateBtn" type="button" class="ghost">下载模板</button>
           <div class="actions">
