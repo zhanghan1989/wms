@@ -8,9 +8,9 @@
     "packages/*"
   ],
   "overrides": {
-    "@nestjs/platform-express": {
-      "multer": "2.3.0"
-    }
+    "multer": "2.3.0",
+    "deepmerge-ts": "8.0.0",
+    "qs": "6.16.0"
   },
   "scripts": {
     "build": "npm run -w api build",
