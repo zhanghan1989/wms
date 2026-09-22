@@ -1,3 +1,5 @@
+import { stockTransaction, lockStockProducts } from '../inventory/stock-transaction';
+import { availableStock } from '../inventory/stock-availability';
 import { execFile } from 'child_process';
 import { createHash, randomUUID } from 'crypto';
 import {
@@ -1544,15 +1546,13 @@ export class OrdersService {
     payload: { items?: SelectedOverseasWarehouseOrderRef[]; remark?: string },
     operatorId?: bigint,
   ): Promise<OverseasPickingBatchCreateResult> {
-    const snapshots = await this.collectOverseasPickingBatchItemSnapshots(payload?.items);
     const remark = String(payload?.remark ?? '').trim() || null;
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      const snapshots = await this.collectOverseasPickingBatchItemSnapshots(payload?.items);
       const productIds = Array.from(new Set(snapshots.map((item) => item.productId))).sort();
       if (productIds.length) {
-        await tx.$queryRaw(
-          Prisma.sql`SELECT product_id FROM master_products WHERE product_id IN (${Prisma.join(productIds)}) FOR UPDATE`,
-        );
+        await lockStockProducts(tx, productIds);
       }
       await this.attachOverseasPickingPlanSnapshots(snapshots, tx);
       await this.attachShoulderStrapBomSnapshots(snapshots, tx);
@@ -1562,9 +1562,7 @@ export class OrdersService {
           (item.bomSnapshot ?? []).map((component) => component.componentProductId))),
       ).sort();
       if (componentProductIds.length) {
-        await tx.$queryRaw(
-          Prisma.sql`SELECT product_id FROM master_products WHERE product_id IN (${Prisma.join(componentProductIds)}) FOR UPDATE`,
-        );
+        await lockStockProducts(tx, componentProductIds);
       }
       await this.assertOverseasPickingBatchDemandWithinStock(snapshots, tx);
       const activeDuplicates = await this.findActiveOverseasPickingBatchDuplicates(snapshots, tx);
@@ -2420,7 +2418,9 @@ export class OrdersService {
     const batchId = parseId(batchIdRaw, 'batchId');
     const actualQtyByItemId = this.parseOverseasPickingBatchActualQtyPayload(payload);
 
-    const batch = await this.prisma.overseasPickingBatch.findUnique({
+    return stockTransaction(this.prisma, async (tx) => {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM overseas_picking_batches WHERE id = ${batchId} FOR UPDATE`);
+    const batch = await tx.overseasPickingBatch.findUnique({
       where: { id: batchId },
       include: {
         items: {
@@ -2486,19 +2486,6 @@ export class OrdersService {
     });
     this.assertOverseasPickingBatchMatchesOrders(normalizedItems);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw(
-        Prisma.sql`SELECT id FROM overseas_picking_batches WHERE id = ${batch.id} FOR UPDATE`,
-      );
-      const lockedBatch = await tx.overseasPickingBatch.findUnique({
-        where: { id: batch.id },
-        select: { status: true },
-      });
-      if (!lockedBatch) throw new NotFoundException(`拣货批次不存在: ${batchIdRaw}`);
-      if (lockedBatch.status === OVERSEAS_PICKING_BATCH_STATUS.PICKED) return;
-      if (lockedBatch.status !== OVERSEAS_PICKING_BATCH_STATUS.CREATED) {
-        throw new BadRequestException('当前拣货批次已确认，不能重复扣库存');
-      }
       const demandByProductId = new Map<string, number>();
       normalizedItems.forEach((item) => {
         if (item.dispatchMode !== OVERSEAS_DISPATCH_MODE.OVERSEAS) {
@@ -2510,20 +2497,9 @@ export class OrdersService {
 
       const productIds = Array.from(demandByProductId.keys());
       if (productIds.length) {
-        await tx.$queryRaw(
-          Prisma.sql`SELECT product_id FROM master_products WHERE product_id IN (${Prisma.join(productIds)}) FOR UPDATE`,
-        );
+        await lockStockProducts(tx, productIds);
       }
-      const inventoryRows = productIds.length
-        ? await tx.masterProductBoxInventory.findMany({
-            where: {
-              productId: {
-                in: productIds,
-              },
-            },
-            orderBy: [{ qty: 'asc' }, { boxId: 'asc' }],
-          })
-        : [];
+      const inventoryRows = await availableStock(tx, productIds, { excludePickingBatchId: batch.id });
       const inventoryRowsByProductId = new Map<string, typeof inventoryRows>();
       inventoryRows.forEach((row) => {
         const key = String(row.productId ?? '').trim();
@@ -2697,19 +2673,12 @@ export class OrdersService {
 
       const componentProductIds = Array.from(componentDemandByProductId.keys()).sort();
       if (componentProductIds.length) {
-        await tx.$queryRaw(
-          Prisma.sql`SELECT product_id FROM master_products WHERE product_id IN (${Prisma.join(componentProductIds)}) FOR UPDATE`,
-        );
+        await lockStockProducts(tx, componentProductIds);
       }
       const componentInventoryProductIds = componentProductIds.filter(
         (componentProductId) => !demandByProductId.has(componentProductId),
       );
-      const componentInventoryRows = componentInventoryProductIds.length
-        ? await tx.masterProductBoxInventory.findMany({
-            where: { productId: { in: componentInventoryProductIds } },
-            orderBy: [{ qty: 'asc' }, { boxId: 'asc' }],
-          })
-        : [];
+      const componentInventoryRows = await availableStock(tx, componentInventoryProductIds, { excludePickingBatchId: batch.id });
       componentInventoryRows.forEach((row) => {
         const key = String(row.productId ?? '').trim();
         const list = inventoryRowsByProductId.get(key);
@@ -2819,9 +2788,8 @@ export class OrdersService {
           confirmedAt: new Date(),
         },
       });
-    });
 
-    const confirmed = await this.prisma.overseasPickingBatch.findUnique({
+    const confirmed = await tx.overseasPickingBatch.findUnique({
       where: { id: batch.id },
       select: {
         id: true,
@@ -2840,6 +2808,7 @@ export class OrdersService {
       status: confirmed.status,
       confirmedAt: confirmed.confirmedAt.toISOString(),
     };
+    });
   }
 
   async listYamatoShipmentBatches(limitParam?: string): Promise<YamatoShipmentBatchSummary[]> {
@@ -5888,24 +5857,7 @@ export class OrdersService {
     db: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<void> {
     if (!snapshots.length) return;
-    const activeItems = await db.overseasPickingBatchItem.findMany({
-      where: {
-        batch: { status: OVERSEAS_PICKING_BATCH_STATUS.CREATED },
-        OR: [{ dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
-      },
-      select: {
-        productId: true,
-        requestedQty: true,
-        pickingPlanSnapshot: true,
-        bomSnapshot: true,
-      },
-    });
-    const productIds = Array.from(
-      new Set([
-        ...snapshots.map((item) => String(item.productId ?? '').trim()),
-        ...activeItems.map((item) => String(item.productId ?? '').trim()),
-      ].filter(Boolean)),
-    );
+    const productIds = [...new Set(snapshots.map(item => item.productId))];
     const products = await db.masterProduct.findMany({
       where: { productId: { in: productIds } },
       select: {
@@ -5925,7 +5877,6 @@ export class OrdersService {
     const productById = new Map(products.map((row) => [row.productId, row] as const));
     const shortageTexts: string[] = [];
     const newDemandByComponentProductId = new Map<string, number>();
-    const reservedDemandByComponentProductId = new Map<string, number>();
     const componentNameByProductId = new Map<string, string>();
     const resolveBom = (productId: string, value: unknown): ShoulderStrapBomSnapshotItem[] => {
       const stored = this.parseShoulderStrapBomSnapshot(value);
@@ -5979,14 +5930,7 @@ export class OrdersService {
       item.bomSnapshot,
       true,
     ));
-    activeItems.forEach((item) => addComponentDemand(
-      reservedDemandByComponentProductId,
-      item.productId,
-      Number(item.requestedQty ?? 0),
-      item.pickingPlanSnapshot,
-      item.bomSnapshot,
-      false,
-    ));
+
 
     const componentProductIds = Array.from(newDemandByComponentProductId.keys());
     const liveComponents = componentProductIds.length
@@ -6005,6 +5949,7 @@ export class OrdersService {
     const liveComponentByProductId = new Map(
       liveComponents.map((component) => [component.productId, component] as const),
     );
+    const availableComponents = await availableStock(db, componentProductIds);
     for (const [componentProductId, newDemand] of newDemandByComponentProductId.entries()) {
       const component = liveComponentByProductId.get(componentProductId);
       const componentName = componentNameByProductId.get(componentProductId) || componentProductId;
@@ -6016,13 +5961,15 @@ export class OrdersService {
         shortageTexts.push(`BOM材料 ${componentProductId}（${componentName}）已停用、类型错误或不存在`);
         continue;
       }
-      const boxStockQty = (component.boxInventories ?? [{ qty: component.stockQty }])
-        .reduce((sum, row) => sum + Number(row.qty ?? 0), 0);
-      const reservedDemand = reservedDemandByComponentProductId.get(componentProductId) ?? 0;
+      const boxStockQty = availableComponents.filter(row => row.productId === componentProductId)
+        .reduce((sum, row) => sum + row.qty, 0);
+      const reservedDemand = snapshots.filter(item => item.productId === componentProductId)
+        .flatMap(item => this.parseOverseasPickingPlanSnapshot(item.pickingPlanSnapshot))
+        .reduce((sum, plan) => sum + plan.pickQty, 0);
       const availableQty = Math.max(boxStockQty - reservedDemand, 0);
       if (availableQty < newDemand) {
         shortageTexts.push(
-          `BOM材料 ${component.productId}（${component.productName ?? componentName}）箱库存 ${boxStockQty}，已预占 ${reservedDemand}，本批次需要 ${newDemand}`,
+          `BOM材料 ${component.productId}（${component.productName ?? componentName}）可用库存 ${boxStockQty}，本批次成品占用 ${reservedDemand}，本批次需要 ${newDemand}`,
         );
       }
     }
@@ -6073,56 +6020,15 @@ export class OrdersService {
     snapshots: OverseasPickingBatchItemSnapshot[],
     db: Prisma.TransactionClient | PrismaService = this.prisma,
   ): Promise<void> {
-    const locationMetaByProductId = await this.loadOverseasPickingBatchLocationMeta(
-      snapshots.map((item) => item.productId),
-      db,
-    );
-    const activeItems = await db.overseasPickingBatchItem.findMany({
-      where: {
-        batch: { status: OVERSEAS_PICKING_BATCH_STATUS.CREATED },
-        OR: [{ dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
-      },
-      select: { productId: true, pickingPlanSnapshot: true },
-    });
-    const reservedFinishedQtyByProductBox = new Map<string, number>();
-    activeItems.forEach((item) => {
-      this.parseOverseasPickingPlanSnapshot(item.pickingPlanSnapshot).forEach((plan) => {
-        const boxCode = String(plan.boxCode ?? '').trim();
-        if (!boxCode) return;
-        const key = `${item.productId}\u001f${boxCode}`;
-        reservedFinishedQtyByProductBox.set(
-          key,
-          (reservedFinishedQtyByProductBox.get(key) ?? 0) + Number(plan.pickQty ?? 0),
-        );
-      });
-    });
-    const remainingLocationsByProductId = new Map<
-      string,
-      Array<{ shelfCode: string | null; boxCode: string | null; qty: number; originalQty: number;
-      }>
-    >();
-
-    snapshots.forEach((snapshot) => {
-      const productId = String(snapshot.productId ?? '').trim();
-      if (!productId || remainingLocationsByProductId.has(productId)) {
-        return;
-      }
-      const locations = locationMetaByProductId.get(productId)?.locations ?? [];
-      remainingLocationsByProductId.set(
-        productId,
-        locations.map((location) => {
-          const boxCode = String(location.boxCode ?? '').trim();
-          const reservedQty = reservedFinishedQtyByProductBox.get(`${productId}\u001f${boxCode}`) ?? 0;
-          const availableQty = Math.max(Number(location.qty ?? 0) - reservedQty, 0);
-          return {
-            shelfCode: location.shelfCode ?? null,
-            boxCode: location.boxCode ?? null,
-            qty: availableQty,
-            originalQty: availableQty,
-          };
-        }),
-      );
-    });
+    const remainingLocationsByProductId = new Map<string,
+      Array<{ shelfCode: string; boxCode: string; qty: number; originalQty: number }>>();
+    const available = await availableStock(db, snapshots.map(item => item.productId));
+    for (const row of available) {
+      const list = remainingLocationsByProductId.get(row.productId) ?? [];
+      list.push({ shelfCode: row.box.shelf.shelfCode, boxCode: row.box.boxCode,
+        qty: row.qty, originalQty: row.qty });
+      remainingLocationsByProductId.set(row.productId, list);
+    }
 
     snapshots.forEach((snapshot) => {
       const locations = remainingLocationsByProductId.get(snapshot.productId) ?? [];

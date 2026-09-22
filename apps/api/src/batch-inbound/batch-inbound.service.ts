@@ -1,3 +1,4 @@
+import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
 import {
   BadRequestException,
   Injectable,
@@ -57,6 +58,9 @@ interface BatchInboundOrderDetail extends BatchInboundOrderSummary {
     productId: string;
     productName: string | null;
     qty: number;
+    actualQty?: number | null;
+    confirmedBy?: bigint | null;
+    differenceReason?: string | null;
     sourceRowNo: number | null;
     status: BatchInboundItemStatus;
     confirmedAt: Date | null;
@@ -147,7 +151,7 @@ export class BatchInboundService {
   ): Promise<{ success: boolean }> {
     const orderId = parseId(orderIdParam, 'batchInboundOrderId');
 
-    await this.prisma.$transaction(async (tx) => {
+    await stockTransaction(this.prisma, async (tx) => {
       const order = await tx.batchInboundOrder.findUnique({
         where: { id: orderId },
         include: {
@@ -199,7 +203,7 @@ export class BatchInboundService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<BatchInboundOrderDetail> {
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const normalizedBatchNo = payload.batchNo.trim().replace(/^0+/, '');
       if (!normalizedBatchNo || !/^[1-9]\d*$/.test(normalizedBatchNo)) {
         throw new BadRequestException('批号必须是大于0的数字');
@@ -292,7 +296,7 @@ export class BatchInboundService {
     const parsedLines = this.parseExcelLines(fileBuffer);
     const mergedLines = this.mergeLines(parsedLines);
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const order = await tx.batchInboundOrder.findUnique({
         where: { id: orderId },
         include: {
@@ -414,7 +418,7 @@ export class BatchInboundService {
       throw new BadRequestException('国内单号不能为空');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const order = await tx.batchInboundOrder.findUnique({
         where: { id: orderId },
         include: {
@@ -497,7 +501,7 @@ export class BatchInboundService {
       throw new BadRequestException('海运单号不能为空');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const order = await tx.batchInboundOrder.findUnique({
         where: { id: orderId },
         include: {
@@ -581,7 +585,7 @@ export class BatchInboundService {
     const itemId = parseId(itemIdParam, 'batchInboundItemId');
     const actualQuantityByItemId = this.parseActualQuantityMap(payload);
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const order = await this.lockOrder(tx, orderId);
       const item = await tx.batchInboundItem.findFirst({
         where: {
@@ -611,6 +615,7 @@ export class BatchInboundService {
         this.resolveActualQuantity(item, actualQuantityByItemId),
         operatorId,
         requestId,
+        payload?.differenceReason,
       );
       const status = await this.syncOrderStatus(tx, order.id, operatorId, requestId);
       const detail = await this.loadOrderDetailInTx(tx, order.id);
@@ -639,7 +644,7 @@ export class BatchInboundService {
       throw new BadRequestException('箱号格式不正确');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const order = await this.lockOrder(tx, orderId);
       const pendingItems = await tx.batchInboundItem.findMany({
         where: {
@@ -669,6 +674,7 @@ export class BatchInboundService {
           this.resolveActualQuantity(item, actualQuantityByItemId),
           operatorId,
           requestId,
+          payload?.differenceReason,
         );
       }
 
@@ -694,7 +700,7 @@ export class BatchInboundService {
     const orderId = parseId(orderIdParam, 'batchInboundOrderId');
     const actualQuantityByItemId = this.parseActualQuantityMap(payload);
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const order = await this.lockOrder(tx, orderId);
       const pendingItems = await tx.batchInboundItem.findMany({
         where: {
@@ -723,6 +729,7 @@ export class BatchInboundService {
           this.resolveActualQuantity(item, actualQuantityByItemId),
           operatorId,
           requestId,
+          payload?.differenceReason,
         );
       }
 
@@ -756,6 +763,8 @@ export class BatchInboundService {
       throw new NotFoundException('批量入库单不存在');
     }
 
+    const productRows = await tx.batchInboundItem.findMany({ where: { orderId }, select: { productId: true } });
+    await lockStockProducts(tx, productRows.map((item) => item.productId));
     const locked = rows[0];
     if (locked.status === BatchInboundOrderStatus.waiting_upload) {
       throw new UnprocessableEntityException('请先上传批量入库文档');
@@ -847,6 +856,7 @@ export class BatchInboundService {
     actualQty: number,
     operatorId: bigint,
     requestId?: string,
+    differenceReason?: string,
   ): Promise<void> {
     if (!Number.isInteger(actualQty) || actualQty < 0) {
       throw new UnprocessableEntityException('实际数量必须是0或正整数');
@@ -865,13 +875,18 @@ export class BatchInboundService {
       throw new UnprocessableEntityException(`产品ID不存在：${productId}`);
     }
 
+    const receiptData = { status: BatchInboundItemStatus.confirmed, confirmedAt: new Date(),
+      actualQty, confirmedBy: operatorId,
+      differenceReason: actualQty === item.qty ? null : differenceReason?.trim() || '收货数量与应收不一致' };
+    await this.auditService.create({ db: tx, entityType: 'batch_inbound_item', entityId: item.id,
+      action: AuditAction.update, eventType: AuditEventType.INBOUND_ORDER_CONFIRMED,
+      beforeData: { expectedQty: item.qty, status: item.status },
+      afterData: { ...receiptData, expectedQty: item.qty }, operatorId, requestId,
+      remark: `batch inbound ${order.orderNo}` });
     if (actualQty === 0) {
       await tx.batchInboundItem.update({
         where: { id: item.id },
-        data: {
-          status: BatchInboundItemStatus.confirmed,
-          confirmedAt: new Date(),
-        },
+        data: receiptData,
       });
       return;
     }
@@ -889,36 +904,16 @@ export class BatchInboundService {
     const beforeQty = Number(inventory?.qty ?? 0);
     const afterQty = beforeQty + actualQty;
 
-    if (inventory) {
-      await tx.masterProductBoxInventory.update({
-        where: {
-          boxId_productId: {
-            boxId: box.id,
-            productId,
-          },
-        },
-        data: {
-          qty: afterQty,
-        },
-      });
-    } else {
-      await tx.masterProductBoxInventory.create({
-        data: {
-          boxId: box.id,
-          productId,
-          qty: actualQty,
-        },
-      });
-    }
+    await changeBoxStock(tx, box.id, productId, actualQty);
+    await tx.stockMovement.create({ data: { movementType: 'inbound', refType: 'batch_inbound_item',
+      refId: item.id, operationKey: `batch-inbound:${item.id}`, boxId: box.id,
+      productId, qtyDelta: actualQty, operatorId } });
 
     const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
 
     await tx.batchInboundItem.update({
       where: { id: item.id },
-      data: {
-        status: BatchInboundItemStatus.confirmed,
-        confirmedAt: new Date(),
-      },
+      data: receiptData,
     });
 
     await this.auditService.create({
@@ -1330,6 +1325,9 @@ export class BatchInboundService {
       boxCode: string;
       productId: string;
       qty: number;
+      actualQty?: number | null;
+      confirmedBy?: bigint | null;
+      differenceReason?: string | null;
       sourceRowNo: number | null;
       status: BatchInboundItemStatus;
       confirmedAt: Date | null;
@@ -1375,6 +1373,9 @@ export class BatchInboundService {
         productId: item.productId,
         productName: productNameById.get(item.productId) ?? null,
         qty: item.qty,
+        actualQty: item.actualQty ?? null,
+        confirmedBy: item.confirmedBy ?? null,
+        differenceReason: item.differenceReason ?? null,
         sourceRowNo: item.sourceRowNo,
         status: item.status,
         confirmedAt: item.confirmedAt,

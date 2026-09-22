@@ -1696,7 +1696,9 @@ function getRoleOptionsWithFallback() {
 }
 
 function getAssignableRoleOptions() {
-  return getRoleOptionsWithFallback().filter((item) => String(item?.code || "") !== "system_admin");
+  return getRoleOptionsWithFallback().filter((item) => isCurrentUserSystemAdmin()
+    ? String(item?.code || "") !== "system_admin"
+    : String(item?.code || "") === "employee");
 }
 
 function getAvailableDepartmentOptionItems() {
@@ -3960,6 +3962,8 @@ function renderUserSelectOptions() {
     const selected = editRoleEl.value || "employee";
     const options = getAssignableRoleOptions().filter(
       (item) => Number(item.status) === 1 || item.code === selected);
+    const currentRole = getRoleOptionsWithFallback().find((item) => item.code === selected);
+    if (currentRole && !options.some((item) => item.code === selected)) options.push(currentRole);
     editRoleEl.innerHTML = options
       .map((item) => {
         const suffix = Number(item.status) === 1 ? "" : "（禁用）";
@@ -4018,7 +4022,9 @@ function renderUsersTable() {
   body.innerHTML =
     users
       .map((user) => {
-        const isProtectedUser = String(user.username || "").trim() === "admin";
+        const isProtectedUser = String(user.username || "").trim() === "admin"
+          || (!isCurrentUserSystemAdmin() && user.role !== "employee"
+            && String(user.id) !== String(state.me?.id));
         const actions = isProtectedUser
           ? ""
           : `
@@ -4189,9 +4195,14 @@ function openEditUserModal(userId, username, role, department, status = 1) {
   state.selectedEditUserId = String(userId);
   $("editUserId").value = String(userId);
   $("editUsername").value = String(username || "");
+  $("editUserRole").value = String(role || "employee");
+  $("editUserDepartment").value = department || "china_warehouse";
   renderUserSelectOptions();
-  const normalizedRole = ["employee", "admin"].includes(String(role || "")) ? String(role) : "employee";
-  $("editUserRole").value = normalizedRole;
+  $("editUserRole").value = String(role || "employee");
+  const ownAdmin = !isCurrentUserSystemAdmin() && String(userId) === String(state.me?.id)
+    && String(role) === "admin";
+  $("editUserRole").disabled = ownAdmin;
+  $("editUserDepartment").disabled = ownAdmin;
   $("editUserDepartment").value = department || "china_warehouse";
   syncEditUserActionButtons(userId, status, username);
   openModal("editUserModal");
@@ -10110,7 +10121,8 @@ function renderBatchInboundDetail(detail) {
                           class="tiny-input batch-actual-qty-input"
                           type="text"
                           inputmode="numeric"
-                          value="${escapeHtml(item.qty)}"
+                          value="${escapeHtml(item.status === "confirmed" ? (item.actualQty ?? "") : item.qty)}"
+                          placeholder="${item.status === "confirmed" && item.actualQty == null ? "历史实收未知" : ""}"
                           data-item-id="${escapeHtml(item.id)}"
                           data-box-code="${escapeHtml(boxCode)}"
                           ${canEditQty ? "" : "disabled"}

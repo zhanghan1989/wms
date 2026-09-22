@@ -1,3 +1,7 @@
+import { randomUUID } from 'crypto';
+import { recordStockAdjustment } from '../inventory/stock-ledger';
+import { assertStockAvailable } from '../inventory/stock-availability';
+import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
 import {
   BadRequestException,
   ConflictException,
@@ -1400,7 +1404,8 @@ export class MasterProductsService {
       throw new BadRequestException('数量必须是大于 0 的整数');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      await lockStockProducts(tx, [productId]);
       const [product, box] = await Promise.all([
         tx.masterProduct.findUnique({
           where: { productId },
@@ -1444,22 +1449,8 @@ export class MasterProductsService {
       const beforeQty = Number(currentInventory?.qty ?? 0);
       const afterQty = beforeQty + qtyDelta;
 
-      await tx.masterProductBoxInventory.upsert({
-        where: {
-          boxId_productId: {
-            boxId: box.id,
-            productId,
-          },
-        },
-        update: {
-          qty: afterQty,
-        },
-        create: {
-          boxId: box.id,
-          productId,
-          qty: afterQty,
-        },
-      });
+      await changeBoxStock(tx, box.id, productId, qtyDelta);
+      await recordStockAdjustment(tx, operatorId, [{ boxId: box.id, productId, qtyDelta }], reason || 'manual-product-adjust');
 
       const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
 
@@ -1538,7 +1529,8 @@ export class MasterProductsService {
       throw new BadRequestException('申请数量必须是大于 0 的整数');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      await lockStockProducts(tx, [productId]);
       const [product, sku, box] = await Promise.all([
         tx.masterProduct.findUnique({
           where: { productId },
@@ -1663,6 +1655,7 @@ export class MasterProductsService {
         throw new ConflictException(`申请数量不能大于当前箱号该主表产品可用数量（${availableQty}）`);
       }
 
+      await assertStockAvailable(tx, productId, box.id, requestedQty);
       const requestNo = await this.generateFbaRequestNo(tx);
       const created = await tx.fbaReplenishment.create({
         data: {
@@ -1767,7 +1760,8 @@ export class MasterProductsService {
       throw new BadRequestException('箱号不能为空');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      await lockStockProducts(tx, [productId]);
       const [product, sku, box] = await Promise.all([
         tx.masterProduct.findUnique({
           where: { productId },
@@ -1824,17 +1818,9 @@ export class MasterProductsService {
       }
 
       const afterQty = beforeQty - 1;
-      await tx.masterProductBoxInventory.update({
-        where: {
-          boxId_productId: {
-            boxId: box.id,
-            productId,
-          },
-        },
-        data: {
-          qty: afterQty,
-        },
-      });
+      await assertStockAvailable(tx, productId, box.id, 1);
+      await changeBoxStock(tx, box.id, productId, -1);
+      await recordStockAdjustment(tx, operatorId, [{ boxId: box.id, productId, qtyDelta: -1 }], remark);
 
       const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
 
@@ -1913,7 +1899,8 @@ export class MasterProductsService {
       throw new BadRequestException('箱号不能为空');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      await lockStockProducts(tx, [productId]);
       const [product, box] = await Promise.all([
         tx.masterProduct.findUnique({
           where: { productId },
@@ -1953,17 +1940,9 @@ export class MasterProductsService {
       }
 
       const afterQty = beforeQty - 1;
-      await tx.masterProductBoxInventory.update({
-        where: {
-          boxId_productId: {
-            boxId: box.id,
-            productId,
-          },
-        },
-        data: {
-          qty: afterQty,
-        },
-      });
+      await assertStockAvailable(tx, productId, box.id, 1);
+      await changeBoxStock(tx, box.id, productId, -1);
+      await recordStockAdjustment(tx, operatorId, [{ boxId: box.id, productId, qtyDelta: -1 }], remark);
 
       const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
 
@@ -2596,7 +2575,7 @@ export class MasterProductsService {
   private async generateFbaRequestNo(tx: Prisma.TransactionClient): Promise<string> {
     let candidate = new Date();
     for (let index = 0; index < 5; index += 1) {
-      const requestNo = this.formatFbaRequestNo(candidate);
+      const requestNo = `${this.formatFbaRequestNo(candidate)}-${randomUUID().slice(0, 8).toUpperCase()}`;
       const exists = await tx.fbaReplenishment.findUnique({
         where: { requestNo },
         select: { id: true },

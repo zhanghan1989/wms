@@ -217,7 +217,20 @@ enum RakutenAutomationRunTrigger {
   manual
 }
 
+model AuthSession {
+  id        String   @id @db.VarChar(36)
+  userId    BigInt   @map("user_id") @db.UnsignedBigInt
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("auth_sessions")
+}
+
 model User {
+  sessionVersion Int @default(0) @map("session_version")
+  sessions AuthSession[]
   id                             BigInt                       @id @default(autoincrement()) @db.UnsignedBigInt
   username                       String                       @unique @db.VarChar(64)
   passwordHash                   String?                      @map("password_hash") @db.VarChar(255)
@@ -302,6 +315,9 @@ model BatchInboundItem {
   orderId     BigInt                 @map("order_id") @db.UnsignedBigInt
   boxCode     String                 @map("box_code") @db.VarChar(128)
   productId   String                 @map("product_id") @db.VarChar(128)
+  actualQty   Int? @map("actual_qty")
+  confirmedBy BigInt? @map("confirmed_by") @db.UnsignedBigInt
+  differenceReason String? @map("difference_reason") @db.VarChar(255)
   qty         Int
   sourceRowNo Int?                   @map("source_row_no")
   status      BatchInboundItemStatus @default(pending)
@@ -907,6 +923,7 @@ model StocktakeRecord {
 }
 
 model StockMovement {
+  operationKey String? @unique @map("operation_key") @db.VarChar(191)
   id           BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
   movementType MovementType   @map("movement_type")
   refType      String         @map("ref_type") @db.VarChar(32)
@@ -946,13 +963,14 @@ model InventoryAdjustOrderItem {
   id        BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
   orderId   BigInt               @map("order_id") @db.UnsignedBigInt
   boxId     BigInt               @map("box_id") @db.UnsignedBigInt
-  skuId     BigInt               @map("sku_id") @db.UnsignedBigInt
+  skuId     BigInt?              @map("sku_id") @db.UnsignedBigInt
+  productId String? @map("product_id") @db.VarChar(128)
   qtyDelta  Int                  @map("qty_delta")
   reason    String?              @db.VarChar(128)
   createdAt DateTime             @default(now()) @map("created_at")
   order     InventoryAdjustOrder @relation(fields: [orderId], references: [id])
   box       Box                  @relation(fields: [boxId], references: [id])
-  sku       Sku                  @relation(fields: [skuId], references: [id])
+  sku       Sku?                 @relation(fields: [skuId], references: [id], onDelete: Restrict)
 
   @@map("inventory_adjust_order_items")
 }

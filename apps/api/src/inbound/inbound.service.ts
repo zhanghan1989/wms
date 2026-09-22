@@ -1,3 +1,4 @@
+import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
 import {
   BadRequestException,
   Injectable,
@@ -106,7 +107,7 @@ export class InboundService {
     changedRows: number;
   }> {
     const orderId = parseId(idParam, 'inboundOrderId');
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const locked = await tx.$queryRaw<Array<{ id: bigint; status: OrderStatus }>>(
         Prisma.sql`SELECT id, status FROM inbound_orders WHERE id = ${orderId} FOR UPDATE`,
       );
@@ -137,6 +138,7 @@ export class InboundService {
 
       const productIds = Array.from(new Set(order.items.map((item) => item.productId)));
       const boxIds = Array.from(new Set(order.items.map((item) => item.boxId)));
+      await lockStockProducts(tx, productIds);
 
       const [products, currentInventoryRows] = await Promise.all([
         tx.masterProduct.findMany({
@@ -173,22 +175,10 @@ export class InboundService {
         const beforeQty = currentQtyMap.get(key) ?? 0;
         const afterQty = beforeQty + item.qty;
 
-        await tx.masterProductBoxInventory.upsert({
-          where: {
-            boxId_productId: {
-              boxId: item.boxId,
-              productId: item.productId,
-            },
-          },
-          update: {
-            qty: afterQty,
-          },
-          create: {
-            boxId: item.boxId,
-            productId: item.productId,
-            qty: item.qty,
-          },
-        });
+        await changeBoxStock(tx, item.boxId, item.productId, item.qty);
+        await tx.stockMovement.create({ data: { movementType: 'inbound', refType: 'inbound_order',
+          refId: order.id, operationKey: `inbound-item:${item.id}`, boxId: item.boxId,
+          productId: item.productId, qtyDelta: item.qty, operatorId } });
 
         currentQtyMap.set(key, afterQty);
 
@@ -306,7 +296,7 @@ export class InboundService {
     idempotent: boolean;
   }> {
     const orderId = parseId(idParam, 'inboundOrderId');
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const locked = await tx.$queryRaw<Array<{ id: bigint; status: OrderStatus }>>(
         Prisma.sql`SELECT id, status FROM inbound_orders WHERE id = ${orderId} FOR UPDATE`,
       );
@@ -484,7 +474,7 @@ export class InboundService {
     operatorId: bigint,
     requestId?: string,
   ): Promise<unknown> {
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       const shelf = await tx.shelf.findFirst({
         where: { status: 1 },
         orderBy: { id: 'asc' },

@@ -529,8 +529,10 @@ describe('OrdersService', () => {
           items: [],
         }),
       },
+      $queryRaw: jest.fn(),
       $transaction: jest.fn(),
     };
+    prisma.$transaction.mockImplementation((work: any) => work(prisma));
     const service = new OrdersService(prisma as any);
 
     await expect(service.confirmOverseasPickingBatch('42', { items: [] }, 7n)).resolves.toEqual({
@@ -539,7 +541,7 @@ describe('OrdersService', () => {
       status: 'picked',
       confirmedAt: confirmedAt.toISOString(),
     });
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it('deducts shoulder strap parts when a picked order has no finished stock', async () => {
@@ -567,7 +569,7 @@ describe('OrdersService', () => {
       masterProductBoxInventory: {
         findMany: jest.fn()
           .mockResolvedValueOnce([])
-          .mockResolvedValueOnce([{ boxId: 7n, productId: 'BODY-7', qty: 10 }]),
+          .mockResolvedValueOnce([{ boxId: 7n, productId: 'BODY-7', qty: 10, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } }]),
         updateMany: boxUpdate,
         aggregate: jest.fn().mockResolvedValue({ _sum: { qty: 0 } }),
       },
@@ -581,9 +583,11 @@ describe('OrdersService', () => {
           }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
+      overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
       stockMovement: { create: stockMovementCreate },
       overseasPickingBatch: {
-        findUnique: jest.fn().mockResolvedValue({ status: 'created' }),
+        findUnique: jest.fn().mockResolvedValueOnce(batch).mockResolvedValueOnce({ ...batch, status: 'picked', confirmedAt }),
         update: jest.fn().mockResolvedValue({}),
       },
     };
@@ -640,8 +644,8 @@ describe('OrdersService', () => {
       $queryRaw: jest.fn().mockResolvedValue([]),
       masterProductBoxInventory: {
         findMany: jest.fn()
-          .mockResolvedValueOnce([{ boxId: 4n, productId: 'STRAP-2', qty: 2 }])
-          .mockResolvedValueOnce([{ boxId: 8n, productId: 'BODY-8', qty: 12 }]),
+          .mockResolvedValueOnce([{ boxId: 4n, productId: 'STRAP-2', qty: 2, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } }])
+          .mockResolvedValueOnce([{ boxId: 8n, productId: 'BODY-8', qty: 12, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } }]),
         updateMany: boxUpdate,
         aggregate: jest.fn().mockResolvedValue({ _sum: { qty: 0 } }),
       },
@@ -659,9 +663,11 @@ describe('OrdersService', () => {
         }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
+      overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
       stockMovement: { create: stockMovementCreate },
       overseasPickingBatch: {
-        findUnique: jest.fn().mockResolvedValue({ status: 'created' }),
+        findUnique: jest.fn().mockResolvedValueOnce(batch).mockResolvedValueOnce({ ...batch, status: 'picked', confirmedAt }),
         update: jest.fn().mockResolvedValue({}),
       },
     };
@@ -696,6 +702,10 @@ describe('OrdersService', () => {
   it('aggregates shared component demand when validating a picking batch', async () => {
     const sharedComponent = { productId: 'HOOK-9', productName: '共用扣件', productType: '肩带配件', stockQty: 1, status: 1 };
     const service = new OrdersService({
+      fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
+      masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([
+        { boxId: 1n, productId: 'HOOK-9', qty: 1, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } },
+      ]) },
       overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
       masterProduct: {
         findMany: jest.fn()
@@ -722,7 +732,7 @@ describe('OrdersService', () => {
         productId: 'STRAP-B', requestedQty: 1, pickingPlanSnapshot: [],
         bomSnapshot: [{ componentProductId: 'HOOK-9', componentProductName: '共用扣件', quantity: 1 }],
       },
-    ])).rejects.toThrow('库存 1，已预占 0，本批次需要 2');
+    ])).rejects.toThrow('可用库存 1，本批次成品占用 0，本批次需要 2');
   });
 
   it('stores the shoulder strap BOM configuration on a new picking batch item', async () => {
@@ -835,6 +845,10 @@ describe('OrdersService', () => {
       componentProductId: 'HOOK-12', componentProductName: '预占配件', quantity: 1,
     }];
     const service = new OrdersService({
+      fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
+      masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([
+        { boxId: 1n, productId: 'HOOK-12', qty: 1, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } },
+      ]) },
       overseasPickingBatchItem: {
         findMany: jest.fn().mockResolvedValue([{
           productId: 'STRAP-RESERVED',
@@ -859,14 +873,18 @@ describe('OrdersService', () => {
       requestedQty: 1,
       pickingPlanSnapshot: [],
       bomSnapshot,
-    }])).rejects.toThrow('库存 1，已预占 1，本批次需要 1');
+    }])).rejects.toThrow('可用库存 0，本批次成品占用 0，本批次需要 1');
   });
 
   it('does not assign finished stock already reserved by another active batch', async () => {
     const service = new OrdersService({
+      fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
+      masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([
+        { boxId: 1n, productId: 'STRAP-FINISHED', qty: 1, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } },
+      ]) },
       overseasPickingBatchItem: {
         findMany: jest.fn().mockResolvedValue([{
-          productId: 'STRAP-FINISHED',
+          productId: 'STRAP-FINISHED', requestedQty: 1, bomSnapshot: [],
           pickingPlanSnapshot: [{ shelfCode: 'S1', boxCode: 'B1', boxQty: 1, pickQty: 1 }],
         }]),
       },

@@ -1,3 +1,7 @@
+import { randomUUID } from 'crypto';
+import { recordStockAdjustment } from './stock-ledger';
+import { assertStockAvailable } from './stock-availability';
+import { stockTransaction, lockStockProducts, changeBoxStock, lockFbaRequests } from '../inventory/stock-transaction';
 import {
   BadRequestException,
   ConflictException,
@@ -95,12 +99,6 @@ type MasterProductBoxInventoryFindUniqueClient = {
 type MasterProductBoxInventoryUpsertClient = {
   masterProductBoxInventory: {
     upsert(args: Prisma.MasterProductBoxInventoryUpsertArgs): Promise<unknown>;
-  };
-};
-
-type MasterProductBoxInventoryUpdateClient = {
-  masterProductBoxInventory: {
-    update(args: Prisma.MasterProductBoxInventoryUpdateArgs): Promise<unknown>;
   };
 };
 
@@ -472,7 +470,7 @@ export class InventoryService {
     requestId?: string,
   ): Promise<unknown> {
     const normalizedItems = payload.items.map((item) => this.normalizeAdjustItem(item));
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
       await this.ensureReferences(tx, normalizedItems);
 
       const order = await tx.inventoryAdjustOrder.create({
@@ -534,7 +532,7 @@ export class InventoryService {
     requestId?: string,
   ): Promise<AdjustOrderResult> {
     const orderId = parseId(idParam, 'adjustOrderId');
-    return this.prisma.$transaction(async (tx) =>
+    return stockTransaction(this.prisma, async (tx) =>
       this.applyAdjustOrder(tx, orderId, operatorId, requestId, true),
     );
   }
@@ -568,7 +566,8 @@ export class InventoryService {
       throw new BadRequestException('目标箱号不能与原箱号相同');
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      await lockStockProducts(tx, [productId]);
       const [product, sourceBox, targetBox] = await Promise.all([
         tx.masterProduct.findUnique({
           where: { productId },
@@ -600,6 +599,7 @@ export class InventoryService {
         throw new ConflictException('原箱号中没有可移动的主商品库存');
       }
 
+      await assertStockAvailable(tx, productId, sourceBox.id, qty);
       const targetQty = await findMasterProductBoxInventoryQty(tx, targetBox.id, product.productId);
 
       await tx.masterProductBoxInventory.delete({
@@ -613,6 +613,10 @@ export class InventoryService {
         targetQty + qty,
       );
 
+      await recordStockAdjustment(tx, operatorId, [
+        { boxId: sourceBox.id, productId, qtyDelta: -qty },
+        { boxId: targetBox.id, productId, qtyDelta: qty },
+      ], 'move-product-between-boxes');
       const totalQty = await this.recalculateMasterProductStockQty(tx, product.productId);
 
       await createMasterProductInventoryAdjustAudit({
@@ -682,7 +686,8 @@ export class InventoryService {
   ): Promise<{ id: string; requestNo: string; status: string; idempotent: boolean }> {
     const id = parseId(idParam, 'fbaReplenishmentId');
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      await lockFbaRequests(tx, [id]);
       const row = await tx.fbaReplenishment.findUnique({
         where: { id },
         select: {
@@ -758,7 +763,8 @@ export class InventoryService {
   ): Promise<{ id: string; requestNo: string; status: string; idempotent: boolean }> {
     const id = parseId(idParam, 'fbaReplenishmentId');
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      await lockFbaRequests(tx, [id]);
       const row = await tx.fbaReplenishment.findUnique({
         where: { id },
         select: {
@@ -800,6 +806,11 @@ export class InventoryService {
         );
       }
 
+      const reservation = await tx.fbaReplenishment.findUnique({ where: { id }, include: { sku: true } });
+      const productId = reservation?.sku.productId;
+      if (!productId || !reservation) throw new ConflictException('补货产品不存在');
+      await lockStockProducts(tx, [productId]);
+      await assertStockAvailable(tx, productId, reservation.boxId, row.requestedQty, { excludeFbaIds: [id] });
       const updated = await tx.fbaReplenishment.update({
         where: { id: row.id },
         data: {
@@ -1100,7 +1111,7 @@ export class InventoryService {
       ? new Date(`${inventoryReport.snapshotDate}T00:00:00.000Z`)
       : null;
 
-    const snapshot = await this.prisma.$transaction(async (tx) => {
+    const snapshot = await stockTransaction(this.prisma, async (tx) => {
       const created = await tx.fbaSalesSnapshot.create({
         data: {
           fileName,
@@ -1187,7 +1198,7 @@ export class InventoryService {
       const inventoryRows = parseAmazonReplenishmentCsv(inventoryBuffer);
       validateAmazonReplenishmentReports(businessRows, inventoryRows);
       const metadata = getAmazonInventorySnapshotMetadata(inventoryRows);
-      const snapshot = await this.prisma.$transaction(async (tx) => {
+      const snapshot = await stockTransaction(this.prisma, async (tx) => {
         const created = await tx.amazonReplenishmentSnapshot.create({
           data: {
             businessFileName: String(businessOriginalName || 'amazon-90-day-sales-by-sku.csv').trim().slice(0, 255),
@@ -1533,7 +1544,7 @@ export class InventoryService {
   async generateFbaRequestNo(tx: Prisma.TransactionClient): Promise<string> {
     let candidate = new Date();
     for (let i = 0; i < 5; i += 1) {
-      const requestNo = this.formatFbaRequestNo(candidate);
+      const requestNo = `${this.formatFbaRequestNo(candidate)}-${randomUUID().slice(0, 8).toUpperCase()}`;
       const exists = await tx.fbaReplenishment.findUnique({
         where: { requestNo },
         select: { id: true },
@@ -1652,7 +1663,7 @@ export class InventoryService {
     items: Array<{ boxId: bigint; skuId: bigint }>,
   ): Promise<void> {
     const uniqueBoxIds = Array.from(new Set(items.map((item) => item.boxId.toString()))).map((id) => BigInt(id));
-    const uniqueSkuIds = Array.from(new Set(items.map((item) => item.skuId.toString()))).map((id) => BigInt(id));
+    const uniqueSkuIds = Array.from(new Set(items.map((item) => item.skuId?.toString() ?? ''))).map((id) => BigInt(id));
 
     const [boxes, skus] = await Promise.all([
       tx.box.findMany({
@@ -1719,7 +1730,7 @@ export class InventoryService {
       where: {
         status: 1,
         id: {
-          in: Array.from(new Set(order.items.map((item) => item.skuId.toString()))).map((id) =>
+          in: Array.from(new Set(order.items.flatMap((item) => item.skuId ? [item.skuId.toString()] : []))).map((id) =>
             BigInt(id),
           ),
         },
@@ -1740,11 +1751,11 @@ export class InventoryService {
     });
     const skuById = new Map(skuRows.map((row) => [row.id.toString(), row]));
     const inventoryPairs = order.items.map((item) => {
-      const sku = skuById.get(item.skuId.toString());
+      const sku = skuById.get(item.skuId?.toString() ?? '');
       const productId = String(sku?.productId || '').trim();
       if (!sku || !productId || !sku.masterProduct) {
         throw new BadRequestException(
-          `SKU ${item.skuId.toString()} 未绑定主商品，无法确认调整单`,
+          `SKU ${item.skuId?.toString() ?? ''} 未绑定主商品，无法确认调整单`,
         );
       }
       return {
@@ -1753,6 +1764,7 @@ export class InventoryService {
       };
     });
 
+    await lockStockProducts(tx, inventoryPairs.map((item) => item.productId));
     const currentInventoryRows = await findMasterProductBoxInventoryByPairs(tx, inventoryPairs, {
       select: {
         boxId: true,
@@ -1772,7 +1784,7 @@ export class InventoryService {
     >();
 
     for (const item of order.items) {
-      const sku = skuById.get(item.skuId.toString())!;
+      const sku = skuById.get(item.skuId?.toString() ?? '')!;
       const productId = String(sku.productId || '').trim();
       const key = getBoxProductInventoryKey(item.boxId, productId);
       const beforeQty = currentQtyMap.get(key) ?? 0;
@@ -1783,7 +1795,8 @@ export class InventoryService {
         );
       }
 
-      await upsertMasterProductBoxInventoryQty(tx, item.boxId, productId, afterQty);
+      if (item.qtyDelta < 0) await assertStockAvailable(tx, productId, item.boxId, -item.qtyDelta);
+      await changeBoxStock(tx, item.boxId, productId, item.qtyDelta);
       currentQtyMap.set(key, afterQty);
 
       if (!productAuditBeforeById.has(productId)) {
@@ -2286,7 +2299,8 @@ async function importBulkUpdateExcelByProduct(
   );
 
   try {
-    return await this.prisma.$transaction(async (tx) => {
+    return await stockTransaction(this.prisma, async (tx) => {
+      await lockStockProducts(tx, productIds);
       const [products, boxes] = await Promise.all([
         tx.masterProduct.findMany({
           where: {
@@ -2445,6 +2459,7 @@ async function importBulkUpdateExcelByProduct(
       }
 
       for (const item of adjustItems) {
+        if (item.qtyDelta < 0) await assertStockAvailable(tx, item.productId, item.boxId, -item.qtyDelta);
         if (item.afterQty <= 0) {
           await tx.masterProductBoxInventory.deleteMany({
             where: {
@@ -2462,6 +2477,8 @@ async function importBulkUpdateExcelByProduct(
         }
       }
 
+      const adjustment = await recordStockAdjustment(tx, operatorId, adjustItems.map(item => ({ boxId: item.boxId, productId: item.productId, qtyDelta: item.qtyDelta })),
+        originalName ? `bulk-inventory-update:${originalName}` : 'bulk-inventory-update');
       const stockQtyByProductId = await this.recalculateMasterProductStockQtyMap(
         tx,
         adjustItems.map((item) => item.productId),
@@ -2531,7 +2548,7 @@ async function importBulkUpdateExcelByProduct(
         changedItemCount: adjustItems.length,
         changedRows: adjustItems.length,
         fileName: originalName ?? null,
-        adjustNo: null,
+        adjustNo: adjustment.adjustNo,
       };
     }, {
       maxWait: BULK_INVENTORY_IMPORT_TRANSACTION_MAX_WAIT_MS,
@@ -3948,20 +3965,6 @@ async function upsertMasterProductBoxInventoryQty(
   });
 }
 
-async function updateMasterProductBoxInventoryQty(
-  client: MasterProductBoxInventoryUpdateClient,
-  boxId: bigint,
-  productId: string,
-  qty: number,
-): Promise<void> {
-  await client.masterProductBoxInventory.update({
-    where: buildMasterProductBoxInventoryWhereUnique(boxId, productId),
-    data: {
-      qty,
-    },
-  });
-}
-
 async function createMasterProductInventoryAdjustAudit({
   auditService,
   tx,
@@ -4131,7 +4134,7 @@ async function manualAdjustByProduct(
   operatorId: bigint,
   requestId?: string,
 ): Promise<AdjustOrderResult & { adjustNo: string }> {
-  return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  return stockTransaction(this.prisma, async (tx: Prisma.TransactionClient) => {
     const sku =
       payload.skuId || payload.keyword
         ? await this.resolveSkuForManual(tx, payload)
@@ -4156,6 +4159,7 @@ async function manualAdjustByProduct(
       throw new BadRequestException('请输入主商品ID');
     }
 
+    await lockStockProducts(tx, [productId]);
     const product = await tx.masterProduct.findUnique({
       where: { productId },
       select: {
@@ -4190,32 +4194,32 @@ async function manualAdjustByProduct(
       },
     });
 
-    if (sku) {
-      await tx.inventoryAdjustOrderItem.create({
-        data: {
-          orderId: adjustOrder.id,
-          boxId: box.id,
-          skuId: sku.id,
-          qtyDelta,
-          reason: payload.reason ?? null,
-        },
-      });
+    await tx.inventoryAdjustOrderItem.create({
+      data: {
+        orderId: adjustOrder.id,
+        boxId: box.id,
+        productId,
+        skuId: sku?.id ?? null,
+        qtyDelta,
+        reason: payload.reason ?? null,
+      },
+    });
 
-      await tx.stockMovement.create({
-        data: {
-          movementType: 'adjust',
-          refType: 'inventory_adjust_order',
-          refId: adjustOrder.id,
-          boxId: box.id,
-          productId,
-          skuId: sku.id,
-          qtyDelta,
-          operatorId,
-        },
-      });
-    }
+    await tx.stockMovement.create({
+      data: {
+        movementType: 'adjust',
+        refType: 'inventory_adjust_order',
+        refId: adjustOrder.id,
+        boxId: box.id,
+        productId,
+        skuId: sku?.id ?? null,
+        qtyDelta,
+        operatorId,
+      },
+    });
 
-    await upsertMasterProductBoxInventoryQty(tx, box.id, productId, afterQty);
+    if (qtyDelta < 0) await assertStockAvailable(tx, productId, box.id, -qtyDelta);
+    await changeBoxStock(tx, box.id, productId, qtyDelta);
 
     const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
 
@@ -4303,7 +4307,7 @@ async function createFbaReplenishmentByProduct(
     throw new BadRequestException('申请数量必须是大于 0 的整数');
   }
 
-  return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  return stockTransaction(this.prisma, async (tx: Prisma.TransactionClient) => {
     const [sku, box] = await Promise.all([
       tx.sku.findFirst({
         where: {
@@ -4341,6 +4345,7 @@ async function createFbaReplenishmentByProduct(
       throw new BadRequestException('该 SKU 未维护店铺，不能申请 FBA 补货');
     }
 
+    await lockStockProducts(tx, [productId]);
     const currentQty = await findMasterProductBoxInventoryQty(tx, box.id, productId);
     if (currentQty <= 0) {
       throw new ConflictException('当前箱号没有该主商品库存，不能申请 FBA 补货');
@@ -4397,6 +4402,7 @@ async function createFbaReplenishmentByProduct(
       throw new ConflictException(`申请数量不能大于可用库存，当前可用库存为 ${availableQty}`);
     }
 
+    await assertStockAvailable(tx, productId, box.id, requestedQty);
     const requestNo = await this.generateFbaRequestNo(tx);
     const created = await tx.fbaReplenishment.create({
       data: {
@@ -4483,7 +4489,8 @@ async function confirmFbaReplenishmentByProduct(
     throw new BadRequestException('实际数量必须是大于 0 的整数');
   }
 
-  return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  return stockTransaction(this.prisma, async (tx: Prisma.TransactionClient) => {
+    await lockFbaRequests(tx, [id]);
     const row = await tx.fbaReplenishment.findUnique({
       where: { id },
       include: {
@@ -4522,6 +4529,7 @@ async function confirmFbaReplenishmentByProduct(
       throw new ConflictException('当前补货申请对应的 SKU 未关联主商品');
     }
 
+    await lockStockProducts(tx, [productId]);
     const [currentQty, reservedRows] = await Promise.all([
       findMasterProductBoxInventoryQty(tx, row.box.id, productId),
       tx.fbaReplenishment.findMany({
@@ -4547,6 +4555,7 @@ async function confirmFbaReplenishmentByProduct(
       throw new ConflictException(`实际数量不能大于可用库存，当前可用库存为 ${availableQty}`);
     }
 
+    await assertStockAvailable(tx, productId, row.box.id, actualQty, { excludeFbaIds: [id] });
     const updated = await tx.fbaReplenishment.update({
       where: { id: row.id },
       data: {
@@ -4638,7 +4647,8 @@ async function outboundFbaReplenishmentsByProduct(
   if (!ids.length) throw new BadRequestException('至少选择一条补货申请');
   if (!expressNo) throw new BadRequestException('快递单号不能为空');
 
-  return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  return stockTransaction(this.prisma, async (tx: Prisma.TransactionClient) => {
+    await lockFbaRequests(tx, ids);
     const rows = await tx.fbaReplenishment.findMany({
       where: { id: { in: ids } },
       include: {
@@ -4662,6 +4672,9 @@ async function outboundFbaReplenishmentsByProduct(
       throw new NotFoundException('存在未找到的 FBA 补货申请');
     }
 
+    if (rows.every((row) => row.status === 'outbound' && row.expressNo === expressNo)) {
+      return { updatedCount: 0, expressNo };
+    }
     const invalid = rows.find((row) => row.status !== 'pending_outbound');
     if (invalid) {
       throw new ConflictException(`申请单 ${invalid.requestNo} 当前状态不支持出库`);
@@ -4692,6 +4705,7 @@ async function outboundFbaReplenishmentsByProduct(
     });
 
     const requiredRows = Array.from(requiredMap.values());
+    await lockStockProducts(tx, requiredRows.map((row) => row.productId));
     const inventoryRows = await findMasterProductBoxInventoryByPairs(tx, requiredRows);
     const inventoryMap = new Map(
       inventoryRows.map((row) => [getBoxProductInventoryKey(row.boxId, row.productId), row]),
@@ -4709,14 +4723,8 @@ async function outboundFbaReplenishmentsByProduct(
     }
 
     for (const reqRow of requiredRows) {
-      const key = getBoxProductInventoryKey(reqRow.boxId, reqRow.productId);
-      const inventory = inventoryMap.get(key)!;
-      await updateMasterProductBoxInventoryQty(
-        tx,
-        reqRow.boxId,
-        reqRow.productId,
-        Number(inventory.qty) - reqRow.qty,
-      );
+      await assertStockAvailable(tx, reqRow.productId, reqRow.boxId, reqRow.qty, { excludeFbaIds: ids });
+      await changeBoxStock(tx, reqRow.boxId, reqRow.productId, -reqRow.qty);
     }
 
     const affectedProductIds = Array.from(new Set(requiredRows.map((row) => row.productId)));
@@ -4760,6 +4768,7 @@ async function outboundFbaReplenishmentsByProduct(
         data: {
           movementType: 'adjust',
           refType: 'fba_replenishment',
+          operationKey: `fba:${row.id}:outbound`,
           refId: row.id,
           boxId: row.boxId,
           productId: String(row.sku.productId || '').trim(),
@@ -4807,7 +4816,7 @@ async function outboundFbaReplenishmentsByProduct(
     }
 
     await tx.fbaReplenishment.updateMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, status: 'pending_outbound' },
       data: {
         status: 'outbound',
         outboundBy: operatorId,

@@ -27,8 +27,8 @@ export class AuthController {
 
   @Post('logout')
   @UseGuards(JwtAuthGuard)
-  async logout(): Promise<{ success: boolean }> {
-    return { success: true };
+  async logout(@CurrentUser() user: AuthUser): Promise<{ success: boolean }> {
+    return this.authService.logout(user.id, user.sessionId);
   }
 
   @Get('me')

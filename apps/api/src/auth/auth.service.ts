@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { compare, hash } from 'bcryptjs';
-import { AuditAction, User } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import { AuditAction, Prisma, User } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -41,6 +42,7 @@ export class AuthService {
         role: true,
         department: true,
         status: true,
+        sessionVersion: true,
         passwordHash: true,
         mfaSecretEncrypted: true,
         mfaSecretIv: true,
@@ -77,13 +79,7 @@ export class AuthService {
     const mfaEnrollmentRequired = this.isMfaRequired() && !mfaEnabled;
     const passwordChangeRequired = this.isPasswordChangeRequired(user.passwordChangedAt);
 
-    const accessToken = await this.jwtService.signAsync({
-      sub: user.id.toString(),
-      username: user.username,
-      role: user.role,
-      mfaPending: mfaEnrollmentRequired,
-      passwordChangeRequired,
-    });
+    const accessToken = await this.issueAccessToken(user, mfaEnrollmentRequired);
 
     return {
       accessToken,
@@ -116,6 +112,7 @@ export class AuthService {
         role: true,
         department: true,
         status: true,
+        sessionVersion: true,
         passwordHash: true,
         mfaEnabledAt: true,
         passwordChangedAt: true,
@@ -146,8 +143,8 @@ export class AuthService {
 
     const secret = this.mfaService.generateSecret();
     const encrypted = this.mfaService.encrypt(secret);
-    await this.prisma.user.update({
-      where: { id },
+    const setup = await this.prisma.user.updateMany({
+      where: { id, status: 1, mfaEnabledAt: null },
       data: {
         mfaSecretEncrypted: encrypted.encryptedValue,
         mfaSecretIv: encrypted.iv,
@@ -155,6 +152,7 @@ export class AuthService {
         mfaEnabledAt: null,
       },
     });
+    if (setup.count !== 1) throw new BadRequestException('MFA状态已变化，请刷新后重试');
     return {
       secret,
       otpAuthUri: this.mfaService.buildOtpAuthUri(user.username, secret),
@@ -173,6 +171,7 @@ export class AuthService {
         username: true,
         role: true,
         status: true,
+        sessionVersion: true,
         mfaSecretEncrypted: true,
         mfaSecretIv: true,
         mfaSecretAuthTag: true,
@@ -193,14 +192,13 @@ export class AuthService {
     if (!this.mfaService.verify(secret, code)) {
       throw new BadRequestException('MFA验证码无效，请确认手机时间后重试');
     }
-    await this.prisma.user.update({ where: { id }, data: { mfaEnabledAt: new Date() } });
-    const accessToken = await this.jwtService.signAsync({
-      sub: user.id.toString(),
-      username: user.username,
-      role: user.role,
-      mfaPending: false,
-      passwordChangeRequired: this.isPasswordChangeRequired(user.passwordChangedAt),
+    const enabled = await this.prisma.user.updateMany({
+      where: { id, status: 1, sessionVersion: user.sessionVersion,
+        mfaEnabledAt: null, mfaSecretEncrypted: user.mfaSecretEncrypted },
+      data: { mfaEnabledAt: new Date(), sessionVersion: { increment: 1 } },
     });
+    if (enabled.count !== 1) throw new BadRequestException('账号或MFA状态已变化，请重新登录');
+    const accessToken = await this.issueAccessToken({ ...user, sessionVersion: user.sessionVersion + 1 }, false);
     return { success: true, accessToken, deployVersion: this.getDeploySessionVersion() };
   }
 
@@ -217,6 +215,7 @@ export class AuthService {
         username: true,
         role: true,
         status: true,
+        sessionVersion: true,
         passwordHash: true,
         mfaEnabledAt: true,
       },
@@ -236,10 +235,11 @@ export class AuthService {
 
     const passwordHash = await hash(newPassword, 10);
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id },
-        data: { passwordHash, passwordChangedAt: new Date() },
+      const updated = await tx.user.updateMany({
+        where: { id, status: 1, sessionVersion: user.sessionVersion, passwordHash: user.passwordHash },
+        data: { passwordHash, passwordChangedAt: new Date(), sessionVersion: { increment: 1 } },
       });
+      if (updated.count !== 1) throw new UnauthorizedException('账号已变化，请重新登录');
       await this.auditService.create({
         db: tx,
         entityType: 'user',
@@ -264,14 +264,41 @@ export class AuthService {
       });
     });
 
-    const accessToken = await this.jwtService.signAsync({
-      sub: user.id.toString(),
-      username: user.username,
-      role: user.role,
-      mfaPending: this.isMfaRequired() && !user.mfaEnabledAt,
-      passwordChangeRequired: false,
-    });
+    const accessToken = await this.issueAccessToken(
+      { ...user, sessionVersion: user.sessionVersion + 1 },
+      this.isMfaRequired() && !user.mfaEnabledAt,
+    );
     return { success: true, accessToken, deployVersion: this.getDeploySessionVersion() };
+  }
+
+  async logout(userId: bigint, sessionId?: string): Promise<{ success: true }> {
+    if (sessionId) await this.prisma.authSession.deleteMany({ where: { id: sessionId, userId } });
+    return { success: true };
+  }
+
+  private async issueAccessToken(
+    user: Pick<User, 'id' | 'username' | 'role' | 'sessionVersion'>,
+    mfaPending: boolean,
+  ): Promise<string> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`);
+      const current = await tx.user.findUnique({ where: { id: user.id } });
+      if (!current || current.status !== 1 || current.sessionVersion !== user.sessionVersion) {
+        throw new UnauthorizedException('账号已变化，请重新登录');
+      }
+      const jti = randomUUID();
+      const token = await this.jwtService.signAsync({
+        sub: current.id.toString(), username: current.username, role: current.role,
+        sessionVersion: current.sessionVersion, jti, mfaPending,
+        passwordChangeRequired: this.isPasswordChangeRequired(current.passwordChangedAt),
+      });
+      const decoded = this.jwtService.decode<{ exp: number }>(token);
+      await tx.authSession.deleteMany({ where: { userId: current.id, expiresAt: { lte: new Date() } } });
+      await tx.authSession.create({
+        data: { id: jti, userId: current.id, expiresAt: new Date(decoded.exp * 1000) },
+      });
+      return token;
+    });
   }
 
   private isMfaRequired(): boolean {

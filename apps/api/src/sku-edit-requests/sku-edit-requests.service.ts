@@ -1,4 +1,5 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { lockStockProducts, stockTransaction } from '../inventory/stock-transaction';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, Prisma, ProductEditRequestStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { normalizeNullableText, parseId } from '../common/utils';
@@ -239,7 +240,14 @@ export class SkuEditRequestsService {
       }
     }
 
-    return this.prisma.$transaction(async (tx) => {
+    return stockTransaction(this.prisma, async (tx) => {
+      const currentSku = await tx.sku.findUnique({ where: { id: request.skuId }, select: { productId: true } });
+      await lockStockProducts(tx, [String(currentSku?.productId ?? ''), String(afterSnapshot.productId ?? '')]);
+      if (String(currentSku?.productId ?? '') !== String(afterSnapshot.productId ?? '')) {
+        const activeFba = await tx.fbaReplenishment.findFirst({ where: { skuId: request.skuId,
+          status: { in: ['pending_confirm', 'pending_outbound'] } }, select: { id: true } });
+        if (activeFba) throw new ConflictException('该 SKU 有未出库的 FBA 补货申请，不能修改产品ID');
+      }
       const skuUpdateData: Prisma.SkuUncheckedUpdateInput = {
         productId: afterSnapshot.productId,
         sku: targetSkuCode,

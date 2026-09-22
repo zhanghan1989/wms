@@ -1,21 +1,20 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { Role } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/types/auth-user.type';
 import { getJwtSecret } from './jwt-config';
 
 interface JwtPayload {
-  sub: string;
-  username: string;
-  role: Role;
+  sub?: string;
+  jti?: string;
+  sessionVersion?: number;
   mfaPending?: boolean;
-  passwordChangeRequired?: boolean;
 }
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor() {
+  constructor(private readonly prisma: PrismaService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
@@ -24,15 +23,30 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthUser> {
-    if (!payload.sub || !payload.username || !payload.role) {
-      throw new UnauthorizedException('登录令牌无效');
+    if (!payload.sub || !/^\d+$/.test(payload.sub) || !payload.jti
+      || !Number.isInteger(payload.sessionVersion)) {
+      throw new UnauthorizedException('登录已失效，请重新登录');
     }
+    const session = await this.prisma.authSession.findUnique({
+      where: { id: payload.jti },
+      include: { user: true },
+    });
+    const user = session?.user;
+    if (!session || session.expiresAt <= new Date() || !user || user.status !== 1
+      || !user.passwordHash || user.id.toString() !== payload.sub
+      || user.sessionVersion !== payload.sessionVersion) {
+      throw new UnauthorizedException('登录已失效，请重新登录');
+    }
+    const requireMfa = String(process.env.AUTH_REQUIRE_MFA ?? 'false').toLowerCase() === 'true';
+    const requireRotation = String(process.env.AUTH_REQUIRE_PASSWORD_ROTATION ?? 'false').toLowerCase() === 'true';
     return {
-      id: BigInt(payload.sub),
-      username: payload.username,
-      role: payload.role,
-      mfaPending: payload.mfaPending === true,
-      passwordChangeRequired: payload.passwordChangeRequired === true,
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      sessionId: session.id,
+      mfaPending: payload.mfaPending === true || (requireMfa && !user.mfaEnabledAt),
+      passwordChangeRequired: requireRotation && (!user.passwordChangedAt
+        || user.passwordChangedAt.getTime() + 365 * 86400000 <= Date.now()),
     };
   }
 }

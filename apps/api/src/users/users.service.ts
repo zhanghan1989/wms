@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { hash } from 'bcryptjs';
@@ -23,6 +24,37 @@ export class UsersService {
     private readonly auditService: AuditService,
     private readonly userOptionsService: UserOptionsService,
   ) {}
+
+  private async assertCanManage(
+    tx: Prisma.TransactionClient,
+    operatorId: bigint,
+    targetId?: bigint,
+    changes?: { role?: Role; department?: string; status?: number },
+  ): Promise<void> {
+    const ids = [...new Set([operatorId, ...(targetId ? [targetId] : [])])].sort((a, b) => a < b ? -1 : 1);
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`);
+    const operator = await tx.user.findUnique({ where: { id: operatorId } });
+    if (!operator || operator.status !== 1 || ![Role.admin, Role.system_admin].includes(operator.role as 'admin' | 'system_admin')) {
+      throw new ForbiddenException('无权管理用户');
+    }
+    const target = targetId ? await tx.user.findUnique({ where: { id: targetId } }) : null;
+    if (targetId && !target) throw new NotFoundException('用户不存在');
+    if (target?.username === this.protectedUsername) throw new ForbiddenException('保留管理员账号不能通过用户管理修改');
+    if (operator.role === Role.system_admin) return;
+    if (changes?.role && changes.role !== Role.employee && !(targetId === operatorId && changes.role === operator.role)) {
+      throw new ForbiddenException('只有系统管理员可以授予管理员权限');
+    }
+    if (target && target.role !== Role.employee) {
+      if (target.id !== operatorId || target.role === Role.system_admin) {
+        throw new ForbiddenException('只有系统管理员可以管理其他管理员');
+      }
+      if ((changes?.role !== undefined && changes.role !== target.role)
+        || (changes?.department !== undefined && changes.department !== target.department)
+        || (changes?.status !== undefined && changes.status !== target.status)) {
+        throw new ForbiddenException('不能修改自己的角色、部门或启用状态');
+      }
+    }
+  }
 
   async findAll(): Promise<unknown[]> {
     const users = await this.prisma.user.findMany({
@@ -72,6 +104,7 @@ export class UsersService {
       throw new BadRequestException('用户名已存在');
     }
     const created = await this.prisma.$transaction(async (tx) => {
+      await this.assertCanManage(tx, operatorId, undefined, { role: nextRole });
       const user = await tx.user.create({
         data: {
           username: payload.username,
@@ -156,9 +189,10 @@ export class UsersService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      await this.assertCanManage(tx, operatorId, id, data);
       const next = await tx.user.update({
-        where: { id },
-        data,
+        where: { id, sessionVersion: user.sessionVersion },
+        data: { ...data, sessionVersion: { increment: 1 } },
       });
       const eventType = next.status === 0 ? AuditEventType.USER_DISABLED : AuditEventType.USER_UPDATED;
       await this.auditService.create({
@@ -213,6 +247,7 @@ export class UsersService {
 
     try {
       await this.prisma.$transaction(async (tx) => {
+        await this.assertCanManage(tx, operatorId, id);
         await tx.user.delete({
           where: { id },
         });
@@ -322,10 +357,12 @@ export class UsersService {
     const passwordHash = await hash(nextPassword, 10);
 
     await this.prisma.$transaction(async (tx) => {
+      await this.assertCanManage(tx, operatorId, id);
       await tx.user.update({
         where: { id },
         data: {
           passwordHash,
+          sessionVersion: { increment: 1 },
           passwordChangedAt: new Date(),
           status: 1,
         },
