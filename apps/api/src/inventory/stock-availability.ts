@@ -52,7 +52,19 @@ export async function availableStock(
 ): Promise<StockRow[]> {
   const ids = [...new Set(productIds.filter(Boolean))];
   if (!ids.length) return [];
-  const [rows, fba, picking] = await Promise.all([
+  // Historical items without a BOM snapshot use the current BOM definition.
+  // Snapshot components are indexed separately so a stock check only loads relevant picking items.
+  const legacyParents = await tx.masterProductBomItem.findMany({
+    where: { componentProductId: { in: ids } },
+    select: { parentProductId: true },
+    distinct: ['parentProductId'],
+  });
+  const pickingProductIds = [...new Set([...ids, ...legacyParents.map(row => row.parentProductId)])];
+  const itemWhere = { batch: { status: 'created' as const }, dispatchMode: { in: ['', 'overseas'] },
+    ...(options.excludePickingBatchId ? { batchId: { not: options.excludePickingBatchId } } : {}) };
+  const itemSelect = { id: true, productId: true, requestedQty: true,
+    pickingPlanSnapshot: true, bomSnapshot: true } as const;
+  const [rows, fba, directPicking, componentRefs] = await Promise.all([
     tx.masterProductBoxInventory.findMany({
       where: { productId: { in: ids } },
       include: { box: { include: { shelf: { select: { shelfCode: true } } } } },
@@ -66,11 +78,16 @@ export async function availableStock(
         sku: { select: { productId: true } }, box: { select: { boxCode: true } } },
     }),
     tx.overseasPickingBatchItem.findMany({
-      where: { batch: { status: 'created' }, dispatchMode: { in: ['', 'overseas'] },
-        ...(options.excludePickingBatchId ? { batchId: { not: options.excludePickingBatchId } } : {}) },
-      select: { productId: true, requestedQty: true, pickingPlanSnapshot: true, bomSnapshot: true },
+      where: { ...itemWhere, productId: { in: pickingProductIds } },
+      select: itemSelect,
+    }),
+    tx.pickingItemComponentRef.findMany({
+      where: { componentProductId: { in: ids }, item: itemWhere },
+      select: { item: { select: itemSelect } },
     }),
   ]);
+  const picking = [...new Map([...directPicking, ...componentRefs.map(ref => ref.item)]
+    .map(item => [item.id, item])).values()];
   const legacyIds = [...new Set(picking.filter(item => !Array.isArray(item.bomSnapshot)).map(item => item.productId))];
   const legacyProducts = legacyIds.length ? await tx.masterProduct.findMany({
     where: { productId: { in: legacyIds } },

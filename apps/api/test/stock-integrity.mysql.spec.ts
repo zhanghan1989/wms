@@ -142,6 +142,31 @@ mysql('stock integrity against isolated MySQL', () => {
       bomSnapshot: [{ componentProductId: material.productId, componentProductName: '材料', quantity: 2 }] }];
     await expect((orders as any).assertOverseasPickingBatchDemandWithinStock(snapshots)).rejects.toThrow('超过库存');
   });
+  it('loads indexed BOM claims without unrelated picking items', async () => {
+    const material = await fixture();
+    const unrelated = await fixture();
+    await picking(unrelated, 7);
+    const parent = await db.masterProduct.create({ data: { productId: name(), productName: '测试组合', stockQty: 0 } });
+    await db.overseasPickingBatch.create({ data: { batchNo: name(), items: { create: {
+      source: 'manual', sourceRecordId: 1n, productId: parent.productId, requestedQty: 3,
+      pickingPlanSnapshot: [], bomSnapshot: [{ componentProductId: material.productId, quantity: 2 }],
+      componentRefs: { create: [{ componentProductId: material.productId }] },
+    } } } });
+    const rows = await availableStock(db as any, [material.productId]);
+    expect(rows.reduce((sum, row) => sum + row.qty, 0)).toBe(4);
+  });
+  it('keeps legacy picking BOM claims when snapshots are absent', async () => {
+    const material = await fixture();
+    const parent = await db.masterProduct.create({ data: { productId: name(), productName: '旧组合', stockQty: 0 } });
+    await db.masterProductBomItem.create({ data: { parentProductId: parent.productId,
+      componentProductId: material.productId, quantity: 2, position: 1 } });
+    await db.overseasPickingBatch.create({ data: { batchNo: name(), items: { create: {
+      source: 'manual', sourceRecordId: 1n, productId: parent.productId, requestedQty: 3,
+      pickingPlanSnapshot: [], bomSnapshot: undefined,
+    } } } });
+    const rows = await availableStock(db as any, [material.productId]);
+    expect(rows.reduce((sum, row) => sum + row.qty, 0)).toBe(4);
+  });
   it('protects reservations from manual deductions and moves', async () => {
     const f = await fixture(); await fba(f, 8);
     await expect(inventory.manualAdjust({ productId: f.productId, boxCode: f.box.boxCode, qtyDelta: -3 }, operatorId)).rejects.toThrow('可用库存不足');

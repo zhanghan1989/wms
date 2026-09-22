@@ -1413,12 +1413,24 @@ model OverseasPickingBatchItem {
   createdAt                  DateTime             @default(now()) @map("created_at")
   updatedAt                  DateTime             @updatedAt @map("updated_at")
   batch                      OverseasPickingBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  componentRefs              PickingItemComponentRef[]
 
   @@unique([batchId, source, sourceRecordId], map: "uq_overseas_picking_batch_items_batch_source_record")
   @@index([batchId, productId])
+  @@index([productId, batchId], map: "idx_picking_items_product_batch")
   @@index([source, sourceRecordId])
   @@index([orderId])
   @@map("overseas_picking_batch_items")
+}
+
+model PickingItemComponentRef {
+  itemId             BigInt                   @map("item_id") @db.UnsignedBigInt
+  componentProductId String                   @map("component_product_id") @db.VarChar(128)
+  item               OverseasPickingBatchItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([itemId, componentProductId])
+  @@index([componentProductId, itemId], map: "idx_picking_component_product_item")
+  @@map("picking_item_component_refs")
 }
 
 model YamatoShipmentBatch {

@@ -3,6 +3,10 @@ import * as XLSX from 'xlsx';
 import * as iconv from 'iconv-lite';
 
 describe('OrdersService', () => {
+  const emptyReservationModels = () => ({
+    masterProductBomItem: { findMany: jest.fn().mockResolvedValue([]) },
+    pickingItemComponentRef: { findMany: jest.fn().mockResolvedValue([]) },
+  });
   it('keeps SP-API FBM rows out of the Amazon order-processing list', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const service = new OrdersService({ amazonOrderRecord: { findMany } } as any);
@@ -583,6 +587,7 @@ describe('OrdersService', () => {
           }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      ...emptyReservationModels(),
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
       overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
       stockMovement: { create: stockMovementCreate },
@@ -663,6 +668,7 @@ describe('OrdersService', () => {
         }]),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
+      ...emptyReservationModels(),
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
       overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
       stockMovement: { create: stockMovementCreate },
@@ -702,6 +708,7 @@ describe('OrdersService', () => {
   it('aggregates shared component demand when validating a picking batch', async () => {
     const sharedComponent = { productId: 'HOOK-9', productName: '共用扣件', productType: '肩带配件', stockQty: 1, status: 1 };
     const service = new OrdersService({
+      ...emptyReservationModels(),
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
       masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([
         { boxId: 1n, productId: 'HOOK-9', qty: 1, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } },
@@ -845,6 +852,7 @@ describe('OrdersService', () => {
       componentProductId: 'HOOK-12', componentProductName: '预占配件', quantity: 1,
     }];
     const service = new OrdersService({
+      ...emptyReservationModels(),
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
       masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([
         { boxId: 1n, productId: 'HOOK-12', qty: 1, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } },
@@ -878,6 +886,7 @@ describe('OrdersService', () => {
 
   it('does not assign finished stock already reserved by another active batch', async () => {
     const service = new OrdersService({
+      ...emptyReservationModels(),
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
       masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([
         { boxId: 1n, productId: 'STRAP-FINISHED', qty: 1, box: { boxCode: 'B1', shelf: { shelfCode: 'S1' } } },

@@ -1597,6 +1597,11 @@ export class OrdersService {
                 pickingPlanSnapshot: item.pickingPlanSnapshot ?? [],
                 pickingRequirementSnapshot: item.pickingRequirementSnapshot ?? [],
                 bomSnapshot: item.bomSnapshot ?? [],
+                componentRefs: {
+                  create: [...new Set((item.bomSnapshot ?? [])
+                    .map((component) => component.componentProductId)
+                    .filter(Boolean))].map((componentProductId) => ({ componentProductId })),
+                },
                 shopName: item.shopName,
                 shippingName: item.shippingName,
               })),
