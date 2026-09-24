@@ -1,0 +1,9 @@
+.git
+.gitignore
+.github
+**/node_modules
+**/dist
+**/.cache
+**/coverage
+*.log
+*.tar.gz
