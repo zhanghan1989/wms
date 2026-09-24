@@ -21,9 +21,9 @@ RUN npm ci --omit=dev --no-audit --no-fund \
 
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY apps/api/public ./apps/api/public
-COPY apps/api/data ./apps/api/data
 COPY docs ./docs
 COPY apps/print-agent/prebuilt ./apps/print-agent/prebuilt
+RUN mkdir -p /app/data /app/storage/backups
 
 EXPOSE 3000
 CMD ["npm", "run", "-w", "api", "start"]
