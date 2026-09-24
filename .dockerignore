@@ -5,5 +5,7 @@
 **/dist
 **/.cache
 **/coverage
+apps/api/storage
+apps/api/test
 *.log
 *.tar.gz
