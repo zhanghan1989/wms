@@ -167,6 +167,17 @@ mysql('stock integrity against isolated MySQL', () => {
     const rows = await availableStock(db as any, [material.productId]);
     expect(rows.reduce((sum, row) => sum + row.qty, 0)).toBe(4);
   });
+  it('blocks new overseas picking batches while earlier work remains unfinished', async () => {
+    const batch = await db.overseasPickingBatch.create({ data: {
+      batchNo: name(), status: 'created', completionGateRequired: true,
+    } });
+    try {
+      await expect(orders.createOverseasPickingBatch({ items: [] }, operatorId))
+        .rejects.toThrow('请先完成之前的拣货批次');
+    } finally {
+      await db.overseasPickingBatch.delete({ where: { id: batch.id } });
+    }
+  });
   it('protects reservations from manual deductions and moves', async () => {
     const f = await fixture(); await fba(f, 8);
     await expect(inventory.manualAdjust({ productId: f.productId, boxCode: f.box.boxCode, qtyDelta: -3 }, operatorId)).rejects.toThrow('可用库存不足');

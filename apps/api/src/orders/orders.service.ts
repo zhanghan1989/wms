@@ -598,6 +598,7 @@ interface OverseasPickingBatchSummary {
   id: string;
   batchNo: string;
   status: string;
+  completionGateRequired: boolean;
   orderCount: number;
   itemCount: number;
   totalQty: number;
@@ -1085,11 +1086,7 @@ export class OrdersService {
         take: limit,
       }),
       this.prisma.overseasPickingBatch.findMany({
-        where: { status: { in: [
-          OVERSEAS_PICKING_BATCH_STATUS.CREATED,
-          OVERSEAS_PICKING_BATCH_STATUS.PICKED,
-          OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED,
-        ] } },
+        where: { status: { not: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.yamatoShipmentBatch.findMany({
@@ -1127,6 +1124,7 @@ export class OrdersService {
         id: row.id.toString(),
         batchNo: row.batchNo,
         status: row.status,
+        completionGateRequired: row.completionGateRequired,
         orderCount: Number(row.orderCount ?? 0),
         itemCount: Number(row.itemCount ?? 0),
         totalQty: Number(row.totalQty ?? 0),
@@ -1138,6 +1136,15 @@ export class OrdersService {
         yamatoPendingPageCount: Math.max(pageCount - printedPageCount, 0),
       };
     });
+  }
+
+  async getOverseasPickingBatchCreationReadiness(): Promise<{ canCreate: boolean; unfinishedBatchNo: string | null }> {
+    const unfinished = await this.prisma.overseasPickingBatch.findFirst({
+      where: { completionGateRequired: true, status: { not: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED } },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { batchNo: true },
+    });
+    return { canCreate: !unfinished, unfinishedBatchNo: unfinished?.batchNo ?? null };
   }
 
   async completeOverseasPickingBatchWork(batchIdRaw: string): Promise<{
@@ -1521,6 +1528,7 @@ export class OrdersService {
       id: batch.id.toString(),
       batchNo: batch.batchNo,
       status: batch.status,
+      completionGateRequired: batch.completionGateRequired,
       orderCount: Number(batch.orderCount ?? 0),
       itemCount: Number(batch.itemCount ?? 0),
       totalQty: Number(batch.totalQty ?? 0),
@@ -1549,6 +1557,20 @@ export class OrdersService {
     const remark = String(payload?.remark ?? '').trim() || null;
 
     return stockTransaction(this.prisma, async (tx) => {
+      const gate = await tx.$queryRaw<Array<{ id: number }>>(
+        Prisma.sql`SELECT id FROM picking_batch_generation_locks WHERE id = 1 FOR UPDATE`,
+      );
+      if (gate.length !== 1) {
+        throw new InternalServerErrorException('批次生成检查不可用，请联系管理员');
+      }
+      const unfinished = await tx.overseasPickingBatch.findFirst({
+        where: { completionGateRequired: true, status: { not: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED } },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { batchNo: true },
+      });
+      if (unfinished) {
+        throw new ConflictException(`请先完成之前的拣货批次 ${unfinished.batchNo}（状态须为“作业已完成”），再生成新批次`);
+      }
       const snapshots = await this.collectOverseasPickingBatchItemSnapshots(payload?.items);
       const productIds = Array.from(new Set(snapshots.map((item) => item.productId))).sort();
       if (productIds.length) {
@@ -1580,6 +1602,7 @@ export class OrdersService {
           data: {
             batchNo: this.buildOverseasPickingBatchNo(),
             status: OVERSEAS_PICKING_BATCH_STATUS.CREATED,
+            completionGateRequired: true,
             orderCount,
             itemCount,
             totalQty,

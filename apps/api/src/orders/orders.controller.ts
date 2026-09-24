@@ -335,6 +335,12 @@ export class OrdersController {
     return this.ordersService.listOverseasPickingBatches(limit);
   }
 
+  @Get('overseas-warehouse/picking-batches/creation-readiness')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getOverseasPickingBatchCreationReadiness(): Promise<unknown> {
+    return this.ordersService.getOverseasPickingBatchCreationReadiness();
+  }
+
   @Get('overseas-warehouse/picking-batches/:batchId')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async getOverseasPickingBatchDetail(@Param('batchId') batchId: string): Promise<unknown> {

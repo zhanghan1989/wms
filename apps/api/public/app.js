@@ -12276,14 +12276,15 @@ function getSelectedOverseasPickingBatch() {
 
 function getOverseasPickingBatchStatusText(item) {
   const status = String(item?.status || "").trim();
-  if (status === "created") return "待确认";
-  if (status === "picked") return "已扣库存";
+  const historyPrefix = item?.completionGateRequired === false && status !== "completed" ? "历史待核对 · " : "";
+  if (status === "created") return `${historyPrefix}待确认`;
+  if (status === "picked") return `${historyPrefix}已扣库存`;
   if (status === "completed") return "作业已完成";
   if (status === "yamato_exported" && item?.yamatoShipmentBatchStatus === "pdf_ready") {
-    return Number(item?.yamatoPrintedPageCount || 0) > 0 ? "打印面单中" : "待打印面单";
+    return `${historyPrefix}${Number(item?.yamatoPrintedPageCount || 0) > 0 ? "打印面单中" : "待打印面单"}`;
   }
-  if (status === "yamato_exported") return "已生成 Yamato";
-  return displayText(status);
+  if (status === "yamato_exported") return `${historyPrefix}已生成 Yamato`;
+  return `${historyPrefix}${displayText(status)}`;
 }
 
 function renderOverseasPickingBatchList() {
@@ -15252,6 +15253,14 @@ function bindForms() {
         const selectedRows = getSelectedOverseasOrderRows();
         if (!selectedRows.length) {
           throw new Error("请先选择要批量打单的订单");
+        }
+        const readiness = await request("/orders/overseas-warehouse/picking-batches/creation-readiness");
+        if (!readiness?.canCreate) {
+          await loadOverseasPickingBatches();
+          switchPanel("overseasPickingBatchManagement");
+          throw new Error(
+            `请先完成之前的拣货批次 ${readiness?.unfinishedBatchNo || ""}，全部显示“作业已完成”后再生成新批次`,
+          );
         }
         const stockIssues = getOverseasPickingBatchStockIssues(selectedRows);
         let rowsForBatch = selectedRows;

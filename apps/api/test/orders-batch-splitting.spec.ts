@@ -43,7 +43,10 @@ describe('overseas picking batch splitting', () => {
   });
 
   it('creates all split batches in one transaction and returns their counts', async () => {
-    const tx = { $queryRaw: jest.fn(), overseasPickingBatch: { create: jest.fn().mockImplementation(async ({ data }) => ({ ...data, id: BigInt(tx.overseasPickingBatch.create.mock.calls.length) })) } };
+    const tx = { $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]), overseasPickingBatch: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockImplementation(async ({ data }) => ({ ...data, id: BigInt(tx.overseasPickingBatch.create.mock.calls.length) })),
+    } };
     const prisma = { $transaction: jest.fn(async (work) => work(tx)) };
     const instance = new OrdersService(prisma as any) as any;
     jest.spyOn(instance, 'collectOverseasPickingBatchItemSnapshots').mockResolvedValue(rows(61));
@@ -90,7 +93,9 @@ describe('overseas picking batch splitting', () => {
   });
 
   it.each(['stock', 'duplicate'])('creates no batches when %s validation fails', async (failure) => {
-    const tx = { $queryRaw: jest.fn(), overseasPickingBatch: { create: jest.fn() } };
+    const tx = { $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]), overseasPickingBatch: {
+      findFirst: jest.fn().mockResolvedValue(null), create: jest.fn(),
+    } };
     const instance = new OrdersService({ $transaction: async (work: any) => work(tx) } as any) as any;
     jest.spyOn(instance, 'collectOverseasPickingBatchItemSnapshots').mockResolvedValue(rows(31));
     for (const method of ['attachOverseasPickingPlanSnapshots', 'attachShoulderStrapBomSnapshots', 'attachOverseasPickingRequirementSnapshots']) jest.spyOn(instance, method).mockResolvedValue(undefined);
@@ -108,12 +113,13 @@ describe('overseas picking batch splitting', () => {
     const start = app.indexOf('  $("overseasCreatePickingBatchBtn").addEventListener');
     const end = app.indexOf('  $("overseasPickingScanSubmitBtn")', start);
     let click: any;
-    const state = { selectedOverseasOrderKeys: new Set(['rakuten:1']), overseasPickingBatchView: 'detail', selectedOverseasPickingBatchId: 'old', selectedOverseasPickingBatchDetail: { id: 'old' } };
+    const state = { selectedOverseasOrderKeys: new Set(['rakuten:1']), overseasPickingBatches: [], overseasPickingBatchView: 'detail', selectedOverseasPickingBatchId: 'old', selectedOverseasPickingBatchDetail: { id: 'old' } };
     const openDetail = jest.fn();
     const toast = jest.fn();
     runInNewContext(app.slice(start, end), {
       $: () => ({ addEventListener: (_event: string, handler: any) => { click = handler; } }),
       state, withBusyButton: async (_button: any, _label: string, work: any) => work(),
+      request: async () => ({ canCreate: true }),
       getSelectedOverseasOrderRows: () => [{ source: 'rakuten', id: '1' }],
       getOverseasPickingBatchStockIssues: () => [],
       createOverseasPickingBatch: async () => ({ id: '1', batches: [{ orderCount: 30 }, { orderCount: 1 }] }),
@@ -126,6 +132,40 @@ describe('overseas picking batch splitting', () => {
     expect(state.selectedOverseasPickingBatchDetail).toBeNull();
     expect(openDetail).not.toHaveBeenCalled();
     expect(toast).toHaveBeenCalledWith(expect.stringContaining('已创建 2 个拣货批次'));
+  });
+
+  it('shows unfinished batches before submitting a new batch from the order list', async () => {
+    const app = readFileSync(join(__dirname, '../public/app.js'), 'utf8');
+    const start = app.indexOf('  $("overseasCreatePickingBatchBtn").addEventListener');
+    const end = app.indexOf('  $("overseasPickingScanSubmitBtn")', start);
+    let click: any;
+    const state = { selectedOverseasOrderKeys: new Set(['rakuten:1']), overseasPickingBatches: [] as any[] };
+    const create = jest.fn();
+    const switchPanel = jest.fn();
+    const toast = jest.fn();
+    runInNewContext(app.slice(start, end), {
+      $: () => ({ addEventListener: (_event: string, handler: any) => { click = handler; } }),
+      state, withBusyButton: async (_button: any, _label: string, work: any) => work(),
+      getSelectedOverseasOrderRows: () => [{ source: 'rakuten', id: '1' }],
+      request: async () => ({ canCreate: false, unfinishedBatchNo: 'PK-OLD' }),
+      loadOverseasPickingBatches: async () => { state.overseasPickingBatches = [{ batchNo: 'PK-OLD', status: 'picked' }]; },
+      createOverseasPickingBatch: create, switchPanel, showToast: toast,
+    });
+    await click({ currentTarget: {} });
+    expect(create).not.toHaveBeenCalled();
+    expect(switchPanel).toHaveBeenCalledWith('overseasPickingBatchManagement');
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining('PK-OLD'), true);
+  });
+
+  it('labels unfinished historical batches without changing their work state', () => {
+    const app = readFileSync(join(__dirname, '../public/app.js'), 'utf8');
+    const start = app.indexOf('function getOverseasPickingBatchStatusText(item)');
+    const end = app.indexOf('function renderOverseasPickingBatchList()', start);
+    const text = runInNewContext(`${app.slice(start, end)}\ngetOverseasPickingBatchStatusText({
+      status: 'yamato_exported', completionGateRequired: false,
+      yamatoShipmentBatchStatus: 'pdf_ready', yamatoPrintedPageCount: 1,
+    })`);
+    expect(text).toBe('历史待核对 · 打印面单中');
   });
 
   it('counts identical order numbers in different sources separately', () => {

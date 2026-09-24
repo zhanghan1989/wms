@@ -3,6 +3,33 @@ import * as XLSX from 'xlsx';
 import * as iconv from 'iconv-lite';
 
 describe('OrdersService', () => {
+  it('ignores historical picking batches in the new creation gate', async () => {
+    const findFirst = jest.fn().mockResolvedValue(null);
+    const service = new OrdersService({ overseasPickingBatch: { findFirst } } as any);
+
+    await expect(service.getOverseasPickingBatchCreationReadiness())
+      .resolves.toEqual({ canCreate: true, unfinishedBatchNo: null });
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { completionGateRequired: true, status: { not: 'completed' } },
+    }));
+  });
+  it('blocks generating a new picking batch until previous batches are completed', async () => {
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([{ id: 1 }]),
+      overseasPickingBatch: {
+        findFirst: jest.fn().mockResolvedValue({ batchNo: 'PK-OLD' }),
+        create: jest.fn(),
+      },
+    };
+    const service = new OrdersService({ $transaction: (work: (db: typeof tx) => Promise<unknown>) => work(tx) } as any);
+
+    await expect(service.createOverseasPickingBatch({ items: [] }))
+      .rejects.toThrow('请先完成之前的拣货批次 PK-OLD');
+    expect(tx.overseasPickingBatch.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { completionGateRequired: true, status: { not: 'completed' } },
+    }));
+    expect(tx.overseasPickingBatch.create).not.toHaveBeenCalled();
+  });
   const emptyReservationModels = () => ({
     masterProductBomItem: { findMany: jest.fn().mockResolvedValue([]) },
     pickingItemComponentRef: { findMany: jest.fn().mockResolvedValue([]) },

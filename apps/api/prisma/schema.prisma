@@ -1375,6 +1375,7 @@ model OverseasPickingBatch {
   id          BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
   batchNo     String                     @unique @map("batch_no") @db.VarChar(64)
   status      String                     @default("created") @db.VarChar(32)
+  completionGateRequired Boolean          @default(true) @map("completion_gate_required")
   orderCount  Int                        @default(0) @map("order_count")
   itemCount   Int                        @default(0) @map("item_count")
   totalQty    Int                        @default(0) @map("total_qty")
@@ -1389,6 +1390,12 @@ model OverseasPickingBatch {
   @@index([status, createdAt])
   @@index([confirmedAt])
   @@map("overseas_picking_batches")
+}
+
+model PickingBatchGenerationLock {
+  id Int @id @db.TinyInt
+
+  @@map("picking_batch_generation_locks")
 }
 
 model OverseasPickingBatchItem {
