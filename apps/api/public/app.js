@@ -4437,7 +4437,7 @@ async function openBoxContentQueryModalForBoxCode(boxCode, preferredBoxId = "") 
   setQueryModalDirectResultMode("box", true);
   $("boxContentQueryBoxCode").value = box?.boxCode || normalizedBoxCode;
   const rows = await getBoxSkuInventoryRows(box.id);
-  renderBoxContentQueryResult(box, rows);
+  renderBoxContentQueryResult((await request(`/boxes?q=${encodeURIComponent(box.boxCode)}`)).find((item) => String(item.id) === String(box.id)) || box, rows);
   openModal("boxContentQueryModal");
 }
 
@@ -5774,10 +5774,22 @@ function loadMoreInventorySearchIfNeeded() {
   return;
 }
 
+const sharedReferenceRequests = new Map();
+function loadReferenceData(path) {
+  const key = `${state.token}:${path}`;
+  if (sharedReferenceRequests.has(key)) return sharedReferenceRequests.get(key);
+  const pending = request(path);
+  sharedReferenceRequests.set(key, pending);
+  pending.finally(() => {
+    if (sharedReferenceRequests.get(key) === pending) sharedReferenceRequests.delete(key);
+  }).catch(() => {});
+  return pending;
+}
+
 async function loadInventory({ preserveSearch = false } = {}) {
   const [skus, totals] = await Promise.all([
-    request("/skus"),
-    request("/inventory/sku-totals"),
+    loadReferenceData("/skus"),
+    loadReferenceData("/inventory/sku-totals"),
     loadFbaPendingSummary(),
   ]);
   state.inventorySkus = skus;
@@ -5808,7 +5820,12 @@ async function refreshInventoryViewAfterStockMutation({ preserveCurrentView = fa
   ).trim();
   const shouldPreserveView = Boolean(preserveCurrentView && (keyword || selectedProductId));
 
-  await loadInventory({ preserveSearch: shouldPreserveView });
+  if (!shouldPreserveView) await loadInventory({ preserveSearch: false });
+  else {
+    const [totals] = await Promise.all([loadReferenceData("/inventory/sku-totals"), loadFbaPendingSummary()]);
+    state.inventoryTotalsBySku = totals || {};
+    state.inventoryLocations = new Map();
+  }
 
   if (!shouldPreserveView) return;
   if (selectedProductId) {
@@ -9788,7 +9805,7 @@ async function loadShops() {
 }
 
 async function loadShelves() {
-  const shelves = await request("/shelves");
+  const shelves = await loadReferenceData("/shelves");
   state.shelves = shelves;
   const latestIds = new Set((Array.isArray(shelves) ? shelves : []).map((item) => String(item.id)));
   state.shelfEditingIds = new Set(
@@ -9819,7 +9836,7 @@ async function loadShelves() {
 }
 
 async function loadBoxes() {
-  const boxes = await request("/boxes");
+  const boxes = await loadReferenceData("/boxes/options");
   state.boxes = boxes;
   const latestIds = new Set((Array.isArray(boxes) ? boxes : []).map((item) => String(item.id)));
   $("statBoxes").textContent = boxes.length;
@@ -9844,9 +9861,12 @@ async function loadBoxes() {
     .join("");
 }
 
+let boxManageRequestVersion = 0;
 async function loadBoxManagePage({ reset = false } = {}) {
-  if (state.boxManageLoading) return;
+  if (!reset && state.boxManageLoading) return;
   if (!reset && !state.boxManageHasMore) return;
+  const requestVersion = ++boxManageRequestVersion;
+  const token = state.token;
 
   if (reset) {
     state.boxManageRows = [];
@@ -9863,6 +9883,7 @@ async function loadBoxManagePage({ reset = false } = {}) {
     const result = await request(
       `/boxes/manage?page=${encodeURIComponent(page)}&pageSize=${encodeURIComponent(state.boxManagePageSize)}`,
     );
+    if (requestVersion !== boxManageRequestVersion || token !== state.token) return;
     const items = Array.isArray(result?.items) ? result.items : [];
     const nextRows = reset ? items : [...state.boxManageRows, ...items];
     const latestIds = new Set(nextRows.map((item) => String(item.id)));
@@ -9871,8 +9892,10 @@ async function loadBoxManagePage({ reset = false } = {}) {
     state.boxManagePage = page + 1;
     state.boxManageVisibleCount = Math.max(state.boxManageVisibleCount, state.boxManageRows.length);
   } finally {
-    state.boxManageLoading = false;
-    renderBoxesManageTable();
+    if (requestVersion === boxManageRequestVersion) {
+      state.boxManageLoading = false;
+      renderBoxesManageTable();
+    }
   }
 }
 
@@ -10657,7 +10680,7 @@ async function loadFbaPendingSummary() {
     return;
   }
 
-  const summary = await request("/inventory/fba-replenishments/pending-summary");
+  const summary = await loadReferenceData("/inventory/fba-replenishments/pending-summary");
   state.fbaPendingCount = Number(summary?.pendingConfirmCount || 0);
   state.fbaPendingBySku = summary?.pendingBySku || {};
   state.fbaPendingByBoxSku = summary?.pendingByBoxSku || {};
@@ -14834,7 +14857,10 @@ async function submitMoveBoxCodeForm() {
 }
 
 async function initOverseasWarehousePage() {
-  await Promise.all([loadShelves(), loadBoxes(), loadInventory()]);
+  const token = state.token;
+  const [,, skus] = await Promise.all([loadShelves(), loadBoxes(), loadReferenceData("/skus")]);
+  if (state.token !== token) return;
+  state.inventorySkus = Array.isArray(skus) ? skus : [];
   $("moveBoxShelfForm")?.reset();
   $("moveShelfCurrentCode").value = "";
   $("moveShelfTargetCode").value = "";
@@ -18291,7 +18317,7 @@ function bindForms() {
           return;
         }
         const rows = await getBoxSkuInventoryRows(box.id);
-        renderBoxContentQueryResult(box, rows);
+        renderBoxContentQueryResult((await request(`/boxes?q=${encodeURIComponent(box.boxCode)}`)).find((item) => String(item.id) === String(box.id)) || box, rows);
       });
     } catch (error) {
       showToast(error.message, true);

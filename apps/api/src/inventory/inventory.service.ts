@@ -928,12 +928,6 @@ export class InventoryService {
     pendingBySku: Record<string, number>;
     pendingByBoxSku: Record<string, number>;
   }> {
-    const pendingConfirmCount = await this.prisma.fbaReplenishment.count({
-      where: {
-        status: { in: ['pending_confirm', 'pending_outbound'] },
-      },
-    });
-
     const pendingRows = await this.prisma.fbaReplenishment.findMany({
       where: {
         status: { in: ['pending_confirm', 'pending_outbound'] },
@@ -947,6 +941,7 @@ export class InventoryService {
       },
     });
 
+    const pendingConfirmCount = pendingRows.length;
     const pendingBySku: Record<string, number> = {};
     const pendingByBoxSku: Record<string, number> = {};
 

@@ -45,6 +45,15 @@ export class BoxesService {
     readonly auditService: AuditService,
   ) {}
 
+  async listOptions(q?: string): Promise<unknown[]> {
+    return this.prisma.box.findMany({
+      where: { status: 1, ...(q ? { boxCode: { contains: q.trim() } } : {}) },
+      select: { id: true, boxCode: true, shelfId: true, status: true,
+        shelf: { select: { id: true, shelfCode: true, name: true } } },
+      orderBy: { id: 'desc' },
+    });
+  }
+
   async list(q?: string): Promise<unknown[]> {
     const boxes = await this.prisma.box.findMany({
       where: {
