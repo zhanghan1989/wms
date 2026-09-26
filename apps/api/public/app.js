@@ -499,6 +499,7 @@ const AUDIT_EVENT_TEXT_MAP = {
 
 const AUDIT_ENTITY_TEXT_MAP = {
   box: "箱号",
+  master_product: "商品",
   sku: "产品",
   shelf: "货架",
   user: "用户",
@@ -10367,6 +10368,7 @@ function pickAuditEntityName(item, entityType) {
     return "";
   };
 
+  if (entityType === "master_product") return [pick("productId", "sku"), pick("productName")].filter(Boolean).join(" / ");
   if (entityType === "sku") return pick("sku", "model");
   if (entityType === "box") return pick("boxCode", "box_code");
   if (entityType === "shelf") return pick("shelfCode", "shelf_code", "name");
@@ -10391,9 +10393,9 @@ function pickAuditEntityName(item, entityType) {
 function formatAuditEntity(item) {
   const entityType = String(item?.entityType || "").trim();
   const entityText = AUDIT_ENTITY_TEXT_MAP[entityType] || entityType || "实体";
-  const entityName = pickAuditEntityName(item, entityType);
+  const entityName = pickAuditEntityName(item, entityType) || String(item?.entityDisplayName || "").trim();
   if (!entityName) {
-    return entityText;
+    return `${entityText}（编号 ${String(item?.entityId ?? "未知")}）`;
   }
   return `${entityText}：${entityName}`;
 }
@@ -10402,6 +10404,39 @@ function getAuditEventText(eventType) {
   const code = String(eventType || "").trim();
   if (!code) return "-";
   return AUDIT_EVENT_TEXT_MAP[code] || code;
+}
+
+function formatAuditEvent(item) {
+  const before = toAuditRecord(item?.beforeData);
+  const after = toAuditRecord(item?.afterData);
+  const details = [];
+  const product = [after.productId ?? before.productId, after.productName ?? before.productName]
+    .filter((value) => value !== undefined && value !== null && String(value).trim()).join(" / ");
+  if (product && item?.entityType !== "master_product") details.push(`商品：${product}`);
+  if (after.boxCode ?? before.boxCode) details.push(`箱号：${after.boxCode ?? before.boxCode}`);
+  for (const [field, label] of [["qty", "箱内数量"], ["stockQty", "总库存"], ["status", "状态"]]) {
+    if (before[field] !== undefined && after[field] !== undefined && before[field] !== after[field]) {
+      details.push(`${label}：${formatAuditValue(field, before[field])} → ${formatAuditValue(field, after[field])}`);
+    }
+  }
+  const delta = Number(after.qtyDelta);
+  if (after.qtyDelta !== undefined && Number.isFinite(delta) && delta !== 0) details.push(`数量${delta > 0 ? "增加" : "减少"} ${Math.abs(delta)}`);
+  if (after.requestNo ?? before.requestNo) details.push(`申请单：${after.requestNo ?? before.requestNo}`);
+  const fieldLabels = { boxCode: "箱号", shelfCode: "货架", productName: "商品名称", sku: "SKU", name: "名称", username: "用户名", role: "角色", department: "部门", remark: "备注", actualQty: "实际数量", requestedQty: "申请数量" };
+  for (const change of Array.isArray(item?.changedFields) ? item.changedFields : []) {
+    const label = fieldLabels[change?.field];
+    if (label) details.push(`${label}：${formatAuditValue(change.field, change.before)} → ${formatAuditValue(change.field, change.after)}`);
+  }
+  return [getAuditEventText(item?.eventType), ...new Set(details)].join("；");
+}
+
+function formatAuditValue(field, value) {
+  if (value === null || value === undefined || value === "") return "未设置";
+  if (field === "status") {
+    const labels = { draft: "草稿", confirmed: "已确认", voided: "已作废", pending: "待处理", completed: "已完成", processing: "处理中" };
+    return labels[value] || String(value);
+  }
+  return typeof value === "object" ? "内容已变更" : String(value);
 }
 
 function renderAuditTable() {
@@ -10415,7 +10450,7 @@ function renderAuditTable() {
       <tr>
         <td>${formatDate(item.createdAt)}</td>
         <td>${escapeHtml(formatAuditEntity(item))}</td>
-        <td>${escapeHtml(getAuditEventText(item.eventType))}</td>
+        <td>${escapeHtml(formatAuditEvent(item))}</td>
         <td>${escapeHtml(item.operator?.username)}</td>
       </tr>
     `,

@@ -2499,12 +2499,14 @@ async function importBulkUpdateExcelByProduct(
               : AuditEventType.BOX_STOCK_OUTBOUND,
           beforeData: {
             scope: 'master_product',
+            boxCode: item.boxCode,
             productId: item.productId,
             productName: item.productName,
             qty: item.beforeQty,
           },
           afterData: {
             scope: 'master_product',
+            boxCode: item.boxCode,
             productId: item.productId,
             productName: item.productName,
             qty: item.afterQty,
@@ -4246,11 +4248,15 @@ async function manualAdjustByProduct(
         qtyDelta > 0 ? AuditEventType.BOX_STOCK_INCREASED : AuditEventType.BOX_STOCK_OUTBOUND,
       beforeData: {
         scope: 'master_product',
+        boxCode: box.boxCode,
+        productName: product.productName,
         productId,
         qty: beforeQty,
       },
       afterData: {
         scope: 'master_product',
+        boxCode: box.boxCode,
+        productName: product.productName,
         productId,
         qty: afterQty,
         qtyDelta,

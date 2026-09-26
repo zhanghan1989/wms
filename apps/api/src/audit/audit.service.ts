@@ -73,9 +73,17 @@ export class AuditService {
       }),
     ]);
 
+    const boxIds = [...new Set(items.filter((item) => item.entityType === 'box').map((item) => item.entityId))];
+    const boxes = boxIds.length
+      ? await this.prisma.box.findMany({ where: { id: { in: boxIds } }, select: { id: true, boxCode: true } })
+      : [];
+    const boxCodeById = new Map(boxes.map((box) => [box.id.toString(), box.boxCode]));
     return {
       total,
-      items,
+      items: items.map((item) => ({
+        ...item,
+        entityDisplayName: item.entityType === 'box' ? boxCodeById.get(item.entityId.toString()) ?? null : null,
+      })),
     };
   }
 
