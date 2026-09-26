@@ -1880,12 +1880,41 @@ function renderOverviewTable(bodyId, html, colspan) {
   body.innerHTML = html || `<tr><td colspan="${colspan}" class="muted">-</td></tr>`;
 }
 
+const overviewIncrementalTables = new Map();
+
+function renderOverviewIncrementalTable(bodyId, items, renderRow, colspan) {
+  const body = $(bodyId);
+  const wrap = body?.closest(".overview-table-wrap");
+  if (!body || !wrap) return;
+  const previous = overviewIncrementalTables.get(bodyId);
+  if (previous) previous.wrap.removeEventListener("scroll", previous.onScroll);
+  let shown = 0;
+  body.innerHTML = "";
+  wrap.scrollTop = 0;
+  const appendPage = () => {
+    const page = items.slice(shown, shown + 30);
+    shown += page.length;
+    if (page.length) body.insertAdjacentHTML("beforeend", page.map(renderRow).join(""));
+    else if (!shown) renderOverviewTable(bodyId, "", colspan);
+  };
+  const onScroll = () => {
+    if (shown < items.length && wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 120) {
+      appendPage();
+    }
+  };
+  appendPage();
+  wrap.addEventListener("scroll", onScroll, { passive: true });
+  overviewIncrementalTables.set(bodyId, { wrap, onScroll });
+}
+
 function setOverviewFbaDependentVisibility(visible) {
   $("overviewDemandCard")?.classList.toggle("hidden", !state.overviewDashboard);
   $("overviewObsoleteCard")?.classList.toggle("hidden", !visible);
 }
 
 function clearOverviewDashboard() {
+  overviewIncrementalTables.forEach(({ wrap, onScroll }) => wrap.removeEventListener("scroll", onScroll));
+  overviewIncrementalTables.clear();
   state.overviewDashboard = null;
   setOverviewFbaDependentVisibility(false);
   setTextById("overviewNoSales90Heading", "90天系统无出单产品");
@@ -2098,8 +2127,7 @@ function renderOverviewDashboard(data) {
         fbaSnapshot.importedAt)}`
     : "尚无可用的FBA API订单与库存快照，请检查Amazon授权和同步状态。";
 
-  const topRows = (Array.isArray(demand.topSkus) ? demand.topSkus : [])
-    .map(
+  renderOverviewIncrementalTable("overviewTopDemandBody", Array.isArray(demand.topSkus) ? demand.topSkus : [],
       (item) => `
       <tr>
         <td>${escapeHtml(displayText(item.productId))}</td>
@@ -2113,12 +2141,9 @@ function renderOverviewDashboard(data) {
         <td>${formatOverviewRatio(item.stockCoverageDays)}</td>
       </tr>
     `,
-    )
-    .join("");
-  renderOverviewTable("overviewTopDemandBody", topRows, 9);
+    9);
 
-  const noSales90Rows = noSales90Items
-    .map(
+  renderOverviewIncrementalTable("overviewNoSales90Body", noSales90Items,
       (item) => `
       <tr>
         <td>${escapeHtml(displayText(item.productId))}</td>
@@ -2130,9 +2155,7 @@ function renderOverviewDashboard(data) {
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
       </tr>
     `,
-    )
-    .join("");
-  renderOverviewTable("overviewNoSales90Body", noSales90Rows, 7);
+    7);
 }
 
 function loadOverviewDashboard(options = {}) {
