@@ -418,11 +418,15 @@ h3 {
 }
 
 .shoulder-strap-product-search-form {
-  grid-template-columns: minmax(0, 1fr) 100px 150px auto;
+  grid-template-columns: minmax(240px, 420px) 100px 100px minmax(0, 1fr) auto;
 }
 
 .shoulder-strap-product-search-form button {
   white-space: nowrap;
+}
+
+.shoulder-strap-product-search-form > button:last-child {
+  grid-column: 5;
 }
 
 .adjust-box-row {
@@ -3550,6 +3554,10 @@ button.danger-solid {
 
   .manage-inline-form.shop-manage-create-form {
     grid-template-columns: 1fr;
+  }
+
+  .shoulder-strap-product-search-form > button:last-child {
+    grid-column: auto;
   }
 
   .inventory-search-fields {
