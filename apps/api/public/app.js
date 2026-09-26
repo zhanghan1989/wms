@@ -1929,7 +1929,7 @@ function clearOverviewDashboard() {
     "overviewNoSales90Count",
     "overviewNoSales90StockQty",
   ].forEach((id) => setTextById(id, "-"));
-  renderOverviewTable("overviewTopDemandBody", "", 5);
+  renderOverviewTable("overviewTopDemandBody", "", 9);
   $("overviewFbaSalesSnapshotMeta").textContent =
     "正在读取Amazon SP-API同步状态。";
   setTextById("overviewDemandQualityHint", "未匹配订单不会进入产品需求和备货计算。");
@@ -2104,8 +2104,9 @@ function renderOverviewDashboard(data) {
       <tr>
         <td>${escapeHtml(displayText(item.productId))}</td>
         <td>${escapeHtml(displayText(item.productName))}</td>
-        <td>${formatOverviewNumber(item.systemOrderQty90d)}</td>
         <td>${formatOverviewNumber(item.fbaOrderedQty90d)}</td>
+        <td>${formatOverviewNumber(item.fbmOrderQty90d)}</td>
+        <td>${formatOverviewNumber(item.rakutenOrderQty90d)}</td>
         <td>${formatOverviewNumber(item.totalOrderQty90d)}</td>
         <td>${formatOverviewNumber(item.avgDailyOutbound, 1)}</td>
         <td>${formatOverviewNumber(item.totalStock)}</td>
@@ -2114,7 +2115,7 @@ function renderOverviewDashboard(data) {
     `,
     )
     .join("");
-  renderOverviewTable("overviewTopDemandBody", topRows, 8);
+  renderOverviewTable("overviewTopDemandBody", topRows, 9);
 
   const noSales90Rows = noSales90Items
     .map(

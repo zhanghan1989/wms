@@ -3027,6 +3027,8 @@ async function getOverviewDashboardByProduct(
   const outbound14ByProduct = new Map<string, number>();
   const outbound7ByProduct = new Map<string, number>();
   const outbound90ByProduct = new Map<string, number>();
+  const selectedFbmOrderByProduct = new Map<string, number>();
+  const selectedRakutenOrderByProduct = new Map<string, number>();
   const productionSystemOrder90ByProduct = new Map<string, number>();
   const productionFbmOrder90ByProduct = new Map<string, number>();
   const productionRakutenOrder90ByProduct = new Map<string, number>();
@@ -3072,6 +3074,7 @@ async function getOverviewDashboardByProduct(
     }
     if (registeredAt >= fromPeriod && addDemandQty(outbound90ByProduct, productIdText, qty)) {
       systemDemandQty90dByChannel[channel] += qty;
+      addDemandQty(channel === 'rakuten' ? selectedRakutenOrderByProduct : selectedFbmOrderByProduct, productIdText, qty);
     }
     if (registeredAt >= from30d) addDemandQty(outbound30ByProduct, productIdText, qty);
     if (registeredAt >= from14d) addDemandQty(outbound14ByProduct, productIdText, qty);
@@ -3566,6 +3569,8 @@ async function getOverviewDashboardByProduct(
         productName: product?.productName ?? null,
         totalStock,
         systemOrderQty90d,
+        fbmOrderQty90d: selectedFbmOrderByProduct.get(productId) ?? 0,
+        rakutenOrderQty90d: selectedRakutenOrderByProduct.get(productId) ?? 0,
         fbaOrderedQty90d,
         totalOrderQty90d,
         avgDailyOutbound,

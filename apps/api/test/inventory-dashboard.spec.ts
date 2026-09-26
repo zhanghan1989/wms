@@ -237,8 +237,8 @@ describe('inventory dashboard no-sales age classification', () => {
     expect(dashboard.demand.unmatchedSystemOrderRowCount90d).toBe(0);
     expect(dashboard.demand.topSkus).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ productId: 'P1', systemOrderQty90d: 5 }),
-        expect.objectContaining({ productId: 'P2', systemOrderQty90d: 5 }),
+        expect.objectContaining({ productId: 'P1', systemOrderQty90d: 5, fbmOrderQty90d: 0, rakutenOrderQty90d: 5 }),
+        expect.objectContaining({ productId: 'P2', systemOrderQty90d: 5, fbmOrderQty90d: 3, rakutenOrderQty90d: 2 }),
       ]),
     );
     expect(dashboard.dataSources.fbm).toEqual(expect.objectContaining({
