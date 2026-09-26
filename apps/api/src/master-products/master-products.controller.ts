@@ -39,8 +39,9 @@ export class MasterProductsController {
     @Query('pageSize') pageSize?: string,
     @Query('keyword') keyword?: string,
     @Query('excludeShoulderStrapAccessories') excludeShoulderStrapAccessories?: string,
+    @Query('cursor') cursor?: string,
   ): Promise<unknown> {
-    return this.masterProductsService.list(page, pageSize, keyword, excludeShoulderStrapAccessories === 'true');
+    return this.masterProductsService.list(page, pageSize, keyword, excludeShoulderStrapAccessories === 'true', cursor);
   }
 
   @Get('sync-records')

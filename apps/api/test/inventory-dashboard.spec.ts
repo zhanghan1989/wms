@@ -107,8 +107,7 @@ describe('inventory dashboard no-sales age classification', () => {
           },
         ]),
       },
-      amazonOrderRecord: {
-        findMany: jest.fn().mockResolvedValue([
+      $queryRaw: jest.fn().mockResolvedValue([
           {
             id: 10n,
             orderId: 'fbm-1',
@@ -162,7 +161,6 @@ describe('inventory dashboard no-sales age classification', () => {
             sourceKind: 'sp_api',
           },
         ]),
-      },
       manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
       rakutenComboProduct: {
         findMany: jest.fn().mockResolvedValue([

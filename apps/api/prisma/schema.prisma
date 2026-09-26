@@ -1518,6 +1518,7 @@ model MasterProduct {
   bomUsages         MasterProductBomItem[]      @relation("MasterProductBomComponent")
 
   @@index([firstStockedAt], map: "idx_master_products_first_stocked_at")
+  @@index([status, stockQty, productId], map: "idx_master_products_status_stock_product")
   @@map("master_products")
 }
 

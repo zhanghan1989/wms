@@ -1,3 +1,4 @@
+import { DashboardCache } from './dashboard-cache';
 import { randomUUID } from 'crypto';
 import { recordStockAdjustment } from './stock-ledger';
 import { assertStockAvailable } from './stock-availability';
@@ -180,11 +181,7 @@ const ESTIMATED_PRODUCTION_ARRIVAL_DAYS = 45;
 const ANOMALY_MIN_DELTA_QTY = 10;
 const PRODUCTION_MIN_90D_DEMAND_EXCLUSIVE = 10;
 const DASHBOARD_SNAPSHOT_RETENTION_LIMIT = 10;
-const OVERVIEW_DASHBOARD_CACHE_TTL_MS = 60 * 1000;
-const overviewDashboardCache = new Map<
-  string,
-  { expiresAt: number; value: Promise<unknown> }
->();
+const overviewDashboardCache = new DashboardCache();
 
 function getJsonObjectString(value: Prisma.JsonValue | null | undefined, key: string): string {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -1272,6 +1269,55 @@ export class InventoryService {
     return result;
   }
 
+  async getOverviewHealthSummary(): Promise<unknown> {
+    const [products, pending, transit, arranged] = await Promise.all([
+      this.prisma.masterProduct.findMany({ where: { status: 1 }, select: { productId: true, productType: true, stockQty: true } }),
+      this.prisma.fbaReplenishment.findMany({ where: { status: { in: ['pending_confirm', 'pending_outbound'] } },
+        select: { status: true, actualQty: true, requestedQty: true, sku: { select: { productId: true } } } }),
+      this.prisma.batchInboundItem.groupBy({ by: ['productId'], where: { status: 'pending', order: { status: 'waiting_inbound' } }, _sum: { qty: true } }),
+      this.prisma.batchInboundItem.groupBy({ by: ['productId'], where: { status: 'pending', order: { status: 'waiting_upload' } }, _sum: { qty: true } }),
+    ]);
+    const locked = new Map<string, number>();
+    pending.forEach(row => {
+      const id = String(row.sku.productId || '').trim();
+      const qty = Number(row.status === 'pending_outbound' ? row.actualQty ?? row.requestedQty : row.requestedQty);
+      if (id && qty > 0) locked.set(id, (locked.get(id) ?? 0) + qty);
+    });
+    const eligible = new Set(products.filter(p => String(p.productType ?? '').trim() !== '肩带配件').map(p => p.productId));
+    const totalStock = products.reduce((sum, p) => sum + (eligible.has(p.productId) ? p.stockQty : 0), 0);
+    const lockedStock = [...locked].reduce((sum, [id, qty]) => sum + (eligible.has(id) ? qty : 0), 0);
+    const activeIds = new Set(products.map(p => p.productId));
+    const legacyCodes = [...new Set([...transit, ...arranged].map(row => String(row.productId || '').trim()))]
+      .filter(code => code && !activeIds.has(code));
+    const legacySkus = legacyCodes.length ? await this.prisma.sku.findMany({
+      where: { status: 1, masterProduct: { is: { status: 1 } },
+        OR: [{ sku: { in: legacyCodes } }, { fbmSku: { in: legacyCodes } }, { rbSku: { in: legacyCodes } }] },
+      select: { productId: true, sku: true, fbmSku: true, rbSku: true },
+    }) : [];
+    const matched = new Map<string, Set<string>>();
+    legacySkus.forEach(row => {
+      const id = String(row.productId || '').trim();
+      if (!activeIds.has(id)) return;
+      [row.sku, row.fbmSku, row.rbSku].forEach(value => {
+        const code = String(value || '').trim();
+        if (!matched.has(code)) matched.set(code, new Set());
+        matched.get(code)!.add(id);
+      });
+    });
+    const sumInbound = (rows: typeof transit) => rows.reduce((sum, row) => {
+      const code = String(row.productId || '').trim();
+      const matches = matched.get(code);
+      const id = activeIds.has(code) ? code : matches?.size === 1 ? [...matches][0] : '';
+      const qty = Number(row._sum.qty ?? 0);
+      return sum + (eligible.has(id) && qty > 0 ? qty : 0);
+    }, 0);
+    const availableStock = totalStock - lockedStock;
+    const inTransitStock = sumInbound(transit);
+    const arrangedProductionStock = sumInbound(arranged);
+    return { totalStock, lockedStock, availableStock, inTransitStock, arrangedProductionStock,
+      securedStock: Math.max(0, availableStock) + inTransitStock + arrangedProductionStock };
+  }
+
   async getOverviewDashboard(
     options: {
       includeFba?: boolean;
@@ -1287,25 +1333,8 @@ export class InventoryService {
       options.includeFba === true ? 'fba' : 'base',
       String(options.fbaSnapshotId || '').trim(),
     ].join(':');
-    const now = Date.now();
-    const cached = overviewDashboardCache.get(cacheKey);
-    if (!options.forceRefresh && cached && cached.expiresAt > now) {
-      return cached.value;
-    }
-
-    const value = getOverviewDashboardByProduct.call(this, { ...options, days });
-    overviewDashboardCache.set(cacheKey, {
-      expiresAt: now + OVERVIEW_DASHBOARD_CACHE_TTL_MS,
-      value,
-    });
-    try {
-      return await value;
-    } catch (error) {
-      if (overviewDashboardCache.get(cacheKey)?.value === value) {
-        overviewDashboardCache.delete(cacheKey);
-      }
-      throw error;
-    }
+    return overviewDashboardCache.get(cacheKey, options.forceRefresh === true,
+      () => getOverviewDashboardByProduct.call(this, { ...options, days }));
   }
 
   async buildProductionRecommendationsExcel(
@@ -2680,16 +2709,6 @@ async function getOverviewDashboardByProduct(
     AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
     shipmentNoRegisteredAt: { gte: from90d },
   };
-  const amazonShipmentOrderFilter: Prisma.AmazonOrderRecordWhereInput = {
-    AND: [
-      {
-        sourceKind: { not: 'sp_api' },
-        AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-        shipmentNoRegisteredAt: { gte: from90d },
-      },
-      { OR: [{ fulfillmentChannel: null }, { fulfillmentChannel: { not: 'AFN' } }] },
-    ],
-  };
   const [
     activeUserCount,
     shelfCount,
@@ -2866,23 +2885,24 @@ async function getOverviewDashboardByProduct(
         shipmentNoRegisteredAt: true,
       },
     }),
-    service.prisma.amazonOrderRecord.findMany({
-      where: amazonShipmentOrderFilter,
-      orderBy: { shipmentNoRegisteredAt: 'desc' },
-      select: {
-        id: true,
-        orderId: true,
-        orderItemId: true,
-        sku: true,
-        rawPayload: true,
-        quantityPurchased: true,
-        shipmentNoRegisteredAt: true,
-        purchaseDateRaw: true,
-        amazonLastUpdatedAt: true,
-        orderStatus: true,
-        sourceKind: true,
-      },
-    }),
+    service.prisma.$queryRaw<Array<{
+      id: bigint; orderId: string | null; orderItemId: string | null; sku: string | null;
+      rawPayload: Prisma.JsonValue | null; quantityPurchased: number | null;
+      shipmentNoRegisteredAt: Date | null; purchaseDateRaw: string | null;
+      amazonLastUpdatedAt: Date | null; orderStatus: string | null; sourceKind: string;
+    }>>(Prisma.sql`
+      SELECT id, order_id AS orderId, order_item_id AS orderItemId, sku,
+        JSON_OBJECT('item', JSON_OBJECT('orderItemId', JSON_EXTRACT(raw_payload, '$.item.orderItemId')),
+          '产品ID', JSON_EXTRACT(raw_payload, '$."产品ID"')) AS rawPayload,
+        quantity_purchased AS quantityPurchased, shipment_no_registered_at AS shipmentNoRegisteredAt,
+        purchase_date_raw AS purchaseDateRaw, amazon_last_updated_at AS amazonLastUpdatedAt,
+        order_status AS orderStatus, source_kind AS sourceKind
+      FROM amazon_order_records
+      WHERE source_kind <> 'sp_api' AND shipment_no IS NOT NULL AND shipment_no <> ''
+        AND shipment_no_registered_at >= ${from90d}
+        AND (fulfillment_channel IS NULL OR fulfillment_channel <> 'AFN')
+      ORDER BY shipment_no_registered_at DESC
+    `),
     Promise.resolve([] as Array<{
       id: bigint;
       orderId: string | null;

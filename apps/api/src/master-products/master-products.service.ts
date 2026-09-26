@@ -51,6 +51,7 @@ type MasterProductListResult = {
   page: number;
   pageSize: number;
   hasMore: boolean;
+  nextCursor?: string | null;
 };
 
 type AvailableStockExportResult = {
@@ -298,20 +299,34 @@ export class MasterProductsService {
     pageSizeRaw?: string | number,
     keywordRaw?: string,
     excludeShoulderStrapAccessories = false,
+    cursorRaw?: string,
   ): Promise<MasterProductListResult> {
     const page = this.normalizePositiveInt(pageRaw, 1);
     const pageSize = Math.min(this.normalizePositiveInt(pageSizeRaw, 30), 100);
     const skip = (page - 1) * pageSize;
     const keyword = String(keywordRaw ?? '').trim();
     const baseWhere = this.buildMasterProductWhere({ keyword }) ?? {};
-    const where: Prisma.MasterProductWhereInput = excludeShoulderStrapAccessories
+    let where: Prisma.MasterProductWhereInput = excludeShoulderStrapAccessories
       ? { AND: [baseWhere, { OR: [{ productType: null }, { productType: { not: '肩带配件' } }] }] }
       : baseWhere;
+
+    if (cursorRaw) {
+      try {
+        const cursor = JSON.parse(Buffer.from(cursorRaw, 'base64url').toString('utf8'));
+        if (!Number.isSafeInteger(cursor.stockQty) || typeof cursor.productId !== 'string'
+          || typeof cursor.id !== 'string' || !/^\d+$/.test(cursor.id)) throw new Error();
+        where = { AND: [where, { OR: [
+          { stockQty: { lt: cursor.stockQty } },
+          { stockQty: cursor.stockQty, productId: { lt: cursor.productId } },
+          { stockQty: cursor.stockQty, productId: cursor.productId, id: { lt: BigInt(cursor.id) } },
+        ] }] };
+      } catch { throw new BadRequestException('无效的产品分页位置'); }
+    }
 
     const rows = await this.prisma.masterProduct.findMany({
       where,
       orderBy: [{ stockQty: 'desc' }, { productId: 'desc' }, { id: 'desc' }],
-      skip,
+      skip: cursorRaw ? 0 : skip,
       take: pageSize + 1,
     });
 
@@ -320,6 +335,10 @@ export class MasterProductsService {
       page,
       pageSize,
       hasMore: rows.length > pageSize,
+      nextCursor: rows.length > pageSize ? Buffer.from(JSON.stringify({
+        stockQty: rows[pageSize - 1].stockQty, productId: rows[pageSize - 1].productId,
+        id: rows[pageSize - 1].id.toString(),
+      })).toString('base64url') : null,
     };
   }
 

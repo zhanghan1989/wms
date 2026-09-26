@@ -280,6 +280,7 @@ const state = {
   inventoryPageSize: 30,
   inventoryHomeProducts: [],
   inventoryHomePage: 1,
+  inventoryHomeCursor: null,
   inventoryHomePageSize: 30,
   inventoryHomeHasMore: false,
   inventoryHomeLoading: false,
@@ -1882,7 +1883,8 @@ function renderOverviewTable(bodyId, html, colspan) {
 
 const overviewIncrementalTables = new Map();
 
-function renderOverviewIncrementalTable(bodyId, items, renderRow, colspan) {
+function renderOverviewIncrementalTable(bodyId, initialItems, renderRow, colspan, paging) {
+  const items = [...initialItems];
   const body = $(bodyId);
   const wrap = body?.closest(".overview-table-wrap");
   if (!body || !wrap) return;
@@ -1897,14 +1899,27 @@ function renderOverviewIncrementalTable(bodyId, items, renderRow, colspan) {
     if (page.length) body.insertAdjacentHTML("beforeend", page.map(renderRow).join(""));
     else if (!shown) renderOverviewTable(bodyId, "", colspan);
   };
-  const onScroll = () => {
-    if (shown < items.length && wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight < 120) {
+  let loading = false;
+  const entry = { wrap, onScroll: null };
+  const onScroll = async () => {
+    if (loading || wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight >= 120) return;
+    if (shown < items.length) { appendPage(); return; }
+    if (!paging || shown >= paging.total) return;
+    loading = true;
+    try {
+      const query = new URLSearchParams({ snapshotId: paging.snapshotId, list: paging.list, offset: String(shown) });
+      const result = await request(`/inventory/dashboard/page?${query}`);
+      if (overviewIncrementalTables.get(bodyId) !== entry) return;
+      items.push(...(result.items || []));
+      if (!result.hasMore) paging.total = items.length;
       appendPage();
-    }
+    } catch (error) { showToast(error.message, true); }
+    finally { loading = false; }
   };
+  entry.onScroll = onScroll;
   appendPage();
   wrap.addEventListener("scroll", onScroll, { passive: true });
-  overviewIncrementalTables.set(bodyId, { wrap, onScroll });
+  overviewIncrementalTables.set(bodyId, entry);
 }
 
 function setOverviewFbaDependentVisibility(visible) {
@@ -1974,6 +1989,7 @@ function clearOverviewDashboard() {
 }
 
 function renderOverviewDashboard(data) {
+  setTextById("overviewSnapshotMeta", data?.generatedAt ? `统计生成时间：${formatDate(data.generatedAt)}；刷新可获取最新统计` : "");
   const summary = data?.summary || {};
   const health = data?.health || {};
   const demand = data?.demand || {};
@@ -2106,7 +2122,7 @@ function renderOverviewDashboard(data) {
   );
 
   const noSales90Items = Array.isArray(obsolete.noSales90dSkus) ? obsolete.noSales90dSkus : [];
-  setTextById("overviewNoSales90Count", formatOverviewNumber(noSales90Items.length));
+  setTextById("overviewNoSales90Count", formatOverviewNumber(obsolete.noSales90dCount ?? noSales90Items.length));
   setTextById(
     "overviewNoSales90StockQty",
     formatOverviewNumber(obsolete.noSales90dStockQty));
@@ -2141,7 +2157,7 @@ function renderOverviewDashboard(data) {
         <td>${formatOverviewRatio(item.stockCoverageDays)}</td>
       </tr>
     `,
-    9);
+    9, data?.pagination ? { snapshotId: data.pagination.snapshotId, list: "top", total: data.pagination.topTotal } : null);
 
   renderOverviewIncrementalTable("overviewNoSales90Body", noSales90Items,
       (item) => `
@@ -2155,7 +2171,7 @@ function renderOverviewDashboard(data) {
         <td>${formatOverviewNumber(item.inTransitStock)}</td>
       </tr>
     `,
-    7);
+    7, data?.pagination ? { snapshotId: data.pagination.snapshotId, list: "no-sales", total: data.pagination.noSalesTotal } : null);
 }
 
 function loadOverviewDashboard(options = {}) {
@@ -2193,6 +2209,25 @@ function loadOverviewDashboard(options = {}) {
   if (includeFba) query.set("includeFba", "true");
   if (fbaSnapshotId) query.set("fbaSnapshotId", fbaSnapshotId);
   query.set("days", String(days));
+  query.set("paged", "true");
+  if (!state.overviewDashboard) {
+    const requestToken = state.token;
+    request("/inventory/dashboard/summary").then((summary) => {
+      if (state.token === requestToken && !state.overviewDashboard) {
+        setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
+        setTextById("statShelves", formatOverviewNumber(summary.shelfCount));
+        setTextById("statBoxes", formatOverviewNumber(summary.boxCount));
+        setTextById("statSkus", formatOverviewNumber(summary.masterProductCount));
+        setTextById("statInboundDraft", formatOverviewNumber(summary.pendingInboundOrderCount));
+        const health = summary.health || {};
+        for (const [id, field] of [["overviewTotalStock", "totalStock"], ["overviewAvailableStock", "availableStock"],
+          ["overviewLockedStock", "lockedStock"], ["overviewInTransitStock", "inTransitStock"],
+          ["overviewArrangedProductionStock", "arrangedProductionStock"], ["overviewSecuredStock", "securedStock"]]) {
+          setTextById(id, formatOverviewNumber(health[field]));
+        }
+      }
+    }).catch(() => {});
+  }
   if (forceRefresh) query.set("refresh", "true");
   const endpoint = `/inventory/dashboard${query.toString() ? `?${query.toString()}` : ""}`;
   const loadPromise = request(endpoint).then((data) => {
@@ -3109,10 +3144,8 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
   }
   if (targetId === "overview") {
     if (!state.overviewDashboard) {
-      withGlobalLoading(
-        "系统看板加载中，请稍候...",
-        () => loadOverviewDashboardWithAutomaticFba()).catch((error) => showToast(error.message, true),
-      );
+      setTextById("overviewSnapshotMeta", "统计正在加载，基础计数将先显示...");
+      loadOverviewDashboardWithAutomaticFba().catch((error) => showToast(error.message, true));
       return;
     }
     const generatedAt = new Date(state.overviewDashboard.generatedAt || 0).getTime();
@@ -5690,12 +5723,14 @@ async function loadInventoryHomeProducts({ reset = false } = {}) {
   if (keyword) {
     params.set("keyword", keyword);
   }
+  if (!reset && state.inventoryHomeCursor) params.set("cursor", state.inventoryHomeCursor);
   state.inventoryHomeLoading = true;
   try {
     const result = await request(`/master-products?${params.toString()}`);
     const items = Array.isArray(result?.items) ? result.items : [];
     state.inventoryHomeProducts = reset ? items : [...state.inventoryHomeProducts, ...items];
     state.inventoryHomePage = Number(result?.page || page);
+    state.inventoryHomeCursor = result?.nextCursor || null;
     state.inventoryHomeHasMore = Boolean(result?.hasMore);
     renderInventoryTable();
     requestAnimationFrame(() => {
@@ -14968,10 +15003,7 @@ async function reloadAll() {
   }
 
   const isAdmin = hasAdminAccess(state.me?.role);
-  const tasks = [
-    loadInventory(),
-    loadInventoryHomeProducts({ reset: true }),
-    loadProductEditPendingSummary()];
+  const tasks = [loadProductEditPendingSummary(), loadFbaPendingSummary()];
   if (!isAdmin) {
     state.departmentOptions = [];
     state.roleOptions = [];

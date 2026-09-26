@@ -1,3 +1,4 @@
+import { dashboardFirstPages, dashboardPage } from './dashboard-pages';
 import {
   BadRequestException,
   Body,
@@ -177,13 +178,33 @@ export class InventoryController {
     @Query('fbaSnapshotId') fbaSnapshotId?: string,
     @Query('days') days?: string,
     @Query('refresh') refresh?: string,
+    @Query('paged') paged?: string,
   ): Promise<unknown> {
-    return this.inventoryService.getOverviewDashboard({
+    const dashboard = await this.inventoryService.getOverviewDashboard({
       includeFba: includeFba === 'true',
       fbaSnapshotId,
       days: Number(days),
       forceRefresh: refresh === 'true',
     });
+    return paged === 'true' ? dashboardFirstPages(dashboard) : dashboard;
+  }
+
+  @Get('dashboard/page')
+  async dashboardPage(@Query('snapshotId') snapshotId: string, @Query('list') list: string,
+    @Query('offset') offset: string): Promise<unknown> {
+    return dashboardPage(snapshotId, list, offset);
+  }
+
+  @Get('dashboard/summary')
+  async dashboardSummary(): Promise<unknown> {
+    const [users, shelves, boxes, pendingInboundOrders, masterProducts, health] = await Promise.all([
+      this.inventoryService.prisma.user.count({ where: { status: 1 } }),
+      this.inventoryService.prisma.shelf.count(), this.inventoryService.prisma.box.count(),
+      this.inventoryService.prisma.batchInboundOrder.count({ where: { status: { in: ['waiting_upload', 'waiting_inbound'] } } }),
+      this.inventoryService.prisma.masterProduct.count(),
+      this.inventoryService.getOverviewHealthSummary(),
+    ]);
+    return { activeUserCount: users, shelfCount: shelves, boxCount: boxes, pendingInboundOrderCount: pendingInboundOrders, masterProductCount: masterProducts, health };
   }
 
   @Post('dashboard/fba-sales-report')
