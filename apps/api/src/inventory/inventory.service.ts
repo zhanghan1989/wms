@@ -2731,6 +2731,7 @@ async function getOverviewDashboardByProduct(
         productName: true,
         stockQty: true,
         firstStockedAt: true,
+        productType: true,
       },
     }),
     service.prisma.sku.findMany({
@@ -3428,11 +3429,13 @@ async function getOverviewDashboardByProduct(
     const securedCoverageDays =
       avgDailyOutbound90d > 0 ? securedStock / avgDailyOutbound90d : Number.POSITIVE_INFINITY;
 
-    totalStock += stock;
-    availableStock += available;
-    lockedStock += locked;
-    inTransitStock += inTransit;
-    arrangedProductionStock += arrangedProductionQty;
+    if (String(rawProduct.productType ?? '').trim() !== '肩带配件') {
+      totalStock += stock;
+      availableStock += available;
+      lockedStock += locked;
+      inTransitStock += inTransit;
+      arrangedProductionStock += arrangedProductionQty;
+    }
 
     if (!latestFbaSalesSnapshot) return;
 
