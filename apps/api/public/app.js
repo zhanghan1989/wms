@@ -5662,6 +5662,7 @@ async function loadInventoryHomeProducts({ reset = false } = {}) {
   const params = new URLSearchParams({
     page: String(page),
     pageSize: String(state.inventoryHomePageSize),
+    excludeShoulderStrapAccessories: "true",
   });
   if (keyword) {
     params.set("keyword", keyword);

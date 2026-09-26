@@ -297,12 +297,16 @@ export class MasterProductsService {
     pageRaw?: string | number,
     pageSizeRaw?: string | number,
     keywordRaw?: string,
+    excludeShoulderStrapAccessories = false,
   ): Promise<MasterProductListResult> {
     const page = this.normalizePositiveInt(pageRaw, 1);
     const pageSize = Math.min(this.normalizePositiveInt(pageSizeRaw, 30), 100);
     const skip = (page - 1) * pageSize;
     const keyword = String(keywordRaw ?? '').trim();
-    const where = this.buildMasterProductWhere({ keyword });
+    const baseWhere = this.buildMasterProductWhere({ keyword }) ?? {};
+    const where: Prisma.MasterProductWhereInput = excludeShoulderStrapAccessories
+      ? { AND: [baseWhere, { OR: [{ productType: null }, { productType: { not: '肩带配件' } }] }] }
+      : baseWhere;
 
     const rows = await this.prisma.masterProduct.findMany({
       where,
