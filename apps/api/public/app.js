@@ -2298,19 +2298,29 @@ function renderDataBackupTable() {
       .join("") || '<tr><td colspan="4" class="muted">暂无备份记录</td></tr>';
 }
 
-async function loadDataBackups() {
-  const rows = await request("/backups");
-  state.dataBackups = Array.isArray(rows) ? rows : [];
-  state.dataBackupsVisibleCount = state.inventoryPageSize;
-  renderDataBackupTable();
+let backupPageState = { page: 0, hasMore: true, loading: false };
+async function loadDataBackups(reset = true) {
+  if (reset) backupPageState = { page: 0, hasMore: true, loading: false };
+  const current = backupPageState;
+  if (current.loading || !current.hasMore) return;
+  const token = state.token;
+  current.loading = true;
+  try {
+    const rows = await request(`/backups?page=${current.page + 1}&pageSize=30`);
+    if (backupPageState !== current || state.token !== token) return;
+    const items = Array.isArray(rows) ? rows : [];
+    current.page += 1;
+    current.hasMore = items.length === 30;
+    state.dataBackups = reset ? items : [...state.dataBackups, ...items];
+    state.dataBackupsVisibleCount = state.dataBackups.length;
+    renderDataBackupTable();
+  } finally { current.loading = false; }
 }
 
 function loadMoreDataBackupsIfNeeded() {
   const panel = $("dataBackup");
-  if (!panel || !panel.classList.contains("active")) return;
-  if (state.dataBackupsVisibleCount >= state.dataBackups.length) return;
-  state.dataBackupsVisibleCount += state.inventoryPageSize;
-  renderDataBackupTable();
+  if (!panel || !panel.classList.contains("active") || !backupPageState.hasMore) return;
+  loadDataBackups(false).catch(error => showToast(error.message, true));
 }
 
 async function runDataBackupNow(button) {
@@ -4754,7 +4764,7 @@ function maybeAutoLoadDataBackups() {
   if (!panel || !panel.classList.contains("active")) return;
   const tableWrap = $("dataBackupTableWrap");
   if (!tableWrap) return;
-  if (state.dataBackupsVisibleCount >= state.dataBackups.length) return;
+  if (!backupPageState.hasMore || backupPageState.loading) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -10402,7 +10412,7 @@ async function refreshAuditFbaRequestNoMap() {
   const map = {};
   const sourceRows = Array.isArray(state.fbaReplenishments) && state.fbaReplenishments.length
     ? state.fbaReplenishments
-    : await request("/inventory/fba-replenishments");
+    : [];
 
   (Array.isArray(sourceRows) ? sourceRows : []).forEach((item) => {
     const id = String(item?.id || "").trim();
@@ -10521,9 +10531,7 @@ function renderAuditTable() {
 function loadMoreAuditIfNeeded() {
   const panel = $("audit");
   if (!panel || !panel.classList.contains("active")) return;
-  if (state.auditVisibleCount >= state.auditLogs.length) return;
-  state.auditVisibleCount += state.inventoryPageSize;
-  renderAuditTable();
+  loadAuditPage(false, false).catch(error => showToast(error.message, true));
 }
 
 function maybeAutoLoadAudit() {
@@ -10531,7 +10539,7 @@ function maybeAutoLoadAudit() {
   if (!panel || !panel.classList.contains("active")) return;
   const tableWrap = $("auditTableWrap");
   if (!tableWrap) return;
-  if (state.auditVisibleCount >= state.auditLogs.length) return;
+  if (!auditPageStates.all?.hasMore || auditPageStates.all?.loading) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -10565,12 +10573,31 @@ function setupAuditLoadObserver() {
   auditLoadObserver.observe(sentinel);
 }
 
+const auditPageStates = { all: null, mine: null };
+async function loadAuditPage(mine, reset) {
+  const key = mine ? "mine" : "all";
+  if (reset || !auditPageStates[key]) auditPageStates[key] = { page: 0, hasMore: true, loading: false };
+  const current = auditPageStates[key];
+  if (current.loading || !current.hasMore) return;
+  const token = state.token;
+  const userId = state.me?.id;
+  if (!token || (mine && !userId)) return;
+  current.loading = true;
+  try {
+    const result = await request(`/audit-logs?page=${current.page + 1}&pageSize=30${mine ? `&operatorId=${userId}` : ""}`);
+    if (auditPageStates[key] !== current || state.token !== token) return;
+    const items = Array.isArray(result.items) ? result.items : [];
+    current.page += 1;
+    const field = mine ? "myAuditLogs" : "auditLogs";
+    state[field] = reset ? items : [...state[field], ...items];
+    current.hasMore = state[field].length < Number(result.total || 0) && items.length > 0;
+    state[mine ? "myAuditVisibleCount" : "auditVisibleCount"] = state[field].length;
+    if (mine) renderMyAuditTable(); else renderAuditTable();
+  } finally { current.loading = false; }
+}
 async function loadAudit() {
   await refreshAuditFbaRequestNoMap();
-  const result = await request("/audit-logs?page=1&pageSize=2000");
-  state.auditLogs = Array.isArray(result.items) ? result.items : [];
-  state.auditVisibleCount = state.inventoryPageSize;
-  renderAuditTable();
+  return loadAuditPage(false, true);
 }
 
 function renderMyAuditTable() {
@@ -10599,9 +10626,7 @@ function loadMoreMyAuditIfNeeded() {
   const threshold = 80;
   const nearBottom = tableWrap.scrollTop + tableWrap.clientHeight >= tableWrap.scrollHeight - threshold;
   if (!nearBottom) return;
-  if (state.myAuditVisibleCount >= state.myAuditLogs.length) return;
-  state.myAuditVisibleCount += state.inventoryPageSize;
-  renderMyAuditTable();
+  loadAuditPage(true, false).catch(error => showToast(error.message, true));
 }
 
 async function loadMyAudit() {
@@ -10612,10 +10637,7 @@ async function loadMyAudit() {
     return;
   }
   await refreshAuditFbaRequestNoMap();
-  const result = await request(`/audit-logs?page=1&pageSize=2000&operatorId=${state.me.id}`);
-  state.myAuditLogs = Array.isArray(result.items) ? result.items : [];
-  state.myAuditVisibleCount = state.inventoryPageSize;
-  renderMyAuditTable();
+  await loadAuditPage(true, true);
 }
 
 function renderFbaPendingBadge() {
@@ -12873,21 +12895,30 @@ function renderOverseasPickingBatchControls() {
   updateOverseasPickingBatchActionButtons();
 }
 
+const overseasDetailRequests = new Map();
 async function loadOverseasPickingBatchDetail(batchId) {
-  if (!state.token || !String(batchId || "").trim()) {
+  const id = String(batchId || '').trim();
+  if (!state.token || !id) {
     state.selectedOverseasPickingBatchDetail = null;
     renderOverseasPickingBatchControls();
     return;
   }
-  const detail = await request(`/orders/overseas-warehouse/picking-batches/${encodeURIComponent(batchId)}`);
-  state.selectedOverseasPickingBatchDetail = detail || null;
-  if (detail?.yamatoShipmentBatchId) {
-    state.selectedYamatoShipmentBatchId = String(detail.yamatoShipmentBatchId || "").trim();
+  const token = state.token;
+  const key = `${token}:${id}`;
+  let pending = overseasDetailRequests.get(key);
+  if (!pending) {
+    pending = request(`/orders/overseas-warehouse/picking-batches/${encodeURIComponent(id)}`);
+    overseasDetailRequests.set(key, pending);
+    pending.finally(() => { if (overseasDetailRequests.get(key) === pending) overseasDetailRequests.delete(key); }).catch(() => {});
   }
+  const detail = await pending;
+  if (state.token !== token || String(state.selectedOverseasPickingBatchId || '') !== id) return;
+  state.selectedOverseasPickingBatchDetail = detail || null;
+  if (detail?.yamatoShipmentBatchId) state.selectedYamatoShipmentBatchId = String(detail.yamatoShipmentBatchId).trim();
   renderOverseasPickingBatchControls();
 }
 
-async function loadOverseasPickingBatches() {
+async function loadOverseasPickingBatches({ refreshDetail = true } = {}) {
   if (!state.token) {
     state.overseasPickingBatches = [];
     state.overseasPickingBatchView = "list";
@@ -12907,7 +12938,7 @@ async function loadOverseasPickingBatches() {
       state.selectedOverseasPickingBatchDetail = null;
     }
   }
-  if (state.overseasPickingBatchView === "detail" && state.selectedOverseasPickingBatchId) {
+  if (refreshDetail && state.overseasPickingBatchView === "detail" && state.selectedOverseasPickingBatchId) {
     await loadOverseasPickingBatchDetail(state.selectedOverseasPickingBatchId);
     return;
   }
@@ -13256,7 +13287,7 @@ async function confirmOverseasBatchWorkComplete() {
   await request(`/orders/overseas-warehouse/picking-batches/${encodeURIComponent(detail.id)}/complete-work`, {
     method: "POST",
   });
-  await Promise.all([loadOverseasPickingBatches(), loadOverseasPickingBatchDetail(detail.id)]);
+  await Promise.all([loadOverseasPickingBatches({ refreshDetail: false }), loadOverseasPickingBatchDetail(detail.id)]);
 }
 
 async function loadYamatoShipmentBatches() {
@@ -19693,7 +19724,7 @@ function bindDelegates() {
           `确认将产品 ${productId} 变更回未拣货状态？`);
         if (!ok) return;
         await resetOverseasPickingBatchProductPicking(detail.id, productId);
-        await Promise.all([loadOverseasPickingBatches(), loadOverseasPickingBatchDetail(detail.id)]);
+        await Promise.all([loadOverseasPickingBatches({ refreshDetail: false }), loadOverseasPickingBatchDetail(detail.id)]);
         showToast(`产品 ${productId} 已恢复为未拣货状态`);
         focusOverseasPickingScanInput();
       } catch (error) {

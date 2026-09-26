@@ -9,7 +9,7 @@ import {
 import { Cron } from '@nestjs/schedule';
 import { createReadStream, createWriteStream } from 'fs';
 import JSZip = require('jszip');
-import { mkdir, open, readdir, readFile, rm, stat } from 'fs/promises';
+import { mkdir, open, readdir, rm, stat } from 'fs/promises';
 import { join, resolve } from 'path';
 import { pipeline } from 'stream/promises';
 import { APP_TIMEZONE, getZonedDateParts } from '../common/utils';
@@ -65,10 +65,21 @@ export class BackupsService implements OnModuleInit {
     }
   }
 
-  async listBackups(): Promise<BackupSummary[]> {
-    await this.reconcileBackupRecordsAndFiles();
+  @Cron('0 */15 * * * *', { name: 'backup-file-reconcile', timeZone: BACKUP_TIMEZONE })
+  async reconcileFilesInBackground(): Promise<void> {
+    try { await this.reconcileBackupRecordsAndFiles(); }
+    catch (error) { this.logger.warn(`备份文件检查失败: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+
+  async listBackups(pageRaw?: string, pageSizeRaw?: string): Promise<BackupSummary[]> {
+    const page = Number(pageRaw || 1);
+    const pageSize = Number(pageSizeRaw || 30);
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+      throw new BadRequestException('无效的备份分页参数');
+    }
     const rows = await this.prisma.backupRecord.findMany({
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (page - 1) * pageSize, take: pageSize,
     });
     return rows.map((row) => ({
       fileName: row.fileName,
@@ -83,7 +94,7 @@ export class BackupsService implements OnModuleInit {
   async getBackupFileForDownload(fileNameRaw: string): Promise<{
     fileName: string;
     sizeBytes: number;
-    content: Buffer;
+    stream: ReturnType<typeof createReadStream>;
   }> {
     const fileName = this.normalizeBackupFileName(fileNameRaw);
     const record = await this.prisma.backupRecord.findUnique({
@@ -99,13 +110,14 @@ export class BackupsService implements OnModuleInit {
     await this.ensureBackupDir();
     const filePath = join(this.backupDir, fileName);
     try {
-      const [content, fileStat] = await Promise.all([readFile(filePath), stat(filePath)]);
-      return {
-        fileName,
-        sizeBytes: Number(fileStat.size || 0),
-        content,
-      };
-    } catch {
+      const handle = await open(filePath, 'r');
+      try {
+        const fileStat = await handle.stat();
+        return { fileName, sizeBytes: Number(fileStat.size || 0),
+          stream: handle.createReadStream({ autoClose: true }) };
+      } catch (error) { await handle.close(); throw error; }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       await this.markBackupFileRemoved(record.id);
       throw new BadRequestException('该备份仅保留记录，不提供下载');
     }

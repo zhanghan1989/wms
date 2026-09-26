@@ -67,7 +67,7 @@ export class AuditService {
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
@@ -78,16 +78,22 @@ export class AuditService {
       ? await this.prisma.box.findMany({ where: { id: { in: boxIds } }, select: { id: true, boxCode: true } })
       : [];
     const boxCodeById = new Map(boxes.map((box) => [box.id.toString(), box.boxCode]));
+    const fbaIds = [...new Set(items.filter(item => item.entityType === 'fba_replenishment').map(item => item.entityId))];
+    const requests = fbaIds.length ? await this.prisma.fbaReplenishment.findMany({
+      where: { id: { in: fbaIds } }, select: { id: true, requestNo: true },
+    }) : [];
+    const requestNoById = new Map(requests.map(row => [row.id.toString(), row.requestNo]));
     return {
       total,
       items: items.map((item) => ({
         ...item,
-        entityDisplayName: item.entityType === 'box' ? boxCodeById.get(item.entityId.toString()) ?? null : null,
+        entityDisplayName: item.entityType === 'box' ? boxCodeById.get(item.entityId.toString()) ?? null
+          : item.entityType === 'fba_replenishment' ? requestNoById.get(item.entityId.toString()) ?? null : null,
       })),
     };
   }
 
-  async queryByEntity(entityType: 'box' | 'sku', entityId: bigint): Promise<unknown[]> {
+  async queryByEntity(entityType: 'box' | 'sku', entityId: bigint, page = 1, pageSize = 30): Promise<unknown[]> {
     return this.prisma.operationAuditLog.findMany({
       where: {
         entityType,
@@ -102,9 +108,8 @@ export class AuditService {
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      skip: (page - 1) * pageSize, take: pageSize,
     });
   }
 

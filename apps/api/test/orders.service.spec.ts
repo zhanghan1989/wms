@@ -1081,10 +1081,11 @@ describe('OrdersService', () => {
             pickingBatchId: 42n,
             status: 'pdf_ready',
             pageCount: 2,
-            pages: [{ printedAt: createdAt }, { printedAt: null }],
+            _count: { pages: 2 },
           },
         ]),
       },
+      yamatoShipmentBatchPage: { groupBy: jest.fn().mockResolvedValue([{ batchId: 16n, _count: { _all: 1 } }]) },
     };
     const service = new OrdersService(prisma as any);
 

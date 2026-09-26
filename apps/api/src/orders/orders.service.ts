@@ -1080,7 +1080,7 @@ export class OrdersService {
   async listOverseasPickingBatches(limitParam?: string): Promise<OverseasPickingBatchSummary[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 50) : 20;
-    const [recentRows, activeRows, yamatoBatches] = await Promise.all([
+    const [recentRows, activeRows] = await Promise.all([
       this.prisma.overseasPickingBatch.findMany({
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
@@ -1089,27 +1089,22 @@ export class OrdersService {
         where: { status: { not: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED } },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       }),
-      this.prisma.yamatoShipmentBatch.findMany({
-        where: {
-          pickingBatchId: { not: null },
-        },
-        select: {
-          id: true,
-          pickingBatchId: true,
-          status: true,
-          pageCount: true,
-          pages: {
-            select: {
-              printedAt: true,
-            },
-          },
-        },
-      }),
+
     ]);
 
     // Always retain unfinished work, even when one request creates more than the history limit.
     const rows = Array.from(new Map([...recentRows, ...activeRows].map((row) => [row.id.toString(), row])).values())
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+    const yamatoBatches = await this.prisma.yamatoShipmentBatch.findMany({
+      where: { pickingBatchId: { in: rows.map(row => row.id) } },
+      select: { id: true, pickingBatchId: true, status: true, pageCount: true,
+        _count: { select: { pages: true } } },
+    });
+    const printedCounts = yamatoBatches.length ? await this.prisma.yamatoShipmentBatchPage.groupBy({
+      by: ['batchId'], where: { batchId: { in: yamatoBatches.map(row => row.id) }, printedAt: { not: null } },
+      _count: { _all: true },
+    }) : [];
+    const printedByBatch = new Map(printedCounts.map(row => [row.batchId.toString(), row._count._all]));
     const yamatoBatchByPickingBatchId = new Map(
       yamatoBatches
         .filter((row) => row.pickingBatchId !== null)
@@ -1118,8 +1113,8 @@ export class OrdersService {
 
     return rows.map((row) => {
       const yamatoBatch = yamatoBatchByPickingBatchId.get(row.id.toString()) ?? null;
-      const printedPageCount = yamatoBatch?.pages.filter((page) => Boolean(page.printedAt)).length ?? 0;
-      const pageCount = Number(yamatoBatch?.pageCount ?? yamatoBatch?.pages.length ?? 0);
+      const printedPageCount = yamatoBatch ? printedByBatch.get(yamatoBatch.id.toString()) ?? 0 : 0;
+      const pageCount = Number(yamatoBatch?.pageCount ?? yamatoBatch?._count.pages ?? 0);
       return {
         id: row.id.toString(),
         batchNo: row.batchNo,
@@ -2845,19 +2840,18 @@ export class OrdersService {
     const rows = await this.prisma.yamatoShipmentBatch.findMany({
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,
-      include: {
-        pages: {
-          select: {
-            id: true,
-            printedAt: true,
-          },
-        },
-      },
+      include: { _count: { select: { pages: true } } },
     });
 
+    const printedCounts = rows.length ? await this.prisma.yamatoShipmentBatchPage.groupBy({
+      by: ['batchId'], where: { batchId: { in: rows.map(row => row.id) }, printedAt: { not: null } },
+      _count: { _all: true },
+    }) : [];
+    const printedByBatch = new Map(printedCounts.map(row => [row.batchId.toString(), row._count._all]));
+
     return rows.map((row) => {
-      const printedPageCount = row.pages.filter((page) => Boolean(page.printedAt)).length;
-      const pageCount = Number(row.pageCount ?? row.pages.length ?? 0);
+      const printedPageCount = printedByBatch.get(row.id.toString()) ?? 0;
+      const pageCount = Number(row.pageCount ?? row._count.pages ?? 0);
       return {
         id: row.id.toString(),
         status: row.status,

@@ -16,12 +16,12 @@ export class AuditController {
   }
 
   @Get('boxes/:id/audit-logs')
-  async queryBoxLogs(@Param('id') id: string): Promise<unknown[]> {
-    return this.auditService.queryByEntity('box', parseId(id, 'boxId'));
+  async queryBoxLogs(@Param('id') id: string, @Query() query: QueryAuditDto): Promise<unknown[]> {
+    return this.auditService.queryByEntity('box', parseId(id, 'boxId'), query.page, Math.min(query.pageSize || 30, 100));
   }
 
   @Get('skus/:id/audit-logs')
-  async querySkuLogs(@Param('id') id: string): Promise<unknown[]> {
-    return this.auditService.queryByEntity('sku', parseId(id, 'skuId'));
+  async querySkuLogs(@Param('id') id: string, @Query() query: QueryAuditDto): Promise<unknown[]> {
+    return this.auditService.queryByEntity('sku', parseId(id, 'skuId'), query.page, Math.min(query.pageSize || 30, 100));
   }
 }
