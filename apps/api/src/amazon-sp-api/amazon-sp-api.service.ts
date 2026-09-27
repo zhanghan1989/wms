@@ -592,7 +592,22 @@ export class AmazonSpApiService {
       : null;
   }
 
+  private dashboardCache = new Map<string, { expires: number; value: Promise<unknown> }>();
+  private invalidateDashboardCache(): void { this.dashboardCache.clear(); }
+
   async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string): Promise<unknown> {
+    const key = `${connectionIdRaw || ''}:${daysRaw || '30'}`;
+    const cached = this.dashboardCache.get(key);
+    if (cached && cached.expires > Date.now()) return cached.value;
+    if (this.dashboardCache.size >= 60) this.dashboardCache.delete(this.dashboardCache.keys().next().value!);
+    const value = this.buildStoreDashboard(connectionIdRaw, daysRaw);
+    const entry = { expires: Date.now() + 30000, value };
+    this.dashboardCache.set(key, entry);
+    value.catch(() => { if (this.dashboardCache.get(key) === entry) this.dashboardCache.delete(key); });
+    return value;
+  }
+
+  private async buildStoreDashboard(connectionIdRaw?: string, daysRaw?: string): Promise<unknown> {
     const allowedDays = new Set([7, 30, 90]);
     const requestedDays = Number(daysRaw ?? 30);
     const days = allowedDays.has(requestedDays) ? requestedDays : 30;
@@ -1211,6 +1226,7 @@ export class AmazonSpApiService {
           ? AmazonSpApiSyncStatus.partial
           : AmazonSpApiSyncStatus.failed;
       const finishedAt = new Date();
+      this.invalidateDashboardCache();
       await reportProgress('finalizing');
       await this.prisma.$transaction([
         this.prisma.amazonSpApiSyncRun.update({
@@ -1240,6 +1256,7 @@ export class AmazonSpApiService {
           },
         }),
       ]);
+      this.invalidateDashboardCache();
       return {
         runId: run.id.toString(),
         status,
@@ -1278,6 +1295,8 @@ export class AmazonSpApiService {
         }),
       ]);
       throw error;
+    } finally {
+      this.invalidateDashboardCache();
     }
   }
 

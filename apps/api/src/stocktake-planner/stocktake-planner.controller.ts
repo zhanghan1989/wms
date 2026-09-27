@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Controller, Query, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -11,8 +11,8 @@ export class StocktakePlannerController {
   constructor(private readonly stocktakePlannerService: StocktakePlannerService) {}
 
   @Get('tasks')
-  async list(): Promise<unknown[]> {
-    return this.stocktakePlannerService.list();
+  async list(@Query("page") page?: string): Promise<unknown> {
+    return this.stocktakePlannerService.list(page || "1");
   }
 
   @Post('tasks/generate')

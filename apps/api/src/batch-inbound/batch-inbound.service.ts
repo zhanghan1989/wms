@@ -99,26 +99,26 @@ export class BatchInboundService {
     return getUploadTemplateByOverride.call(this);
   }
 
-  async list(): Promise<BatchInboundOrderSummary[]> {
-    const orders = await this.prisma.batchInboundOrder.findMany({
-      include: {
-        creator: {
-          select: {
-            id: true,
-            username: true,
-          },
-        },
-        items: {
-          select: {
-            id: true,
-            status: true,
-          },
-        },
-      },
-      orderBy: { id: 'desc' },
+  async list(pageRaw?: string): Promise<any> {
+    const page = Math.max(1, Math.floor(Number(pageRaw)) || 1);
+    const active = { status: { in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound] } };
+    const include = { creator: { select: { id: true, username: true } } };
+    const history = await this.prisma.batchInboundOrder.findMany({
+      ...(pageRaw ? { where: { NOT: active }, skip: (page - 1) * 30, take: 31 } : {}),
+      include, orderBy: { id: 'desc' },
     });
-
-    return orders.map((order) => this.toOrderSummary(order));
+    const pending = pageRaw && page === 1 ? await this.prisma.batchInboundOrder.findMany({ where: active, include, orderBy: { id: 'desc' } }) : [];
+    const rows = [...pending, ...(pageRaw ? history.slice(0, 30) : history)];
+    const counts = rows.length ? await this.prisma.batchInboundItem.groupBy({
+      by: ['orderId', 'status'], where: { orderId: { in: rows.map(row => row.id) } }, _count: { _all: true },
+    }) : [];
+    const items = rows.map(order => {
+      const groups = counts.filter(row => row.orderId === order.id);
+      const itemCount = groups.reduce((sum, row) => sum + row._count._all, 0);
+      const pendingCount = groups.find(row => row.status === BatchInboundItemStatus.pending)?._count._all || 0;
+      return this.toOrderSummary({ ...order, items: [] }, { itemCount, pendingCount });
+    });
+    return pageRaw ? { items, hasMore: history.length > 30, pendingCount: await this.prisma.batchInboundOrder.count({ where: active }) } : items;
   }
 
   async detail(orderIdParam: string): Promise<BatchInboundOrderDetail> {
@@ -1278,9 +1278,10 @@ export class BatchInboundService {
     collectedBoxCodes: Prisma.JsonValue;
     creator: { id: bigint; username: string };
     items: Array<{ id: bigint; status: BatchInboundItemStatus }>;
-  }): BatchInboundOrderSummary {
-    const pendingCount = order.items.filter((item) => item.status === BatchInboundItemStatus.pending).length;
-    const confirmedCount = order.items.length - pendingCount;
+  }, counts?: { itemCount: number; pendingCount: number }): BatchInboundOrderSummary {
+    const pendingCount = counts?.pendingCount ?? order.items.filter((item) => item.status === BatchInboundItemStatus.pending).length;
+    const itemCount = counts?.itemCount ?? order.items.length;
+    const confirmedCount = itemCount - pendingCount;
 
     return {
       id: order.id.toString(),
@@ -1299,7 +1300,7 @@ export class BatchInboundService {
         id: order.creator.id.toString(),
         username: order.creator.username,
       },
-      itemCount: order.items.length,
+      itemCount,
       pendingCount,
       confirmedCount,
     };

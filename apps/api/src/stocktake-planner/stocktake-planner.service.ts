@@ -12,8 +12,11 @@ export class StocktakePlannerService {
     private readonly auditService: AuditService,
   ) {}
 
-  async list(): Promise<unknown[]> {
+  async list(pageRaw?: string): Promise<any> {
+    const page = Math.max(1, Math.floor(Number(pageRaw)) || 1);
+    const active = { status: { in: [StocktakePlannerTaskStatus.pending, StocktakePlannerTaskStatus.confirming] } };
     const rows = await this.prisma.stocktakePlannerTask.findMany({
+      ...(pageRaw ? { where: { NOT: active }, skip: (page - 1) * 30, take: 31 } : {}),
       include: {
         shelf: {
           select: {
@@ -34,7 +37,9 @@ export class StocktakePlannerService {
         { id: 'desc' },
       ],
     });
-    return rows.map((item) => this.toTaskDto(item));
+    if (!pageRaw) return rows.map((item) => this.toTaskDto(item));
+    const pending = page === 1 ? await this.prisma.stocktakePlannerTask.findMany({ where: active, include: { shelf: true, confirmer: true }, orderBy: [{ createdAt: "desc" }, { id: "desc" }] }) : [];
+    return { items: [...pending, ...rows.slice(0, 30)].map(item => this.toTaskDto(item)), hasMore: rows.length > 30 };
   }
 
   async generate(operatorId: bigint, requestId?: string): Promise<unknown[]> {

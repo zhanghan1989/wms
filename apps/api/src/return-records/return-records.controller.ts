@@ -22,8 +22,8 @@ export class ReturnRecordsController {
   constructor(private readonly returnRecordsService: ReturnRecordsService) {}
 
   @Get()
-  async list(): Promise<unknown[]> {
-    return this.returnRecordsService.list();
+  async list(@Query("page") page?: string): Promise<unknown[]> {
+    return this.returnRecordsService.list(Number(page || 1));
   }
 
   @Get('search')

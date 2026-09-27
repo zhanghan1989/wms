@@ -4619,10 +4619,35 @@ function getEligibleStocktakeShelves() {
   });
 }
 
-async function loadStocktakeTasks() {
-  const items = await request("/stocktake-planner/tasks");
-  state.stocktakeTasks = Array.isArray(items) ? items : [];
-  state.stocktakeVisibleCount = Math.min(state.inventoryPageSize, state.stocktakeTasks.length);
+const historyPages = new Map();
+async function loadHistoryPage(key, path, reset, apply) {
+  let pageState = historyPages.get(key);
+  if (reset || !pageState) {
+    pageState = { page: 0, hasMore: true, loading: false, token: state.token };
+    historyPages.set(key, pageState);
+  }
+  if (pageState.loading || !pageState.hasMore) return;
+  pageState.loading = true;
+  try {
+    const result = await request(`${path}?page=${pageState.page + 1}`);
+    if (historyPages.get(key) !== pageState || state.token !== pageState.token) return;
+    const rows = Array.isArray(result) ? result : result.items || [];
+    pageState.page += 1;
+    pageState.hasMore = Array.isArray(result) ? rows.length === 30 : Boolean(result.hasMore);
+    apply(rows, result);
+    return true;
+  } finally { pageState.loading = false; }
+}
+function historyHasMore(key) {
+  const page = historyPages.get(key);
+  return Boolean(page?.hasMore && !page.loading);
+}
+
+async function loadStocktakeTasks(reset = true) {
+  await loadHistoryPage('stocktake', '/stocktake-planner/tasks', reset, (items) => {
+    state.stocktakeTasks = reset ? items : [...state.stocktakeTasks, ...items];
+    state.stocktakeVisibleCount = reset ? Math.min(state.inventoryPageSize, items.length) : state.stocktakeTasks.length;
+  });
 }
 
 function buildStocktakeTaskStatusText(task) {
@@ -4637,7 +4662,7 @@ async function generateStocktakeTasks() {
     method: "POST",
     body: "{}",
   });
-  state.stocktakeTasks = Array.isArray(items) ? items : [];
+  await loadStocktakeTasks();
   state.stocktakeVisibleCount = Math.min(
     Math.max(state.stocktakeVisibleCount || 0, state.inventoryPageSize),
     state.stocktakeTasks.length,
@@ -4737,7 +4762,10 @@ function renderStocktakePlanner() {
 function loadMoreStocktakeTasksIfNeeded() {
   const panel = $("stocktakePlanner");
   if (!panel || !panel.classList.contains("active")) return;
-  if (state.stocktakeVisibleCount >= state.stocktakeTasks.length) return;
+  if (state.stocktakeVisibleCount >= state.stocktakeTasks.length) {
+    if (historyHasMore('stocktake')) loadStocktakeTasks(false).then(renderStocktakePlanner).catch(error => showToast(error.message, true));
+    return;
+  }
   state.stocktakeVisibleCount = Math.min(
     state.stocktakeTasks.length,
     state.stocktakeVisibleCount + state.inventoryPageSize,
@@ -4750,7 +4778,7 @@ function maybeAutoLoadStocktakeTasks() {
   if (!panel || !panel.classList.contains("active")) return;
   const tableWrap = $("stocktakePlannerTableWrap");
   if (!tableWrap) return;
-  if (state.stocktakeVisibleCount >= state.stocktakeTasks.length) return;
+  if (state.stocktakeVisibleCount >= state.stocktakeTasks.length && !historyHasMore('stocktake')) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -10051,7 +10079,10 @@ function renderBatchInboundOrders() {
 function loadMoreBatchInboundOrdersIfNeeded() {
   const panel = $("batchInbound");
   if (!panel || !panel.classList.contains("active")) return;
-  if (state.batchInboundVisibleCount >= state.batchInboundOrders.length) return;
+  if (state.batchInboundVisibleCount >= state.batchInboundOrders.length) {
+    if (historyHasMore('batchInbound')) loadBatchInboundOrders({ reset: false, refreshDetail: false }).catch(error => showToast(error.message, true));
+    return;
+  }
   state.batchInboundVisibleCount += state.inventoryPageSize;
   renderBatchInboundOrders();
 }
@@ -10075,7 +10106,7 @@ function maybeAutoLoadBatchInboundOrders() {
   if (!panel || !panel.classList.contains("active")) return;
   const tableWrap = $("batchInboundTableWrap");
   if (!tableWrap) return;
-  if (state.batchInboundVisibleCount >= state.batchInboundOrders.length) return;
+  if (state.batchInboundVisibleCount >= state.batchInboundOrders.length && !historyHasMore('batchInbound')) return;
 
   const threshold = 120;
   const currentBottom = tableWrap.scrollTop + tableWrap.clientHeight;
@@ -10251,13 +10282,13 @@ function renderBatchInboundDetail(detail) {
   `;
 }
 
-async function loadBatchInboundOrders({ keepSelection = true } = {}) {
-  const orders = await request("/batch-inbound/orders");
-  state.batchInboundOrders = Array.isArray(orders) ? orders : [];
-  state.batchInboundVisibleCount = state.inventoryPageSize;
-  $("statInboundDraft").textContent = state.batchInboundOrders.filter(
-    (order) => order.status === "waiting_upload" || order.status === "waiting_inbound",
-  ).length;
+async function loadBatchInboundOrders({ keepSelection = true, reset = true, refreshDetail = true } = {}) {
+  const loaded = await loadHistoryPage('batchInbound', '/batch-inbound/orders', reset, (orders, result) => {
+    state.batchInboundOrders = reset ? orders : [...state.batchInboundOrders, ...orders];
+    $("statInboundDraft").textContent = result.pendingCount;
+  });
+  if (!loaded) return;
+  state.batchInboundVisibleCount = reset ? state.inventoryPageSize : state.batchInboundOrders.length;
   renderBatchInboundOrders();
   renderBatchInboundUploadOptions();
 
@@ -10283,12 +10314,15 @@ async function loadBatchInboundOrders({ keepSelection = true } = {}) {
     return;
   }
 
-  await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
-  });
+  if (refreshDetail) await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true });
 }
 
+let batchInboundDetailVersion = 0;
 async function loadBatchInboundOrderDetail(orderId, { silent = false } = {}) {
-  const detail = await request(`/batch-inbound/orders/${orderId}`);
+  const version = ++batchInboundDetailVersion;
+  const token = state.token;
+  const detail = await loadReferenceData(`/batch-inbound/orders/${orderId}`);
+  if (version !== batchInboundDetailVersion || token !== state.token) return;
   state.selectedBatchInboundOrderId = String(orderId);
   state.selectedBatchInboundOrderDetail = detail;
   renderBatchInboundDetail(detail);
@@ -11586,6 +11620,7 @@ function clearOrderSearchResults() {
 }
 
 async function searchReturnRecords(keyword) {
+  historyPages.delete("returns");
   return request(`/return-records/search?q=${encodeURIComponent(String(keyword || "").trim())}`);
 }
 
@@ -11660,7 +11695,7 @@ function clearReturnRecordSearchResults() {
   renderReturnRecordsTable();
 }
 
-async function loadReturnRecords() {
+async function loadReturnRecords(reset = true) {
   if (!state.token) {
     state.returnRecords = [];
     state.returnRecordSearchResult = null;
@@ -11670,11 +11705,13 @@ async function loadReturnRecords() {
     renderReturnRecordsTable();
     return;
   }
-  const list = await request("/return-records");
-  state.returnRecords = Array.isArray(list) ? list : [];
+  const loaded = await loadHistoryPage('returns', '/return-records', reset, (list) => {
+    state.returnRecords = reset ? list : [...state.returnRecords, ...list];
+  });
+  if (!loaded) return;
   state.returnRecordSearchResult = null;
-  state.returnRecordsVisibleCount = state.inventoryPageSize;
-  state.selectedReturnRecordIds = new Set();
+  state.returnRecordsVisibleCount = reset ? state.inventoryPageSize : state.returnRecords.length;
+  if (reset) state.selectedReturnRecordIds = new Set();
   renderReturnRecordSearchSummary();
   renderReturnRecordsTable();
   setupReturnRecordsLoadObserver();
@@ -11764,7 +11801,10 @@ function loadMoreReturnRecordsIfNeeded() {
   const panel = $("returnManagement");
   if (!panel || !panel.classList.contains("active")) return;
   const rows = getReturnRecordsDisplayRows();
-  if (state.returnRecordsVisibleCount >= rows.length) return;
+  if (state.returnRecordsVisibleCount >= rows.length) {
+    if (!state.returnRecordSearchResult && historyHasMore('returns')) loadReturnRecords(false).catch(error => showToast(error.message, true));
+    return;
+  }
   state.returnRecordsVisibleCount += state.inventoryPageSize;
   renderReturnRecordsTable();
 }
@@ -15985,7 +16025,7 @@ function bindForms() {
       await withBusyButton(submitButton, "采集中...", async () => {
         await submitCollectBatchInboundForm();
         showToast("箱号采集完成，已创建批量入库单");
-        await loadBatchInboundOrders();
+        await loadBatchInboundOrders({ refreshDetail: false });
         if (state.selectedBatchInboundOrderId) {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
         }
@@ -16002,7 +16042,7 @@ function bindForms() {
       await withBusyButton(submitButton, "上传中...", async () => {
         await submitUploadBatchInboundForm();
         showToast("文档上传成功");
-        await loadBatchInboundOrders();
+        await loadBatchInboundOrders({ refreshDetail: false });
         if (state.selectedBatchInboundOrderId) {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
         }
@@ -16598,7 +16638,7 @@ function bindForms() {
   $("openBatchInboundModal").addEventListener("click", async () => {
     try {
       switchPanel("batchInbound");
-      await loadBatchInboundOrders();
+      await loadBatchInboundOrders({ refreshDetail: false });
       if (state.selectedBatchInboundOrderId) {
         await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
         });
@@ -18837,7 +18877,7 @@ function bindDelegates() {
         }
         await saveBatchInboundDomesticOrderNo(orderId, domesticOrderNo);
         showToast("国内单号已保存");
-        await loadBatchInboundOrders();
+        await loadBatchInboundOrders({ refreshDetail: false });
         if (state.selectedBatchInboundOrderId) {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
           });
@@ -18850,7 +18890,7 @@ function bindDelegates() {
         }
         await saveBatchInboundSeaOrderNo(orderId, seaOrderNo);
         showToast("海运单号已保存");
-        await loadBatchInboundOrders();
+        await loadBatchInboundOrders({ refreshDetail: false });
         if (state.selectedBatchInboundOrderId) {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
           });
@@ -19437,7 +19477,7 @@ function bindDelegates() {
       if (action === "batchInboundPrintItemLabel") {
         return;
       }
-      await loadBatchInboundOrders();
+      await loadBatchInboundOrders({ refreshDetail: false });
       await loadBatchInboundOrderDetail(orderId, { silent: true });
       await loadInventory();
       await loadBoxes();

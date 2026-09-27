@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
@@ -47,10 +48,11 @@ const RETURN_RECORD_COLUMN_ALIASES = {
 export class ReturnRecordsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(): Promise<unknown[]> {
+  async list(page = 1): Promise<unknown[]> {
     const rows = await (this.prisma as any).returnRecord.findMany({
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: 1000,
+      skip: (Math.max(1, Math.floor(page) || 1) - 1) * 30,
+      take: 30,
     });
     return rows.map((row: any) => this.toListItem(row));
   }
@@ -61,7 +63,7 @@ export class ReturnRecordsService {
       throw new BadRequestException('请输入注文番号、追跡番号、発送人或電話番号');
     }
 
-    const rows = await this.findSearchCandidateRows();
+    const rows = await this.findSearchCandidateRows(query, 500);
     const matchedRows = rows.filter((row) => this.matchesSearchQuery(row, query)).slice(0, 500);
     return {
       query,
@@ -74,7 +76,7 @@ export class ReturnRecordsService {
     const query = String(queryRaw ?? '').trim();
     if (!query) return [];
 
-    const rows = await this.findSearchCandidateRows(1000);
+    const rows = await this.findSearchCandidateRows(query, 100);
     const suggestions = new Map<string, ReturnRecordSearchSuggestion>();
     const addSuggestion = (type: ReturnRecordSearchSuggestion['type'], value: unknown, labelPrefix: string) => {
       const text = String(value ?? '').trim();
@@ -177,10 +179,21 @@ export class ReturnRecordsService {
     return product?.productName ?? null;
   }
 
-  private async findSearchCandidateRows(take = 5000): Promise<any[]> {
-    return (this.prisma as any).returnRecord.findMany({
+  private async findSearchCandidateRows(query: string, take: number): Promise<any[]> {
+    const text = this.normalizeSearchText(query);
+    const loose = this.normalizeLooseSearchText(query);
+    const predicates = ['order_no', 'tracking_no', 'sender_name', 'phone'].map((column) => {
+      const field = Prisma.raw('`' + column + '`');
+      return Prisma.sql`(LOCATE(${text}, LOWER(COALESCE(${field}, ''))) > 0
+        OR (${loose} <> '' AND LOCATE(${loose}, REGEXP_REPLACE(LOWER(COALESCE(${field}, '')), '[[:space:]‐‑‒–—―ー－-]', '')) > 0))`;
+    });
+    const ids = await this.prisma.$queryRaw<Array<{ id: bigint }>>(Prisma.sql`
+      SELECT id FROM return_records WHERE ${Prisma.join(predicates, ' OR ')}
+      ORDER BY created_at DESC, id DESC LIMIT ${take}`);
+    if (!ids.length) return [];
+    return this.prisma.returnRecord.findMany({
+      where: { id: { in: ids.map((row) => row.id) } },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take,
     });
   }
 

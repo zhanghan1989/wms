@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  Query,
   Post,
   Req,
   Res,
@@ -47,8 +48,8 @@ export class BatchInboundController {
   }
 
   @Get('orders')
-  async list(): Promise<unknown[]> {
-    return this.batchInboundService.list();
+  async list(@Query("page") page?: string): Promise<unknown> {
+    return this.batchInboundService.list(page || "1");
   }
 
   @Get('orders/:id')
