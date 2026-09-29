@@ -9876,7 +9876,11 @@ async function loadBoxes() {
   syncMoveProductOldShelfDisplay();
   syncMoveProductNewShelfDisplay();
   renderBoxesManageTable();
-  $("boxesBody").innerHTML = boxes
+  renderBoxesListTable();
+}
+
+function renderBoxesListTable() {
+  $("boxesBody").innerHTML = state.boxes
     .map(
       (box) => `
       <tr>
@@ -14844,10 +14848,15 @@ async function submitMoveBoxShelfForm() {
     throw new Error("新货架号不能与旧货架号相同");
   }
 
-  await request(`/boxes/${sourceBoxId}`, {
+  const updatedBox = await request(`/boxes/${sourceBoxId}`, {
     method: "PUT",
     body: JSON.stringify({ shelfId: targetShelfId }),
   });
+  upsertEnabledBox({ ...sourceBox, ...updatedBox, shelf: targetShelf });
+  state.boxManageRows = (state.boxManageRows || []).map((box) =>
+    String(box.id) === String(sourceBoxId) ? { ...box, ...updatedBox, shelf: targetShelf } : box);
+  renderBoxesManageTable();
+  renderBoxesListTable();
 }
 
 async function submitMoveBoxCodeForm() {
@@ -14901,10 +14910,14 @@ async function initOverseasWarehousePage() {
   const [,, skus] = await Promise.all([loadShelves(), loadBoxes(), loadReferenceData("/skus")]);
   if (state.token !== token) return;
   state.inventorySkus = Array.isArray(skus) ? skus : [];
+  resetOverseasWarehouseMoveForms();
+}
+
+function resetOverseasWarehouseMoveForms({ refreshOptions = true } = {}) {
   $("moveBoxShelfForm")?.reset();
   $("moveShelfCurrentCode").value = "";
   $("moveShelfTargetCode").value = "";
-  renderMoveShelfBoxOptions("");
+  if (refreshOptions) renderMoveShelfBoxOptions("");
   renderMoveShelfTargetOptions("");
   syncMoveShelfCurrentDisplay();
 
@@ -14914,8 +14927,10 @@ async function initOverseasWarehousePage() {
   $("moveProductNewShelfCode").value = "";
   const hint = $("moveProductOldBoxHint");
   if (hint) hint.classList.add("hidden");
-  renderMasterProductOptionsForInput("moveProductProductId", "moveProductProductIdList");
-  renderMoveProductNewBoxOptions("");
+  if (refreshOptions) {
+    renderMasterProductOptionsForInput("moveProductProductId", "moveProductProductIdList");
+    renderMoveProductNewBoxOptions("");
+  }
 }
 
 async function reloadAll() {
@@ -19412,8 +19427,8 @@ function bindDelegates() {
       if (!confirmed) return;
       await submitMoveBoxShelfForm();
       showToast("箱号已移动至新货架");
-      await initOverseasWarehousePage();
-      await loadAudit();
+      resetOverseasWarehouseMoveForms({ refreshOptions: false });
+      loadAudit().catch((error) => showToast(error.message, true));
     } catch (error) {
       showToast(error.message, true);
     }
@@ -19429,8 +19444,8 @@ function bindDelegates() {
       if (!confirmed) return;
       const result = await submitMoveBoxCodeForm();
       showToast(`已将${result.qty}件主商品从 ${result.oldBoxCode} 移动到 ${result.newBoxCode}`);
-      await initOverseasWarehousePage();
-      await loadAudit();
+      resetOverseasWarehouseMoveForms({ refreshOptions: false });
+      loadAudit().catch((error) => showToast(error.message, true));
     } catch (error) {
       showToast(error.message, true);
     }
