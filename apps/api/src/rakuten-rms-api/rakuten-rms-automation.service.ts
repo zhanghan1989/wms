@@ -749,7 +749,7 @@ export class RakutenRmsAutomationService {
     const result = await this.prisma.rakutenOrderShippingReport.updateMany({
       where: {
         id,
-        status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
+        status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter] },
       },
       data: {
         status: RakutenAutomationStatus.skipped,
@@ -759,7 +759,7 @@ export class RakutenRmsAutomationService {
         deadLetteredAt: null,
       },
     });
-    if (result.count !== 1) throw new BadRequestException('只有待回传或失败的单号回传任务可以忽略，请刷新清单');
+    if (result.count !== 1) throw new BadRequestException('只有待回传、失败或需人工处理的单号回传任务可以忽略，请刷新清单');
     await this.createAudit({
       entityType: 'rakuten_shipping_report',
       entityId: id,

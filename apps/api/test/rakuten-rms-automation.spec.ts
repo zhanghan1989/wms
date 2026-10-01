@@ -1219,10 +1219,10 @@ describe('Rakuten RMS shipping and mail automation', () => {
     })).toBe(false);
   });
 
-  it('marks a pending or failed shipment report as manually ignored', async () => {
+  it.each([RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter])('marks a %s shipment report as manually ignored', async (status) => {
     const prisma = {
       rakutenOrderShippingReport: {
-        findUnique: jest.fn().mockResolvedValue({ id: 84n, status: RakutenAutomationStatus.failed }),
+        findUnique: jest.fn().mockResolvedValue({ id: 84n, status }),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
     } as any;
@@ -1234,7 +1234,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(prisma.rakutenOrderShippingReport.updateMany).toHaveBeenCalledWith({
       where: {
         id: 84n,
-        status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
+        status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter] },
       },
       data: expect.objectContaining({
         status: RakutenAutomationStatus.skipped,
@@ -1247,6 +1247,20 @@ describe('Rakuten RMS shipping and mail automation', () => {
       eventType: 'rakuten_shipping_ignored',
       operatorId: 9n,
     }));
+  });
+
+  it('rejects ignoring a shipment report whose status changed before the update', async () => {
+    const prisma = {
+      rakutenOrderShippingReport: {
+        findUnique: jest.fn().mockResolvedValue({ id: 84n, status: RakutenAutomationStatus.dead_letter }),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    } as any;
+    const audit = { create: jest.fn() } as any;
+    const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any, audit);
+
+    await expect(scopedService.ignoreShippingReport('84', 9n)).rejects.toThrow('请刷新清单');
+    expect(audit.create).not.toHaveBeenCalled();
   });
 
   it('reports a critical shop health state for uncertain mail and failed shipping', async () => {

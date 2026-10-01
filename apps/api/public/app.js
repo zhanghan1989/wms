@@ -7467,7 +7467,7 @@ function renderRakutenManualAutomation() {
       <td>${escapeHtml(displayText(item?.actionLabel))}</td>
       <td>${escapeHtml(rakutenShippingStatusLabel(item))}</td>
       <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
-      <td>${executable ? `<div class="action-row"><button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">回传</button><button type="button" class="tiny-btn ghost" data-action="ignoreRakutenManualShipping" data-id="${escapeHtml(item.id)}">忽略</button></div>` : '<span class="muted">请先处理异常</span>'}</td>
+      <td><div class="action-row">${executable ? `<button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">回传</button>` : '<span class="muted">请先处理异常</span>'}${["pending", "failed", "dead_letter"].includes(status) ? `<button type="button" class="tiny-btn ghost" data-action="ignoreRakutenManualShipping" data-id="${escapeHtml(item.id)}">忽略</button>` : ""}</div></td>
     </tr>`;
   }).join("") || '<tr><td colspan="8" class="muted">当前没有需要回传单号的任务。</td></tr>';
 }
