@@ -12623,7 +12623,8 @@ function getOverseasPickingBatchStockIssues(rows) {
     if (!productId) return;
     const requestedQty = Number(row?.orderQuantity || 0);
     if (!Number.isFinite(requestedQty) || requestedQty <= 0) return;
-    const availableStock = Math.max(0, Number(row?.availableStock || 0));
+    const availableStock = Math.max(0, Number(row?.availableStock || 0))
+      + (row?.assemblableStockApplicable ? Math.max(0, Number(row?.assemblableStock || 0)) : 0);
     const group =
       groups.get(productId) ??
       {
@@ -12724,7 +12725,7 @@ function renderOverseasPickingBatchStockModal(issues, rows) {
           <div class="overseas-batch-stock-group-head">
             <span>产品ID：${escapeHtml(issue.productId)}</span>
             <span>产品名称：${escapeHtml(displayText(issue.productName))}</span>
-            <span>库存：${escapeHtml(displayText(issue.availableStock))}</span>
+            <span>可供数量（成品＋可组装）：${escapeHtml(displayText(issue.availableStock))}</span>
             <span>待拣：${escapeHtml(displayText(issue.requestedQty))}</span>
             <span class="overseas-batch-stock-warning">需要踢出：${escapeHtml(displayText(issue.shortageQty))}</span>
           </div>

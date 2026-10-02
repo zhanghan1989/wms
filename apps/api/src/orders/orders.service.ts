@@ -5792,17 +5792,17 @@ export class OrdersService {
 
     const rakutenMap = new Map(
       enrichedRakutenRows
-        .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock > 0)
+        .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock + (row.assemblableStock ?? 0) > 0)
         .map((row) => [row.id.toString(), row] as const),
     );
     const amazonMap = new Map(
       enrichedAmazonRows
-        .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock > 0)
+        .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock + (row.assemblableStock ?? 0) > 0)
         .map((row) => [row.id.toString(), row] as const),
     );
     const manualMap = new Map(
       enrichedManualRows
-        .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock > 0)
+        .filter((row) => row.fulfillmentMode === 'overseas_warehouse' && row.availableStock + (row.assemblableStock ?? 0) > 0)
         .map((row) => [row.id.toString(), row] as const),
     );
 
@@ -9502,6 +9502,7 @@ export class OrdersService {
         bomComponents: {
           orderBy: [{ position: 'asc' }, { id: 'asc' }],
           select: {
+            componentProductId: true,
             quantity: true,
             componentProduct: {
               select: {
@@ -9516,9 +9517,31 @@ export class OrdersService {
       },
     });
 
+    const stockIds = [...new Set(rows.flatMap((row) => [
+      row.productId,
+      ...(row.bomComponents ?? []).map((item) => item.componentProductId),
+    ]))];
+    const stockRows = await availableStock(this.prisma, stockIds);
+    const stockByProductId = new Map<string, Array<{ qty: number }>>();
+    stockRows.forEach((row) => {
+      const locations = stockByProductId.get(row.productId) ?? [];
+      locations.push({ qty: row.qty });
+      stockByProductId.set(row.productId, locations);
+    });
+
     return new Map(
       rows.map((row) => {
-        const availability = calculateProductStockAvailability(row);
+        const availability = calculateProductStockAvailability({
+          ...row,
+          boxInventories: stockByProductId.get(row.productId) ?? [],
+          bomComponents: (row.bomComponents ?? []).map((item) => ({
+            ...item,
+            componentProduct: {
+              ...item.componentProduct,
+              boxInventories: stockByProductId.get(item.componentProductId) ?? [],
+            },
+          })),
+        });
         return [
           String(row.productId ?? '').trim(),
           {

@@ -456,6 +456,11 @@ describe('OrdersService', () => {
     };
     const rakutenFindMany = jest.fn().mockResolvedValue([processedOrder]);
     const prisma = {
+      masterProductBomItem: { findMany: jest.fn().mockResolvedValue([]) },
+      masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([]) },
+      fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
+      overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
+      pickingItemComponentRef: { findMany: jest.fn().mockResolvedValue([]) },
       rakutenOrderRecord: { findMany: rakutenFindMany },
       amazonOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
       manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
@@ -477,6 +482,12 @@ describe('OrdersService', () => {
 
   it('marks assemblable stock as applicable only to shoulder strap products', async () => {
     const service = new OrdersService({
+      masterProductBomItem: { findMany: jest.fn().mockResolvedValue([]) },
+      masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([]) },
+      fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
+      overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
+      pickingItemComponentRef: { findMany: jest.fn().mockResolvedValue([]) },
+
       masterProduct: {
         findMany: jest.fn().mockResolvedValue([
           {

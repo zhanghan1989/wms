@@ -57,8 +57,8 @@ describe('overseas picking batch splitting', () => {
     expect(result.batches.map((batch: any) => batch.orderCount)).toEqual([30, 30, 1]);
     expect(tx.overseasPickingBatch.create.mock.calls.map(([args]) => args.data.items.create.length)).toEqual([30, 30, 1]);
   });
-  it('deduplicates selected records while preserving distinct sources', async () => {
-    const common = { availableStock: 10, fulfillmentMode: 'overseas_warehouse', resolvedProductId: 'P1', shopName: 'shop' };
+  it('accepts assembly-only stock for all sources and deduplicates selected records', async () => {
+    const common = { availableStock: 0, assemblableStock: 1, fulfillmentMode: 'overseas_warehouse', resolvedProductId: 'P1', shopName: 'shop' };
     const rakuten = { ...common, id: 1n, orderId: 'R1', skuCode: 'SKU', orderQuantity: 1,
       shippingName: '山田', shippingPhone: '090-1234-5678', shippingPostalCode: '123-4567',
       shippingPrefecture: '東京都', shippingCity: '中央区', shippingAddress: '銀座1-2ビル301' };
@@ -68,15 +68,17 @@ describe('overseas picking batch splitting', () => {
     const instance = new OrdersService({
       rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([rakuten]) },
       amazonOrderRecord: { findMany: jest.fn().mockResolvedValue([amazon]) },
+      manualOrderRecord: { findMany: jest.fn().mockResolvedValue([{ ...amazon, id: 3n, orderId: 'M1' }]) },
     } as any) as any;
     jest.spyOn(instance, 'enrichOrderRows').mockResolvedValue([rakuten]);
     jest.spyOn(instance, 'enrichAmazonOrderRows').mockResolvedValue([amazon]);
-    jest.spyOn(instance, 'enrichManualOrderRows').mockResolvedValue([]);
+    jest.spyOn(instance, 'enrichManualOrderRows').mockResolvedValue([{ ...amazon, id: 3n, orderId: 'M1' }]);
     const snapshots = await instance.collectOverseasPickingBatchItemSnapshots([
       { source: 'rakuten', id: '1' }, { source: 'amazon', id: '2' }, { source: 'rakuten', id: '1' },
+      { source: 'manual', id: '3' },
     ]);
-    expect(snapshots).toHaveLength(2);
-    expect(instance.splitOverseasPickingBatches([...rows(29), ...snapshots]).map((batch: any[]) => batch.length)).toEqual([30, 1]);
+    expect(snapshots).toHaveLength(3);
+    expect(instance.splitOverseasPickingBatches([...rows(29), ...snapshots]).map((batch: any[]) => batch.length)).toEqual([30, 2]);
   });
 
   it('lists every unfinished batch when more than 20 were created, without duplicates', async () => {
