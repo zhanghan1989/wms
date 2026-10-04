@@ -20415,7 +20415,9 @@ function bindDelegates() {
     const fileName = String(button.dataset.fileName || "").trim();
     if (!fileName) return;
     try {
-      await downloadDataBackup(fileName);
+      await withBusyButton(button, "下载中...", () =>
+        withGlobalLoading("下载中，请稍候...", () => downloadDataBackup(fileName))
+      );
     } catch (error) {
       showToast(error.message, true);
     }
