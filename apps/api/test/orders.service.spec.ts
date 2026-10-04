@@ -967,10 +967,36 @@ describe('OrdersService', () => {
         }),
       },
     };
+    Object.assign(prisma, { $queryRaw: jest.fn(), printJob: { count: jest.fn().mockResolvedValue(0) }, yamatoShipmentBatchPage: { findMany: jest.fn(async () => (await prisma.yamatoShipmentBatch.findFirst()).pages) }, $transaction: jest.fn(async (work) => work(prisma)) });
     const service = new OrdersService(prisma as any);
 
     await expect(service.completeOverseasPickingBatchWork('42')).rejects.toThrow('还有 1 张面单未打印');
     expect(prisma.overseasPickingBatch.update).not.toHaveBeenCalled();
+  });
+
+  it('exports BOM IDs in label notes without changing scanned product quantities', async () => {
+    const service = new OrdersService({
+      manualOrderRecord: { findMany: jest.fn().mockResolvedValue([
+        { id: 1n, orderId: 'ORDER-STRAP' }, { id: 2n, orderId: 'ORDER-STRAP' },
+      ]) },
+      masterProduct: { findMany: jest.fn().mockResolvedValue([]) },
+    } as any);
+    const items = await (service as any).buildYamatoExportItemsFromPickingBatchItems([
+      { source: 'manual', sourceRecordId: 1n, productId: 'STRAP-01', actualQty: 2,
+        bomSnapshot: [
+          { componentProductId: 'BODY-22', quantity: 1 },
+          { componentProductId: 'HOOK-21', quantity: 2 },
+        ] },
+      { source: 'manual', sourceRecordId: 2n, productId: 'NORMAL-02', actualQty: 3 },
+    ]);
+    const [row] = (service as any).mergeYamatoExportItems(items);
+    expect(row.itemSummary).toBe('DGAZ STRAP-01*2個(BODY-22*2個、HOOK-21*4個) / NORMAL-02*3個');
+    expect(row.productIds).toEqual(['STRAP-01', 'NORMAL-02']);
+    expect((service as any).parseYamatoItemSummaryProductQuantities(row.itemSummary, row.productIds))
+      .toEqual([{ productId: 'STRAP-01', quantity: 2 }, { productId: 'NORMAL-02', quantity: 3 }]);
+    expect((service as any).parseYamatoItemSummaryProductQuantities(
+      'DGAZ STRAP-01*2個(BODY/22、HOOK*21)', ['STRAP-01'],
+    )).toEqual([{ productId: 'STRAP-01', quantity: 2 }]);
   });
 
   it('builds the assembly part confirmation list for a Yamato label', async () => {
@@ -1004,11 +1030,11 @@ describe('OrdersService', () => {
     expect(parts).toEqual([
       {
         componentProductId: 'HOOK-21', componentProductName: '肩带扣', componentProductType: '肩带配件', requiredQty: 2,
-        stockQty: 8, parentProductIds: ['STRAP-LABEL'],
+        stockQty: 8, pickingConfirmedQty: null, parentProductIds: ['STRAP-LABEL'],
       },
       {
         componentProductId: 'BODY-22', componentProductName: '肩带布', componentProductType: '肩带本体', requiredQty: 1,
-        stockQty: 5, parentProductIds: ['STRAP-LABEL'],
+        stockQty: 5, pickingConfirmedQty: null, parentProductIds: ['STRAP-LABEL'],
       },
     ]);
   });
@@ -1016,16 +1042,16 @@ describe('OrdersService', () => {
   it('blocks Yamato label output until every assembly part is confirmed', () => {
     const service = new OrdersService({} as any);
     const parts = [
-      { componentProductId: 'HOOK-21', componentProductName: '肩带扣', requiredQty: 2, stockQty: 8 },
-      { componentProductId: 'BODY-22', componentProductName: '肩带布', requiredQty: 1, stockQty: 5 },
+      { componentProductId: 'HOOK-21', componentProductName: '肩带扣', componentProductType: '肩带配件', requiredQty: 2, stockQty: 8 },
+      { componentProductId: 'BODY-22', componentProductName: '肩带布', componentProductType: '肩带本体', requiredQty: 1, stockQty: 5 },
     ];
 
     expect(() => (service as any).assertYamatoAssemblyPartsConfirmed(
-      { productId: 'STRAP-LABEL', confirmedAssemblyComponentProductIds: ['HOOK-21'] },
+      { productId: 'STRAP-LABEL', confirmedAssemblyParts: [{ productId: 'HOOK-21', quantity: 1 }] },
       parts,
-    )).toThrow('请先确认全部 BOM 材料：BODY-22');
+    )).toThrow('请清点确认全部配件数量：HOOK-21');
     expect(() => (service as any).assertYamatoAssemblyPartsConfirmed(
-      { productId: 'STRAP-LABEL', confirmedAssemblyComponentProductIds: ['HOOK-21', 'BODY-22'] },
+      { productId: 'STRAP-LABEL', confirmedAssemblyParts: [{ productId: 'HOOK-21', quantity: 2 }], scannedBodies: [{ productId: 'BODY-22', quantity: 1 }] },
       parts,
     )).not.toThrow();
   });
@@ -1036,6 +1062,7 @@ describe('OrdersService', () => {
       pageNo: 1,
       printedAt: null,
       productIds: ['STRAP-LABEL'],
+      orderId: 'ORDER-STRAP',
     };
     const service = new OrdersService({
       yamatoShipmentBatch: {
@@ -1053,6 +1080,7 @@ describe('OrdersService', () => {
       overseasPickingBatchItem: {
         findMany: jest.fn().mockResolvedValue([{
           productId: 'STRAP-LABEL',
+          orderId: 'ORDER-STRAP',
           requestedQty: 1,
           pickingPlanSnapshot: [],
           bomSnapshot: [{
@@ -1125,6 +1153,7 @@ describe('OrdersService', () => {
         }),
       },
     };
+    Object.assign(prisma, { $queryRaw: jest.fn(), printJob: { count: jest.fn().mockResolvedValue(0) }, yamatoShipmentBatchPage: { findMany: jest.fn(async () => (await prisma.yamatoShipmentBatch.findFirst()).pages) }, $transaction: jest.fn(async (work) => work(prisma)) });
     const service = new OrdersService(prisma as any);
 
     await expect(service.completeOverseasPickingBatchWork('42')).resolves.toEqual({

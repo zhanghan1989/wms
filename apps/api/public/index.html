@@ -1371,8 +1371,10 @@
                   placeholder="上传 PDF 后，扫描产品ID自动匹配对应面单页并打印"
                 />
               </div>
-              <button id="overseasYamatoReprintBtn" type="button" class="secondary">重新打印</button>
+              <button id="overseasYamatoReprintBtn" type="button" class="secondary">补打面单</button>
+              <button id="yamatoPrintTasksBtn" type="button" class="secondary">查看 / 恢复打印任务</button>
             </div>
+            <div id="yamatoPrintTasks"></div>
             <div class="card-head">
               <div>
                 <h3>当前批次订单信息</h3>
@@ -2823,7 +2825,11 @@
         <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前面单打印</button>
       </div>
       <p id="yamatoMergedScanSummary" class="muted">该面单包含多个产品，请扫齐后再打印。</p>
+      <div id="yamatoCandidateSection" class="hidden">
+        <table><thead><tr><th>订单号</th><th>成品及配件总量</th><th>操作</th></tr></thead><tbody id="yamatoCandidateBody"></tbody></table>
+      </div>
       <div id="yamatoMergedScanInputRow" class="action-row overseas-scan-row">
+        <select id="yamatoScanTargetProductSelect" aria-label="共用本体时选择成品"></select>
         <input id="yamatoMergedScanInput" type="text" inputmode="text" autocomplete="off" placeholder="继续扫描该面单内剩余产品ID" />
       </div>
       <div class="master-product-table-wrap yamato-merged-scan-table-wrap">
@@ -2841,15 +2847,15 @@
       </div>
       <div id="yamatoAssemblyPartSection" class="hidden">
         <h4>组装肩带 BOM 材料确认</h4>
-        <p class="muted">请逐行核对肩带本体和肩带配件，全部确认后再点击打印确认。</p>
+        <p class="muted">肩带成品码或本体码任选其一，每件只扫一次；配件无单件码，请清点并输入本次组装所需总数量后确认。拣货时外箱扫码用于核对配件种类。</p>
         <div class="master-product-table-wrap yamato-merged-scan-table-wrap">
           <table>
             <thead>
               <tr>
-                <th>主产品ID</th>
-                <th>主产品名称</th>
+                <th>材料ID</th>
+                <th>材料名称</th>
                 <th>所需数量</th>
-                <th>库存数量</th>
+                <th>拣货扫码记录</th>
                 <th>操作</th>
               </tr>
             </thead>

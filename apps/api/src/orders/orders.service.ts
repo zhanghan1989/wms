@@ -755,6 +755,7 @@ interface YamatoExportItem {
   orderId: string;
   productId: string;
   printerValue: string;
+  components?: Array<{ componentProductId: string; quantity: number }>;
   quantity: number;
   deliveryDate: string;
   deliveryTimeSlot: string;
@@ -807,6 +808,8 @@ interface YamatoShipmentPdfUploadFile {
 }
 
 interface YamatoShipmentPrintFileResult {
+  queueJobId?: string;
+  reused?: boolean;
   batchId: string;
   fileName: string;
   content: Buffer;
@@ -817,6 +820,8 @@ interface YamatoShipmentPrintFileResult {
 }
 
 interface YamatoShipmentDirectPrintResult {
+  queueJobId: string;
+  reused?: boolean;
   batchId: string;
   fileName: string;
   pageNo: number;
@@ -834,6 +839,7 @@ interface YamatoShipmentPrintConfig {
 }
 
 interface YamatoShipmentQueuedPrintResult {
+  reused?: boolean;
   batchId: string;
   productId: string;
   pageNo: number;
@@ -847,6 +853,9 @@ interface YamatoShipmentPageProductDetail {
   productId: string;
   productName: string | null;
   quantity: number;
+  finishedQuantity: number;
+  assemblyQuantity: number;
+  bodyProductIds: string[];
 }
 
 interface YamatoShipmentPageAssemblyPartDetail {
@@ -855,6 +864,7 @@ interface YamatoShipmentPageAssemblyPartDetail {
   componentProductType: string;
   requiredQty: number;
   stockQty: number;
+  pickingConfirmedQty: number | null;
   parentProductIds: string[];
 }
 
@@ -870,9 +880,16 @@ interface YamatoShipmentPagePreviewResult {
   products: YamatoShipmentPageProductDetail[];
   assemblyParts: YamatoShipmentPageAssemblyPartDetail[];
   remainingMatchCount: number;
+  requiresSelection: boolean;
+  candidates: Array<{ pageNo: number; orderId: string | null; productIds: string[]; itemSummary: string | null }>;
 }
 
 interface PreparedYamatoShipmentPrintResult {
+  sourcePdfFilePath: string;
+  isReprint: boolean;
+  printRequestId?: string;
+  confirmationSnapshot: Prisma.InputJsonValue;
+  orderId: string | null;
   batchId: string;
   fileName: string;
   content: Buffer;
@@ -885,11 +902,15 @@ interface PreparedYamatoShipmentPrintResult {
   remainingMatchCount: number;
 }
 
-interface YamatoShipmentPrintByProductPayload {
+export interface YamatoShipmentPrintByProductPayload {
   productId?: string;
   pageNo?: string | number;
-  acceptActivePrintJob?: boolean;
-  confirmedAssemblyComponentProductIds?: Array<string | number>;
+  scanRecords?: Array<{ productId: string; scannedCode: string; quantity: number }>;
+  confirmedAssemblyParts?: Array<{ productId: string; quantity: number }>;
+  operatorUsername?: string;
+  stationId?: string;
+  reprintConfirmed?: boolean;
+  printRequestId?: string;
 }
 
 interface ParsedPdfPageText {
@@ -1008,7 +1029,6 @@ const YAMATO_PRODUCT_PRINTER_ALIASES: Record<string, string> = {
   ヤマト: YAMATO_DEFAULT_WINDOWS_PRINTER_NAME,
   ネコポス: 'nekoposu',
 };
-const YAMATO_PRINT_JOB_STALE_MS = 5 * 60 * 1000;
 const YAMATO_EXPORT_FIXED_VALUES = {
   recipientSuffix: '様',
   senderPhone: '0477277616',
@@ -1148,68 +1168,76 @@ export class OrdersService {
     status: string;
   }> {
     const batchId = parseId(batchIdRaw, 'batchId');
-    const batch = await this.prisma.overseasPickingBatch.findUnique({
-      where: { id: batchId },
-      select: {
-        id: true,
-        batchNo: true,
-        status: true,
-      },
-    });
-    if (!batch) {
-      throw new NotFoundException(`拣货批次不存在: ${batchIdRaw}`);
-    }
+    return this.prisma.$transaction(async (tx) => {
+      const batch = await tx.overseasPickingBatch.findUnique({
+        where: { id: batchId },
+        select: {
+          id: true,
+          batchNo: true,
+          status: true,
+        },
+      });
+      if (!batch) {
+        throw new NotFoundException(`拣货批次不存在: ${batchIdRaw}`);
+      }
 
-    const yamatoBatch = await this.prisma.yamatoShipmentBatch.findFirst({
-      where: { pickingBatchId: batch.id },
-      select: {
-        id: true,
-        status: true,
-        pageCount: true,
-        pages: {
-          select: {
-            printedAt: true,
+      const yamatoBatch = await tx.yamatoShipmentBatch.findFirst({
+        where: { pickingBatchId: batch.id },
+        select: {
+          id: true,
+          status: true,
+          pageCount: true,
+          pages: {
+            select: {
+              printedAt: true,
+            },
           },
         },
-      },
-    });
-    if (!yamatoBatch) {
-      throw new BadRequestException('当前批次尚未生成 Yamato 面单批次，不能确认完成作业');
-    }
-    if (yamatoBatch.status !== YAMATO_BATCH_STATUS.PDF_READY) {
-      throw new BadRequestException(
-        `Yamato 批次 #${yamatoBatch.id.toString()} 尚未上传面单 PDF，不能确认完成作业`,
-      );
-    }
-
-    const printedPageCount = yamatoBatch.pages.filter((page) => Boolean(page.printedAt)).length;
-    const pageCount = Number(yamatoBatch.pageCount ?? yamatoBatch.pages.length ?? 0);
-    const pendingPageCount = Math.max(pageCount - printedPageCount, 0);
-    if (pageCount <= 0) {
-      throw new BadRequestException('当前批次没有可检查的 Yamato 面单，不能确认完成作业');
-    }
-    if (pendingPageCount > 0) {
-      throw new BadRequestException(
-        `本批次作业未完成：还有 ${pendingPageCount} 张面单未打印。请完成后再次确认。`,
-      );
-    }
-
-    if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.COMPLETED) {
-      if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED) {
-        throw new BadRequestException(`当前批次状态为 ${batch.status}，不能确认完成作业`);
-      }
-      await this.prisma.overseasPickingBatch.update({
-        where: { id: batch.id },
-        data: { status: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED },
       });
-    }
+      if (!yamatoBatch) {
+        throw new BadRequestException('当前批次尚未生成 Yamato 面单批次，不能确认完成作业');
+      }
+      if (yamatoBatch.status !== YAMATO_BATCH_STATUS.PDF_READY) {
+        throw new BadRequestException(
+          `Yamato 批次 #${yamatoBatch.id.toString()} 尚未上传面单 PDF，不能确认完成作业`,
+        );
+      }
 
-    return {
-      id: batch.id.toString(),
-      batchNo: batch.batchNo,
-      status: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED,
-    };
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM yamato_shipment_batch_pages WHERE batch_id = ${yamatoBatch.id} ORDER BY id FOR UPDATE`);
+      const activeJobs = await tx.printJob.count({ where: { batchPage: { batchId: yamatoBatch.id }, status: { in: [PrintJobStatus.pending, PrintJobStatus.claimed] } } });
+      if (activeJobs) throw new BadRequestException(`还有 ${activeJobs} 个打印或补打任务未确认出纸，不能完成作业`);
+      const currentPages = await tx.yamatoShipmentBatchPage.findMany({ where: { batchId: yamatoBatch.id }, select: { printedAt: true } });
+      yamatoBatch.pages = currentPages;
+      const printedPageCount = yamatoBatch.pages.filter((page) => Boolean(page.printedAt)).length;
+      const pageCount = Number(yamatoBatch.pageCount ?? yamatoBatch.pages.length ?? 0);
+      const pendingPageCount = Math.max(pageCount - printedPageCount, 0);
+      if (pageCount <= 0) {
+        throw new BadRequestException('当前批次没有可检查的 Yamato 面单，不能确认完成作业');
+      }
+      if (pendingPageCount > 0) {
+        throw new BadRequestException(
+          `本批次作业未完成：还有 ${pendingPageCount} 张面单未打印。请完成后再次确认。`,
+        );
+      }
+
+      if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.COMPLETED) {
+        if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED) {
+          throw new BadRequestException(`当前批次状态为 ${batch.status}，不能确认完成作业`);
+        }
+        await tx.overseasPickingBatch.update({
+          where: { id: batch.id },
+          data: { status: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED },
+        });
+      }
+
+      return {
+        id: batch.id.toString(),
+        batchNo: batch.batchNo,
+        status: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED,
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   }
+
 
   async getOverseasPickingBatchDetail(batchIdRaw: string): Promise<OverseasPickingBatchDetail> {
     const batchId = parseId(batchIdRaw, 'batchId');
@@ -6409,6 +6437,7 @@ export class OrdersService {
       sourceRecordId: bigint;
       productId: string;
       actualQty: number | null;
+      bomSnapshot?: unknown;
     }>,
   ): Promise<YamatoExportItem[]> {
     const rakutenIds = items
@@ -6469,6 +6498,7 @@ export class OrdersService {
     );
 
     return items.map((item) => {
+      const components = this.parseShoulderStrapBomSnapshot(item.bomSnapshot) ?? [];
       const quantity = Number(item.actualQty ?? 0);
       if (!Number.isInteger(quantity) || quantity <= 0) {
         throw new BadRequestException(`产品 ${item.productId} 缺少有效的实际拣货数量`);
@@ -6485,6 +6515,7 @@ export class OrdersService {
           id: item.sourceRecordId.toString(),
           orderId: String(row.orderId ?? '').trim(),
           productId: item.productId,
+          components,
           printerValue: printerValueByProductId.get(item.productId) ?? '0',
           quantity,
           deliveryDate: this.formatYamatoDeliveryDate(
@@ -6514,6 +6545,7 @@ export class OrdersService {
           id: item.sourceRecordId.toString(),
           orderId: String(row.orderId ?? '').trim(),
           productId: item.productId,
+          components,
           printerValue: printerValueByProductId.get(item.productId) ?? '0',
           quantity,
           deliveryDate: '-',
@@ -6536,6 +6568,7 @@ export class OrdersService {
         id: item.sourceRecordId.toString(),
         orderId: String(row.orderId ?? '').trim(),
         productId: item.productId,
+        components,
         printerValue: printerValueByProductId.get(item.productId) ?? '0',
         quantity,
         deliveryDate: '-',
@@ -6674,7 +6707,10 @@ export class OrdersService {
 
     items.forEach((item) => {
       const key = item.orderId || `${item.source}:${item.id}`;
-      const itemPart = `${item.productId}*${item.quantity}個`;
+      const componentNote = item.components?.length
+        ? `(${item.components.map((component) => `${component.componentProductId}*${component.quantity * item.quantity}個`).join('、')})`
+        : '';
+      const itemPart = `${item.productId}*${item.quantity}個${componentNote}`;
       const existing = mergedByOrderId.get(key);
       if (!existing) {
         mergedByOrderId.set(key, {
@@ -6752,6 +6788,7 @@ export class OrdersService {
     if (!batch.pages.length) {
       throw new BadRequestException('该 Yamato 批次没有可绑定的页面记录');
     }
+    if (validFiles.length > 20 || validFiles.reduce((size, file) => size + file.buffer.length, 0) > 100 * 1024 * 1024) throw new BadRequestException('一次最多上传 20 个 PDF，总大小不能超过 100MB');
     validFiles.forEach((file, index) => {
       if (!this.isPdfFileBuffer(file.buffer)) {
         const fileLabel = file.originalName ? `「${file.originalName}」` : `第 ${index + 1} 个文件`;
@@ -6771,75 +6808,87 @@ export class OrdersService {
       pageNo: index + 1,
       text: page.text,
     }));
-    const mergedPdfBuffer = await this.mergeUploadedPdfPagesInBatchOrder(orderedUploadedPages);
 
-    const trackingNumbers = parsedPages.map((page) =>
-      this.extractTrackingNoFromPdfText(page?.text ?? ''));
+    const trackingNumbers = parsedPages.map((page, index) =>
+      this.extractTrackingNoFromPdfText(page?.text ?? '', [...this.getBatchPageProductIds(batch.pages[index]), batch.pages[index].orderId ?? '']));
     trackingNumbers.forEach((trackingNo, index) => {
       if (!trackingNo) {
         throw new BadRequestException(`PDF 第 ${parsedPages[index]?.pageNo ?? index + 1} 页未识别到快递单号`);
       }
     });
 
+    if (new Set(trackingNumbers).size !== trackingNumbers.length) throw new BadRequestException('PDF 存在重复快递单号，请核对后重新上传');
+
+    const mergedPdfBuffer = await this.mergeUploadedPdfPagesInBatchOrder(orderedUploadedPages);
     const sanitizedFileName = this.getYamatoUploadFileName(batch.id, validFiles);
-    const pdfPath = this.buildYamatoBatchPdfPath(batch.id.toString(), sanitizedFileName);
+    const pdfPath = this.buildYamatoBatchPdfPath(batch.id.toString(), `${randomUUID()}-${sanitizedFileName}`);
     await this.ensureYamatoBatchDir(batch.id.toString());
     await writeFile(pdfPath, mergedPdfBuffer);
 
     const manualOrderIdsForXyjg = new Set<bigint>();
-    await this.prisma.$transaction(async (tx) => {
-      await tx.yamatoShipmentBatch.update({
-        where: { id: batch.id },
-        data: {
-          pdfFileName: sanitizedFileName,
-          pdfFilePath: pdfPath,
-          pdfUploadedAt: new Date(),
-          status: YAMATO_BATCH_STATUS.PDF_READY,
-          pageCount: parsedPages.length,
-        },
-      });
-
-      for (let index = 0; index < batch.pages.length; index += 1) {
-        const page = batch.pages[index];
-        const parsedPage = parsedPages[index];
-        const trackingNo = trackingNumbers[index];
-        await tx.yamatoShipmentBatchPage.update({
-          where: { id: page.id },
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM yamato_shipment_batch_pages WHERE batch_id = ${batch.id} ORDER BY id FOR UPDATE`);
+        const printed = await tx.yamatoShipmentBatchPage.count({ where: { batchId: batch.id, printedAt: { not: null } } });
+        const jobs = await tx.printJob.count({ where: { batchPage: { batchId: batch.id },
+          status: { in: [PrintJobStatus.pending, PrintJobStatus.claimed, PrintJobStatus.completed] } } });
+        if (printed || jobs) throw new BadRequestException('该批次已有打印记录或执行中任务，不能替换 PDF');
+        await tx.yamatoShipmentBatch.update({
+          where: { id: batch.id },
           data: {
-            trackingNo,
-            pageText: parsedPage?.text ?? null,
-            printedAt: null,
-            printedProductId: null,
+            pdfFileName: sanitizedFileName,
+            pdfFilePath: pdfPath,
+            pdfUploadedAt: new Date(),
+            status: YAMATO_BATCH_STATUS.PDF_READY,
+            pageCount: parsedPages.length,
           },
         });
 
-        const updatedManualIds = await this.writeYamatoTrackingNoBackToOrders(
-          tx,
-          page.orderId,
-          trackingNo,
-          {
-            pickingBatchId: batch.pickingBatchId,
-            productIds: this.getBatchPageProductIds(page),
-          });
-        updatedManualIds.forEach((id) => manualOrderIdsForXyjg.add(id));
-
-        if (batch.pickingBatchId && String(page.orderId ?? '').trim()) {
-          await tx.overseasPickingBatchItem.updateMany({
-            where: {
-              batchId: batch.pickingBatchId,
-              orderId: String(page.orderId ?? '').trim(),
-              dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS,
-              ...(this.getBatchPageProductIds(page).length
-                ? { productId: { in: this.getBatchPageProductIds(page) } }
-                : {}),
-            },
+        for (let index = 0; index < batch.pages.length; index += 1) {
+          const page = batch.pages[index];
+          const parsedPage = parsedPages[index];
+          const trackingNo = trackingNumbers[index];
+          await tx.yamatoShipmentBatchPage.update({
+            where: { id: page.id },
             data: {
-              shipmentTrackingNo: trackingNo,
+              trackingNo,
+              pageText: parsedPage?.text ?? null,
+              printedAt: null,
+              printedProductId: null,
             },
           });
+
+          const updatedManualIds = await this.writeYamatoTrackingNoBackToOrders(
+            tx,
+            page.orderId,
+            trackingNo,
+            {
+              pickingBatchId: batch.pickingBatchId,
+              productIds: this.getBatchPageProductIds(page),
+            });
+          updatedManualIds.forEach((id) => manualOrderIdsForXyjg.add(id));
+
+          if (batch.pickingBatchId && String(page.orderId ?? '').trim()) {
+            await tx.overseasPickingBatchItem.updateMany({
+              where: {
+                batchId: batch.pickingBatchId,
+                orderId: String(page.orderId ?? '').trim(),
+                dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS,
+                ...(this.getBatchPageProductIds(page).length
+                  ? { productId: { in: this.getBatchPageProductIds(page) } }
+                  : {}),
+              },
+              data: {
+                shipmentTrackingNo: trackingNo,
+              },
+            });
+          }
         }
-      }
-    });
+      });
+    } catch (error) {
+      await rm(pdfPath, { force: true }).catch(() => {});
+      throw error;
+    }
 
     await this.syncManualOrderIdsToXyjgBestEffort(Array.from(manualOrderIdsForXyjg));
     return {
@@ -6947,9 +6996,11 @@ export class OrdersService {
     payload: YamatoShipmentPrintByProductPayload,
   ): Promise<YamatoShipmentPrintFileResult> {
     const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
-    await this.markYamatoShipmentBatchPagePrinted(prepared.pageId, prepared.productId);
+    const queued = await this.reserveYamatoPrintJob(prepared, null, 'yamato_browser');
 
     return {
+      queueJobId: queued.queueJobId,
+      reused: queued.reused,
       batchId: prepared.batchId,
       fileName: prepared.fileName,
       content: prepared.content,
@@ -6964,9 +7015,10 @@ export class OrdersService {
     batchIdRaw: string,
     payload: YamatoShipmentPrintByProductPayload,
   ): Promise<YamatoShipmentPagePreviewResult> {
-    const { batch, targetPage, productId, printablePages } = await this.findPrintableYamatoShipmentPageByProductId(
+    const { batch, targetPage, productId, printablePages, isBodyScan } = await this.findPrintableYamatoShipmentPageByProductId(
       batchIdRaw,
       payload,
+      { allowAmbiguous: true, allowPrinted: payload.reprintConfirmed === true, excludeActivePrintJobs: true },
     );
     const productIds = this.getBatchPageProductIds(targetPage);
     const assemblyParts = await this.buildYamatoShipmentPageAssemblyPartDetails(
@@ -6982,9 +7034,13 @@ export class OrdersService {
       productIds,
       itemSummary: targetPage.itemSummary ?? null,
       recipientName: targetPage.recipientName ?? null,
-      products: await this.buildYamatoShipmentPageProductDetails(targetPage),
+      products: await this.buildYamatoShipmentPageProductDetails(targetPage, batch.pickingBatchId),
       assemblyParts,
       remainingMatchCount: Math.max(printablePages.length - 1, 0),
+      requiresSelection: (isBodyScan || payload.reprintConfirmed === true) && payload.pageNo == null && printablePages.length > 1,
+      candidates: printablePages.map((page) => ({
+        pageNo: page.pageNo, orderId: page.orderId, productIds: this.getBatchPageProductIds(page), itemSummary: page.itemSummary,
+      })),
     };
   }
 
@@ -6997,8 +7053,18 @@ export class OrdersService {
     }
 
     const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
-    const printJob = await this.sendPdfBufferToPrinter(prepared.content, prepared.fileName);
-    await this.markYamatoShipmentBatchPagePrinted(prepared.pageId, prepared.productId);
+    const printerName = await this.resolveYamatoPrinterNameForProductIds(prepared.productIds);
+    const queued = await this.reserveYamatoPrintJob(prepared, printerName, 'yamato_direct');
+    let printJob: { printerName: string | null; printJobId: string | null };
+    try {
+      printJob = queued.reused ? { printerName: queued.printerName, printJobId: null }
+        : await this.sendPdfBufferToPrinter(prepared.content, prepared.fileName, printerName);
+      if (!queued.reused) await this.prisma.printJob.updateMany({ where: { id: parseId(queued.queueJobId, 'jobId'), status: PrintJobStatus.claimed, confirmationSnapshot: { equals: prepared.confirmationSnapshot } }, data: { status: PrintJobStatus.pending, systemJobId: printJob.printJobId, printerName: printJob.printerName } });
+    } catch (error) {
+      await this.prisma.printJob.updateMany({ where: { id: parseId(queued.queueJobId, 'jobId'), status: PrintJobStatus.claimed, confirmationSnapshot: { equals: prepared.confirmationSnapshot } }, data: { status: PrintJobStatus.pending } });
+      // Keep the reservation: a printer may have accepted the document before an error was returned.
+      throw new BadRequestException(`直打任务 #${queued.queueJobId} 结果未确认，请重试进入出纸确认；系统不会重复提交原任务`);
+    }
 
     return {
       batchId: prepared.batchId,
@@ -7009,6 +7075,7 @@ export class OrdersService {
       remainingMatchCount: prepared.remainingMatchCount,
       printerName: printJob.printerName,
       printJobId: printJob.printJobId,
+      queueJobId: queued.queueJobId, reused: queued.reused,
       mode: 'direct',
     };
   }
@@ -7021,78 +7088,68 @@ export class OrdersService {
       throw new BadRequestException('Yamato 打印代理未启用');
     }
 
-    let prepared: PreparedYamatoShipmentPrintResult;
-    try {
-      prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload, {
-        excludeActivePrintJobs: true,
-      });
-    } catch (error) {
-      if (
-        !(error instanceof BadRequestException) ||
-        !String(error.message).includes('对应面单已全部打印或正在打印中')
-      ) {
-        throw error;
-      }
-      prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
+    if (!Number.isInteger(Number(payload.pageNo)) || Number(payload.pageNo) <= 0) throw new BadRequestException('请先预览并选择具体面单后再打印');
+    if (payload.pageNo != null && !payload.reprintConfirmed) {
+      const completed = await this.prisma.printJob.findFirst({ where: {
+        jobType: 'yamato_label', status: PrintJobStatus.completed,
+        AND: [{ confirmationSnapshot: { path: '$.requestId', equals: payload.printRequestId ?? '' } }, { confirmationSnapshot: { path: '$.operatorUsername', equals: payload.operatorUsername ?? '' } }, { confirmationSnapshot: { path: '$.stationId', equals: payload.stationId ?? '' } }],
+        batchPage: { batchId: parseId(batchIdRaw, 'batchId'), pageNo: Number(payload.pageNo) },
+      }, orderBy: [{ id: 'desc' }] });
+      if (completed) return { batchId: batchIdRaw, productId: completed.productId, pageNo: Number(payload.pageNo),
+        trackingNo: completed.trackingNo, printerName: completed.printerName, queueJobId: completed.id.toString(), reused: true, mode: 'agent' };
     }
+    const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
     const printerName = await this.resolveYamatoPrinterNameForProductIds(prepared.productIds);
-    const activeJob = await this.prisma.printJob.findFirst({
-      where: {
-        batchPageId: prepared.pageId,
-        status: {
-          in: [PrintJobStatus.pending, PrintJobStatus.claimed],
-        },
-      },
-      orderBy: [{ id: 'desc' }],
-    });
-    if (activeJob) {
-      const staleReason = this.getReusablePrintJobBlockReason(activeJob, printerName);
-      if (!staleReason) {
-        if (payload.acceptActivePrintJob === true) {
-          await this.prisma.printJob.updateMany({
-            where: {
-              id: activeJob.id,
-              status: {
-                in: [PrintJobStatus.pending, PrintJobStatus.claimed],
-              },
-            },
-            data: {
-              status: PrintJobStatus.failed,
-              failedAt: new Date(),
-              errorMessage: 'requeued after merged label confirmation',
-            },
-          });
-        } else {
-          throw new BadRequestException('该面单已在打印队列中，请勿重复扫码');
-        }
-      } else {
-        await this.prisma.printJob.updateMany({
-          where: {
-            id: activeJob.id,
-            status: {
-              in: [PrintJobStatus.pending, PrintJobStatus.claimed],
-            },
-          },
-          data: {
-            status: PrintJobStatus.failed,
-            failedAt: new Date(),
-            errorMessage: staleReason,
-          },
-        });
-      }
-    }
+    return this.reserveYamatoPrintJob(prepared, printerName, 'yamato_label');
+  }
 
-    return this.createYamatoShipmentPrintJob(prepared, printerName);
+  private async reserveYamatoPrintJob(prepared: PreparedYamatoShipmentPrintResult, printerName: string | null, jobType: string): Promise<YamatoShipmentQueuedPrintResult> {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM yamato_shipment_batch_pages WHERE id = ${prepared.pageId} FOR UPDATE`);
+      const page = await tx.yamatoShipmentBatchPage.findUnique({ where: { id: prepared.pageId } });
+      if (!page || (page.printedAt && !prepared.isReprint)) throw new BadRequestException('该面单已打印，请刷新后重试');
+      if (prepared.sourcePdfFilePath) {
+        const batch = await tx.yamatoShipmentBatch.findUnique({ where: { id: parseId(prepared.batchId, 'batchId') }, select: { pdfFilePath: true } });
+        if (batch?.pdfFilePath !== prepared.sourcePdfFilePath) throw new BadRequestException('面单 PDF 已变更，请重新预览并确认');
+      }
+      if (prepared.printRequestId) {
+        const completed = await tx.printJob.findFirst({ where: {
+          batchPageId: prepared.pageId, jobType, status: PrintJobStatus.completed,
+          confirmationSnapshot: { path: '$.requestId', equals: prepared.printRequestId },
+        }, orderBy: [{ id: 'desc' }] });
+        if (completed) { this.assertYamatoPrintOwner(completed.confirmationSnapshot, prepared.confirmationSnapshot); return { batchId: prepared.batchId, productId: completed.productId, pageNo: prepared.pageNo,
+          trackingNo: completed.trackingNo, printerName: completed.printerName, queueJobId: completed.id.toString(), reused: true, mode: 'agent' as const }; }
+      }
+      const active = await tx.printJob.findFirst({
+        where: { batchPageId: prepared.pageId, status: { in: [PrintJobStatus.pending, PrintJobStatus.claimed] } },
+        orderBy: [{ id: 'desc' }],
+      });
+      if (active) {
+        this.assertYamatoPrintOwner(active.confirmationSnapshot, prepared.confirmationSnapshot, true);
+        if (jobType === 'yamato_direct' && active.status === PrintJobStatus.claimed) throw new BadRequestException('该面单正在提交到打印机，请等待结果后再处理');
+        const snapshot = active.confirmationSnapshot as { requestId?: string } | null;
+        if (prepared.isReprint && snapshot?.requestId !== prepared.printRequestId) throw new BadRequestException('原面单仍有待打印或执行中任务，请先核对原任务结果');
+        if (active.jobType !== jobType) throw new BadRequestException('该面单已有其他打印方式的任务，请先处理该任务');
+        return { batchId: prepared.batchId, productId: active.productId, pageNo: prepared.pageNo,
+          trackingNo: active.trackingNo, printerName: active.printerName, queueJobId: active.id.toString(), reused: true, mode: 'agent' as const };
+      }
+      return this.createYamatoShipmentPrintJob(prepared, printerName, tx, jobType);
+    }, { timeout: 15000 });
   }
 
   private async createYamatoShipmentPrintJob(
     prepared: PreparedYamatoShipmentPrintResult,
     printerName: string | null,
+    db: Prisma.TransactionClient | PrismaService = this.prisma,
+    jobType = 'yamato_label',
   ): Promise<YamatoShipmentQueuedPrintResult> {
-    const created = await this.prisma.printJob.create({
+    const created = await db.printJob.create({
       data: {
-        jobType: 'yamato_label',
-        status: PrintJobStatus.pending,
+        jobType,
+        orderId: prepared.orderId,
+        confirmationSnapshot: prepared.confirmationSnapshot,
+        status: jobType === 'yamato_direct' ? PrintJobStatus.claimed : PrintJobStatus.pending,
+        claimedAt: jobType === 'yamato_direct' ? new Date() : null,
         batchPageId: prepared.pageId,
         productId: prepared.productId,
         printerName,
@@ -7105,7 +7162,7 @@ export class OrdersService {
       const filePath = this.buildPrintJobPdfPath(created.id.toString(), prepared.fileName);
       await this.ensurePrintJobDir(created.id.toString());
       await writeFile(filePath, prepared.content);
-      await this.prisma.printJob.update({
+      await db.printJob.update({
         where: { id: created.id },
         data: {
           filePath,
@@ -7122,7 +7179,7 @@ export class OrdersService {
         mode: 'agent',
       };
     } catch (error) {
-      await this.prisma.printJob.update({
+      await db.printJob.update({
         where: { id: created.id },
         data: {
           status: PrintJobStatus.failed,
@@ -7142,26 +7199,92 @@ export class OrdersService {
       throw new BadRequestException('Yamato 打印代理未启用');
     }
 
+    if (payload.reprintConfirmed !== true) throw new BadRequestException('请明确确认补打原快递单号的面单');
     const prepared = await this.prepareYamatoShipmentLabelByProductId(batchIdRaw, payload);
     const printerName = await this.resolveYamatoPrinterNameForProductIds(prepared.productIds);
-    const cleared = await this.prisma.printJob.updateMany({
-      where: {
-        batchPageId: prepared.pageId,
-        status: {
-          in: [PrintJobStatus.pending, PrintJobStatus.claimed],
-        },
-      },
-      data: {
-        status: PrintJobStatus.failed,
-        failedAt: new Date(),
-        errorMessage: 'manual reprint requested',
-      },
+    const queued = await this.reserveYamatoPrintJob(prepared, printerName, 'yamato_label');
+    return { ...queued, clearedJobCount: 0 };
+  }
+
+  private assertYamatoPrintOwner(snapshot: unknown, expected: unknown, checkRequest = false): void {
+    const owner = (snapshot ?? {}) as Record<string, unknown>;
+    const caller = (expected ?? {}) as Record<string, unknown>;
+    if ((owner.operatorUsername && owner.operatorUsername !== caller.operatorUsername)
+      || (owner.stationId && owner.stationId !== caller.stationId)
+      || (checkRequest && owner.requestId && owner.requestId !== caller.requestId)) {
+      throw new BadRequestException('该面单已由其他操作员、工位或装包请求占用，请先处理原打印任务');
+    }
+  }
+
+  async confirmYamatoLocalPrintJob(jobIdRaw: string, printed: boolean, operatorUsername = '', stationId = '', stopped = false): Promise<unknown> {
+    const jobId = parseId(jobIdRaw, 'jobId');
+    if (typeof printed !== 'boolean') throw new BadRequestException('请明确确认是否已出纸');
+    return this.prisma.$transaction(async (tx) => {
+      const initial = await tx.printJob.findUnique({ where: { id: jobId } });
+      if (!initial || !['yamato_browser', 'yamato_direct', 'yamato_label'].includes(initial.jobType) || !initial.batchPageId) throw new NotFoundException('打印任务不存在');
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM yamato_shipment_batch_pages WHERE id = ${initial.batchPageId} FOR UPDATE`);
+      const job = await tx.printJob.findUnique({ where: { id: jobId } });
+      this.assertYamatoPrintOwner(job?.confirmationSnapshot, { operatorUsername, stationId });
+      if (job?.status === PrintJobStatus.completed && printed) return job;
+      if (job?.status === PrintJobStatus.failed && !printed) return job;
+      if (printed && (job?.confirmationSnapshot as { cancelOnly?: boolean } | null)?.cancelOnly === true) throw new BadRequestException('原代理任务尚未提交，仅可确认取消且未出纸');
+      const staleClaim = job?.status === PrintJobStatus.claimed && job.claimedAt
+        && Date.now() - job.claimedAt.getTime() >= 5 * 60 * 1000;
+      if (stopped && !staleClaim) throw new BadRequestException('任务仍可能执行，请等待五分钟并停止原打印程序、清空打印机队列后再恢复');
+      const recovering = stopped && staleClaim;
+      const agentSubmitted = job?.jobType === 'yamato_label' && job.status === PrintJobStatus.claimed
+        && ((job.confirmationSnapshot as { submissionAccepted?: boolean; submissionUncertain?: boolean } | null)?.submissionAccepted === true
+          || (job.confirmationSnapshot as { submissionUncertain?: boolean } | null)?.submissionUncertain === true);
+      if (!job || !(recovering || agentSubmitted || (job.jobType !== 'yamato_label' && job.status === PrintJobStatus.pending) || (job.jobType === 'yamato_label' && job.status === PrintJobStatus.pending && !printed))) throw new BadRequestException('打印任务尚未提交完成或状态已变化，请刷新');
+      const isReprint = (job.confirmationSnapshot as { isReprint?: boolean } | null)?.isReprint === true;
+      if (printed) {
+        const page = await tx.yamatoShipmentBatchPage.updateMany({ where: { id: initial.batchPageId, printedAt: null },
+          data: { printedAt: new Date(), printedProductId: job.productId } });
+        if (page.count !== 1 && !isReprint) throw new BadRequestException('该面单已经打印');
+      }
+      const changed = await tx.printJob.updateMany({ where: { id: jobId, status: job.status, claimToken: job.claimToken }, data: {
+        claimToken: null,
+        status: printed ? PrintJobStatus.completed : PrintJobStatus.failed,
+        completedAt: printed ? new Date() : null, failedAt: printed ? null : new Date(),
+        errorMessage: printed ? null : '操作员确认未出纸',
+        confirmationSnapshot: { ...(job.confirmationSnapshot && typeof job.confirmationSnapshot === 'object' && !Array.isArray(job.confirmationSnapshot) ? job.confirmationSnapshot : {}),
+          recoveryStopped: recovering ? true : false, paperConfirmedBy: operatorUsername, paperConfirmedAt: new Date().toISOString(), paperPrinted: printed },
+      } });
+      if (changed.count !== 1) throw new BadRequestException('任务正在被打印程序处理，请刷新并核对出纸结果');
+      return tx.printJob.findUnique({ where: { id: jobId } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  }
+
+  async takeOverYamatoPrintJob(jobIdRaw: string, operatorUsername: string, stationId: string, stopped: boolean): Promise<unknown> {
+    if (!stopped || !/^[a-zA-Z0-9-]{16,64}$/.test(stationId)) throw new BadRequestException('接管前必须停止原打印程序、取消原队列并指定当前工位');
+    const jobId = parseId(jobIdRaw, 'jobId');
+    return this.prisma.$transaction(async (tx) => {
+      const initial = await tx.printJob.findUnique({ where: { id: jobId } });
+      if (!initial?.batchPageId || !['yamato_browser', 'yamato_direct', 'yamato_label'].includes(initial.jobType)) throw new NotFoundException('打印任务不存在');
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM yamato_shipment_batch_pages WHERE id = ${initial.batchPageId} FOR UPDATE`);
+      const job = await tx.printJob.findUnique({ where: { id: jobId } });
+      if (!job || ![PrintJobStatus.pending, PrintJobStatus.claimed].includes(job.status as 'pending' | 'claimed')) throw new BadRequestException('任务已结束，请刷新');
+      if (job.status === PrintJobStatus.claimed && (!job.claimedAt || Date.now() - job.claimedAt.getTime() < 5 * 60000)) throw new BadRequestException('原任务仍可能执行，领取后五分钟内不能接管');
+      const snapshot = (job.confirmationSnapshot ?? {}) as Record<string, Prisma.InputJsonValue>;
+      const transfers = Array.isArray(snapshot.ownershipTransfers) ? snapshot.ownershipTransfers : [];
+      const changed = await tx.printJob.updateMany({ where: { id: jobId, status: job.status, claimToken: job.claimToken }, data: {
+        status: PrintJobStatus.claimed, claimToken: null, claimedAt: new Date(),
+        confirmationSnapshot: { ...snapshot, operatorUsername, stationId, submissionUncertain: true,
+          cancelOnly: snapshot.cancelOnly === true || (job.jobType === 'yamato_label' && job.status === PrintJobStatus.pending),
+          ownershipTransfers: [...transfers, { previousOperator: snapshot.operatorUsername ?? '', previousStation: snapshot.stationId ?? '', operatorUsername, stationId, stopped: true, at: new Date().toISOString() }] },
+      } });
+      if (changed.count !== 1) throw new BadRequestException('原打印程序正在处理任务，请重新检查');
+      return { id: jobId.toString(), status: 'awaiting_paper_confirmation' };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  }
+
+  async listYamatoShipmentPrintJobs(batchIdRaw: string): Promise<unknown> {
+    return this.prisma.printJob.findMany({
+      where: { batchPage: { batchId: parseId(batchIdRaw, 'batchId') }, status: { in: [PrintJobStatus.pending, PrintJobStatus.claimed] } },
+      orderBy: { id: 'desc' }, take: 200,
+      select: { id: true, jobType: true, status: true, trackingNo: true, printerName: true, productId: true,
+        claimedAt: true, confirmationSnapshot: true, batchPage: { select: { pageNo: true, orderId: true } } },
     });
-    const queued = await this.createYamatoShipmentPrintJob(prepared, printerName);
-    return {
-      ...queued,
-      clearedJobCount: cleared.count,
-    };
   }
 
   async getYamatoShipmentPrintJobStatus(jobIdRaw: string): Promise<unknown> {
@@ -7183,9 +7306,10 @@ export class OrdersService {
         claimedAt: true,
         completedAt: true,
         failedAt: true,
+        confirmationSnapshot: true,
       },
     });
-    if (!job || job.jobType !== 'yamato_label') {
+    if (!job || !['yamato_label', 'yamato_browser', 'yamato_direct'].includes(job.jobType)) {
       throw new NotFoundException(`Yamato 打印任务不存在: ${jobIdRaw}`);
     }
     return job;
@@ -7194,18 +7318,22 @@ export class OrdersService {
   private async prepareYamatoShipmentLabelByProductId(
     batchIdRaw: string,
     payload: YamatoShipmentPrintByProductPayload,
-    options: { excludeActivePrintJobs?: boolean } = {},
+    options: { excludeActivePrintJobs?: boolean; allowAmbiguous?: boolean; allowPrinted?: boolean } = {},
   ): Promise<PreparedYamatoShipmentPrintResult> {
+    if (!Number.isInteger(Number(payload.pageNo)) || Number(payload.pageNo) <= 0) throw new BadRequestException('请先预览并选择具体面单后再打印');
+    if (!/^[a-zA-Z0-9-]{16,64}$/.test(payload.printRequestId ?? '') || !/^[a-zA-Z0-9-]{16,64}$/.test(payload.stationId ?? '')) throw new BadRequestException('打印缺少工位或请求编号，请刷新页面后重试');
     const { batch, targetPage, productId, printablePages } = await this.findPrintableYamatoShipmentPageByProductId(
       batchIdRaw,
       payload,
-      options,
+      { ...options, allowPrinted: payload.reprintConfirmed === true },
     );
     const assemblyParts = await this.buildYamatoShipmentPageAssemblyPartDetails(
       batch.pickingBatchId,
       targetPage,
     );
     this.assertYamatoAssemblyPartsConfirmed(payload, assemblyParts);
+    const products = await this.buildYamatoShipmentPageProductDetails(targetPage, batch.pickingBatchId);
+    this.assertYamatoScannedProducts(payload, products);
 
     const pdfFilePath = batch.pdfFilePath;
     if (!pdfFilePath) {
@@ -7222,6 +7350,15 @@ export class OrdersService {
     const singlePagePdf = await this.extractPdfSinglePage(pdfBuffer, targetPage.pageNo);
 
     return {
+      sourcePdfFilePath: pdfFilePath,
+      isReprint: payload.reprintConfirmed === true,
+      printRequestId: payload.printRequestId,
+      orderId: targetPage.orderId,
+      confirmationSnapshot: {
+        operatorUsername: payload.operatorUsername ?? '', stationId: payload.stationId ?? '', isReprint: payload.reprintConfirmed === true, requestId: payload.printRequestId ?? '',
+        scanRecords: payload.scanRecords ?? [],
+        confirmedAssemblyParts: payload.confirmedAssemblyParts ?? [], confirmedAt: new Date().toISOString(),
+      },
       batchId: batch.id.toString(),
       fileName: `Yamato-${productId}-p${targetPage.pageNo}.pdf`,
       content: singlePagePdf,
@@ -7238,12 +7375,13 @@ export class OrdersService {
   private async findPrintableYamatoShipmentPageByProductId(
     batchIdRaw: string,
     payload: YamatoShipmentPrintByProductPayload,
-    options: { excludeActivePrintJobs?: boolean } = {},
+    options: { excludeActivePrintJobs?: boolean; allowAmbiguous?: boolean; allowPrinted?: boolean } = {},
   ): Promise<{
     batch: YamatoShipmentBatch & { pages: YamatoShipmentBatchPage[] };
     targetPage: YamatoShipmentBatchPage;
     productId: string;
     printablePages: YamatoShipmentBatchPage[];
+    isBodyScan: boolean;
   }> {
     const batchId = parseId(batchIdRaw, 'batchId');
     const productId = String(payload?.productId ?? '').trim();
@@ -7275,12 +7413,15 @@ export class OrdersService {
     }
 
     const matchedPageProductIds = new Set([productId]);
+    const bodyMatchedPages = new Set<number>();
+    let isBodyScan = false;
     if (batch.pickingBatchId) {
       const scannedProduct = await this.prisma.masterProduct.findUnique({
         where: { productId },
         select: { productType: true },
       });
       if (String(scannedProduct?.productType ?? '').trim() === '肩带本体') {
+        isBodyScan = true;
         const pickingItems = await this.prisma.overseasPickingBatchItem.findMany({
           where: {
             batchId: batch.pickingBatchId,
@@ -7289,32 +7430,35 @@ export class OrdersService {
           select: {
             productId: true,
             requestedQty: true,
+            actualQty: true,
+            orderId: true,
             pickingPlanSnapshot: true,
             bomSnapshot: true,
           },
         });
         pickingItems.forEach((item) => {
-          const finishedQty = this.parseOverseasPickingPlanSnapshot(item.pickingPlanSnapshot)
-            .reduce((sum, plan) => sum + Number(plan.pickQty ?? 0), 0);
-          const requiresAssembly = finishedQty < Number(item.requestedQty ?? 0);
+          const hasShipmentQty = Number(item.actualQty ?? item.requestedQty ?? 0) > 0;
           const usesScannedBody = (this.parseShoulderStrapBomSnapshot(item.bomSnapshot) ?? [])
-            .some((component) => component.componentProductId === productId);
-          if (requiresAssembly && usesScannedBody) matchedPageProductIds.add(item.productId);
+            .some((component) => component.componentProductId.toUpperCase() === productId.toUpperCase());
+          if (hasShipmentQty && usesScannedBody) {
+            batch.pages.filter((page) => page.orderId === item.orderId && this.getBatchPageProductIds(page).includes(item.productId))
+              .forEach((page) => bodyMatchedPages.add(page.pageNo));
+          }
         });
       }
     }
 
     let printablePages = batch.pages.filter(
       (page) =>
-        !page.printedAt &&
+        (!page.printedAt || options.allowPrinted) &&
         (pageNo === null || page.pageNo === pageNo) &&
-        this.getBatchPageProductIds(page).some(
+        (isBodyScan ? (bodyMatchedPages.has(page.pageNo) || this.getBatchPageProductIds(page).some((id) => id.toUpperCase() === productId.toUpperCase())) : this.getBatchPageProductIds(page).some(
           (candidate) => Array.from(matchedPageProductIds).some(
             (matchedProductId) => candidate.localeCompare(matchedProductId, undefined, {
               sensitivity: 'accent',
             }) === 0,
           ),
-        ),
+        )),
     );
     if (options.excludeActivePrintJobs && printablePages.length) {
       const activeJobs = await this.prisma.printJob.findMany({
@@ -7328,37 +7472,26 @@ export class OrdersService {
         },
         select: {
           batchPageId: true,
+          confirmationSnapshot: true,
         },
       });
-      const activePageIds = new Set(activeJobs.map((job) => job.batchPageId?.toString()).filter(Boolean));
+      const activePageIds = new Set(activeJobs.filter((job) => { const owner = job.confirmationSnapshot as { operatorUsername?: string; stationId?: string } | null; return !owner || owner.operatorUsername !== payload.operatorUsername || owner.stationId !== payload.stationId; }).map((job) => job.batchPageId?.toString()).filter(Boolean));
       printablePages = printablePages.filter((page) => !activePageIds.has(page.id.toString()));
     }
     if (!printablePages.length) {
       throw new BadRequestException(`当前批次中产品ID ${productId} 对应面单已全部打印或正在打印中`);
     }
 
+    if (isBodyScan && pageNo === null && !options.allowAmbiguous && printablePages.length > 1) {
+      throw new BadRequestException('该肩带本体对应多个待打印订单，请先选择成品及配件组合');
+    }
     return {
       batch,
       targetPage: printablePages[0],
       productId,
       printablePages,
+      isBodyScan,
     };
-  }
-
-  private async markYamatoShipmentBatchPagePrinted(pageId: bigint, productId: string): Promise<void> {
-    const result = await this.prisma.yamatoShipmentBatchPage.updateMany({
-      where: {
-        id: pageId,
-        printedAt: null,
-      },
-      data: {
-        printedAt: new Date(),
-        printedProductId: productId,
-      },
-    });
-    if (result.count !== 1) {
-      throw new BadRequestException('该面单已被其他操作打印，请刷新批次后重试');
-    }
   }
 
   private async loadPdfJsModule(): Promise<{
@@ -7387,6 +7520,7 @@ export class OrdersService {
       }>;
     };
 
+    if (document.numPages > 2000) throw new BadRequestException('单个 PDF 不能超过 2000 页，请拆分批次');
     const pages: ParsedPdfPageText[] = [];
     for (let pageNo = 1; pageNo <= document.numPages; pageNo += 1) {
       const page = await document.getPage(pageNo);
@@ -7408,6 +7542,7 @@ export class OrdersService {
     for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
       const file = files[fileIndex];
       const pages = await this.extractPdfPagesText(file.buffer);
+      if (result.length + pages.length > 2000) throw new BadRequestException('PDF 总页数不能超过 2000 页，请拆分批次');
       pages.forEach((page) => {
         result.push({
           fileIndex,
@@ -7425,33 +7560,14 @@ export class OrdersService {
     uploadedPages: UploadedYamatoPdfPage[],
     batchPages: Array<Pick<YamatoShipmentBatchPage, 'pageNo' | 'productIds' | 'orderId' | 'recipientName'>>,
   ): UploadedYamatoPdfPage[] {
-    const usedUploadedPageIndexes = new Set<number>();
-    return batchPages.map((batchPage) => {
-      const expectedText = this.describeYamatoBatchPageExpectation(batchPage);
-      let bestUploadedPageIndex = -1;
-      let bestScore = 0;
-
-      uploadedPages.forEach((uploadedPage, uploadedPageIndex) => {
-        if (usedUploadedPageIndexes.has(uploadedPageIndex)) {
-          return;
-        }
-        const score = this.scorePdfTextForYamatoBatchPage(uploadedPage.text, batchPage);
-        if (score <= 0) {
-          return;
-        }
-        if (score > bestScore) {
-          bestUploadedPageIndex = uploadedPageIndex;
-          bestScore = score;
-        }
-      });
-
-      if (bestUploadedPageIndex < 0) {
-        throw new BadRequestException(`PDF 中未找到第 ${batchPage.pageNo} 张预期面单：${expectedText}`);
-      }
-
-      usedUploadedPageIndexes.add(bestUploadedPageIndex);
-      return uploadedPages[bestUploadedPageIndex];
+    const matches = batchPages.map((page) => {
+      const orderMatches = page.orderId ? uploadedPages.filter((uploaded) => this.pdfTextContainsProductId(uploaded.text, page.orderId!)) : [];
+      const candidates = orderMatches.filter((uploaded) => this.getBatchPageProductIds(page).every((id) => this.pdfTextContainsProductId(uploaded.text, id)) && (!page.recipientName || this.normalizePdfComparableText(uploaded.text).includes(this.normalizePdfComparableText(page.recipientName))));
+      if (candidates.length !== 1) throw new BadRequestException(`PDF 面单匹配${candidates.length ? '不唯一' : '失败'}：${this.describeYamatoBatchPageExpectation(page)}，PDF 必须包含完整订单号，请核对导出模板和订单`);
+      return candidates[0];
     });
+    if (new Set(matches).size !== matches.length) throw new BadRequestException('同一 PDF 页匹配到多个订单，请核对面单后重新上传');
+    return matches;
   }
 
   private async extractPdfSinglePage(fileBuffer: Buffer, pageNo: number): Promise<Buffer> {
@@ -7582,29 +7698,6 @@ export class OrdersService {
     );
   }
 
-  private getReusablePrintJobBlockReason(
-    job: {
-      status: PrintJobStatus;
-      printerName: string | null;
-      queuedAt: Date;
-      claimedAt: Date | null;
-    },
-    currentPrinterName: string | null,
-  ): string | null {
-    const jobPrinterName = String(job.printerName ?? '').trim();
-    const nextPrinterName = String(currentPrinterName ?? '').trim();
-    if (jobPrinterName !== nextPrinterName) {
-      return `printer route changed from ${jobPrinterName || '(default)'} to ${nextPrinterName || '(default)'}`;
-    }
-
-    const activeAt = job.status === PrintJobStatus.claimed ? (job.claimedAt ?? job.queuedAt) : job.queuedAt;
-    if (activeAt.getTime() <= Date.now() - YAMATO_PRINT_JOB_STALE_MS) {
-      return 'print job timed out before retry';
-    }
-
-    return null;
-  }
-
   private isTruthyEnvFlag(value: string | null | undefined): boolean {
     const normalized = String(value ?? '').trim().toLowerCase();
     return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
@@ -7625,8 +7718,9 @@ export class OrdersService {
   private async sendPdfBufferToPrinter(
     pdfBuffer: Buffer,
     fileName: string,
+    routedPrinterName?: string | null,
   ): Promise<{ printerName: string | null; printJobId: string | null }> {
-    const printerName = this.getConfiguredYamatoPrinterName() || null;
+    const printerName = routedPrinterName || this.getConfiguredYamatoPrinterName() || null;
     const tempDir = join(resolve(process.cwd(), 'data', 'yamato-print-jobs'), randomUUID());
     const tempFilePath = join(tempDir, this.sanitizeYamatoFileName(fileName) || 'yamato-label.pdf');
     await mkdir(tempDir, { recursive: true });
@@ -7639,7 +7733,7 @@ export class OrdersService {
     args.push(tempFilePath);
 
     try {
-      const { stdout, stderr } = await execFileAsync('lp', args);
+      const { stdout, stderr } = await execFileAsync('lp', args, { timeout: 60000 });
       const output = String(stdout || stderr || '').trim();
       const printJobIdMatch = output.match(/\b([^\s()]+-\d+)\b/);
       return {
@@ -7673,7 +7767,8 @@ export class OrdersService {
   }
 
   private async buildYamatoShipmentPageProductDetails(
-    page: Pick<YamatoShipmentBatchPage, 'productIds' | 'itemSummary'>,
+    page: Pick<YamatoShipmentBatchPage, 'productIds' | 'itemSummary'> & { orderId?: string | null },
+    pickingBatchId?: bigint | null,
   ): Promise<YamatoShipmentPageProductDetail[]> {
     const parsedItems = this.parseYamatoItemSummaryProductQuantities(page.itemSummary, this.getBatchPageProductIds(page),
     );
@@ -7688,7 +7783,36 @@ export class OrdersService {
         })
       : [];
     const productNameById = new Map(productRows.map((row) => [row.productId, row.productName] as const));
+    const pickingItems = pickingBatchId && page.orderId ? await this.prisma.overseasPickingBatchItem.findMany({
+      where: { batchId: pickingBatchId, orderId: page.orderId, productId: { in: productIds },
+        OR: [{ dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }] },
+      select: { productId: true, actualQty: true, requestedQty: true, pickingPlanSnapshot: true, bomSnapshot: true },
+    }) : [];
+    const componentIds = Array.from(new Set(pickingItems.flatMap((item) =>
+      (this.parseShoulderStrapBomSnapshot(item.bomSnapshot) ?? []).map((component) => component.componentProductId))));
+    const componentProducts = componentIds.length ? await this.prisma.masterProduct.findMany({
+      where: { productId: { in: componentIds } }, select: { productId: true, productType: true },
+    }) : [];
+    const bodyIds = new Set(componentProducts.filter((component) => component.productType === '肩带本体').map((component) => component.productId));
+    const bodiesByProductId = new Map<string, Set<string>>();
+    pickingItems.forEach((item) => {
+      const ids = bodiesByProductId.get(item.productId) ?? new Set<string>();
+      (this.parseShoulderStrapBomSnapshot(item.bomSnapshot) ?? []).forEach((component) => {
+        if (bodyIds.has(component.componentProductId)) ids.add(component.componentProductId);
+      });
+      bodiesByProductId.set(item.productId, ids);
+    });
+    const assemblyByProductId = new Map<string, number>();
+    pickingItems.forEach((item) => {
+      if (!(this.parseShoulderStrapBomSnapshot(item.bomSnapshot) ?? []).length) return;
+      const finished = this.parseOverseasPickingPlanSnapshot(item.pickingPlanSnapshot).reduce((sum, plan) => sum + Number(plan.pickQty ?? 0), 0);
+      const assembly = Math.max(0, Number(item.actualQty ?? item.requestedQty ?? 0) - finished);
+      assemblyByProductId.set(item.productId, (assemblyByProductId.get(item.productId) ?? 0) + assembly);
+    });
     return parsedItems.map((item) => ({
+      finishedQuantity: Math.max(0, item.quantity - (assemblyByProductId.get(item.productId) ?? 0)),
+      assemblyQuantity: assemblyByProductId.get(item.productId) ?? 0,
+      bodyProductIds: Array.from(bodiesByProductId.get(item.productId) ?? []),
       productId: item.productId,
       productName: productNameById.get(item.productId) ?? null,
       quantity: item.quantity,
@@ -7716,6 +7840,7 @@ export class OrdersService {
         actualQty: true,
         pickingPlanSnapshot: true,
         bomSnapshot: true,
+        pickingRequirementSnapshot: true,
       },
     });
     const requiredByComponentProductId = new Map<
@@ -7725,6 +7850,7 @@ export class OrdersService {
         componentProductName: string;
         componentProductType: string;
         requiredQty: number;
+        pickingConfirmedQty: number | null;
         parentProductIds: Set<string>;
       }
     >();
@@ -7737,9 +7863,14 @@ export class OrdersService {
       const bomItems = this.parseShoulderStrapBomSnapshot(item.bomSnapshot) ?? [];
       bomItems.forEach((component) => {
         const requiredQty = Number(component.quantity) * assemblyQty;
+        const pickingRequirement = this.parseOverseasPickingRequirementSnapshot(item.pickingRequirementSnapshot)
+          .find((requirement) => requirement.productId === component.componentProductId);
+        const pickingConfirmedQty = pickingRequirement?.pickedQty ?? null;
         const existing = requiredByComponentProductId.get(component.componentProductId);
         if (existing) {
           existing.requiredQty += requiredQty;
+          existing.pickingConfirmedQty = existing.pickingConfirmedQty === null || pickingConfirmedQty === null
+            ? null : existing.pickingConfirmedQty + pickingConfirmedQty;
           existing.parentProductIds.add(item.productId);
         } else {
           requiredByComponentProductId.set(component.componentProductId, {
@@ -7747,6 +7878,7 @@ export class OrdersService {
             componentProductName: component.componentProductName,
             componentProductType: '',
             requiredQty,
+            pickingConfirmedQty,
             parentProductIds: new Set([item.productId]),
           });
         }
@@ -7775,6 +7907,7 @@ export class OrdersService {
         componentProductName: liveComponent?.productName ?? component.componentProductName,
         componentProductType: String(liveComponent?.productType ?? component.componentProductType),
         requiredQty: component.requiredQty,
+        pickingConfirmedQty: component.pickingConfirmedQty,
         stockQty: (liveComponent?.boxInventories ?? [{ qty: liveComponent?.stockQty ?? 0 }])
           .reduce((sum, row) => sum + Number(row.qty ?? 0), 0) ?? 0,
         parentProductIds: Array.from(component.parentProductIds),
@@ -7787,20 +7920,49 @@ export class OrdersService {
     assemblyParts: YamatoShipmentPageAssemblyPartDetail[],
   ): void {
     if (!assemblyParts.length) return;
-    const confirmedComponentProductIds = new Set(
-      (Array.isArray(payload.confirmedAssemblyComponentProductIds)
-        ? payload.confirmedAssemblyComponentProductIds
-        : [])
-        .map((id) => String(id ?? '').trim())
-        .filter(Boolean),
-    );
-    const missingComponents = assemblyParts.filter(
-      (component) => !confirmedComponentProductIds.has(component.componentProductId),
+    if (assemblyParts.some((part) => part.pickingConfirmedQty != null && part.pickingConfirmedQty < part.requiredQty)) {
+      throw new BadRequestException('该面单的组装材料拣货数量未完成，请先核对拣货记录');
+    }
+    const confirmed = this.parseYamatoConfirmationQuantities(payload.confirmedAssemblyParts);
+    const missingComponents = assemblyParts.filter((part) =>
+      part.componentProductType !== '肩带本体' && confirmed.get(part.componentProductId) !== part.requiredQty,
     );
     if (missingComponents.length) {
-      throw new BadRequestException(
-        `该面单包含组装肩带，请先确认全部 BOM 材料：${missingComponents.map((component) => component.componentProductId).join('、')}`,
-      );
+      throw new BadRequestException(`请清点确认全部配件数量：${missingComponents.map((part) => part.componentProductId).join('、')}`);
+    }
+  }
+
+  private parseYamatoConfirmationQuantities(value: unknown): Map<string, number> {
+    if (value == null) return new Map();
+    if (!Array.isArray(value)) throw new BadRequestException('扫码和确认数量格式不正确');
+    const quantities = new Map<string, number>();
+    for (const item of value) {
+      const id = String(item?.productId ?? '').trim();
+      if (!id || !Number.isInteger(item?.quantity) || item.quantity < 0 || quantities.has(id)) {
+        throw new BadRequestException('扫码和确认数量须为非负整数，产品ID不能重复');
+      }
+      quantities.set(id, item.quantity);
+    }
+    return quantities;
+  }
+
+  private assertYamatoScannedProducts(payload: YamatoShipmentPrintByProductPayload, products: YamatoShipmentPageProductDetail[]): void {
+    if (!Array.isArray(payload.scanRecords)) throw new BadRequestException('请扫码核对该面单的全部产品数量');
+    const totals = new Map<string, number>();
+    const seen = new Set<string>();
+    for (const record of payload.scanRecords) {
+      const product = products.find((item) => item.productId === record?.productId);
+      const code = String(record?.scannedCode ?? '').trim().toUpperCase();
+      const key = `${record?.productId}:${code}`;
+      if (!product || ![product.productId, ...(product.bodyProductIds ?? [])].some((id) => id.toUpperCase() === code)
+        || !Number.isInteger(record.quantity) || record.quantity <= 0 || seen.has(key)) {
+        throw new BadRequestException('扫码记录的产品、本体或数量不正确');
+      }
+      seen.add(key);
+      totals.set(product.productId, (totals.get(product.productId) ?? 0) + record.quantity);
+    }
+    if (products.some((product) => totals.get(product.productId) !== product.quantity)) {
+      throw new BadRequestException('请扫齐该面单的产品数量，肩带成品码或本体码任选其一，每件只扫一次');
     }
   }
 
@@ -7808,56 +7970,13 @@ export class OrdersService {
     itemSummary: string | null | undefined,
     fallbackProductIds: string[],
   ): Array<{ productId: string; quantity: number }> {
-    const quantityByProductId = new Map<string, number>();
     const summary = String(itemSummary ?? '').trim().replace(/^DGAZ\s*/i, '');
-    summary
-      .split('/')
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .forEach((part) => {
-        const starIndex = part.lastIndexOf('*');
-        if (starIndex <= 0) return;
-        const productId = part.slice(0, starIndex).trim();
-        const quantityText = part.slice(starIndex + 1).replace(/[^\d]/g, '');
-        const quantity = Number.parseInt(quantityText, 10);
-        if (!productId || !Number.isInteger(quantity) || quantity <= 0) return;
-        quantityByProductId.set(productId, (quantityByProductId.get(productId) ?? 0) + quantity);
-      });
-
-    fallbackProductIds.forEach((productId) => {
-      if (!quantityByProductId.has(productId)) {
-        quantityByProductId.set(productId, 1);
-      }
+    return Array.from(new Set(fallbackProductIds)).map((productId) => {
+      const escaped = productId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`(?:^|\\s*/\\s*)${escaped}\\*(\\d+)個`, 'g');
+      const quantity = Array.from(summary.matchAll(pattern)).reduce((sum, match) => sum + Number(match[1]), 0);
+      return { productId, quantity: quantity > 0 ? quantity : 1 };
     });
-
-    return Array.from(quantityByProductId.entries()).map(([productId, quantity]) => ({
-      productId,
-      quantity,
-    }));
-  }
-
-  private scorePdfTextForYamatoBatchPage(
-    text: string,
-    page: Pick<YamatoShipmentBatchPage, 'productIds' | 'orderId' | 'recipientName'>,
-  ): number {
-    let score = 0;
-    const expectedProductIds = this.getBatchPageProductIds(page);
-    if (expectedProductIds.some((productId) => this.pdfTextContainsProductId(text, productId))) {
-      score += 100;
-    }
-
-    const normalizedText = this.normalizePdfComparableText(text);
-    const orderId = String(page.orderId ?? '').trim();
-    if (orderId && normalizedText.includes(this.normalizePdfComparableText(orderId))) {
-      score += 50;
-    }
-
-    const recipientName = String(page.recipientName ?? '').trim();
-    if (recipientName && normalizedText.includes(this.normalizePdfComparableText(recipientName))) {
-      score += 10;
-    }
-
-    return score;
   }
 
   private describeYamatoBatchPageExpectation(
@@ -7876,12 +7995,11 @@ export class OrdersService {
   }
 
   private pdfTextContainsProductId(text: string, productId: string): boolean {
-    const normalizedText = this.normalizePdfComparableText(text);
-    const normalizedProductId = this.normalizePdfComparableText(productId);
-    if (!normalizedText || !normalizedProductId) {
-      return false;
-    }
-    return normalizedText.includes(normalizedProductId);
+    const normalizedId = this.normalizePdfComparableText(productId);
+    if (!normalizedId) return false;
+    const escaped = normalizedId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`(^|[^A-Z0-9_-])${escaped}($|[^A-Z0-9_-])`, 'i');
+    return pattern.test(String(text ?? '').toUpperCase());
   }
 
   private normalizePdfComparableText(value: string): string {
@@ -7891,18 +8009,11 @@ export class OrdersService {
       .replace(/\s+/g, '');
   }
 
-  private extractTrackingNoFromPdfText(text: string): string | null {
-    const hyphenated = text.match(/\b\d{4}-\d{4}-\d{4}\b/);
-    if (hyphenated?.[0]) {
-      return hyphenated[0];
-    }
-
-    const plain = text.match(/\b\d{12}\b/);
-    if (!plain?.[0]) {
-      return null;
-    }
-    const digits = plain[0];
-    return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`;
+  private extractTrackingNoFromPdfText(text: string, excludedCodes: string[] = []): string | null {
+    const format = (value: string) => { const digits = value.replace(/\D/g, ''); return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`; };
+    const labelled = [...text.matchAll(/(?:お問い合わせ番号|お問合せ番号|送り状番号|伝票番号|追跡番号|tracking\s*(?:no\.?|number))[^\d]{0,30}(\d{4}[\s-]?\d{4}[\s-]?\d{4})(?!\d)/gi)].map((match) => format(match[1]));
+    const candidates = new Set(labelled.length ? labelled : [...text.matchAll(/(?<![A-Za-z0-9])\d{4}[ -]?\d{4}[ -]?\d{4}(?![A-Za-z0-9])/g)].map((match) => format(match[0])).filter((value) => !excludedCodes.some((code) => code.replace(/\D/g, '') === value.replace(/\D/g, ''))));
+    return candidates.size === 1 ? [...candidates][0] : null;
   }
 
   private isPdfFileBuffer(fileBuffer: Buffer): boolean {

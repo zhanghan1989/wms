@@ -21,7 +21,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
-import { OrdersService } from './orders.service';
+import { OrdersService, YamatoShipmentPrintByProductPayload } from './orders.service';
 import { ThirdPartyApiKeyGuard } from './third-party-api-key.guard';
 
 @Controller('orders')
@@ -495,7 +495,7 @@ export class OrdersController {
 
   @Post('overseas-warehouse/yamato-batches/:batchId/upload-pdf')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @UseInterceptors(AnyFilesInterceptor({ limits: { files: 20 } }))
+  @UseInterceptors(AnyFilesInterceptor({ limits: { files: 20, fileSize: 20 * 1024 * 1024 } }))
   async uploadYamatoShipmentBatchPdf(
     @Param('batchId') batchId: string,
     @UploadedFiles() files: Array<{ buffer?: Buffer; originalname?: string }> | undefined,
@@ -517,10 +517,11 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async printYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyComponentProductIds?: string[] },
+    @Body() payload: YamatoShipmentPrintByProductPayload,
+    @CurrentUser() user: AuthUser,
     @Res() res: Response,
   ): Promise<void> {
-    const file = await this.ordersService.printYamatoShipmentLabelByProductId(batchId, payload);
+    const file = await this.ordersService.printYamatoShipmentLabelByProductId(batchId, { ...payload, operatorUsername: user.username });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
@@ -528,10 +529,12 @@ export class OrdersController {
     );
     res.setHeader('Content-Length', String(file.content.length));
     res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Yamato-Print-Job-Id', file.queueJobId ?? '');
     res.setHeader('X-Yamato-Batch-Id', file.batchId);
     res.setHeader('X-Yamato-Page-No', String(file.pageNo));
     res.setHeader('X-Yamato-Tracking-No', file.trackingNo ?? '');
     res.setHeader('X-Yamato-Product-Id', file.productId);
+    res.setHeader('X-Yamato-Reused-Print-Job', file.reused ? 'true' : 'false');
     res.setHeader('X-Yamato-Remaining-Match-Count', String(file.remainingMatchCount));
     res.status(200).send(file.content);
   }
@@ -540,36 +543,66 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   async previewYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyComponentProductIds?: string[] },
+    @Body() payload: YamatoShipmentPrintByProductPayload,
+    @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
-    return this.ordersService.previewYamatoShipmentLabelByProductId(batchId, payload);
+    return this.ordersService.previewYamatoShipmentLabelByProductId(batchId, { ...payload, operatorUsername: user.username });
   }
 
   @Post('overseas-warehouse/yamato-batches/:batchId/direct-print-by-product')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async directPrintYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyComponentProductIds?: string[] },
+    @Body() payload: YamatoShipmentPrintByProductPayload,
+    @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
-    return this.ordersService.directPrintYamatoShipmentLabelByProductId(batchId, payload);
+    return this.ordersService.directPrintYamatoShipmentLabelByProductId(batchId, { ...payload, operatorUsername: user.username });
   }
 
   @Post('overseas-warehouse/yamato-batches/:batchId/queue-print-by-product')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async queueYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyComponentProductIds?: string[] },
+    @Body() payload: YamatoShipmentPrintByProductPayload,
+    @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
-    return this.ordersService.queueYamatoShipmentLabelByProductId(batchId, payload);
+    return this.ordersService.queueYamatoShipmentLabelByProductId(batchId, { ...payload, operatorUsername: user.username });
   }
 
   @Post('overseas-warehouse/yamato-batches/:batchId/requeue-print-by-product')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async requeueYamatoShipmentLabelByProductId(
     @Param('batchId') batchId: string,
-    @Body() payload: { productId?: string; pageNo?: number; confirmedAssemblyComponentProductIds?: string[] },
+    @Body() payload: YamatoShipmentPrintByProductPayload,
+    @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
-    return this.ordersService.requeueYamatoShipmentLabelByProductId(batchId, payload);
+    return this.ordersService.requeueYamatoShipmentLabelByProductId(batchId, { ...payload, operatorUsername: user.username });
+  }
+
+  @Get('overseas-warehouse/yamato-batches/:batchId/print-jobs')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async listYamatoShipmentPrintJobs(@Param('batchId') batchId: string): Promise<unknown> {
+    return this.ordersService.listYamatoShipmentPrintJobs(batchId);
+  }
+
+  @Post('overseas-warehouse/yamato-print-jobs/:jobId/take-over')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.admin)
+  async takeOverYamatoPrintJob(@Param('jobId') jobId: string, @Body() payload: { stationId?: string; stopped?: boolean }, @CurrentUser() user: AuthUser): Promise<unknown> {
+    return this.ordersService.takeOverYamatoPrintJob(jobId, user.username, payload.stationId ?? '', payload.stopped === true);
+  }
+
+  @Post('overseas-warehouse/yamato-print-jobs/:jobId/recover')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async recoverYamatoPrint(@Param('jobId') jobId: string, @Body() payload: { printed?: boolean; stationId?: string; stopped?: boolean }, @CurrentUser() user: AuthUser): Promise<unknown> {
+    if (payload.stopped !== true) throw new BadRequestException('恢复前必须停止原打印程序并清空打印机队列');
+    return this.ordersService.confirmYamatoLocalPrintJob(jobId, payload.printed as boolean, user.username, payload.stationId ?? '', true);
+  }
+
+  @Post('overseas-warehouse/yamato-print-jobs/:jobId/confirm-browser')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async confirmYamatoBrowserPrint(@Param('jobId') jobId: string, @Body() payload: { printed?: boolean; stationId?: string }, @CurrentUser() user: AuthUser): Promise<unknown> {
+    return this.ordersService.confirmYamatoLocalPrintJob(jobId, payload.printed as boolean, user.username, payload.stationId ?? '');
   }
 
   @Get('overseas-warehouse/yamato-print-jobs/:jobId')

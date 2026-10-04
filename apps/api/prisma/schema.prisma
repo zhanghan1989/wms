@@ -1593,6 +1593,7 @@ model ReturnRecord {
 }
 
 model PrintJob {
+  confirmationSnapshot Json? @map("confirmation_snapshot")
   id           BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
   jobType      String                   @default("yamato_label") @map("job_type") @db.VarChar(32)
   status       PrintJobStatus           @default(pending)

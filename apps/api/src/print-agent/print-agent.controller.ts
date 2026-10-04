@@ -51,7 +51,7 @@ export class PrintAgentController {
   @Post('jobs/:jobId/fail')
   async failJob(
     @Param('jobId') jobId: string,
-    @Body() payload: { claimToken?: string; errorMessage?: string },
+    @Body() payload: { claimToken?: string; errorMessage?: string; failureStage?: string },
   ): Promise<unknown> {
     return this.printAgentService.failJob(jobId, payload);
   }

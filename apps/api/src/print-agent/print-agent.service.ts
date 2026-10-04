@@ -19,6 +19,7 @@ type CompletePrintJobPayload = {
 type FailPrintJobPayload = {
   claimToken?: string;
   errorMessage?: string;
+  failureStage?: string;
 };
 
 const PRINT_JOB_AGENT_NAME_MAX_LENGTH = 128;
@@ -43,6 +44,7 @@ export class PrintAgentService {
       : [];
     const where = printerNames.length
       ? {
+          jobType: 'yamato_label',
           status: PrintJobStatus.pending,
           filePath: {
             not: null,
@@ -57,6 +59,7 @@ export class PrintAgentService {
           ],
         }
       : {
+          jobType: 'yamato_label',
           status: PrintJobStatus.pending,
           filePath: {
             not: null,
@@ -74,6 +77,7 @@ export class PrintAgentService {
       const result = await this.prisma.printJob.updateMany({
         where: {
           id: job.id,
+          jobType: 'yamato_label',
           status: PrintJobStatus.pending,
           filePath: {
             not: null,
@@ -168,8 +172,12 @@ export class PrintAgentService {
           claimToken,
         },
         data: {
-          status: PrintJobStatus.completed,
-          completedAt: new Date(),
+          // Spool submission is not proof that a physical label has been produced.
+          status: PrintJobStatus.claimed,
+          confirmationSnapshot: {
+            ...(job.confirmationSnapshot && typeof job.confirmationSnapshot === 'object' && !Array.isArray(job.confirmationSnapshot) ? job.confirmationSnapshot : {}),
+            submissionAccepted: true, submissionAcceptedAt: new Date().toISOString(),
+          },
           errorMessage: null,
           printerName: printerName || job.printerName,
           systemJobId: systemJobId || job.systemJobId,
@@ -178,27 +186,11 @@ export class PrintAgentService {
       if (updated.count !== 1) {
         throw new BadRequestException('打印任务状态已变更，请重新获取任务');
       }
-
-      if (job.batchPageId) {
-        const pageUpdated = await tx.yamatoShipmentBatchPage.updateMany({
-          where: {
-            id: job.batchPageId,
-            printedAt: null,
-          },
-          data: {
-            printedAt: new Date(),
-            printedProductId: job.productId,
-          },
-        });
-        if (pageUpdated.count !== 1) {
-          throw new BadRequestException('面单页已被其他操作标记为已打印');
-        }
-      }
     });
 
     return {
       id: job.id.toString(),
-      status: 'completed',
+      status: 'submitted',
     };
   }
 
@@ -216,6 +208,9 @@ export class PrintAgentService {
       throw new NotFoundException('未找到待失败回报的打印任务');
     }
 
+    const snapshot = job.confirmationSnapshot && typeof job.confirmationSnapshot === 'object' && !Array.isArray(job.confirmationSnapshot)
+      ? job.confirmationSnapshot : {};
+    const uncertain = payload.failureStage !== 'download' || snapshot.submissionAccepted === true;
     await this.prisma.printJob.updateMany({
       where: {
         id: job.id,
@@ -223,15 +218,16 @@ export class PrintAgentService {
         claimToken,
       },
       data: {
-        status: PrintJobStatus.failed,
-        failedAt: new Date(),
+        status: uncertain ? PrintJobStatus.claimed : PrintJobStatus.failed,
+        failedAt: uncertain ? null : new Date(),
+        confirmationSnapshot: { ...snapshot, submissionUncertain: uncertain },
         errorMessage: normalizePrintJobText(payload?.errorMessage, PRINT_JOB_ERROR_MESSAGE_MAX_LENGTH) || '打印失败',
       },
     });
 
     return {
       id: job.id.toString(),
-      status: 'failed',
+      status: uncertain ? 'uncertain' : 'failed',
     };
   }
 }

@@ -195,6 +195,7 @@ async function requestJson(pathname, options = {}) {
   };
   const response = await fetch(`${baseUrl}/api${pathname}`, {
     ...options,
+    signal: options.signal || AbortSignal.timeout(30000),
     headers,
   });
   const text = await response.text();
@@ -213,6 +214,7 @@ async function downloadJobFile(jobId, claimToken) {
   const response = await fetch(
     `${baseUrl}/api/print-agent/jobs/${encodeURIComponent(jobId)}/file?claimToken=${encodeURIComponent(claimToken)}`,
     {
+      signal: AbortSignal.timeout(60000),
       headers: {
         "x-print-agent-key": apiKey,
       },
@@ -253,7 +255,7 @@ async function reportComplete(job, printerName, systemJobId) {
   });
 }
 
-async function reportFailure(job, errorMessage) {
+async function reportFailure(job, errorMessage, failureStage) {
   await requestJson(`/print-agent/jobs/${encodeURIComponent(job.id)}/fail`, {
     method: "POST",
     headers: {
@@ -262,6 +264,7 @@ async function reportFailure(job, errorMessage) {
     body: JSON.stringify({
       claimToken: job.claimToken,
       errorMessage: String(errorMessage || "").slice(0, 255),
+      failureStage,
     }),
   });
 }
@@ -287,6 +290,7 @@ async function sendPdfToPrinter(job, pdfBuffer) {
         try {
           const { stdout, stderr } = await execFileAsync(pdfToolPath, args, {
             windowsHide: true,
+            timeout: 60000,
           });
           const output = String(stdout || stderr || "").trim();
           return {
@@ -322,6 +326,7 @@ async function sendPdfToPrinter(job, pdfBuffer) {
       try {
         const { stdout, stderr } = await execFileAsync("powershell.exe", args, {
           windowsHide: true,
+          timeout: 60000,
         });
         const output = String(stdout || stderr || "").trim();
         return {
@@ -348,7 +353,7 @@ async function sendPdfToPrinter(job, pdfBuffer) {
     }
     args.push(tempFilePath);
 
-    const { stdout, stderr } = await execFileAsync("lp", args);
+    const { stdout, stderr } = await execFileAsync("lp", args, { timeout: 60000 });
     const output = String(stdout || stderr || "").trim();
     const match = output.match(/\b([^\s()]+-\d+)\b/);
     return {
@@ -376,12 +381,12 @@ async function processOneJob() {
     const printResult = await sendPdfToPrinter(job, pdfBuffer);
     step = "complete";
     await reportComplete(job, printResult.printerName, printResult.systemJobId);
-    log(`Completed job #${job.id}${printResult.systemJobId ? ` (${printResult.systemJobId})` : ""}`);
+    log(`Submitted job #${job.id}${printResult.systemJobId ? ` (${printResult.systemJobId})` : ""}`);
     return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown print error";
     try {
-      await reportFailure(job, message);
+      await reportFailure(job, message, step);
     } catch (reportError) {
       log(`Failed to report error for job #${job.id}: ${reportError instanceof Error ? reportError.message : String(reportError)}`);
     }
