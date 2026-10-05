@@ -1371,9 +1371,15 @@
                   placeholder="上传 PDF 后，扫描产品ID自动匹配对应面单页并打印"
                 />
               </div>
+
               <button id="overseasYamatoReprintBtn" type="button" class="secondary">补打面单</button>
               <button id="yamatoPrintTasksBtn" type="button" class="secondary">查看 / 恢复打印任务</button>
             </div>
+              <div id="yamatoInlineScanProgress" class="action-row hidden" aria-live="polite">
+                <span id="yamatoInlineScanProgressText"></span>
+                <button id="yamatoInlineScanRetryBtn" type="button" class="hidden">重试打印</button>
+                <button id="yamatoInlineScanCancelBtn" type="button" class="ghost">取消本次扫码确认</button>
+              </div>
             <div id="yamatoPrintTasks"></div>
             <div class="card-head">
               <div>
@@ -2821,8 +2827,8 @@
   <div id="yamatoMergedScanModal" class="modal hidden">
     <div class="modal-card modal-wide">
       <div class="modal-head">
-        <h3>面单产品与组装确认</h3>
-        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前面单打印</button>
+        <h3 id="yamatoScanConfirmTitle">订单产品扫码确认</h3>
+        <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消本次扫码确认</button>
       </div>
       <p id="yamatoMergedScanSummary" class="muted">该面单包含多个产品，请扫齐后再打印。</p>
       <div id="yamatoCandidateSection" class="hidden">
@@ -2832,7 +2838,7 @@
         <select id="yamatoScanTargetProductSelect" aria-label="共用本体时选择成品"></select>
         <input id="yamatoMergedScanInput" type="text" inputmode="text" autocomplete="off" placeholder="继续扫描该面单内剩余产品ID" />
       </div>
-      <div class="master-product-table-wrap yamato-merged-scan-table-wrap">
+      <div id="yamatoProductScanSection" class="master-product-table-wrap yamato-merged-scan-table-wrap">
         <table>
           <thead>
             <tr>
@@ -2866,8 +2872,8 @@
       <div class="modal-actions modal-actions-split">
         <span id="yamatoMergedScanHint" class="muted">扫齐产品并逐行确认全部 BOM 材料后，再点击打印确认。</span>
         <div class="actions">
-          <button id="confirmYamatoMergedScanBtn" type="button" disabled>确认并打印成品肩带面单</button>
-          <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消当前面单打印</button>
+          <button id="confirmYamatoMergedScanBtn" type="button" disabled>确认并打印面单</button>
+          <button type="button" class="ghost" data-action="cancelYamatoMergedScan">取消本次扫码确认</button>
         </div>
       </div>
     </div>

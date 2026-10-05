@@ -36,6 +36,55 @@ function bodyService() {
 }
 
 describe('Yamato scan and print safety', () => {
+  it('counts a single product inline, prints once per order and preserves completed scans on retry', async () => {
+    const state: any = {};
+    const previews = [3, 2].map((quantity, index) => ({ batchId: '151', pageNo: index + 1, orderId: `ORDER-${index + 1}`,
+      products: [{ productId: '12279', quantity }], assemblyParts: [] }));
+    const execute = jest.fn().mockResolvedValueOnce({}).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({});
+    const preview = jest.fn().mockResolvedValueOnce(previews[0]).mockResolvedValueOnce(previews[1]);
+    const input = { value: '' };
+    const context: any = { state, $: () => ({ value: '', classList: { add: jest.fn() } }),
+      newYamatoRequestId: () => 'request-id', persistYamatoScanProgress: jest.fn(), renderYamatoMergedScanSession: jest.fn(),
+      renderYamatoInlineScanProgress: jest.fn(), focusOverseasYamatoScanInput: jest.fn(), openModal: jest.fn(), closeModal: jest.fn(),
+      getYamatoShipmentBatchById: () => ({ id: '151' }), executeYamatoPrintForProduct: execute,
+      previewYamatoShipmentPageByProductId: preview };
+    runInNewContext(['normalizeYamatoProductId', 'isYamatoMergedScanComplete', 'startYamatoMergedScanSession',
+      'focusYamatoMergedScanInput', 'handleYamatoMergedScanValue', 'finishYamatoMergedScanSession', 'submitOverseasYamatoScan']
+      .map(browserFunction).join('\n'), context);
+    const scan = (rawValue = '12279') => context.submitOverseasYamatoScan({ scanRequest: { input, rawValue, batch: { id: '151' } } });
+    await scan();
+    expect(state.yamatoMergedScanSession).toMatchObject({ inline: true, products: [{ scannedQty: 1 }] });
+    await expect(scan('WRONG')).rejects.toThrow('不是当前面单');
+    expect(state.yamatoMergedScanSession.products[0].scannedQty).toBe(1);
+    await scan();
+    expect(execute).not.toHaveBeenCalled();
+    await scan();
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][2].requestOptions.scanRecords).toEqual([{ productId: '12279', scannedCode: '12279', quantity: 3 }]);
+    expect(state.yamatoMergedScanSession).toBeNull();
+    await scan();
+    await expect(scan()).rejects.toThrow('offline');
+    expect(state.yamatoMergedScanSession).toMatchObject({ submitting: false, products: [{ scannedQty: 2 }] });
+    await scan();
+    expect(execute.mock.calls[2][2].requestOptions.scanRecords[0].quantity).toBe(2);
+    expect(preview).toHaveBeenCalledTimes(2);
+    expect(context.openModal).not.toHaveBeenCalled();
+  });
+  it('separates ordinary product scanning, shoulder assembly and mixed-order stages', () => {
+    const context: any = {};
+    runInNewContext(browserFunction('getYamatoScanConfirmationMode'), context);
+    const product = { quantity: 1, scannedQty: 1 };
+    expect(context.getYamatoScanConfirmationMode({ products: [product, product], assemblyParts: [] }))
+      .toMatchObject({ hasAssembly: false, productStep: false, assemblyStep: false, productsComplete: true });
+    expect(context.getYamatoScanConfirmationMode({ products: [product], assemblyParts: parts }))
+      .toMatchObject({ productStep: false, assemblyStep: true });
+    const mixed = { products: [product, { quantity: 2, scannedQty: 1 }], assemblyParts: parts, assemblyStep: false };
+    expect(context.getYamatoScanConfirmationMode(mixed)).toMatchObject({ productStep: true, assemblyStep: false, productsComplete: false });
+    mixed.products[1].scannedQty = 2;
+    expect(context.getYamatoScanConfirmationMode(mixed)).toMatchObject({ productsComplete: true, productStep: true });
+    mixed.assemblyStep = true;
+    expect(context.getYamatoScanConfirmationMode(mixed)).toMatchObject({ productStep: false, assemblyStep: true });
+  });
   it('matches body aliases to finished and assembled shipments and demands an explicit order selection', async () => {
     const service = bodyService();
     await expect(service.findPrintableYamatoShipmentPageByProductId('4', { productId: 'BODY-1' }))
@@ -172,7 +221,7 @@ describe('Yamato scan and print safety', () => {
     const state = { yamatoMergedScanSession: session };
     const execute = jest.fn().mockRejectedValue(new Error('offline'));
     const context: any = { persistYamatoScanProgress: jest.fn(), newYamatoRequestId: () => 'request-1', getYamatoStationId: () => 'station-1', state, isYamatoMergedScanComplete: () => true, getYamatoShipmentBatchById: () => ({ id: '2' }),
-      executeYamatoPrintForProduct: execute, renderYamatoMergedScanSession: jest.fn(), closeModal: jest.fn() };
+      executeYamatoPrintForProduct: execute, renderYamatoInlineScanProgress: jest.fn(), renderYamatoMergedScanSession: jest.fn(), closeModal: jest.fn() };
     runInNewContext(browserFunction('finishYamatoMergedScanSession'), context);
     await expect(context.finishYamatoMergedScanSession()).rejects.toThrow('offline');
     expect(state.yamatoMergedScanSession).toBe(session);
@@ -250,7 +299,7 @@ describe('Yamato scan and print safety', () => {
     await expect(context.confirmYamatoPaperOutput(meta, '2:1')).rejects.toThrow('offline');
     expect(state.yamatoPendingPaperConfirmations).toHaveProperty('2:1');
     await context.confirmYamatoPaperOutput(meta, '2:1');
-    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt).not.toHaveBeenCalled();
     expect(request).toHaveBeenCalledTimes(2);
     expect(state.yamatoPendingPaperConfirmations).toEqual({});
   });
@@ -265,6 +314,20 @@ describe('Yamato scan and print safety', () => {
     expect(context.state.yamatoMergedScanSession.products[0].scannedQty).toBe(1);
     expect(context.state.yamatoMergedScanSession.scanRecords).toEqual([{ productId: 'STRAP', scannedCode: 'BODY-1', quantity: 1 }]);
     expect(context.state.yamatoMergedScanSession.assemblyParts[1].confirmed).toBe(false);
+  });
+
+  it('reuses the pending reprint request when reopening the same label', () => {
+    const context: any = { newYamatoRequestId: () => 'new-request', state: { yamatoPrintRequests: { '151:11:reprint': 'original-request' } },
+      renderYamatoMergedScanSession: jest.fn(), openModal: jest.fn(), focusYamatoMergedScanInput: jest.fn(), $: () => ({ value: '' }) };
+    runInNewContext(browserFunction('normalizeYamatoProductId') + browserFunction('startYamatoMergedScanSession'), context);
+    const preview = { batchId: '151', pageNo: 11, products: [{ productId: '102247', quantity: 1 }] };
+    context.startYamatoMergedScanSession(preview, '102247', { isReprint: true });
+    expect(context.state.yamatoMergedScanSession.printRequestId).toBe('original-request');
+    context.startYamatoMergedScanSession(preview, '102247');
+    expect(context.state.yamatoMergedScanSession.printRequestId).toBe('new-request');
+    delete context.state.yamatoPrintRequests['151:11:reprint'];
+    context.startYamatoMergedScanSession(preview, '102247', { isReprint: true });
+    expect(context.state.yamatoMergedScanSession.printRequestId).toBe('new-request');
   });
 
   it('records a declined paper confirmation as failed without marking the page printed', async () => {
@@ -311,14 +374,15 @@ describe('Yamato scan and print safety', () => {
     )).toEqual([{ productId: 'STRAP(01)', quantity: 3 }, { productId: 'NORMAL', quantity: 2 }]);
   });
 
-  it('keeps the print reserved when paper confirmation is dismissed', async () => {
+  it('automatically confirms submitted prints without a paper confirmation dialog', async () => {
     const state = { yamatoPendingPaperConfirmations: {} };
     const request = jest.fn();
     const context: any = { persistYamatoScanProgress: jest.fn(), getYamatoStationId: () => 'station-1', state, request, openActionConfirmModal: jest.fn().mockResolvedValue(null) };
     runInNewContext(browserFunction('confirmYamatoPaperOutput'), context);
-    await expect(context.confirmYamatoPaperOutput({ queueJobId: '8' }, '2:1')).rejects.toThrow('尚未确认');
-    expect(request).not.toHaveBeenCalled();
-    expect(state.yamatoPendingPaperConfirmations).toHaveProperty('2:1');
+    await context.confirmYamatoPaperOutput({ queueJobId: '8' }, '2:1');
+    expect(context.openActionConfirmModal).not.toHaveBeenCalled();
+    expect(JSON.parse(request.mock.calls[0][1].body)).toEqual({ printed: true, stationId: 'station-1' });
+    expect(state.yamatoPendingPaperConfirmations).toEqual({});
   });
 
 });

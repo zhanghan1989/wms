@@ -13462,7 +13462,8 @@ async function showYamatoPrintTasks() {
     state.yamatoPrintRequests = { ...data.requests, ...state.yamatoPrintRequests };
     if (!state.yamatoMergedScanSession && data.session?.batchId === String(batch.id)) {
       state.yamatoMergedScanSession = { ...data.session, submitting: false };
-      renderYamatoMergedScanSession(); openModal('yamatoMergedScanModal');
+      renderYamatoMergedScanSession();
+      if (!state.yamatoMergedScanSession.inline) openModal('yamatoMergedScanModal');
     }
   }
   const jobs = await request(`/orders/overseas-warehouse/yamato-batches/${encodeURIComponent(batch.id)}/print-jobs`);
@@ -13720,8 +13721,36 @@ function isYamatoMergedScanComplete(session = state.yamatoMergedScanSession) {
   );
 }
 
+function getYamatoScanConfirmationMode(session) {
+  const hasAssembly = Boolean(session?.assemblyParts?.length);
+  const multipleProducts = (session?.products?.length || 0) > 1;
+  return {
+    hasAssembly,
+    productStep: hasAssembly && multipleProducts && !session.assemblyStep,
+    assemblyStep: hasAssembly && (!multipleProducts || session.assemblyStep === true),
+    productsComplete: Boolean(session?.products?.length) && session.products.every((item) => Number(item.scannedQty || 0) === Number(item.quantity || 0)),
+  };
+}
+
+function renderYamatoInlineScanProgress() {
+  const session = state.yamatoMergedScanSession;
+  const inline = session?.inline === true;
+  $("yamatoInlineScanProgress")?.classList.toggle("hidden", !inline);
+  if (!inline) return;
+  const product = session.products[0];
+  const complete = isYamatoMergedScanComplete(session);
+  const text = $("yamatoInlineScanProgressText");
+  if (text) text.textContent = `订单 ${session.orderId} · 产品 ${product.productId} · 已扫 ${product.scannedQty}/${product.quantity}${session.submitting ? " · 打印提交中" : complete ? " · 等待打印完成，可重试" : " · 请继续扫描同一产品"}`;
+  const retry = $("yamatoInlineScanRetryBtn");
+  if (retry) { retry.classList.toggle("hidden", !complete); retry.disabled = Boolean(session.submitting); }
+  const cancel = $("yamatoInlineScanCancelBtn");
+  if (cancel) cancel.disabled = Boolean(session.submitting);
+}
+
 function renderYamatoMergedScanSession() {
   persistYamatoScanProgress();
+  renderYamatoInlineScanProgress();
+  if (state.yamatoMergedScanSession?.inline) return;
   const session = state.yamatoMergedScanSession;
   if (session) document.querySelectorAll('[data-yamato-part-qty]').forEach((input) => {
     const part = session.assemblyParts.find((item) => item.componentProductId === input.dataset.yamatoPartQty);
@@ -13747,8 +13776,15 @@ function renderYamatoMergedScanSession() {
     return;
   }
 
+  const mode = getYamatoScanConfirmationMode(session);
+  const title = $("yamatoScanConfirmTitle");
+  if (title) title.textContent = mode.assemblyStep ? "肩带组装确认" : "订单产品扫码确认";
+  $("yamatoProductScanSection")?.classList.toggle("hidden", mode.assemblyStep && session.products.length > 1);
   const targetSelect = $("yamatoScanTargetProductSelect");
   if (targetSelect) {
+    const bodyCounts = new Map();
+    session.products.forEach((item) => (item.bodyProductIds || []).forEach((id) => bodyCounts.set(id, (bodyCounts.get(id) || 0) + 1)));
+    targetSelect.classList.toggle("hidden", !Array.from(bodyCounts.values()).some((count) => count > 1));
     const selected = targetSelect.value;
     targetSelect.innerHTML = '<option value="">共用本体时，请选择本次成品</option>' + session.products
       .filter((item) => item.scannedQty < item.quantity)
@@ -13763,10 +13799,12 @@ function renderYamatoMergedScanSession() {
     .filter((item) => item.componentProductType !== "肩带本体" && !item.confirmed);
   if (scanInputRow) scanInputRow.classList.toggle("hidden", remainingProducts.length === 0);
   summary.textContent = remainingProducts.length
-    ? `请继续扫码产品：${remainingProducts.join("、")}；肩带成品码或本体码任选其一，每件只扫一次。`
-    : remainingParts.length
-      ? `肩带已扫码完成，请清点配件并输入实点数量。`
-      : "产品和 BOM 材料已全部确认，请点击“确认并打印”。";
+    ? `请继续扫码产品：${remainingProducts.join("、")}。${mode.hasAssembly ? "肩带成品码或本体码任选其一，每件只扫一次。" : "每件商品扫码一次。"}`
+    : mode.productStep
+      ? "订单产品已扫齐，请进入肩带组装确认。"
+      : remainingParts.length
+        ? "肩带已扫码完成，请清点配件并输入实点数量。"
+        : mode.hasAssembly ? "肩带和配件已全部确认，请点击打印。" : "订单产品已全部扫齐，请点击打印。";
   if (hint) {
     hint.textContent = session.orderId
       ? `订单号：${session.orderId}，面单第 ${session.pageNo} 页。`
@@ -13782,7 +13820,7 @@ function renderYamatoMergedScanSession() {
         <tr>
           <td>${escapeHtml(displayText(item.productId))}</td>
           <td>${escapeHtml(displayText(item.productName))}</td>
-          <td>总数 ${quantity}（库存 ${item.finishedQuantity || 0} / 组装 ${item.assemblyQuantity || 0}）</td>
+          <td>${Number(item.assemblyQuantity || 0) > 0 ? `总数 ${quantity}（成品 ${item.finishedQuantity || 0} / 组装 ${item.assemblyQuantity || 0}）` : `总数 ${quantity}`}</td>
           <td class="${done ? "yamato-merged-scan-status-done" : "yamato-merged-scan-status-pending"}">
             ${done ? "已扫码" : `待扫码（${scannedQty}/${quantity}）`}
           </td>
@@ -13791,7 +13829,7 @@ function renderYamatoMergedScanSession() {
     })
     .join("");
   if (assemblySection) {
-    assemblySection.classList.toggle("hidden", !session.assemblyParts.length);
+    assemblySection.classList.toggle("hidden", !mode.assemblyStep);
   }
   if (assemblyBody) {
     assemblyBody.innerHTML = session.assemblyParts
@@ -13816,15 +13854,24 @@ function renderYamatoMergedScanSession() {
       `)
       .join("");
   }
-  if (finalConfirmButton) finalConfirmButton.disabled = !isYamatoMergedScanComplete(session);
+  if (finalConfirmButton) {
+    finalConfirmButton.textContent = mode.productStep ? "下一步：肩带组装确认" : mode.assemblyStep ? "确认组装并打印面单" : "确认并打印面单";
+    finalConfirmButton.disabled = mode.productStep ? !mode.productsComplete : !isYamatoMergedScanComplete(session);
+  }
 }
 
 function focusYamatoMergedScanInput() {
+  if (state.yamatoMergedScanSession?.inline) { focusOverseasYamatoScanInput(); return; }
   const input = $("yamatoMergedScanInput");
   if (!input) return;
   requestAnimationFrame(() => {
-    input.focus();
-    input.select();
+    if (!$("yamatoMergedScanInputRow")?.classList.contains("hidden")) {
+      input.focus();
+      input.select();
+    } else {
+      const partInput = $("yamatoAssemblyPartBody")?.querySelector('input:not(:disabled)');
+      (partInput || $("confirmYamatoMergedScanBtn"))?.focus();
+    }
   });
 }
 
@@ -13842,7 +13889,7 @@ function cancelYamatoMergedScanSession({ showMessage = true } = {}) {
   closeModal("yamatoMergedScanModal");
   focusOverseasYamatoScanInput();
   if (showMessage) {
-    showToast("已取消当前面单打印，可稍后重新扫码处理");
+    showToast("已取消本次扫码确认，可稍后重新扫码处理");
   }
 }
 
@@ -13873,8 +13920,9 @@ function startYamatoMergedScanSession(preview, scannedProductId, options = {}) {
   const initialTarget = candidates.length === 1 ? candidates[0] : null;
   if (initialTarget) initialTarget.scannedQty = 1;
   state.yamatoMergedScanSession = {
+    inline: options.inline === true,
     isReprint: options.isReprint === true,
-    printRequestId: newYamatoRequestId(),
+    printRequestId: state.yamatoPrintRequests?.[`${String(preview?.batchId || '').trim()}:${Number(preview?.pageNo || 0)}:${options.isReprint === true ? 'reprint' : 'normal'}`] || newYamatoRequestId(),
     batchId: String(preview?.batchId || "").trim(),
     pageNo: Number(preview?.pageNo || 0),
     orderId: String(preview?.orderId || "").trim(),
@@ -13885,6 +13933,7 @@ function startYamatoMergedScanSession(preview, scannedProductId, options = {}) {
     assemblyParts: previewAssemblyParts,
   };
   renderYamatoMergedScanSession();
+  if (state.yamatoMergedScanSession.inline) { focusOverseasYamatoScanInput(); return; }
   openModal("yamatoMergedScanModal");
   const modalInput = $("yamatoMergedScanInput");
   if (modalInput) modalInput.value = state.yamatoMergedScanSession.pendingInitialScan || "";
@@ -13912,12 +13961,7 @@ async function confirmYamatoPaperOutput(meta, pendingKey) {
   state.yamatoPendingPaperConfirmations ||= {};
   const pending = state.yamatoPendingPaperConfirmations[pendingKey] ||= { meta };
   persistYamatoScanProgress();
-  if (typeof pending.printed !== 'boolean') {
-    pending.printed = await openActionConfirmModal(
-      `${meta.reused ? '已有打印任务，系统没有重复提交。' : ''}快递单号 ${meta.trackingNo || "未知"}：请核对纸张上的单号一致，并确认已实际出纸。如果尚未出纸，请先取消打印机中的待打印任务，再确认未出纸。`,
-      "确认面单出纸", "已出纸", { cancelText: "已取消任务，未出纸", paperOutputConfirmation: true });
-  }
-  if (typeof pending.printed !== "boolean") throw new Error("出纸结果尚未确认，原任务及扫码进度已保留，请核对后重试");
+  if (typeof pending.printed !== 'boolean') pending.printed = true;
   await request(`/orders/overseas-warehouse/yamato-print-jobs/${encodeURIComponent(meta.queueJobId)}/confirm-browser`, {
     method: 'POST', body: JSON.stringify({ printed: pending.printed, stationId: getYamatoStationId() }),
   });
@@ -13942,6 +13986,7 @@ async function executeYamatoPrintForProduct(batch, productId, options = {}) {
   state.yamatoPrintRequests ||= {};
   const requestKey = `${batch.id}:${requestOptions.pageNo || productId}:${requestOptions.reprintConfirmed ? 'reprint' : 'normal'}`;
   requestOptions.printRequestId ||= (state.yamatoPrintRequests[requestKey] ||= newYamatoRequestId());
+  state.yamatoPrintRequests[requestKey] = requestOptions.printRequestId;
   const pendingKey = `${requestKey}:${requestOptions.printRequestId}`;
   persistYamatoScanProgress();
   const pendingPaper = state.yamatoPendingPaperConfirmations?.[pendingKey];
@@ -14022,6 +14067,7 @@ async function finishYamatoMergedScanSession() {
       .map((item) => ({ productId: item.componentProductId, quantity: item.confirmedQty })),
   };
   session.submitting = true;
+  renderYamatoInlineScanProgress();
   try {
     if (session.isReprint && !session.reprintApproved) {
       session.reprintApproved = await openActionConfirmModal(`确认补打订单 ${session.orderId} 第 ${session.pageNo} 页的原面单？原快递单号不会更换，请核对原纸张和任务结果。`, "补打确认", "确认补打");
@@ -14031,8 +14077,11 @@ async function finishYamatoMergedScanSession() {
     state.yamatoMergedScanSession = null;
     renderYamatoMergedScanSession();
     closeModal("yamatoMergedScanModal");
+    focusOverseasYamatoScanInput();
   } finally {
     session.submitting = false;
+    renderYamatoInlineScanProgress();
+    if (session.inline) focusOverseasYamatoScanInput();
   }
 }
 
@@ -14090,6 +14139,8 @@ function showYamatoCandidateSelection(preview, rawValue, options = {}) {
   $("yamatoCandidateBody").innerHTML = preview.candidates.map((item) => `<tr>
     <td>${escapeHtml(item.orderId || '')}</td><td>${escapeHtml(item.itemSummary || item.productIds.join('、'))}</td>
     <td><button type="button" data-action="selectYamatoCandidate" data-page-no="${item.pageNo}">选择此订单</button></td></tr>`).join('');
+  $("yamatoScanConfirmTitle").textContent = "选择面单订单";
+  $("yamatoProductScanSection")?.classList.remove("hidden");
   $("yamatoMergedScanSummary").textContent = options.isReprint
     ? "请选择需要补打的原订单，核对成品和配件组合。"
     : "同一本体对应多个订单，请根据成品和配件组合选择本次装包订单。";
@@ -14122,7 +14173,12 @@ async function submitOverseasYamatoScan(options = {}) {
   if (state.yamatoMergedScanSession?.submitting) throw new Error("正在提交打印，本次扫码尚未计数，输入已保留");
   if (input && String(input.value).trim() === rawValue) input.value = "";
   if (state.yamatoMergedScanSession) {
-    await handleYamatoMergedScanValue(rawValue);
+    const session = state.yamatoMergedScanSession;
+    if (session.batchId !== String(batch.id)) throw new Error("请先完成或取消原订单的扫码确认");
+    if (session.inline && isYamatoMergedScanComplete(session)) {
+      if (normalizeYamatoProductId(rawValue) !== normalizeYamatoProductId(session.products[0].productId)) throw new Error("上一订单尚未打印完成，请重试打印或取消扫码确认");
+    } else await handleYamatoMergedScanValue(rawValue);
+    if (session.inline && isYamatoMergedScanComplete(session)) await finishYamatoMergedScanSession();
     return;
   }
 
@@ -14133,7 +14189,11 @@ async function submitOverseasYamatoScan(options = {}) {
   }
   const products = Array.isArray(preview?.products) ? preview.products : [];
   const assemblyParts = Array.isArray(preview?.assemblyParts) ? preview.assemblyParts : [];
-  if (products.length > 1 || products.some((item) => item.quantity > 1) || assemblyParts.length > 0) {
+  if (products.length === 1 && products[0].quantity > 1 && assemblyParts.length === 0) {
+    startYamatoMergedScanSession(preview, rawValue, { inline: true });
+    return;
+  }
+  if (products.length > 1 || assemblyParts.length > 0) {
     startYamatoMergedScanSession(preview, rawValue);
     return;
   }
@@ -17351,6 +17411,12 @@ function bindForms() {
     }
   });
 
+  $("yamatoInlineScanCancelBtn")?.addEventListener("click", () => cancelYamatoMergedScanSession());
+  $("yamatoInlineScanRetryBtn")?.addEventListener("click", async () => {
+    if (!state.yamatoMergedScanSession?.inline || state.yamatoMergedScanSession.submitting) return;
+    try { await finishYamatoMergedScanSession(); }
+    catch (error) { showToast(error.message, true); }
+  });
   $("yamatoMergedScanInput")?.addEventListener("keydown", async (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
@@ -17392,6 +17458,14 @@ function bindForms() {
     catch (error) { showToast(error.message, true); }
   });
   $("confirmYamatoMergedScanBtn")?.addEventListener("click", async (event) => {
+    const session = state.yamatoMergedScanSession;
+    const mode = getYamatoScanConfirmationMode(session);
+    if (mode.productStep && mode.productsComplete) {
+      session.assemblyStep = true;
+      renderYamatoMergedScanSession();
+      focusYamatoMergedScanInput();
+      return;
+    }
     if (!isYamatoMergedScanComplete()) return;
     try {
       await withBusyButton(event.currentTarget, "打印中...", finishYamatoMergedScanSession);
