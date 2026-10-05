@@ -42,6 +42,16 @@ describe('Yamato printing optimization regressions', () => {
     expect(service.extractTrackingNoFromPdfText('お問い合わせ番号 1234-1111-2222 追跡番号 9999-8888-7777')).toBeNull();
   });
 
+  it('recognizes Yamato barcode text and line-wrapped tracking numbers without accepting ambiguity', () => {
+    const service: any = new OrdersService({} as any);
+    expect(service.extractTrackingNoFromPdfText('DGAZ 12279*1個 花田里佳 a391264687133a\na391264687133a')).toBe('3912-6468-7133');
+    expect(service.extractTrackingNoFromPdfText('3912\n6468\n7133')).toBe('3912-6468-7133');
+    expect(service.extractTrackingNoFromPdfText('3912- 6468-\n7133 a391264687133a')).toBe('3912-6468-7133');
+    expect(service.extractTrackingNoFromPdfText('a391264687133a a999988887777a')).toBeNull();
+    expect(service.extractTrackingNoFromPdfText('a391264687133a', ['391264687133'])).toBeNull();
+    expect(service.extractTrackingNoFromPdfText('SKUa391264687133a')).toBeNull();
+  });
+
   it('rejects duplicate tracking numbers before writing or merging the PDF', async () => {
     const service: any = new OrdersService({ yamatoShipmentBatch: { findUnique: jest.fn().mockResolvedValue({ id: 2n, pages: [
       { pageNo: 1, orderId: 'ORDER-1', productIds: ['STRAP'], recipientName: 'A' },
