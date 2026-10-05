@@ -87,6 +87,23 @@ describe('Yamato scan and print safety', () => {
     expect(service.matchUploadedPdfPagesToBatchPages(pages, expected)).toEqual([pages[1], pages[0]]);
   });
 
+  it('matches labels without order numbers by product and normalized recipient name', () => {
+    const service = new OrdersService({} as any) as any;
+    const pages = [{ text: 'DGAZ 12279*1個 花田 里佳 様' }];
+    const expected = [{ pageNo: 1, orderId: '421951-20261005-0951508794', productIds: ['12279'], recipientName: '花田里佳' }];
+    expect(service.matchUploadedPdfPagesToBatchPages(pages, expected)).toEqual(pages);
+    expect(() => service.matchUploadedPdfPagesToBatchPages(pages, [{ ...expected[0], recipientName: null }])).toThrow('失败');
+    expect(() => service.matchUploadedPdfPagesToBatchPages(pages, [{ ...expected[0], recipientName: '其他人' }])).toThrow('失败');
+  });
+
+  it('refuses ambiguous fallback matches and reused fallback pages', () => {
+    const service = new OrdersService({} as any) as any;
+    const expected = { pageNo: 1, orderId: 'ORDER-1', productIds: ['ABC1'], recipientName: '张三' };
+    const page = { text: 'ABC1 张三' };
+    expect(() => service.matchUploadedPdfPagesToBatchPages([page, { ...page }], [expected])).toThrow('不唯一');
+    expect(() => service.matchUploadedPdfPagesToBatchPages([page], [expected, { ...expected, orderId: 'ORDER-2', pageNo: 2 }])).toThrow('多个订单');
+  });
+
   it('refuses ambiguous PDFs, reused pages and partial product ID matches', () => {
     const service = new OrdersService({} as any) as any;
     const expected = { pageNo: 1, orderId: 'ABSENT', productIds: ['ABC1'], recipientName: '张三' };

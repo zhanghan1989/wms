@@ -24,10 +24,11 @@ function browserFunction(name: string) {
 }
 
 describe('Yamato printing optimization regressions', () => {
-  it('rejects another order even with identical products and recipient', () => {
+  it('allows a unique product and recipient fallback but rejects mismatched label details', () => {
     const service: any = new OrdersService({} as any);
     const page = { pageNo: 1, orderId: 'EXPECTED-ORDER', productIds: ['STRAP'], recipientName: '王小明' };
-    expect(() => service.matchUploadedPdfPagesToBatchPages([{ text: 'OTHER-ORDER STRAP 王小明' }], [page])).toThrow('完整订单号');
+    const uploaded = [{ text: 'OTHER-ORDER STRAP 王小明' }];
+    expect(service.matchUploadedPdfPagesToBatchPages(uploaded, [page])).toEqual(uploaded);
     expect(() => service.matchUploadedPdfPagesToBatchPages([{ text: 'EXPECTED-ORDER WRONG 王小明' }], [page])).toThrow();
     expect(() => service.matchUploadedPdfPagesToBatchPages([{ text: 'EXPECTED-ORDER STRAP 李小明' }], [page])).toThrow();
   });

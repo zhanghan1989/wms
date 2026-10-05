@@ -7562,8 +7562,12 @@ export class OrdersService {
   ): UploadedYamatoPdfPage[] {
     const matches = batchPages.map((page) => {
       const orderMatches = page.orderId ? uploadedPages.filter((uploaded) => this.pdfTextContainsProductId(uploaded.text, page.orderId!)) : [];
-      const candidates = orderMatches.filter((uploaded) => this.getBatchPageProductIds(page).every((id) => this.pdfTextContainsProductId(uploaded.text, id)) && (!page.recipientName || this.normalizePdfComparableText(uploaded.text).includes(this.normalizePdfComparableText(page.recipientName))));
-      if (candidates.length !== 1) throw new BadRequestException(`PDF 面单匹配${candidates.length ? '不唯一' : '失败'}：${this.describeYamatoBatchPageExpectation(page)}，PDF 必须包含完整订单号，请核对导出模板和订单`);
+      const productIds = this.getBatchPageProductIds(page);
+      const recipientName = this.normalizePdfComparableText(page.recipientName ?? '');
+      const candidates = (orderMatches.length ? orderMatches : uploadedPages).filter((uploaded) =>
+        productIds.length > 0 && productIds.every((id) => this.pdfTextContainsProductId(uploaded.text, id)) &&
+        (recipientName ? this.normalizePdfComparableText(uploaded.text).includes(recipientName) : orderMatches.length > 0));
+      if (candidates.length !== 1) throw new BadRequestException(`PDF 面单匹配${candidates.length ? '不唯一' : '失败'}：${this.describeYamatoBatchPageExpectation(page)}，请核对 PDF 中的商品和收件人；同商品、同姓名有多张面单时，请使用包含完整订单号的模板`);
       return candidates[0];
     });
     if (new Set(matches).size !== matches.length) throw new BadRequestException('同一 PDF 页匹配到多个订单，请核对面单后重新上传');
