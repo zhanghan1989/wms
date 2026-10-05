@@ -52,6 +52,13 @@ describe('Yamato printing optimization regressions', () => {
     expect(service.extractTrackingNoFromPdfText('SKUa391264687133a')).toBeNull();
   });
 
+  it('does not combine postal or phone suffixes with the next tracking field', () => {
+    const service: any = new OrdersService({} as any);
+    expect(service.extractTrackingNoFromPdfText('09051915556 402-0056 3912-6468-7133\na391264687133a\n3912-6468-7133')).toBe('3912-6468-7133');
+    expect(service.extractTrackingNoFromPdfText('0120-11-8010\n7671-0755-0613\n2026 10 05\na767107550613a')).toBe('7671-0755-0613');
+    expect(service.extractTrackingNoFromPdfText('a391264687133a 9999-8888-7777')).toBeNull();
+  });
+
   it('rejects duplicate tracking numbers before writing or merging the PDF', async () => {
     const service: any = new OrdersService({ yamatoShipmentBatch: { findUnique: jest.fn().mockResolvedValue({ id: 2n, pages: [
       { pageNo: 1, orderId: 'ORDER-1', productIds: ['STRAP'], recipientName: 'A' },

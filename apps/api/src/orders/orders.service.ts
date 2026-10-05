@@ -8017,8 +8017,10 @@ export class OrdersService {
     const format = (value: string) => { const digits = value.replace(/\D/g, ''); return `${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`; };
     const labelled = [...text.matchAll(/(?:お問い合わせ番号|お問合せ番号|送り状番号|伝票番号|追跡番号|tracking\s*(?:no\.?|number))[^\d]{0,30}(\d{4}[\s-]?\d{4}[\s-]?\d{4})(?!\d)/gi)].map((match) => format(match[1]));
     const barcodeNumbers = [...text.matchAll(/(?<![A-Za-z0-9])a(\d{12})a(?![A-Za-z0-9])/gi)].map((match) => format(match[1]));
+    const formattedNumbers = [...text.matchAll(/(?<![A-Za-z0-9])\d{4}\s*-\s*\d{4}\s*-\s*\d{4}(?![A-Za-z0-9])/g)].map((match) => format(match[0]));
     const plainNumbers = [...text.matchAll(/(?<![A-Za-z0-9])\d{4}[\s-]*\d{4}[\s-]*\d{4}(?![A-Za-z0-9])/g)].map((match) => format(match[0]));
-    const candidates = new Set(labelled.length ? labelled : [...barcodeNumbers, ...plainNumbers].filter((value) => !excludedCodes.some((code) => code.replace(/\D/g, '') === value.replace(/\D/g, ''))));
+    const structuredNumbers = [...barcodeNumbers, ...formattedNumbers];
+    const candidates = new Set(labelled.length ? labelled : (structuredNumbers.length ? structuredNumbers : plainNumbers).filter((value) => !excludedCodes.some((code) => code.replace(/\D/g, '') === value.replace(/\D/g, ''))));
     return candidates.size === 1 ? [...candidates][0] : null;
   }
 
