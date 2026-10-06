@@ -120,3 +120,37 @@ describe('dashboard scroll requests', () => {
     expect(handlers.size).toBe(1);
   });
 });
+
+describe('dashboard snapshot memory limits', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('actively releases expired snapshots without waiting for another dashboard request', () => {
+    const pages = require('../src/inventory/dashboard-pages') as typeof import('../src/inventory/dashboard-pages');
+    const source = { demand: { topSkus: Array.from({ length: 65 }, (_, id) => ({ id })) }, obsolete: { noSales90dSkus: [] } };
+    const first = pages.dashboardFirstPages(source) as any;
+    expect(jest.getTimerCount()).toBe(1);
+    expect((pages.dashboardFirstPages(source) as any).pagination.snapshotId).toBe(first.pagination.snapshotId);
+    expect(jest.getTimerCount()).toBe(1);
+    jest.advanceTimersByTime(10 * 60_000);
+    expect(jest.getTimerCount()).toBe(0);
+    expect(() => pages.dashboardPage(first.pagination.snapshotId, 'top', '30')).toThrow('过期');
+    expect((pages.dashboardFirstPages(source) as any).pagination.snapshotId).not.toBe(first.pagination.snapshotId);
+  });
+
+  it('evicts older large snapshots by total row budget and preserves the newest full pagination', () => {
+    const pages = require('../src/inventory/dashboard-pages') as typeof import('../src/inventory/dashboard-pages');
+    const make = () => ({ demand: { topSkus: Array.from({ length: 60_000 }, (_, id) => ({ id })) }, obsolete: { noSales90dSkus: [] } });
+    const first = pages.dashboardFirstPages(make()) as any;
+    const second = pages.dashboardFirstPages(make()) as any;
+    expect(() => pages.dashboardPage(first.pagination.snapshotId, 'top', '30')).toThrow('过期');
+    expect((pages.dashboardPage(second.pagination.snapshotId, 'top', '59970') as any).items).toHaveLength(30);
+    expect(jest.getTimerCount()).toBe(1);
+  });
+});

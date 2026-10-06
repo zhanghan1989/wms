@@ -156,6 +156,8 @@ const BULK_UPDATE_COMPAT_SHELF_CODES = ['S-00', 'Z-0'];
 const BULK_UPDATE_DEFAULT_SHELF_NAME = '默认货架';
 const BULK_UPDATE_MAX_BOX_CODE_LENGTH = 128;
 const BULK_UPDATE_MAX_PRODUCT_ID_LENGTH = 128;
+const BULK_INVENTORY_QUERY_BATCH_SIZE = 500;
+const BULK_INVENTORY_AUDIT_BATCH_SIZE = 500;
 const BULK_INVENTORY_IMPORT_TRANSACTION_TIMEOUT_MS = 120000;
 const BULK_INVENTORY_IMPORT_TRANSACTION_MAX_WAIT_MS = 10000;
 const MASTER_PRODUCT_BOX_SHELF_SELECT = {
@@ -2428,7 +2430,7 @@ async function importBulkUpdateExcelByProduct(
           productId: true,
           qty: true,
         },
-      });
+      }, BULK_INVENTORY_QUERY_BATCH_SIZE);
 
       const inventoryQtyByBoxProduct = new Map<string, number>();
       inventoryRows.forEach((row) => {
@@ -2508,7 +2510,7 @@ async function importBulkUpdateExcelByProduct(
         adjustItems.map((item) => item.productId),
       );
 
-      const auditPayloads: Parameters<AuditService['createMany']>[0] = [];
+      let auditPayloads: Parameters<AuditService['createMany']>[0] = [];
       for (const item of adjustItems) {
         const afterStockQty = stockQtyByProductId.get(item.productId) ?? 0;
 
@@ -2563,9 +2565,13 @@ async function importBulkUpdateExcelByProduct(
           requestId,
           remark: originalName ? `bulk-inventory-update:${originalName}` : 'bulk-inventory-update',
         });
+        if (auditPayloads.length >= BULK_INVENTORY_AUDIT_BATCH_SIZE) {
+          await this.auditService.createMany(auditPayloads);
+          auditPayloads = [];
+        }
       }
 
-      await this.auditService.createMany(auditPayloads);
+      if (auditPayloads.length) await this.auditService.createMany(auditPayloads);
 
       return {
         totalRows: rows.length,
@@ -2610,7 +2616,7 @@ function parseBulkInventoryUpdateRowsByProduct(
 ): BulkInventoryUpdateRow[] {
   let workbook: XLSX.WorkBook;
   try {
-    workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+    workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0 });
   } catch {
     throw new BadRequestException('无法解析 Excel 文件');
   }
@@ -4137,20 +4143,26 @@ async function findMasterProductBoxInventoryByPairs(
   client: MasterProductBoxInventoryFindManyClient,
   pairs: BoxProductInventoryPair[],
   args: Omit<Prisma.MasterProductBoxInventoryFindManyArgs, 'where'> = {},
+  batchSize = pairs.length,
 ): Promise<MasterProductBoxInventoryPairRow[]> {
   if (pairs.length === 0) {
     return [];
   }
 
-  return client.masterProductBoxInventory.findMany({
-    ...args,
-    where: {
-      OR: pairs.map((pair) => ({
-        boxId: pair.boxId,
-        productId: pair.productId,
-      })),
-    },
-  });
+  const rows: MasterProductBoxInventoryPairRow[] = [];
+  for (let offset = 0; offset < pairs.length; offset += batchSize) {
+    const batch = await client.masterProductBoxInventory.findMany({
+      ...args,
+      where: {
+        OR: pairs.slice(offset, offset + batchSize).map((pair) => ({
+          boxId: pair.boxId,
+          productId: pair.productId,
+        })),
+      },
+    });
+    for (const row of batch) rows.push(row);
+  }
+  return rows;
 }
 
 async function manualAdjustByProduct(
