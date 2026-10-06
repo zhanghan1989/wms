@@ -163,19 +163,29 @@ export class BatchInboundService {
       if (!order) {
         throw new NotFoundException('批量入库单不存在');
       }
-      if (order.status === BatchInboundOrderStatus.confirmed) {
-        throw new UnprocessableEntityException('已确认的批量入库单不能删除');
+      if (
+        order.status !== BatchInboundOrderStatus.waiting_upload ||
+        order.uploadedFileName !== null ||
+        order.items.length > 0
+      ) {
+        throw new UnprocessableEntityException('只能删除刚采集箱号、尚未上传明细的批量入库单');
       }
       if (this.readSeaOrderNo(order)) {
         throw new UnprocessableEntityException('已保存海运单号的批量入库单不能删除');
       }
 
-      await tx.batchInboundItem.deleteMany({
-        where: { orderId: order.id },
+      const deleted = await tx.batchInboundOrder.deleteMany({
+        where: {
+          id: order.id,
+          status: BatchInboundOrderStatus.waiting_upload,
+          uploadedFileName: null,
+          seaOrderNo: order.seaOrderNo,
+          items: { none: {} },
+        },
       });
-      await tx.batchInboundOrder.delete({
-        where: { id: order.id },
-      });
+      if (deleted.count !== 1) {
+        throw new UnprocessableEntityException('入库单已发生变化，请刷新后重试删除');
+      }
 
       await this.auditService.create({
         db: tx,

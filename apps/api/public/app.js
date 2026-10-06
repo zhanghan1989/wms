@@ -10042,6 +10042,13 @@ function renderBatchInboundUploadOptions() {
   }
 }
 
+function canDeleteBatchInboundOrder(order) {
+  return order.status === "waiting_upload" &&
+    order.uploadedFileName == null &&
+    order.itemCount === 0 &&
+    !String(order.seaOrderNo || "").trim();
+}
+
 function renderBatchInboundOrders() {
   const tbody = $("batchInboundBody");
   if (!tbody) return;
@@ -10058,6 +10065,11 @@ function renderBatchInboundOrders() {
           order.id,
         )}">查看</button>`,
       ];
+      if (canDeleteBatchInboundOrder(order)) {
+        actions.push(`<button class="tiny-btn danger" data-action="batchInboundDeleteOrder" data-order-id="${escapeHtml(
+          order.id,
+        )}" data-order-no="${escapeHtml(order.orderNo)}">删除</button>`);
+      }
       return `
         <tr>
           <td>${escapeHtml(order.orderNo)}</td>
