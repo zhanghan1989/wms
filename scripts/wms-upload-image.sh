@@ -52,7 +52,9 @@ PROGRESS_PID=$!
 
 for attempt in 1 2 3; do
   echo "Upload attempt ${attempt}/3 (resuming any matching partial archive)"
-  if printf 'reput "%s" "%s"\n' "$IMAGE_FILE" "$REMOTE_PARTIAL" |
+  TRANSFER_COMMAND=put
+  if remote "test -f '${REMOTE_PARTIAL}'" </dev/null; then TRANSFER_COMMAND=reput; fi
+  if printf '%s "%s" "%s"\n' "$TRANSFER_COMMAND" "$IMAGE_FILE" "$REMOTE_PARTIAL" |
     timeout --kill-after=15s 8m sftp "${SSH_OPTIONS[@]}" -P "$ECS_PORT" -b - "$DESTINATION"; then
     if remote "printf '%s  %s\\n' '${IMAGE_SHA}' '${REMOTE_PARTIAL}' | sha256sum -c - && mv -- '${REMOTE_PARTIAL}' '${REMOTE_FINAL}'" </dev/null; then
       echo 'Image upload complete; SHA-256 verified'
