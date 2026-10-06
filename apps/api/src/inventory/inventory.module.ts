@@ -1,3 +1,4 @@
+import { BoxReplacementService } from './box-replacement.service';
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { InventoryController } from './inventory.controller';
@@ -6,6 +7,6 @@ import { InventoryService } from './inventory.service';
 @Module({
   imports: [AuditModule],
   controllers: [InventoryController],
-  providers: [InventoryService],
+  providers: [InventoryService, BoxReplacementService],
 })
 export class InventoryModule {}

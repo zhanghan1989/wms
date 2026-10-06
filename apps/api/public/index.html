@@ -397,6 +397,27 @@
             <button type="submit">移动主商品到新箱子</button>
           </form>
         </article>
+        <article class="card">
+          <h3>整箱换号</h3>
+          <p class="muted">将旧箱内全部产品移至一个不存在的新箱号。新货架默认沿用旧货架，旧箱保留为空箱。</p>
+          <form id="replaceBoxForm" class="form-grid overseas-form overseas-form-three">
+            <label>旧箱号
+              <input id="replaceBoxOldCode" list="moveShelfBoxCodeList" inputmode="numeric" maxlength="6" placeholder="请输入旧箱号" required />
+            </label>
+            <label>旧货架
+              <input id="replaceBoxOldShelf" readonly placeholder="输入旧箱号后自动显示" />
+            </label>
+            <label>新箱号
+              <input id="replaceBoxNewCode" inputmode="numeric" maxlength="6" placeholder="必须是不存在的箱号" required />
+            </label>
+            <label>新货架
+              <input id="replaceBoxNewShelf" list="replaceBoxShelfList" placeholder="默认沿用旧货架，可修改" />
+              <datalist id="replaceBoxShelfList"></datalist>
+            </label>
+            <p id="replaceBoxSummary" class="muted" aria-live="polite">输入旧箱号后显示产品种类和总件数。</p>
+            <button type="submit" id="replaceBoxSubmit">一键换箱号</button>
+          </form>
+        </article>
       </section>
 
       <section class="panel" id="productManagement">

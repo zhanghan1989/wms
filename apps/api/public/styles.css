@@ -1612,6 +1612,15 @@ button.ghost {
   grid-template-columns: repeat(5, minmax(140px, 1fr));
 }
 
+#replaceBoxForm {
+  grid-template-columns: repeat(2, minmax(140px, 280px));
+}
+
+#replaceBoxSummary {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 #moveBoxShelfForm {
   grid-template-columns: repeat(3, minmax(140px, 280px));
 }
@@ -3684,6 +3693,10 @@ button.danger-solid {
 }
 
 @media (max-width: 640px) {
+  #replaceBoxForm {
+    grid-template-columns: 1fr;
+  }
+
   .overview-demand-head {
     display: grid;
   }

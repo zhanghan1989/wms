@@ -9853,6 +9853,7 @@ async function loadShelves() {
   syncMoveShelfCurrentDisplay();
   syncMoveProductOldShelfDisplay();
   syncMoveProductNewShelfDisplay();
+  renderReplaceBoxShelfOptions();
   renderShelvesManageTable();
   renderBoxesManageTable();
 
@@ -10547,6 +10548,9 @@ function formatAuditEvent(item) {
   const before = toAuditRecord(item?.beforeData);
   const after = toAuditRecord(item?.afterData);
   const details = [];
+  if (item?.remark === "整箱换号" && after.oldBoxCode && after.newBoxCode) {
+    details.push(`整箱换号：${after.oldBoxCode} → ${after.newBoxCode}；货架：${after.oldShelfCode} → ${after.newShelfCode}；${after.productCount} 种产品`);
+  }
   const product = [after.productId ?? before.productId, after.productName ?? before.productName]
     .filter((value) => value !== undefined && value !== null && String(value).trim()).join(" / ");
   if (product && item?.entityType !== "master_product") details.push(`商品：${product}`);
@@ -15032,6 +15036,125 @@ async function createShelfFromInventoryModal() {
   });
 }
 
+let replaceBoxSourceRevision = 0;
+let replaceBoxSourceTimer = null;
+let replaceBoxDefaultShelf = "";
+let replaceBoxPending = null;
+let replaceBoxPendingOwner = "";
+
+function replaceBoxStorageKey() {
+  return `replaceBoxPending:${state.me?.id || state.me?.username || ""}`;
+}
+
+function saveReplaceBoxPending(value) {
+  replaceBoxPending = value;
+  replaceBoxPendingOwner = replaceBoxStorageKey();
+  try {
+    if (value) sessionStorage.setItem(replaceBoxStorageKey(), JSON.stringify(value));
+    else sessionStorage.removeItem(replaceBoxStorageKey());
+  } catch { /* In-memory retries still retain the operation ID when storage is unavailable. */ }
+}
+
+function renderReplaceBoxShelfOptions() {
+  const list = $("replaceBoxShelfList");
+  if (list) list.innerHTML = getEnabledShelvesSorted().map(shelf =>
+    `<option value="${escapeHtml(formatShelfCodeWithName(shelf))}"></option>`).join("");
+}
+
+function resetReplaceBoxForm() {
+  replaceBoxSourceRevision += 1;
+  clearTimeout(replaceBoxSourceTimer);
+  $("replaceBoxForm")?.reset();
+  replaceBoxDefaultShelf = "";
+  const owner = replaceBoxStorageKey();
+  let pending = replaceBoxPendingOwner === owner ? replaceBoxPending : null;
+  try {
+    const stored = sessionStorage.getItem(owner);
+    if (stored) pending = JSON.parse(stored);
+  } catch { /* Preserve this user's in-memory request when storage is unavailable. */ }
+  replaceBoxPending = pending?.payload && pending?.summary ? pending : null;
+  replaceBoxPendingOwner = owner;
+  if (replaceBoxPending?.payload && replaceBoxPending?.summary) {
+    const { payload, summary } = replaceBoxPending;
+    $("replaceBoxOldCode").value = payload.fromBoxCode;
+    $("replaceBoxNewCode").value = payload.toBoxCode;
+    $("replaceBoxOldShelf").value = summary.oldShelfCode;
+    $("replaceBoxNewShelf").value = payload.shelfCode || summary.newShelfCode;
+    $("replaceBoxSummary").textContent = "上次换箱结果尚未确认，请点击按钮重试，系统会避免重复搬移。";
+    $("replaceBoxSubmit").textContent = "确认上次换箱结果";
+  } else {
+    $("replaceBoxSummary").textContent = "输入旧箱号后显示产品种类和总件数。";
+    $("replaceBoxSubmit").textContent = "一键换箱号";
+  }
+  renderReplaceBoxShelfOptions();
+}
+
+async function syncReplaceBoxSource() {
+  const revision = ++replaceBoxSourceRevision;
+  const code = normalizeBoxCodeInput($("replaceBoxOldCode").value);
+  $("replaceBoxOldShelf").value = "";
+  $("replaceBoxSummary").textContent = code ? "正在查询旧箱库存…" : "输入旧箱号后显示产品种类和总件数。";
+  if (!code) return;
+  try {
+    const data = await request(`/inventory/replace-box/source?boxCode=${encodeURIComponent(code)}`);
+    if (revision !== replaceBoxSourceRevision) return;
+    $("replaceBoxOldShelf").value = formatShelfCodeWithName(data.shelfCode);
+    const targetShelf = $("replaceBoxNewShelf");
+    if (!targetShelf.value || normalizeShelfCodeInput(targetShelf.value) === replaceBoxDefaultShelf) {
+      targetShelf.value = formatShelfCodeWithName(data.shelfCode);
+    }
+    replaceBoxDefaultShelf = data.shelfCode;
+    $("replaceBoxSummary").textContent = `${data.productCount} 种产品，共 ${data.qty} 件，全部移入新箱。`;
+  } catch (error) {
+    if (revision !== replaceBoxSourceRevision) return;
+    $("replaceBoxSummary").textContent = error.message;
+  }
+}
+
+async function submitReplaceBoxForm() {
+  const fromBoxCode = normalizeBoxCodeInput($("replaceBoxOldCode").value);
+  const toBoxCode = normalizeBoxCodeInput($("replaceBoxNewCode").value);
+  const shelfCode = normalizeShelfCodeInput($("replaceBoxNewShelf").value);
+  if (!/^\d{1,6}$/.test(fromBoxCode) || !/^\d{1,6}$/.test(toBoxCode)) throw new Error("请输入1至6位数字箱号");
+  if (fromBoxCode === toBoxCode) throw new Error("新箱号不能与旧箱号相同");
+  let pending = replaceBoxPending;
+  if (pending) {
+    if (pending.payload.fromBoxCode !== fromBoxCode || pending.payload.toBoxCode !== toBoxCode
+      || (pending.payload.shelfCode || pending.summary.newShelfCode) !== shelfCode) {
+      resetReplaceBoxForm();
+      throw new Error("上次换箱结果尚未确认，请先重试确认上次结果，再进行新的换箱。");
+    }
+  } else {
+    const input = { fromBoxCode, toBoxCode, ...(shelfCode ? { shelfCode } : {}) };
+    const summary = await request("/inventory/replace-box/preview", { method: "POST", body: JSON.stringify(input) });
+    const confirmed = await openActionConfirmModal(
+      `将旧箱 ${summary.oldBoxCode}（货架 ${summary.oldShelfCode}）的全部 ${summary.productCount} 种产品、共 ${summary.qty} 件移至新箱 ${summary.newBoxCode}，货架为 ${summary.newShelfCode}。旧箱将保留为空箱。`,
+      "确认整箱换号", "确认换箱");
+    if (!confirmed) return;
+    pending = { payload: { ...input, snapshotToken: summary.snapshotToken, operationId: newYamatoRequestId() }, summary };
+    saveReplaceBoxPending(pending);
+  }
+  let result;
+  try {
+    result = await request("/inventory/replace-box", { method: "POST", body: JSON.stringify(pending.payload) });
+  } catch (error) {
+    // Keep the same operation ID after an uncertain response, including a page refresh.
+    if (error.status >= 400 && error.status < 500 && ![401, 408, 429].includes(error.status)) {
+      saveReplaceBoxPending(null);
+    } else {
+      $("replaceBoxSummary").textContent = "换箱结果尚未确认，请再次点击按钮重试，系统会避免重复搬移。";
+    }
+    throw error;
+  }
+  saveReplaceBoxPending(null);
+  resetReplaceBoxForm();
+  showToast(`已将 ${result.productCount} 种产品、共 ${result.qty} 件从 ${result.oldBoxCode} 移至 ${result.newBoxCode}（货架 ${result.newShelfCode}）`);
+  const refreshed = await Promise.allSettled([loadBoxes(), loadInventory(), loadAudit()]);
+  if (refreshed.some(item => item.status === "rejected")) {
+    showToast("换箱已完成，但部分列表刷新失败，请刷新页面查看最新数据。", true);
+  }
+}
+
 async function submitMoveBoxShelfForm() {
   const sourceBox = findEnabledBoxByCode($("moveShelfBoxCode").value);
   const sourceBoxId = Number(sourceBox?.id || 0);
@@ -15124,6 +15247,7 @@ async function initOverseasWarehousePage() {
 }
 
 function resetOverseasWarehouseMoveForms({ refreshOptions = true } = {}) {
+  resetReplaceBoxForm();
   $("moveBoxShelfForm")?.reset();
   $("moveShelfCurrentCode").value = "";
   $("moveShelfTargetCode").value = "";
@@ -19665,6 +19789,36 @@ function bindDelegates() {
       await Promise.all([loadShelves(), loadBoxes(), loadInventory(), loadAudit()]);
     } catch (error) {
       showToast(error.message, true);
+    }
+  });
+
+  $("replaceBoxOldCode").addEventListener("input", () => {
+    replaceBoxSourceRevision += 1;
+    clearTimeout(replaceBoxSourceTimer);
+    $("replaceBoxOldShelf").value = "";
+    $("replaceBoxSummary").textContent = "正在查询旧箱库存…";
+    replaceBoxSourceTimer = setTimeout(() => syncReplaceBoxSource(), 250);
+  });
+  $("replaceBoxOldCode").addEventListener("blur", event => {
+    const code = normalizeBoxCodeInput(event.target.value);
+    if (code) event.target.value = code;
+  });
+  $("replaceBoxForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    try {
+      await withBusyButton(getSubmitButton(form, event), "换箱处理中…", async () => {
+        const inputs = [...form.querySelectorAll("input:not([readonly])")];
+        inputs.forEach(input => { input.disabled = true; });
+        replaceBoxSourceRevision += 1;
+        clearTimeout(replaceBoxSourceTimer);
+        try { await submitReplaceBoxForm(); }
+        finally { inputs.forEach(input => { input.disabled = false; }); }
+      });
+    } catch (error) { showToast(error.message, true); }
+    finally {
+      const button = $("replaceBoxSubmit");
+      if (button.dataset.busy !== "1") button.textContent = replaceBoxPending ? "确认上次换箱结果" : "一键换箱号";
     }
   });
 

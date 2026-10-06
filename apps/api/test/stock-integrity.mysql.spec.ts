@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client';
 import { AuditService } from '../src/audit/audit.service';
 import { AuthService } from '../src/auth/auth.service';
 import { JwtStrategy } from '../src/auth/jwt.strategy';
+import { BoxReplacementService } from '../src/inventory/box-replacement.service';
 import { InventoryService } from '../src/inventory/inventory.service';
 import { BatchInboundService } from '../src/batch-inbound/batch-inbound.service';
 import { OrdersService } from '../src/orders/orders.service';
@@ -29,6 +30,7 @@ mysql('stock integrity against isolated MySQL', () => {
     }
     db = new PrismaClient({ datasources: { db: { url: testUrl } } });
     await db.$connect();
+    await db.pickingBatchGenerationLock.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
     const maxBox = await db.$queryRaw<Array<{ maxCode: bigint | null }>>`SELECT MAX(CAST(box_code AS UNSIGNED)) AS maxCode FROM boxes WHERE box_code REGEXP '^[0-9]{1,6}$'`;
     boxSequence = Math.max(100000, Number(maxBox[0]?.maxCode ?? 0));
     const operator = await db.user.create({ data: { username: name(), role: 'system_admin', passwordHash: await hash('TestOnly@123', 4), passwordChangedAt: new Date() } });
@@ -68,6 +70,122 @@ mysql('stock integrity against isolated MySQL', () => {
       bomSnapshot: [],
     } } }, include: { items: true } });
   }
+
+  function replacementService(audit = new AuditService(db as any)) {
+    return new BoxReplacementService(db as any, audit);
+  }
+  async function replacement(f: Awaited<ReturnType<typeof fixture>>, shelfCode?: string) {
+    const input = { fromBoxCode: f.box.boxCode, toBoxCode: String(++boxSequence), ...(shelfCode ? { shelfCode } : {}) };
+    const preview = await replacementService().preview(input);
+    return { ...input, snapshotToken: preview.snapshotToken, operationId: randomUUID() };
+  }
+  it('moves every product atomically, keeps totals and history, and replays concurrent retries once', async () => {
+    const f = await fixture();
+    const second = await db.masterProduct.create({ data: { productId: name(), productName: name(), stockQty: 7 } });
+    await db.masterProductBoxInventory.create({ data: { boxId: f.box.id, productId: second.productId, qty: 7 } });
+    const targetShelf = await db.shelf.create({ data: { shelfCode: name().toUpperCase() } });
+    const input = await replacement(f, targetShelf.shelfCode);
+    const results = await Promise.all([1, 2].map(() => replacementService().replace(input, operatorId)));
+    expect(results.map(row => row.idempotent).sort()).toEqual([false, true]);
+    expect(results[0]).toMatchObject({ qty: 17, productCount: 2, oldShelfCode: f.shelf.shelfCode, newShelfCode: targetShelf.shelfCode });
+    const target = await db.box.findUniqueOrThrow({ where: { boxCode: input.toBoxCode } });
+    expect(target.shelfId).toBe(targetShelf.id);
+    expect(await db.masterProductBoxInventory.count({ where: { boxId: f.box.id } })).toBe(0);
+    expect(await db.masterProductBoxInventory.findMany({ where: { boxId: target.id }, orderBy: { qty: 'asc' } })).toEqual([
+      expect.objectContaining({ productId: second.productId, qty: 7 }), expect.objectContaining({ productId: f.productId, qty: 10 }),
+    ]);
+    expect(await db.box.findUniqueOrThrow({ where: { id: f.box.id } })).toMatchObject({ boxCode: f.box.boxCode, status: 1 });
+    await expectBalance(f, 10);
+    expect((await db.masterProduct.findUniqueOrThrow({ where: { id: second.id } })).stockQty).toBe(7);
+    expect(await db.stockMovement.count({ where: { boxId: { in: [f.box.id, target.id] } } })).toBe(4);
+    expect(await db.operationAuditLog.count({ where: { entityType: 'box', entityId: { in: [f.box.id, target.id] }, remark: '整箱换号' } })).toBe(2);
+    await expect(replacementService().replace({ ...input, toBoxCode: String(++boxSequence) }, operatorId)).rejects.toThrow('重复请求');
+  });
+  it('rolls back target creation, stock and ledger when audit insertion fails', async () => {
+    const f = await fixture(); const input = await replacement(f);
+    const audit = new AuditService(db as any);
+    jest.spyOn(audit, 'create').mockRejectedValue(new Error('test audit failure'));
+    await expect(replacementService(audit).replace(input, operatorId)).rejects.toThrow('test audit failure');
+    expect(await db.box.findUnique({ where: { boxCode: input.toBoxCode } })).toBeNull();
+    expect(await db.masterProductBoxInventory.findUnique({ where: { boxId_productId: { boxId: f.box.id, productId: f.productId } } })).toMatchObject({ qty: 10 });
+    expect(await db.stockMovement.count({ where: { productId: f.productId } })).toBe(0);
+    await expectBalance(f, 10);
+  });
+  it('rejects stale confirmation after another product enters the source box', async () => {
+    const f = await fixture(); const input = await replacement(f);
+    const second = await db.masterProduct.create({ data: { productId: name(), productName: name(), stockQty: 2 } });
+    await db.masterProductBoxInventory.create({ data: { boxId: f.box.id, productId: second.productId, qty: 2 } });
+    await expect(replacementService().replace(input, operatorId)).rejects.toThrow('库存或货架已变化');
+    expect(await db.box.findUnique({ where: { boxCode: input.toBoxCode } })).toBeNull();
+    expect(await db.masterProductBoxInventory.count({ where: { boxId: f.box.id } })).toBe(2);
+  });
+  it('allows only one replacement when distinct new boxes race for the same source', async () => {
+    const f = await fixture(); const first = await replacement(f); const second = await replacement(f);
+    const results = await Promise.allSettled([first, second].map(input => replacementService().replace(input, operatorId)));
+    expect(results.filter(row => row.status === 'fulfilled')).toHaveLength(1);
+    expect(await db.box.count({ where: { boxCode: { in: [first.toBoxCode, second.toBoxCode] } } })).toBe(1);
+    await expectBalance(f, 10);
+  });
+  it('preserves stock when whole-box replacement races with an outbound adjustment', async () => {
+    const f = await fixture(); const input = await replacement(f);
+    const results = await Promise.allSettled([
+      replacementService().replace(input, operatorId),
+      inventory.manualAdjust({ productId: f.productId, boxCode: f.box.boxCode, qtyDelta: -3 }, operatorId),
+    ]);
+    expect(results.filter(row => row.status === 'fulfilled')).toHaveLength(1);
+    await expectBalance(f, results[1].status === 'fulfilled' ? 7 : 10);
+  });
+  it('blocks a target reserved by pending inbound and a source reserved by picking', async () => {
+    const f = await fixture(); const input = await replacement(f);
+    const order = await db.batchInboundOrder.create({ data: { orderNo: name(), status: 'waiting_upload',
+      expectedBoxCount: 1, rangeStart: Number(input.toBoxCode), rangeEnd: Number(input.toBoxCode),
+      collectedBoxCodes: [input.toBoxCode], createdBy: operatorId } });
+    await expect(replacementService().replace(input, operatorId)).rejects.toThrow(order.orderNo);
+    await db.batchInboundOrder.update({ where: { id: order.id }, data: { status: 'void' } });
+    const batch = await picking(f, 1);
+    await expect(replacementService().replace(input, operatorId)).rejects.toThrow(batch.batchNo);
+    await expectBalance(f, 10);
+  });
+  it('blocks active FBA and shelf stocktakes, including those created after preview', async () => {
+    const f = await fixture(); const input = await replacement(f);
+    const request = await fba(f, 1);
+    await expect(replacementService().replace(input, operatorId)).rejects.toThrow(request.requestNo);
+    await db.fbaReplenishment.update({ where: { id: request.id }, data: { status: 'deleted' } });
+    const task = await db.stocktakePlannerTask.create({ data: { taskNo: name(), plannedDate: new Date(), shelfId: f.shelf.id, createdBy: operatorId } });
+    await expect(replacementService().replace(input, operatorId)).rejects.toThrow(task.taskNo);
+    await expectBalance(f, 10);
+  });
+
+  it('rejects an existing disabled target, an empty source and a disabled destination shelf', async () => {
+    const f = await fixture(); const input = await replacement(f);
+    const target = await db.box.create({ data: { boxCode: input.toBoxCode, shelfId: f.shelf.id, status: 0 } });
+    await expect(replacementService().preview(input)).rejects.toThrow('新箱号已存在');
+    await db.box.delete({ where: { id: target.id } });
+    const empty = await fixture(0);
+    await expect(replacementService().preview({ fromBoxCode: empty.box.boxCode, toBoxCode: String(++boxSequence) })).rejects.toThrow('空箱');
+    const shelf = await db.shelf.create({ data: { shelfCode: name().toUpperCase(), status: 0 } });
+    await expect(replacementService().preview({ ...input, shelfCode: shelf.shelfCode })).rejects.toThrow('新货架不存在或未启用');
+    await expectBalance(f, 10);
+  });
+  it('blocks a frozen picking plan referencing the box even if its product stock is already missing', async () => {
+    const f = await fixture(); const input = await replacement(f);
+    const other = await fixture();
+    const batch = await picking({ ...f, productId: other.productId }, 1);
+    await expect(replacementService().replace(input, operatorId)).rejects.toThrow(batch.batchNo);
+    await expectBalance(f, 10);
+  });
+  it('rejects confirmation when the source shelf changes and defaults new boxes to the source shelf', async () => {
+    const f = await fixture(); const input = await replacement(f);
+    const shelf = await db.shelf.create({ data: { shelfCode: name().toUpperCase() } });
+    await db.box.update({ where: { id: f.box.id }, data: { shelfId: shelf.id } });
+    await expect(replacementService().replace(input, operatorId)).rejects.toThrow('库存或货架已变化');
+    const fresh = await replacement(f);
+    const result = await replacementService().replace(fresh, operatorId);
+    expect(result.newShelfCode).toBe(shelf.shelfCode);
+    const target = await db.box.findUniqueOrThrow({ where: { boxCode: fresh.toBoxCode } });
+    expect(target.shelfId).toBe(shelf.id);
+    await expectBalance(f, 10);
+  });
 
   it('keeps concurrent product-only adjustments and ledger consistent', async () => {
     const f = await fixture();

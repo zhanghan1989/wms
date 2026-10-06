@@ -7,6 +7,7 @@ export async function recordStockAdjustment(
   operatorId: bigint,
   items: Array<{ boxId: bigint; productId: string; qtyDelta: number; skuId?: bigint | null }>,
   reason: string,
+  operationKey?: string,
 ): Promise<{ id: bigint; adjustNo: string }> {
   const order = await tx.inventoryAdjustOrder.create({ data: {
     adjustNo: generateOrderNo('ADJ'), status: 'confirmed', createdBy: operatorId, remark: reason.slice(0, 255),
@@ -17,7 +18,7 @@ export async function recordStockAdjustment(
     } });
     await tx.stockMovement.create({ data: {
       ...item, movementType: 'adjust', refType: 'inventory_adjust_order', refId: order.id,
-      operatorId, operationKey: `adjust:${order.id}:${index}`,
+      operatorId, operationKey: index === 0 && operationKey ? operationKey : `adjust:${order.id}:${index}`,
     } });
   }
   return order;

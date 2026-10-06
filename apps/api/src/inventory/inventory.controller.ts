@@ -1,3 +1,5 @@
+import { BoxReplacementService } from './box-replacement.service';
+import { ReplaceBoxDto, ReplaceBoxPreviewDto } from './dto/replace-box.dto';
 import { dashboardFirstPages, dashboardPage } from './dashboard-pages';
 import {
   BadRequestException,
@@ -37,7 +39,7 @@ import { InventoryService } from './inventory.service';
 @Controller('inventory')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class InventoryController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(private readonly inventoryService: InventoryService, private readonly boxReplacement: BoxReplacementService) {}
 
   @Get('search')
   async search(@Query() query: SearchSkuDto): Promise<unknown[]> {
@@ -84,6 +86,22 @@ export class InventoryController {
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
     return this.inventoryService.manualAdjust(payload, user.id, req.requestId);
+  }
+
+  @Get('replace-box/source')
+  async replacementSource(@Query('boxCode') boxCode: string): Promise<unknown> {
+    return this.boxReplacement.source(boxCode);
+  }
+
+  @Post('replace-box/preview')
+  async previewReplaceBox(@Body() payload: ReplaceBoxPreviewDto): Promise<unknown> {
+    return this.boxReplacement.preview(payload);
+  }
+
+  @Post('replace-box')
+  async replaceBox(@Body() payload: ReplaceBoxDto, @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string }): Promise<unknown> {
+    return this.boxReplacement.replace(payload, user.id, req.requestId);
   }
 
   @Post('move-product-between-boxes')
