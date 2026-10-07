@@ -42,6 +42,36 @@ describe('dashboard pagination and snapshot refresh', () => {
     await expect(cache.get('key', false, async () => { throw new Error('failed'); })).rejects.toThrow('failed');
     await expect(cache.get('key', false, async () => 2)).resolves.toBe(2);
   });
+  it('serializes full calculations across periods while coalescing queued requests', async () => {
+    const cache = new DashboardCache();
+    let complete!: (value: unknown) => void;
+    const firstBuild = jest.fn(() => new Promise(resolve => { complete = resolve; }));
+    const secondBuild = jest.fn().mockResolvedValue({ days: 60 });
+    const first = cache.get('30', false, firstBuild);
+    const second = cache.get('60', false, secondBuild);
+    const repeated = cache.get('60', true, secondBuild);
+    await Promise.resolve();
+    expect(firstBuild).toHaveBeenCalledTimes(1);
+    expect(secondBuild).not.toHaveBeenCalled();
+    complete({ days: 30 });
+    await expect(first).resolves.toEqual({ days: 30 });
+    await expect(second).resolves.toEqual({ days: 60 });
+    await expect(repeated).resolves.toEqual({ days: 60 });
+    expect(secondBuild).toHaveBeenCalledTimes(1);
+  });
+  it('releases the calculation queue after a failure and still serves fresh cached data', async () => {
+    const cache = new DashboardCache();
+    await cache.get('cached', false, async () => 1);
+    let fail!: (error: Error) => void;
+    const first = cache.get('30', false, () => new Promise((_, reject) => { fail = reject; }));
+    const rejection = expect(first).rejects.toThrow('failed');
+    const second = cache.get('60', false, async () => 2);
+    await Promise.resolve();
+    await expect(cache.get('cached', false, async () => 3)).resolves.toBe(1);
+    fail(new Error('failed'));
+    await rejection;
+    await expect(second).resolves.toBe(2);
+  });
 });
 
 import { MasterProductsService } from '../src/master-products/master-products.service';
@@ -65,6 +95,8 @@ import { InventoryService } from '../src/inventory/inventory.service';
 describe('lightweight inventory summary', () => {
   it('excludes accessories and resolves legacy inbound SKUs without counting ambiguous mappings', async () => {
     const prisma = {
+      $queryRaw: jest.fn().mockImplementation((query: any) => Promise.resolve(query.sql.includes('SUM(stock_qty)')
+        ? [{ totalStock: 10n }] : [{ productId: 'P1', sku: 'legacy', rbSku: null, fbmSku: null, shop: '' }])),
       masterProduct: { findMany: jest.fn().mockResolvedValue([
         { productId: 'P1', productType: null, stockQty: 10 },
         { productId: 'A1', productType: '肩带配件', stockQty: 100 },
@@ -89,6 +121,55 @@ describe('lightweight inventory summary', () => {
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { createContext, runInContext } from 'vm';
+describe('dashboard refresh after inventory changes', () => {
+  function setup(active: boolean) {
+    const script = readFileSync(join(__dirname, '../public/app.js'), 'utf8');
+    const source = script.slice(script.indexOf('function loadOverviewDashboard(options'), script.indexOf('\nfunction formatFileSize'));
+    const state = { token: 'session', overviewDashboard: { old: true }, overviewDashboardGeneration: 0,
+      overviewNeedsRefresh: false, overviewDashboardCache: new Map(), overviewIncludesFba: false,
+      overviewFbaSnapshotId: '', overviewDashboardDays: 30 };
+    const request = jest.fn().mockResolvedValue({ fresh: true });
+    const render = jest.fn();
+    const context = createContext({ state, request, URLSearchParams, Date,
+      $: () => ({ classList: { contains: () => active } }),
+      overviewDashboardLoadPromise: null, overviewDashboardLoadKey: '',
+      renderOverviewDashboard: render, setTextById: jest.fn(), formatOverviewNumber: String });
+    runInContext(source, context);
+    return { state, request, render, context: context as any };
+  }
+
+  it('defers recalculation while hidden and requests fresh data when the dashboard is next opened', async () => {
+    const { state, request, context } = setup(false);
+    state.overviewDashboardCache.set('base::30', { data: { old: true }, expiresAt: Date.now() + 60_000 });
+    await context.refreshOverviewAfterInventoryChange();
+    expect(request).not.toHaveBeenCalled();
+    expect(state.overviewDashboardCache.size).toBe(0);
+    expect(state.overviewDashboard).toBeNull();
+    await context.loadOverviewDashboard();
+    expect(request).toHaveBeenCalledWith(expect.stringContaining('refresh=true'));
+    expect(state.overviewNeedsRefresh).toBe(false);
+    expect(state.overviewDashboard).toEqual({ fresh: true });
+  });
+
+  it('refreshes the visible dashboard and rejects pre-change responses from the cache and renderer', async () => {
+    const { state, request, render, context } = setup(true);
+    let complete!: (data: unknown) => void;
+    request.mockImplementation((url: string) => url.includes('/summary') ? Promise.resolve({})
+      : new Promise(resolve => { complete = resolve; }));
+    const oldRequest = context.loadOverviewDashboard({ forceRefresh: true });
+    const finishOld = complete;
+    const refreshed = context.refreshOverviewAfterInventoryChange();
+    const finishNew = complete;
+    finishNew({ fresh: true });
+    await refreshed;
+    finishOld({ old: true });
+    await oldRequest;
+    expect(state.overviewDashboard).toEqual({ fresh: true });
+    expect(state.overviewDashboardCache.get('base::30').data).toEqual({ fresh: true });
+    expect(render).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('dashboard scroll requests', () => {
   it('fetches only the next 30 rows and discards a response belonging to the previous view', async () => {
     const script = readFileSync(join(__dirname, '../public/app.js'), 'utf8');

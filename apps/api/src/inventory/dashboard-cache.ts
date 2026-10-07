@@ -1,5 +1,8 @@
 /** Bounded snapshots with one refresh per key; stale values remain readable for five minutes. */
 export class DashboardCache {
+  // Different periods also load the full catalog. Run one calculation at a time
+  // so switching periods or concurrent users cannot multiply the memory peak.
+  private buildQueue: Promise<void> = Promise.resolve();
   private readonly entries = new Map<string, { value?: unknown; expiresAt: number; staleUntil: number; pending?: Promise<unknown> }>();
   get(key: string, refresh: boolean, build: () => Promise<unknown>): Promise<unknown> {
     const now = Date.now();
@@ -18,7 +21,9 @@ export class DashboardCache {
       this.entries.set(key, entry);
     }
     const current = entry;
-    const pending = Promise.resolve().then(build).then(value => {
+    const calculation = this.buildQueue.then(build);
+    this.buildQueue = calculation.then(() => undefined, () => undefined);
+    const pending = calculation.then(value => {
       current.value = value;
       current.expiresAt = Date.now() + 60_000;
       current.staleUntil = Date.now() + 5 * 60_000;

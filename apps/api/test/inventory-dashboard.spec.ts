@@ -1,5 +1,6 @@
 import { classifyNoSalesInventoryAge } from '../src/inventory/inventory-dashboard';
 import { InventoryService } from '../src/inventory/inventory.service';
+import * as XLSX from 'xlsx';
 
 describe('inventory dashboard no-sales age classification', () => {
   const now = new Date('2026-07-22T12:00:00.000Z');
@@ -40,6 +41,19 @@ describe('inventory dashboard no-sales age classification', () => {
     );
   });
 
+  it('exports freshly calculated recommendations through the shared calculation queue', async () => {
+    const service = new InventoryService({} as never, {} as never);
+    const load = jest.spyOn(service, 'getOverviewDashboard').mockResolvedValue({
+      production: { includesFba: true, recommendations: [{ productId: 'P1', suggestedProductionQty: 42 }] },
+    });
+    const file = await service.buildProductionRecommendationsExcel({ days: 60, fbaSnapshotId: '10' });
+    expect(load).toHaveBeenCalledWith({ days: 60, fbaSnapshotId: '10', forceRefresh: true });
+    const workbook = XLSX.read(file.content, { type: 'buffer' });
+    expect(XLSX.utils.sheet_to_json(workbook.Sheets['工厂备货建议'])).toEqual([
+      expect.objectContaining({ '产品ID': 'P1', '建议生产量': 42 }),
+    ]);
+  });
+
   it('splits legacy Rakuten combo rows without expanding already-split rows again', async () => {
     const registeredAt = new Date();
     registeredAt.setDate(registeredAt.getDate() - 1);
@@ -53,11 +67,12 @@ describe('inventory dashboard no-sales age classification', () => {
       box: { count: jest.fn().mockResolvedValue(0) },
       batchInboundOrder: { count: jest.fn().mockResolvedValue(0) },
       masterProduct: {
-        count: jest.fn().mockResolvedValue(3),
+        count: jest.fn().mockResolvedValue(4),
         findMany: jest.fn().mockResolvedValue([
           { productId: 'P1', productName: '产品1', stockQty: 10, firstStockedAt: null },
           { productId: 'P2', productName: '产品2', stockQty: 0, firstStockedAt: null },
           { productId: 'P3', productName: '产品3', stockQty: 10, firstStockedAt: firstStockedAt100d },
+          { productId: 'P4', productName: '未使用产品', stockQty: 0, firstStockedAt: null },
         ]),
       },
       sku: {
@@ -65,6 +80,7 @@ describe('inventory dashboard no-sales age classification', () => {
           { id: 1n, sku: 'FBA-P1', fbmSku: 'CHANNEL-CONFLICT', rbSku: null, productId: 'P1' },
           { id: 2n, sku: 'CHANNEL-CONFLICT', fbmSku: 'FBM-P2', rbSku: null, productId: 'P2' },
           { id: 3n, sku: 'FBA-P3', fbmSku: 'FBM-P3', rbSku: null, productId: 'P3' },
+          { id: 4n, sku: 'UNUSED', fbmSku: null, rbSku: null, productId: 'P4' },
         ]),
       },
       fbaReplenishment: { findMany: jest.fn().mockResolvedValue([]) },
@@ -207,25 +223,38 @@ describe('inventory dashboard no-sales age classification', () => {
         }),
       },
     };
+    const amazonQuery = prisma.$queryRaw.getMockImplementation()!;
+    const allSkus = await prisma.sku.findMany();
+    prisma.sku.findMany.mockClear();
+    prisma.$queryRaw.mockImplementation((query: any) => {
+      if (query.sql.includes('FROM skus')) {
+        const codes = new Set(query.values);
+        return Promise.resolve(allSkus.filter((row: { sku: string; rbSku: string | null; fbmSku: string | null }) =>
+          [row.sku, row.rbSku, row.fbmSku].some(code => codes.has(String(code ?? '').trim())),
+        ));
+      }
+      return amazonQuery(query);
+    });
+    const allProducts = await prisma.masterProduct.findMany();
+    prisma.masterProduct.findMany.mockClear();
+    prisma.masterProduct.findMany.mockImplementation((query: any) => Promise.resolve(allProducts.filter((product: { productId: string; stockQty: number }) =>
+      query.where.stockQty ? product.stockQty !== 0 : query.where.productId.in.includes(product.productId),
+    )));
     const service = new InventoryService(prisma as never, {} as never);
 
     const dashboard = (await service.getOverviewDashboard()) as any;
     expect(dashboard.period.days).toBe(30);
+    expect(dashboard.health.activeProductCount).toBe(4);
+    expect(dashboard.health.totalStock).toBe(20);
     const groupedQueryCount = prisma.amazonFbaOrderItem.groupBy.mock.calls.length;
     await service.getOverviewDashboard();
     expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledTimes(groupedQueryCount);
     await service.getOverviewDashboard({ forceRefresh: true });
     expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledTimes(groupedQueryCount + 2);
 
-    expect(prisma.sku.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          status: 1,
-          productId: { not: null },
-          masterProduct: { is: { status: 1 } },
-        },
-      }),
-    );
+    expect(prisma.$queryRaw.mock.calls.some(([query]: any) =>
+      query.sql.includes('FROM skus') && query.sql.includes('p.status = 1'),
+    )).toBe(true);
 
     expect(dashboard.demand.systemOrderQty90d).toBe(10);
     expect(dashboard.demand.rakutenOrderedQty90d).toBe(7);

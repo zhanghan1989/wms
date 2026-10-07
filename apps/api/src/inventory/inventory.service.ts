@@ -1,3 +1,4 @@
+import { dashboardCodes, loadDashboardSkus, loadDashboardProducts } from './dashboard-catalog';
 import { DashboardCache } from './dashboard-cache';
 import { randomUUID } from 'crypto';
 import { recordStockAdjustment } from './stock-ledger';
@@ -1267,13 +1268,21 @@ export class InventoryService {
   }
 
   async getOverviewHealthSummary(): Promise<unknown> {
-    const [products, pending, transit, arranged] = await Promise.all([
-      this.prisma.masterProduct.findMany({ where: { status: 1 }, select: { productId: true, productType: true, stockQty: true } }),
+    const [stock, pending, transit, arranged] = await Promise.all([
+      this.prisma.$queryRaw<Array<{ totalStock: bigint | number }>>(Prisma.sql`
+        SELECT COALESCE(SUM(stock_qty), 0) AS totalStock FROM master_products
+        WHERE status = 1 AND TRIM(COALESCE(product_type, '')) <> '肩带配件'
+      `),
       this.prisma.fbaReplenishment.findMany({ where: { status: { in: ['pending_confirm', 'pending_outbound'] } },
         select: { status: true, actualQty: true, requestedQty: true, sku: { select: { productId: true } } } }),
       this.prisma.batchInboundItem.groupBy({ by: ['productId'], where: { status: 'pending', order: { status: 'waiting_inbound' } }, _sum: { qty: true } }),
       this.prisma.batchInboundItem.groupBy({ by: ['productId'], where: { status: 'pending', order: { status: 'waiting_upload' } }, _sum: { qty: true } }),
     ]);
+    const codes = dashboardCodes([...transit, ...arranged].map(row => row.productId));
+    const legacySkus = await loadDashboardSkus(this.prisma, codes);
+    const products = await loadDashboardProducts(this.prisma, dashboardCodes([
+      ...codes, ...legacySkus.map(row => row.productId), ...pending.map(row => row.sku?.productId),
+    ]), false);
     const locked = new Map<string, number>();
     pending.forEach(row => {
       const id = String(row.sku.productId || '').trim();
@@ -1281,16 +1290,9 @@ export class InventoryService {
       if (id && qty > 0) locked.set(id, (locked.get(id) ?? 0) + qty);
     });
     const eligible = new Set(products.filter(p => String(p.productType ?? '').trim() !== '肩带配件').map(p => p.productId));
-    const totalStock = products.reduce((sum, p) => sum + (eligible.has(p.productId) ? p.stockQty : 0), 0);
+    const totalStock = Number(stock[0]?.totalStock ?? 0);
     const lockedStock = [...locked].reduce((sum, [id, qty]) => sum + (eligible.has(id) ? qty : 0), 0);
     const activeIds = new Set(products.map(p => p.productId));
-    const legacyCodes = [...new Set([...transit, ...arranged].map(row => String(row.productId || '').trim()))]
-      .filter(code => code && !activeIds.has(code));
-    const legacySkus = legacyCodes.length ? await this.prisma.sku.findMany({
-      where: { status: 1, masterProduct: { is: { status: 1 } },
-        OR: [{ sku: { in: legacyCodes } }, { fbmSku: { in: legacyCodes } }, { rbSku: { in: legacyCodes } }] },
-      select: { productId: true, sku: true, fbmSku: true, rbSku: true },
-    }) : [];
     const matched = new Map<string, Set<string>>();
     legacySkus.forEach(row => {
       const id = String(row.productId || '').trim();
@@ -1337,7 +1339,7 @@ export class InventoryService {
   async buildProductionRecommendationsExcel(
     options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number } = {},
   ): Promise<{ fileName: string; content: Buffer }> {
-    const dashboard = (await getOverviewDashboardByProduct.call(this, options)) as {
+    const dashboard = (await this.getOverviewDashboard({ ...options, forceRefresh: true })) as {
       production?: {
         includesFba?: boolean;
         recommendations?: Array<{
@@ -2716,8 +2718,7 @@ async function getOverviewDashboardByProduct(
     boxCount,
     pendingInboundOrderCount,
     masterProductCount,
-    activeProducts,
-    activeSkus,
+    activeProductCount,
     pendingRows,
     inTransitRows,
     arrangedProductionRows,
@@ -2744,35 +2745,7 @@ async function getOverviewDashboardByProduct(
       },
     }),
     service.prisma.masterProduct.count(),
-    service.prisma.masterProduct.findMany({
-      where: { status: 1 },
-      select: {
-        productId: true,
-        productName: true,
-        stockQty: true,
-        firstStockedAt: true,
-        productType: true,
-      },
-    }),
-    service.prisma.sku.findMany({
-      where: {
-        status: 1,
-        productId: {
-          not: null,
-        },
-        masterProduct: {
-          is: { status: 1 },
-        },
-      },
-      select: {
-        id: true,
-        sku: true,
-        rbSku: true,
-        fbmSku: true,
-        shop: true,
-        productId: true,
-      },
-    }),
+    service.prisma.masterProduct.count({ where: { status: 1 } }),
     service.prisma.fbaReplenishment.findMany({
       where: {
         status: { in: ['pending_confirm', 'pending_outbound'] },
@@ -2951,6 +2924,59 @@ async function getOverviewDashboardByProduct(
     return demandDate && demandDate >= from90d ? [{ row, demandDate }] : [];
   });
   const amazonDemandRows = amazonDemandRows90d.filter(({ demandDate }) => demandDate >= fromPeriod);
+
+  const normalizeComboSku = (value: unknown): string => String(value ?? '').trim().toLowerCase();
+  const referencedComboSkus = Array.from(
+    new Set(
+      systemRakutenRows
+        .flatMap((row) => [
+          row.comboOrderSku,
+          row.setComponentSkuCode,
+          /^zh-/i.test(String(row.skuCode ?? '').trim()) ? row.skuCode : null,
+        ])
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean),
+    ),
+  );
+  const rakutenComboProducts = referencedComboSkus.length
+    ? await service.prisma.rakutenComboProduct.findMany({
+        where: { comboName: { in: referencedComboSkus } },
+        select: {
+          comboName: true,
+          items: {
+            orderBy: { position: 'asc' },
+            select: { productId: true },
+          },
+        },
+      })
+    : [];
+  const comboProductIdsBySku = new Map(
+    rakutenComboProducts.map((combo) => [
+      normalizeComboSku(combo.comboName),
+      combo.items.map((item) => String(item.productId ?? '').trim()).filter(Boolean),
+    ]),
+  );
+  const skuCodes = dashboardCodes([
+    ...systemRakutenRows.map(row => row.skuCode),
+    ...rawSystemAmazonRows.map(row => row.sku),
+    ...fbaApiOrderGroups.map(row => row.sellerSku),
+    ...productionFbaApiOrderGroups.map(row => row.sellerSku),
+    ...(latestFbaSalesSnapshot?.items ?? []).map(row => row.sellerSku),
+    ...inTransitRows.map(row => row.productId),
+    ...arrangedProductionRows.map(row => row.productId),
+  ]);
+  const activeSkus = await loadDashboardSkus(service.prisma, skuCodes);
+  const productIds = dashboardCodes([
+    ...activeSkus.map(row => row.productId),
+    ...systemRakutenRows.map(row => row.skuCode),
+    ...rawSystemAmazonRows.map(row => getJsonObjectString(row.rawPayload, '产品ID')),
+    ...rakutenComboProducts.flatMap(combo => combo.items.map(item => item.productId)),
+    ...pendingRows.map(row => row.sku?.productId),
+    ...inTransitRows.map(row => row.productId),
+    ...arrangedProductionRows.map(row => row.productId),
+    ...(latestFbaSalesSnapshot?.items ?? []).map(row => row.productId),
+  ]);
+  const activeProducts = await loadDashboardProducts(service.prisma, productIds);
 
   const productById = new Map<
     string,
@@ -3160,37 +3186,6 @@ async function getOverviewDashboardByProduct(
     });
   };
 
-  const normalizeComboSku = (value: unknown): string => String(value ?? '').trim().toLowerCase();
-  const referencedComboSkus = Array.from(
-    new Set(
-      systemRakutenRows
-        .flatMap((row) => [
-          row.comboOrderSku,
-          row.setComponentSkuCode,
-          /^zh-/i.test(String(row.skuCode ?? '').trim()) ? row.skuCode : null,
-        ])
-        .map((value) => String(value ?? '').trim())
-        .filter(Boolean),
-    ),
-  );
-  const rakutenComboProducts = referencedComboSkus.length
-    ? await service.prisma.rakutenComboProduct.findMany({
-        where: { comboName: { in: referencedComboSkus } },
-        select: {
-          comboName: true,
-          items: {
-            orderBy: { position: 'asc' },
-            select: { productId: true },
-          },
-        },
-      })
-    : [];
-  const comboProductIdsBySku = new Map(
-    rakutenComboProducts.map((combo) => [
-      normalizeComboSku(combo.comboName),
-      combo.items.map((item) => String(item.productId ?? '').trim()).filter(Boolean),
-    ]),
-  );
   systemRakutenRows.forEach((row) => {
     const skuCode = String(row.skuCode ?? '').trim();
     const directProductId = activeProductIdSet.has(skuCode)
@@ -3737,7 +3732,7 @@ async function getOverviewDashboardByProduct(
       pendingInboundOrderCount,
     },
     health: {
-      activeProductCount: activeProducts.length,
+      activeProductCount,
       totalStock,
       availableStock,
       lockedStock,

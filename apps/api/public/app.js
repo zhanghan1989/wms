@@ -380,6 +380,8 @@ const state = {
   overviewFbaSnapshotId: "",
   overviewDashboardDays: 30,
   overviewDashboardCache: new Map(),
+  overviewDashboardGeneration: 0,
+  overviewNeedsRefresh: false,
   dataBackups: [],
   dataBackupsVisibleCount: 0,
   pendingPrintLabel: null,
@@ -2191,7 +2193,10 @@ function loadOverviewDashboard(options = {}) {
   const requestedDays = Number(options.days ?? state.overviewDashboardDays ?? 30);
   const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
   const loadKey = `${includeFba ? "fba" : "base"}:${fbaSnapshotId}:${days}`;
-  const forceRefresh = options.forceRefresh === true;
+  const generation = state.overviewDashboardGeneration;
+  const requestKey = `${generation}:${loadKey}`;
+  const requestToken = state.token;
+  const forceRefresh = options.forceRefresh === true || state.overviewNeedsRefresh;
 
   state.overviewIncludesFba = includeFba;
   state.overviewFbaSnapshotId = fbaSnapshotId;
@@ -2204,7 +2209,7 @@ function loadOverviewDashboard(options = {}) {
     return Promise.resolve(cached.data);
   }
 
-  if (overviewDashboardLoadPromise && overviewDashboardLoadKey === loadKey) {
+  if (overviewDashboardLoadPromise && overviewDashboardLoadKey === requestKey) {
     return overviewDashboardLoadPromise;
   }
 
@@ -2216,7 +2221,7 @@ function loadOverviewDashboard(options = {}) {
   if (!state.overviewDashboard) {
     const requestToken = state.token;
     request("/inventory/dashboard/summary").then((summary) => {
-      if (state.token === requestToken && !state.overviewDashboard) {
+      if (state.token === requestToken && state.overviewDashboardGeneration === generation && !state.overviewDashboard) {
         setTextById("statUsers", formatOverviewNumber(summary.activeUserCount));
         setTextById("statShelves", formatOverviewNumber(summary.shelfCount));
         setTextById("statBoxes", formatOverviewNumber(summary.boxCount));
@@ -2234,6 +2239,8 @@ function loadOverviewDashboard(options = {}) {
   if (forceRefresh) query.set("refresh", "true");
   const endpoint = `/inventory/dashboard${query.toString() ? `?${query.toString()}` : ""}`;
   const loadPromise = request(endpoint).then((data) => {
+    if (state.overviewDashboardGeneration !== generation || state.token !== requestToken) return data;
+    state.overviewNeedsRefresh = false;
     state.overviewDashboardCache.set(loadKey, {
       data: data || null,
       expiresAt: Date.now() + 60 * 1000,
@@ -2246,7 +2253,7 @@ function loadOverviewDashboard(options = {}) {
     return data;
   });
   overviewDashboardLoadPromise = loadPromise;
-  overviewDashboardLoadKey = loadKey;
+  overviewDashboardLoadKey = requestKey;
   const clearLoad = () => {
     if (overviewDashboardLoadPromise === loadPromise) {
       overviewDashboardLoadPromise = null;
@@ -2255,6 +2262,17 @@ function loadOverviewDashboard(options = {}) {
   };
   loadPromise.then(clearLoad, clearLoad);
   return loadPromise;
+}
+
+function refreshOverviewAfterInventoryChange() {
+  state.overviewDashboardGeneration += 1;
+  state.overviewNeedsRefresh = true;
+  state.overviewDashboardCache.clear();
+  state.overviewDashboard = null;
+  if ($("overview")?.classList.contains("active")) {
+    return loadOverviewDashboard({ forceRefresh: true });
+  }
+  return Promise.resolve();
 }
 
 async function loadOverviewDashboardWithAutomaticFba() {
@@ -15435,6 +15453,8 @@ async function reloadAll() {
     state.overviewFbaSnapshotId = "";
     state.overviewDashboardDays = 30;
     state.overviewDashboardCache.clear();
+    state.overviewDashboardGeneration += 1;
+    state.overviewNeedsRefresh = false;
     renderUserSelectOptions();
     renderUserOptionsTable();
     renderFbaPendingBadge();
@@ -18578,7 +18598,7 @@ function bindForms() {
         showToast(
           `上传完成：共${result.totalRows}行，调整SKU${result.changedSkuCount}个，库存变更明细${result.changedItemCount}条`,
         );
-        await Promise.all([loadInventory(), loadAudit(), loadOverviewDashboard({ forceRefresh: true })]);
+        await Promise.all([loadInventory(), loadAudit(), refreshOverviewAfterInventoryChange()]);
       });
     } catch (error) {
       showToast(error.message, true);
