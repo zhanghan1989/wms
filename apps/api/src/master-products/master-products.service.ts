@@ -281,6 +281,7 @@ export class MasterProductsService {
   private xiyaSyncStarting = false;
   private masterProductSyncRunning = false;
   private masterProductExportRunning = false;
+  private overseasStockExportRunning = false;
   private masterProductExportFilterCache: {
     expiresAt: number;
     value: Record<MasterProductExportFilterKey, string[]>;
@@ -702,36 +703,102 @@ export class MasterProductsService {
   }
 
   async exportOverseasWarehouseStockExcel(): Promise<MasterProductExportFile> {
-    const rows = await this.prisma.masterProduct.findMany({
-      where: {
-        stockQty: { gt: 0 },
-      },
-      select: {
-        productId: true,
-        productName: true,
-        stockQty: true,
-      },
-      orderBy: [{ stockQty: 'desc' }, { productId: 'asc' }, { id: 'asc' }],
-    });
+    if (this.overseasStockExportRunning) {
+      throw new ConflictException('海外仓库存下载正在生成，请稍后重试');
+    }
+    this.overseasStockExportRunning = true;
+    try {
+      const rows: Array<{ id: bigint; productId: string; productName: string | null; stockQty: number }> = [];
+      // Cache scalar totals rather than repeated box records for shared BOM materials.
+      const stockByProductId = new Map<string, number>();
+      let lastId: bigint | undefined;
+      while (true) {
+        const products = await this.prisma.masterProduct.findMany({
+          where: {
+            AND: [
+              { OR: [{ productType: null }, { productType: { notIn: [...SHOULDER_STRAP_MATERIAL_TYPES] } }] },
+              { OR: [{ stockQty: { gt: 0 } }, { productType: '肩带' }] },
+              ...(lastId === undefined ? [] : [{ id: { gt: lastId } }]),
+            ],
+          },
+          select: { id: true, productId: true, productName: true, productType: true, stockQty: true },
+          orderBy: { id: 'asc' },
+          take: MASTER_PRODUCT_EXPORT_BATCH_SIZE,
+        });
+        if (!products.length) break;
 
-    const worksheet = XLSX.utils.json_to_sheet(
-      rows.map((row) => ({
-        产品ID: row.productId,
-        产品名称: row.productName ?? '',
-        在库数: Number(row.stockQty ?? 0),
-      })),
-    );
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, '海外仓库存');
-    const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
-    const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
-    const fileName = `海外仓库存下载-${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}.xlsx`;
+        const shoulderIds = products
+          .filter((product) => String(product.productType ?? '').trim() === '肩带')
+          .map((product) => product.productId);
+        const shoulders = shoulderIds.length ? await this.prisma.masterProduct.findMany({
+          where: { productId: { in: shoulderIds } },
+          select: {
+            productId: true,
+            bomComponents: {
+              select: {
+                componentProductId: true,
+                quantity: true,
+                componentProduct: { select: { status: true, productType: true } },
+              },
+            },
+          },
+        }) : [];
+        const missingStockIds = [...new Set(shoulders.flatMap((product) => [
+          product.productId,
+          ...product.bomComponents.map((item) => item.componentProductId),
+        ]))].filter((id) => !stockByProductId.has(id));
+        for (let offset = 0; offset < missingStockIds.length; offset += MASTER_PRODUCT_EXPORT_BATCH_SIZE) {
+          const ids = missingStockIds.slice(offset, offset + MASTER_PRODUCT_EXPORT_BATCH_SIZE);
+          const totals = await this.prisma.masterProductBoxInventory.groupBy({
+            by: ['productId'],
+            where: { productId: { in: ids }, qty: { gt: 0 } },
+            _sum: { qty: true },
+          });
+          ids.forEach((id) => stockByProductId.set(id, 0));
+          totals.forEach((total) => stockByProductId.set(total.productId, Number(total._sum.qty ?? 0)));
+        }
+        const shoulderStock = new Map(shoulders.map((product) => [
+          product.productId,
+          calculateProductStockAvailability({
+            productType: '肩带',
+            stockQty: stockByProductId.get(product.productId) ?? 0,
+            bomComponents: product.bomComponents.map((item) => ({
+              quantity: item.quantity,
+              componentProduct: {
+                ...item.componentProduct,
+                stockQty: stockByProductId.get(item.componentProductId) ?? 0,
+              },
+            })),
+          }).fulfillableStock,
+        ]));
+        for (const product of products) {
+          if (SHOULDER_STRAP_MATERIAL_TYPES.some((type) => type === String(product.productType ?? '').trim())) continue;
+          const stockQty = String(product.productType ?? '').trim() === '肩带'
+            ? shoulderStock.get(product.productId) ?? 0
+            : Number(product.stockQty ?? 0);
+          if (stockQty > 0) rows.push({ id: product.id, productId: product.productId, productName: product.productName, stockQty });
+        }
+        lastId = products[products.length - 1].id;
+        if (products.length < MASTER_PRODUCT_EXPORT_BATCH_SIZE) break;
+      }
+      rows.sort((a, b) => b.stockQty - a.stockQty
+        || (a.productId < b.productId ? -1 : a.productId > b.productId ? 1 : 0)
+        || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-    return {
-      fileName,
-      content,
-      totalRows: rows.length,
-    };
+      const worksheet = XLSX.utils.aoa_to_sheet([['产品ID', '产品名称', '在库数']]);
+      for (let offset = 0; offset < rows.length; offset += MASTER_PRODUCT_EXPORT_BATCH_SIZE) {
+        XLSX.utils.sheet_add_aoa(worksheet, rows.slice(offset, offset + MASTER_PRODUCT_EXPORT_BATCH_SIZE)
+          .map((row) => [row.productId, row.productName ?? '', row.stockQty]), { origin: -1 });
+      }
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, '海外仓库存');
+      const content = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+      const parts = getZonedDateParts(new Date(), APP_TIMEZONE);
+      const fileName = `海外仓库存下载-${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}.xlsx`;
+      return { fileName, content, totalRows: rows.length };
+    } finally {
+      this.overseasStockExportRunning = false;
+    }
   }
 
   async getUploadTemplate(): Promise<{ fileName: string; content: Buffer }> {
