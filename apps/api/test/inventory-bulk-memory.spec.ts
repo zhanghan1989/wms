@@ -49,6 +49,14 @@ describe('bulk inventory bounded memory', () => {
     expect(audit.createMany).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects an import if a box is locked after the initial lookup', async () => {
+    const { service, tx } = fixture(1);
+    tx.box.findMany.mockResolvedValueOnce([{ id: 1n, boxCode: '001', status: 1, shelf: { status: 1 } }])
+      .mockResolvedValueOnce([{ id: 1n, boxCode: '001', status: 2, shelf: { status: 1 } }]);
+    await expect(service.importBulkUpdateExcel(Buffer.alloc(0), 'stock.xlsx', 7n)).rejects.toThrow('已锁定');
+    expect(tx.masterProductBoxInventory.upsert).not.toHaveBeenCalled();
+  });
+
   it('reads the first worksheet without parsing unrelated worksheet cells', () => {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['箱号', '产品ID', '数量'], ['001', 'P1', 5]]), '库存');

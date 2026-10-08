@@ -2754,6 +2754,7 @@ export class OrdersService {
           const updated = await tx.masterProductBoxInventory.updateMany({
             where: {
               boxId: allocation.boxId,
+              box: { status: 1 },
               productId: component.componentProductId,
               qty: { gte: allocation.qty },
             },
@@ -2794,6 +2795,7 @@ export class OrdersService {
           const updated = await tx.masterProductBoxInventory.updateMany({
             where: {
               boxId: allocation.boxId,
+              box: { status: 1 },
               productId: item.productId,
               qty: { gte: allocation.qty },
             },

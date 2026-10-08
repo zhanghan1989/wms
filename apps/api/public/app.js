@@ -8564,9 +8564,6 @@ function upsertEnabledBox(box) {
 }
 
 async function resolveEnabledBoxCodeLive(raw) {
-  const local = resolveEnabledBoxCode(raw);
-  if (local) return local;
-
   const normalized = normalizeBoxCodeInput(raw);
   if (!normalized) return "";
 
@@ -8575,7 +8572,10 @@ async function resolveEnabledBoxCodeLive(raw) {
     const matched = (Array.isArray(boxes) ? boxes : []).find(
       (box) => normalizeBoxCodeInput(box?.boxCode) === normalized && Number(box?.status) === 1,
     );
-    if (!matched?.boxCode) return "";
+    if (!matched?.boxCode) {
+      state.boxes = state.boxes.filter(box => normalizeBoxCodeInput(box?.boxCode) !== normalized);
+      return "";
+    }
     upsertEnabledBox(matched);
     return matched.boxCode;
   } catch {
@@ -8736,7 +8736,7 @@ async function refreshMoveProductOldBoxOptionsByProduct() {
   }
 
   const rows = (await request(`/inventory/master-product-boxes?productId=${encodeURIComponent(productId)}`))
-    .filter((row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode)
+    .filter((row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode && Number(row.box.status) === 1)
     .sort((a, b) => String(a.box.boxCode).localeCompare(String(b.box.boxCode), "en", { numeric: true,
       }),
     );
@@ -15187,10 +15187,11 @@ async function submitReplaceBoxForm() {
 }
 
 async function submitMoveBoxShelfForm() {
+  await loadBoxes();
   const sourceBox = findEnabledBoxByCode($("moveShelfBoxCode").value);
   const sourceBoxId = Number(sourceBox?.id || 0);
   if (!Number.isInteger(sourceBoxId) || sourceBoxId <= 0) {
-    throw new Error("请选择箱号");
+    throw new Error("箱号不存在、已禁用或已锁定，不能移动");
   }
 
   const targetShelfCode = resolveEnabledShelfCode(
@@ -15224,13 +15225,14 @@ async function submitMoveBoxShelfForm() {
 }
 
 async function submitMoveBoxCodeForm() {
+  await loadBoxes();
   const productId = resolveMoveProductProductId();
   if (!productId) {
     throw new Error("请选择产品ID");
   }
 
   const rows = (await request(`/inventory/master-product-boxes?productId=${encodeURIComponent(productId)}`)).filter(
-    (row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode,
+    (row) => Number(row?.qty ?? 0) > 0 && row?.box?.boxCode && Number(row.box.status) === 1,
   );
   if (!rows.length) {
     throw new Error("该主商品当前没有可移动库存");
@@ -15251,7 +15253,7 @@ async function submitMoveBoxCodeForm() {
 
   const newBoxCode = resolveEnabledBoxCode($("moveProductNewBoxCode").value);
   if (!newBoxCode) {
-    throw new Error("请选择新箱号");
+    throw new Error("新箱号不存在、已禁用或已锁定，不能使用");
   }
   if (String(newBoxCode).toUpperCase() === String(oldRow.box.boxCode).toUpperCase()) {
     throw new Error("新箱号不能与旧箱号相同");
@@ -21048,6 +21050,9 @@ function bindDelegates() {
         });
         state.overviewDashboardCache.clear();
         await Promise.all([reloadBoxesAfterManageMutation(), loadBoxes(), loadEmptyBoxes()]);
+        resetOverseasWarehouseMoveForms({ refreshOptions: false });
+        await refreshMoveProductOldBoxOptionsByProduct();
+        resetReplaceBoxForm();
         showToast(locked ? "箱号已解锁" : "箱号已锁定，不可使用且不计入统计");
       } catch (error) { showToast(error.message); }
       finally { boxLockButton.disabled = false; }

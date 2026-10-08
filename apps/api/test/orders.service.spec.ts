@@ -647,7 +647,7 @@ describe('OrdersService', () => {
     await service.confirmOverseasPickingBatch('42', { items: [] }, 9n);
 
     expect(boxUpdate).toHaveBeenCalledWith({
-      where: { boxId: 7n, productId: 'BODY-7', qty: { gte: 6 } },
+      where: { boxId: 7n, productId: 'BODY-7', qty: { gte: 6 }, box: { status: 1 } },
       data: { qty: { decrement: 6 } },
     });
     expect(stockMovementCreate).toHaveBeenCalledWith({
@@ -728,14 +728,14 @@ describe('OrdersService', () => {
     await service.confirmOverseasPickingBatch('43', { items: [] }, 9n);
 
     expect(boxUpdate).toHaveBeenCalledWith({
-      where: { boxId: 4n, productId: 'STRAP-2', qty: { gte: 1 } },
+      where: { boxId: 4n, productId: 'STRAP-2', qty: { gte: 1 }, box: { status: 1 } },
       data: { qty: { decrement: 1 } },
     });
     expect(stockMovementCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ productId: 'STRAP-2', qtyDelta: -1 }),
     });
     expect(boxUpdate).toHaveBeenCalledWith({
-      where: { boxId: 8n, productId: 'BODY-8', qty: { gte: 2 } },
+      where: { boxId: 8n, productId: 'BODY-8', qty: { gte: 2 }, box: { status: 1 } },
       data: { qty: { decrement: 2 } },
     });
     expect(stockMovementCreate).toHaveBeenCalledWith({

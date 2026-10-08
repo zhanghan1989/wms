@@ -1,3 +1,4 @@
+import { assertBoxUsable } from '../common/box-availability';
 import { randomUUID } from 'crypto';
 import { recordStockAdjustment } from '../inventory/stock-ledger';
 import { assertStockAvailable } from '../inventory/stock-availability';
@@ -1509,8 +1510,8 @@ export class MasterProductsService {
           },
         }),
         tx.box.findUnique({
-          where: { status: { not: 2 }, boxCode },
-          select: {
+          where: { boxCode },
+          select: { status: true,
             id: true,
             boxCode: true,
             shelf: {
@@ -1529,6 +1530,7 @@ export class MasterProductsService {
       if (!box) {
         throw new NotFoundException('未找到箱号信息');
       }
+      assertBoxUsable(box);
 
       const currentInventory = await tx.masterProductBoxInventory.findUnique({
         where: {
@@ -1647,8 +1649,8 @@ export class MasterProductsService {
           },
         }),
         tx.box.findUnique({
-          where: { status: { not: 2 }, boxCode },
-          select: {
+          where: { boxCode },
+          select: { status: true,
             id: true,
             boxCode: true,
             shelf: {
@@ -1678,6 +1680,7 @@ export class MasterProductsService {
       if (!box) {
         throw new NotFoundException('未找到箱号信息');
       }
+      assertBoxUsable(box);
 
       const boxInventory = await tx.masterProductBoxInventory.findUnique({
         where: {
@@ -1876,8 +1879,8 @@ export class MasterProductsService {
           },
         }),
         tx.box.findUnique({
-          where: { status: { not: 2 }, boxCode },
-          select: {
+          where: { boxCode },
+          select: { status: true,
             id: true,
             boxCode: true,
           },
@@ -1896,6 +1899,7 @@ export class MasterProductsService {
       if (!box) {
         throw new NotFoundException('未找到箱号信息');
       }
+      assertBoxUsable(box);
 
       const currentInventory = await tx.masterProductBoxInventory.findUnique({
         where: {
@@ -2004,8 +2008,8 @@ export class MasterProductsService {
           },
         }),
         tx.box.findUnique({
-          where: { status: { not: 2 }, boxCode },
-          select: {
+          where: { boxCode },
+          select: { status: true,
             id: true,
             boxCode: true,
           },
@@ -2018,6 +2022,7 @@ export class MasterProductsService {
       if (!box) {
         throw new NotFoundException('未找到箱号信息');
       }
+      assertBoxUsable(box);
 
       const currentInventory = await tx.masterProductBoxInventory.findUnique({
         where: {

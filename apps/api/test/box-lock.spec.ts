@@ -16,7 +16,7 @@ describe('locked boxes', () => {
     const before = { id: 7n, boxCode: '007', shelfId: 1n, status: status === 2 ? 1 : 2 };
     const tx: any = {
       $queryRaw: jest.fn().mockResolvedValue([]),
-      box: { update: jest.fn().mockResolvedValue({ ...before, status }) },
+      box: { findUnique: jest.fn().mockResolvedValue(before), update: jest.fn().mockResolvedValue({ ...before, status }) },
       masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([{ productId: 'P1' }]), aggregate: jest.fn().mockResolvedValue({ _sum: { qty: status === 2 ? 3 : 8 } }) },
       masterProduct: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -29,13 +29,45 @@ describe('locked boxes', () => {
   });
 
   it('rejects stock changes in locked boxes', async () => {
-    const tx: any = { box: { findUnique: jest.fn().mockResolvedValue({ status: 2 }) }, masterProductBoxInventory: { upsert: jest.fn() } };
+    const tx: any = { $queryRaw: jest.fn().mockResolvedValue([]), box: { findUnique: jest.fn().mockResolvedValue({ status: 2 }) }, masterProductBoxInventory: { upsert: jest.fn() } };
     await expect(changeBoxStock(tx, 7n, 'P1', 2)).rejects.toThrow('箱号已锁定');
     expect(tx.masterProductBoxInventory.upsert).not.toHaveBeenCalled();
   });
 
   it('rejects equivalent-code lookup of a locked box', async () => {
-    const tx: any = { box: { findFirst: jest.fn().mockResolvedValue({ id: 7n, boxCode: '007', status: 2 }) } };
+    const tx: any = { $queryRaw: jest.fn().mockResolvedValue([]), box: { findFirst: jest.fn().mockResolvedValue({ id: 7n, boxCode: '007', status: 2 }) } };
     await expect(InventoryService.prototype.findBoxByEquivalentCode.call({} as any, tx, '007')).rejects.toThrow('箱号 007 已锁定');
   });
+
+  it.each(['source', 'target'])('rejects moving products when the %s box is locked', async (lockedSide) => {
+    const tx: any = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      masterProduct: { findUnique: jest.fn().mockResolvedValue({ productId: 'P1' }) },
+      box: { findUnique: jest.fn().mockImplementation(({ where }) => Promise.resolve({
+        id: where.boxCode === '007' ? 7n : 8n, boxCode: where.boxCode,
+        status: (where.boxCode === '007' ? 'source' : 'target') === lockedSide ? 2 : 1,
+      })) },
+      masterProductBoxInventory: { delete: jest.fn(), upsert: jest.fn() },
+    };
+    const context: any = { prisma: { $transaction: (work: any) => work(tx) } };
+    await expect(InventoryService.prototype.moveProductBetweenBoxes.call(context,
+      { productId: 'P1', fromBoxCode: '007', toBoxCode: '008' }, 1n)).rejects.toThrow('已锁定');
+    expect(tx.masterProductBoxInventory.delete).not.toHaveBeenCalled();
+    expect(tx.masterProductBoxInventory.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale move-to-shelf request after the box is locked', async () => {
+    const before = { id: 7n, boxCode: '007', shelfId: 1n, status: 1 };
+    const tx: any = { $queryRaw: jest.fn().mockResolvedValue([]), box: { findUnique: jest.fn().mockResolvedValue({ ...before, status: 2 }), update: jest.fn() }, masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([]) } };
+    const prisma: any = { box: { findUnique: jest.fn().mockResolvedValue(before) },
+      shelf: { findUnique: jest.fn().mockResolvedValue({ id: 1n }) }, $transaction: (work: any) => work(tx) };
+    await expect(new BoxesService(prisma, {} as any).update('7', { shelfId: 1 }, 1n)).rejects.toThrow('已锁定');
+    expect(tx.box.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects even a zero stock change when the box is locked', async () => {
+    const tx: any = { $queryRaw: jest.fn().mockResolvedValue([]), box: { findUnique: jest.fn().mockResolvedValue({ status: 2, boxCode: '007' }) } };
+    await expect(changeBoxStock(tx, 7n, 'P1', 0)).rejects.toThrow('已锁定');
+  });
+
 });

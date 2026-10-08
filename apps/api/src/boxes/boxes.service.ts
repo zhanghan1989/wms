@@ -1,3 +1,4 @@
+import { assertBoxUsable } from '../common/box-availability';
 import {
   BadRequestException,
   ConflictException,
@@ -462,7 +463,7 @@ export class BoxesService {
     const box = await this.prisma.box.findUnique({ where: { id } });
     if (!box) throw new NotFoundException('箱号不存在');
 
-    if (box.status === 2 && (payload.boxCode || payload.shelfId)) {
+    if (box.status === 2 && (payload.boxCode || payload.shelfId || (payload.status !== undefined && payload.status !== 1 && payload.status !== 2))) {
       throw new BadRequestException("箱号已锁定，请先解锁后再修改");
     }
 
@@ -507,6 +508,9 @@ export class BoxesService {
         where: { boxId: id }, select: { productId: true },
       });
       await lockStockProducts(tx, stockRows.map(row => row.productId));
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM boxes WHERE id = ${id} FOR UPDATE`);
+      const currentBox = await tx.box.findUnique({ where: { id } });
+      if (payload.shelfId || payload.boxCode) assertBoxUsable(currentBox);
       const updated = await tx.box.update({
         where: { id },
         data: {
@@ -559,6 +563,7 @@ export class BoxesService {
     const id = parseId(idParam, 'boxId');
     const box = await this.prisma.box.findUnique({ where: { id } });
     if (!box) throw new NotFoundException('箱号不存在');
+    if (box.status === 2) assertBoxUsable(box);
     const check = await this.getDeleteCheck(idParam);
     if (!check.canDelete) {
       throw new BadRequestException(`箱号无法删除：${check.reasons.join('；')}`);

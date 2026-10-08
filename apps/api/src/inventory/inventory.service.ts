@@ -1,3 +1,4 @@
+import { assertBoxUsable, assertBoxUsableById, assertBoxesUsableByIds } from '../common/box-availability';
 import { dashboardCodes, loadDashboardSkus, loadDashboardProducts } from './dashboard-catalog';
 import { DashboardCache } from './dashboard-cache';
 import { randomUUID } from 'crypto';
@@ -569,6 +570,8 @@ export class InventoryService {
 
     return stockTransaction(this.prisma, async (tx) => {
       await lockStockProducts(tx, [productId]);
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM boxes
+        WHERE box_code IN (${Prisma.join([fromBoxCode, toBoxCode])}) ORDER BY id FOR UPDATE`);
       const [product, sourceBox, targetBox] = await Promise.all([
         tx.masterProduct.findUnique({
           where: { productId },
@@ -580,18 +583,20 @@ export class InventoryService {
           },
         }),
         tx.box.findUnique({
-          where: { status: { not: 2 }, boxCode: fromBoxCode },
-          select: { id: true, boxCode: true },
+          where: { boxCode: fromBoxCode },
+          select: { status: true, id: true, boxCode: true },
         }),
         tx.box.findUnique({
-          where: { status: { not: 2 }, boxCode: toBoxCode },
-          select: { id: true, boxCode: true },
+          where: { boxCode: toBoxCode },
+          select: { status: true, id: true, boxCode: true },
         }),
       ]);
 
       if (!product) throw new NotFoundException('主商品不存在');
       if (!sourceBox) throw new NotFoundException('原箱号不存在');
+      assertBoxUsable(sourceBox);
       if (!targetBox) throw new NotFoundException('目标箱号不存在');
+      assertBoxUsable(targetBox);
 
       await this.ensureBoxesNotUnderActiveFba(tx, [sourceBox.id, targetBox.id], '移箱');
 
@@ -1794,6 +1799,7 @@ export class InventoryService {
     });
 
     await lockStockProducts(tx, inventoryPairs.map((item) => item.productId));
+    for (const boxId of new Set(inventoryPairs.map(item => item.boxId))) await assertBoxUsableById(tx, boxId);
     const currentInventoryRows = await findMasterProductBoxInventoryByPairs(tx, inventoryPairs, {
       select: {
         boxId: true,
@@ -1974,10 +1980,11 @@ export class InventoryService {
   ): Promise<{ id: bigint; boxCode: string }> {
     if (payload.boxId) {
       const box = await tx.box.findUnique({
-        where: { status: { not: 2 }, id: BigInt(payload.boxId) },
-        select: { id: true, boxCode: true },
+        where: { id: BigInt(payload.boxId) },
+        select: { status: true, id: true, boxCode: true },
       });
       if (!box) throw new NotFoundException('箱号不存在');
+      assertBoxUsable(box);
       return box;
     }
     const boxCode = normalizeBoxCode(payload.boxCode);
@@ -2183,7 +2190,7 @@ export class InventoryService {
     });
 
     if (!box) return null;
-    if (box.status === 2) throw new ConflictException(`箱号 ${box.boxCode} 已锁定，不能使用`);
+    assertBoxUsable(box);
 
     return {
       id: box.id,
@@ -2490,6 +2497,7 @@ async function importBulkUpdateExcelByProduct(
         };
       }
 
+      await assertBoxesUsableByIds(tx, adjustItems.map(item => item.boxId));
       for (const item of adjustItems) {
         if (item.qtyDelta < 0) await assertStockAvailable(tx, item.productId, item.boxId, -item.qtyDelta);
         if (item.afterQty <= 0) {
@@ -4571,6 +4579,7 @@ async function confirmFbaReplenishmentByProduct(
     }
 
     await lockStockProducts(tx, [productId]);
+    await assertBoxUsableById(tx, row.box.id);
     const [currentQty, reservedRows] = await Promise.all([
       findMasterProductBoxInventoryQty(tx, row.box.id, productId),
       tx.fbaReplenishment.findMany({

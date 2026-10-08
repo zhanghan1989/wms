@@ -1,3 +1,4 @@
+import { assertBoxUsable } from '../common/box-availability';
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
@@ -29,7 +30,7 @@ export class BoxReplacementService {
     if (!matches.length) throw new NotFoundException('旧箱号不存在');
     if (matches.length !== 1) throw new ConflictException('旧箱号存在重复编码，请先处理箱号数据');
     const box = matches[0];
-    if (box.status !== 1) throw new ConflictException('旧箱号未启用');
+    assertBoxUsable(box);
     const rows = await db.masterProductBoxInventory.findMany({
       where: { boxId: box.id }, orderBy: { productId: 'asc' },
     });
@@ -45,7 +46,8 @@ export class BoxReplacementService {
     const input = this.normalize(payload);
     const source = await this.loadSource(db, input.fromBoxCode);
     const target = await db.box.findFirst({ where: { boxCode: { in: buildEquivalentBoxCodes(input.toBoxCode) } } });
-    if (target) throw new ConflictException('新箱号已存在（包括空箱和禁用箱），请使用不存在的箱号');
+    if (target?.status === 2) assertBoxUsable(target);
+    if (target) throw new ConflictException('新箱号已存在（包括空箱、禁用箱和锁定箱），请使用不存在的箱号');
     const shelf = input.shelfCode
       ? await db.shelf.findUnique({ where: { shelfCode: input.shelfCode } }) : source.box.shelf;
     if (!shelf || shelf.status !== 1) throw new ConflictException('新货架不存在或未启用');

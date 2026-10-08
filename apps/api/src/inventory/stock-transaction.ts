@@ -1,3 +1,4 @@
+import { assertBoxUsableById } from '../common/box-availability';
 import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -40,9 +41,8 @@ export async function changeBoxStock(
   tx: Prisma.TransactionClient, boxId: bigint, productId: string, delta: number,
 ): Promise<void> {
   if (!Number.isSafeInteger(delta)) throw new ConflictException('库存变更数量必须是整数');
+  await assertBoxUsableById(tx, boxId);
   if (delta === 0) return;
-  const box = await tx.box.findUnique({ where: { id: boxId }, select: { status: true } });
-  if (box?.status === 2) throw new ConflictException('箱号已锁定，不能变更库存');
   if (delta > 0) {
     await tx.masterProductBoxInventory.upsert({
       where: { boxId_productId: { boxId, productId } },
@@ -51,7 +51,7 @@ export async function changeBoxStock(
     });
   } else {
     const result = await tx.masterProductBoxInventory.updateMany({
-      where: { boxId, productId, qty: { gte: -delta } },
+      where: { boxId, productId, qty: { gte: -delta }, box: { status: 1 } },
       data: { qty: { decrement: -delta } },
     });
     if (result.count !== 1) throw new ConflictException(`产品 ${productId} 库存不足或已变化，请刷新后重试`);
