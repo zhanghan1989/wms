@@ -17,7 +17,8 @@ describe('locked boxes', () => {
     const tx: any = {
       $queryRaw: jest.fn().mockResolvedValue([]),
       box: { findUnique: jest.fn().mockResolvedValue(before), update: jest.fn().mockResolvedValue({ ...before, status }) },
-      masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([{ productId: 'P1' }]), aggregate: jest.fn().mockResolvedValue({ _sum: { qty: status === 2 ? 3 : 8 } }) },
+      itemCode: { findFirst: jest.fn().mockResolvedValue(null) },
+      masterProductBoxInventory: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([{ productId: 'P1' }]), aggregate: jest.fn().mockResolvedValue({ _sum: { qty: status === 2 ? 3 : 8 } }) },
       masterProduct: { update: jest.fn().mockResolvedValue({}) },
     };
     const prisma: any = { box: { findUnique: jest.fn().mockResolvedValue(before) }, $transaction: (work: any) => work(tx) };
@@ -68,6 +69,31 @@ describe('locked boxes', () => {
   it('rejects even a zero stock change when the box is locked', async () => {
     const tx: any = { $queryRaw: jest.fn().mockResolvedValue([]), box: { findUnique: jest.fn().mockResolvedValue({ status: 2, boxCode: '007' }) } };
     await expect(changeBoxStock(tx, 7n, 'P1', 0)).rejects.toThrow('已锁定');
+  });
+
+  it.each(['product', 'itemCode'])('rejects locking a box with %s stock', async (kind) => {
+    const box = { id: 7n, boxCode: '007', shelfId: 1n, status: 1 };
+    const tx: any = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      box: { findUnique: jest.fn().mockResolvedValue(box), update: jest.fn() },
+      masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([]), findFirst: jest.fn().mockResolvedValue(kind === 'product' ? { id: 1n } : null) },
+      itemCode: { findFirst: jest.fn().mockResolvedValue(kind === 'itemCode' ? { id: 1n } : null) },
+    };
+    const prisma: any = { box: { findUnique: jest.fn().mockResolvedValue(box) }, $transaction: (work: any) => work(tx) };
+    await expect(new BoxesService(prisma, {} as any).update('7', { status: 2 }, 1n)).rejects.toThrow('只有空箱才能锁定');
+    expect(tx.box.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stale disable request when another request has locked the box', async () => {
+    const before = { id: 7n, boxCode: '007', shelfId: 1n, status: 1 };
+    const tx: any = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      box: { findUnique: jest.fn().mockResolvedValue({ ...before, status: 2 }), update: jest.fn() },
+      masterProductBoxInventory: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const prisma: any = { box: { findUnique: jest.fn().mockResolvedValue(before) }, $transaction: (work: any) => work(tx) };
+    await expect(new BoxesService(prisma, {} as any).update('7', { status: 0 }, 1n)).rejects.toThrow('请先解锁');
+    expect(tx.box.update).not.toHaveBeenCalled();
   });
 
 });

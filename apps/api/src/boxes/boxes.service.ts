@@ -141,6 +141,8 @@ export class BoxesService {
       activeFbaCounts,
       pendingBatchInboundCounts,
       lockingOrders,
+      nonEmptyInventoryCounts,
+      activeItemCodeCounts,
     ] = await Promise.all([
       this.prisma.masterProductBoxInventory.groupBy({
         by: ['boxId'],
@@ -219,6 +221,12 @@ export class BoxesService {
         },
         orderBy: { id: 'desc' },
       }),
+      this.prisma.masterProductBoxInventory.groupBy({
+        by: ['boxId'], where: { boxId: { in: boxIds }, qty: { not: 0 } }, _count: { _all: true },
+      }),
+      this.prisma.itemCode.groupBy({
+        by: ['boxId'], where: { boxId: { in: boxIds }, status: { in: ['in_stock', 'frozen'] } }, _count: { _all: true },
+      }),
     ]);
 
     const masterInventorySumByBoxId = new Map(
@@ -264,6 +272,11 @@ export class BoxesService {
         }
       }
     }
+
+    const nonEmptyBoxIds = new Set([
+      ...nonEmptyInventoryCounts.map(row => row.boxId.toString()),
+      ...activeItemCodeCounts.map(row => row.boxId.toString()),
+    ]);
 
     return boxes.map((box) => {
       const boxId = box.id.toString();
@@ -344,6 +357,8 @@ export class BoxesService {
       return {
         ...box,
         totalStock,
+        canLock: box.status === 1 && !nonEmptyBoxIds.has(boxId),
+        lockBlockedReason: nonEmptyBoxIds.has(boxId) ? "箱内仍有库存，只有空箱才能锁定" : null,
         canDelete,
         canArchiveRelease,
         deleteBlockedReasons,
@@ -510,7 +525,18 @@ export class BoxesService {
       await lockStockProducts(tx, stockRows.map(row => row.productId));
       await tx.$queryRaw(Prisma.sql`SELECT id FROM boxes WHERE id = ${id} FOR UPDATE`);
       const currentBox = await tx.box.findUnique({ where: { id } });
+      if (!currentBox) throw new NotFoundException('箱号不存在');
+      if (currentBox.status === 2 && payload.status !== undefined && payload.status !== 1 && payload.status !== 2) {
+        throw new BadRequestException('箱号已锁定，请先解锁后再修改');
+      }
       if (payload.shelfId || payload.boxCode) assertBoxUsable(currentBox);
+      if (payload.status === 2 && currentBox?.status !== 2) {
+        const [inventory, itemCode] = await Promise.all([
+          tx.masterProductBoxInventory.findFirst({ where: { boxId: id, qty: { not: 0 } }, select: { id: true } }),
+          tx.itemCode.findFirst({ where: { boxId: id, status: { in: ['in_stock', 'frozen'] } }, select: { id: true } }),
+        ]);
+        if (inventory || itemCode) throw new BadRequestException('箱内仍有库存，只有空箱才能锁定');
+      }
       const updated = await tx.box.update({
         where: { id },
         data: {
@@ -520,7 +546,7 @@ export class BoxesService {
         },
       });
 
-      if (box.status === 2 || updated.status === 2) {
+      if (currentBox.status === 2 || updated.status === 2) {
         for (const productId of new Set(stockRows.map(row => row.productId))) {
           const total = await tx.masterProductBoxInventory.aggregate({
             where: { productId, box: { status: { not: 2 } } }, _sum: { qty: true },
@@ -528,23 +554,23 @@ export class BoxesService {
           await tx.masterProduct.update({ where: { productId }, data: { stockQty: Number(total._sum.qty ?? 0) } });
         }
       }
-      const eventType = updated.status === 2 || box.status === 2
+      const eventType = updated.status === 2 || currentBox.status === 2
         ? AuditEventType.BOX_FIELD_UPDATED
-        : this.resolveEventType(box.boxCode, updated.boxCode, updated.status);
+        : this.resolveEventType(currentBox.boxCode, updated.boxCode, updated.status);
       await createBoxAudit({
         auditService: this.auditService,
         tx,
         entityId: updated.id,
         action: AuditAction.update,
         eventType,
-        beforeData: box as unknown as Record<string, unknown>,
+        beforeData: currentBox as unknown as Record<string, unknown>,
         afterData: updated as unknown as Record<string, unknown>,
         operatorId,
         requestId,
-        remark: updated.status === 2 ? "锁定箱号" : box.status === 2 ? "解锁箱号" : undefined,
+        remark: updated.status === 2 ? "锁定箱号" : currentBox.status === 2 ? "解锁箱号" : undefined,
       });
       return updated;
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   }
 
   async getDeleteCheck(idParam: string): Promise<{ canDelete: boolean; reasons: string[] }> {

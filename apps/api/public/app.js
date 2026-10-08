@@ -8209,7 +8209,8 @@ function renderBoxesManageTable() {
         </td>
         <td>
           <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>
-          <button class="tiny-btn secondary" data-action="toggleBoxLock" data-id="${escapeHtml(item.id)}" data-status="${Number(item.status)}">${Number(item.status) === 2 ? "解锁箱号" : "锁定箱号"}</button>
+          <button class="tiny-btn secondary" data-action="toggleBoxLock" data-id="${escapeHtml(item.id)}" data-status="${Number(item.status)}" ${Number(item.status) !== 2 && !item.canLock ? `disabled title="${escapeHtml(item.lockBlockedReason || "只有空箱才能锁定")}"` : ""}>${Number(item.status) === 2 ? "解锁箱号" : "锁定箱号"}</button>
+          ${Number(item.status) !== 2 && item.lockBlockedReason ? `<span class="muted">${escapeHtml(item.lockBlockedReason)}</span>` : ""}
           ${Number(item.status) === 2 ? '<span class="muted">已锁定（不计入统计）</span>' : archiveReleaseAction}
         </td>
       </tr>
@@ -21043,19 +21044,35 @@ function bindDelegates() {
     const boxLockButton = event.target.closest("button[data-action='toggleBoxLock']");
     if (boxLockButton) {
       const locked = Number(boxLockButton.dataset.status) === 2;
+      const nextStatus = locked ? 1 : 2;
       boxLockButton.disabled = true;
       try {
         await request(`/boxes/${encodeURIComponent(boxLockButton.dataset.id)}`, {
-          method: "PUT", body: JSON.stringify({ status: locked ? 1 : 2 }),
+          method: "PUT", body: JSON.stringify({ status: nextStatus }),
         });
-        state.overviewDashboardCache.clear();
-        await Promise.all([reloadBoxesAfterManageMutation(), loadBoxes(), loadEmptyBoxes()]);
+      } catch (error) {
+        showToast(error.message);
+        boxLockButton.disabled = false;
+        return;
+      }
+      // Preserve the confirmed result even if a subsequent list refresh fails.
+      boxLockButton.dataset.status = String(nextStatus);
+      boxLockButton.textContent = locked ? "锁定箱号" : "解锁箱号";
+      state.boxManageRows = (state.boxManageRows || []).map(box =>
+        String(box.id) === String(boxLockButton.dataset.id) ? { ...box, status: nextStatus, canLock: locked } : box);
+      if (!locked) state.boxes = state.boxes.filter(box => String(box.id) !== String(boxLockButton.dataset.id));
+      state.overviewDashboardCache.clear();
+      const successMessage = locked ? "箱号已解锁" : "箱号已锁定，不可使用且不计入统计";
+      try {
+        const refreshed = await Promise.allSettled([reloadBoxesAfterManageMutation(), loadBoxes(), loadEmptyBoxes()]);
         resetOverseasWarehouseMoveForms({ refreshOptions: false });
-        await refreshMoveProductOldBoxOptionsByProduct();
         resetReplaceBoxForm();
-        showToast(locked ? "箱号已解锁" : "箱号已锁定，不可使用且不计入统计");
-      } catch (error) { showToast(error.message); }
-      finally { boxLockButton.disabled = false; }
+        await refreshMoveProductOldBoxOptionsByProduct();
+        const refreshFailed = refreshed.some(result => result.status === "rejected");
+        showToast(refreshFailed ? `${successMessage}，但部分列表刷新失败，请刷新页面` : successMessage, refreshFailed);
+      } catch {
+        showToast(`${successMessage}，但部分列表刷新失败，请刷新页面`, true);
+      } finally { boxLockButton.disabled = false; }
       return;
     }
     const boxManageClose = event.target.closest("button[data-action='closeBoxManageModal']");
