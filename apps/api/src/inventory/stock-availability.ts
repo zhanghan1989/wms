@@ -66,7 +66,7 @@ export async function availableStock(
     pickingPlanSnapshot: true, bomSnapshot: true } as const;
   const [rows, fba, directPicking, componentRefs] = await Promise.all([
     tx.masterProductBoxInventory.findMany({
-      where: { productId: { in: ids } },
+      where: { productId: { in: ids }, box: { status: { not: 2 } } },
       include: { box: { include: { shelf: { select: { shelfCode: true } } } } },
       orderBy: [{ qty: 'asc' }, { boxId: 'asc' }],
     }),

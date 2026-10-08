@@ -212,6 +212,7 @@ export class InboundService {
         const totals = await tx.masterProductBoxInventory.groupBy({
           by: ['productId'],
           where: {
+            box: { status: { not: 2 } },
             productId: { in: productIds },
             qty: { gt: 0 },
           },

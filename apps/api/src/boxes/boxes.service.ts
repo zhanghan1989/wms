@@ -11,6 +11,7 @@ import { parseId } from '../common/utils';
 import { AuditEventType, AuditEventTypeValue } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBoxDto } from './dto/create-box.dto';
+import { lockStockProducts } from '../inventory/stock-transaction';
 import { UpdateBoxDto } from './dto/update-box.dto';
 
 interface BoxAuditArgs {
@@ -89,7 +90,7 @@ export class BoxesService {
     const page = this.normalizePage(pageParam);
     const pageSize = this.normalizePageSize(pageSizeParam, 30);
     const skip = (page - 1) * pageSize;
-    const where = { status: 1 };
+    const where = { status: { in: [1, 2] } };
     const [boxes, total] = await Promise.all([
       this.prisma.box.findMany({
         where,
@@ -461,6 +462,10 @@ export class BoxesService {
     const box = await this.prisma.box.findUnique({ where: { id } });
     if (!box) throw new NotFoundException('箱号不存在');
 
+    if (box.status === 2 && (payload.boxCode || payload.shelfId)) {
+      throw new BadRequestException("箱号已锁定，请先解锁后再修改");
+    }
+
     if (payload.boxCode) {
       const nextBoxCode = normalizeBoxCode(payload.boxCode);
       if (!nextBoxCode) {
@@ -498,6 +503,10 @@ export class BoxesService {
       if (payload.shelfId && BigInt(payload.shelfId) !== box.shelfId) {
         await this.ensureBoxNotUnderActiveFba(id, box.boxCode, '移箱');
       }
+      const stockRows = await tx.masterProductBoxInventory.findMany({
+        where: { boxId: id }, select: { productId: true },
+      });
+      await lockStockProducts(tx, stockRows.map(row => row.productId));
       const updated = await tx.box.update({
         where: { id },
         data: {
@@ -507,7 +516,17 @@ export class BoxesService {
         },
       });
 
-      const eventType = this.resolveEventType(box.boxCode, updated.boxCode, updated.status);
+      if (box.status === 2 || updated.status === 2) {
+        for (const productId of new Set(stockRows.map(row => row.productId))) {
+          const total = await tx.masterProductBoxInventory.aggregate({
+            where: { productId, box: { status: { not: 2 } } }, _sum: { qty: true },
+          });
+          await tx.masterProduct.update({ where: { productId }, data: { stockQty: Number(total._sum.qty ?? 0) } });
+        }
+      }
+      const eventType = updated.status === 2 || box.status === 2
+        ? AuditEventType.BOX_FIELD_UPDATED
+        : this.resolveEventType(box.boxCode, updated.boxCode, updated.status);
       await createBoxAudit({
         auditService: this.auditService,
         tx,
@@ -518,6 +537,7 @@ export class BoxesService {
         afterData: updated as unknown as Record<string, unknown>,
         operatorId,
         requestId,
+        remark: updated.status === 2 ? "锁定箱号" : box.status === 2 ? "解锁箱号" : undefined,
       });
       return updated;
     });

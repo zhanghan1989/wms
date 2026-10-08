@@ -187,9 +187,9 @@ export class ShelvesService {
     if (!shelf) throw new NotFoundException('货架不存在');
 
     const [boxCount, sampleBoxes] = await Promise.all([
-      this.prisma.box.count({ where: { shelfId: id, status: 1 } }),
+      this.prisma.box.count({ where: { shelfId: id, status: { in: [1, 2] } } }),
       this.prisma.box.findMany({
-        where: { shelfId: id, status: 1 },
+        where: { shelfId: id, status: { in: [1, 2] } },
         select: { boxCode: true },
         orderBy: { boxCode: 'asc' },
         take: 3,

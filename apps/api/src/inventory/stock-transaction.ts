@@ -41,6 +41,8 @@ export async function changeBoxStock(
 ): Promise<void> {
   if (!Number.isSafeInteger(delta)) throw new ConflictException('库存变更数量必须是整数');
   if (delta === 0) return;
+  const box = await tx.box.findUnique({ where: { id: boxId }, select: { status: true } });
+  if (box?.status === 2) throw new ConflictException('箱号已锁定，不能变更库存');
   if (delta > 0) {
     await tx.masterProductBoxInventory.upsert({
       where: { boxId_productId: { boxId, productId } },

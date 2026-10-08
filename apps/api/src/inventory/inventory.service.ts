@@ -357,6 +357,7 @@ export class InventoryService {
   async boxSkus(boxId: number): Promise<unknown[]> {
     return this.prisma.masterProductBoxInventory.findMany({
       where: {
+        box: { status: { not: 2 } },
         boxId: BigInt(boxId),
         qty: { gt: 0 },
       },
@@ -579,11 +580,11 @@ export class InventoryService {
           },
         }),
         tx.box.findUnique({
-          where: { boxCode: fromBoxCode },
+          where: { status: { not: 2 }, boxCode: fromBoxCode },
           select: { id: true, boxCode: true },
         }),
         tx.box.findUnique({
-          where: { boxCode: toBoxCode },
+          where: { status: { not: 2 }, boxCode: toBoxCode },
           select: { id: true, boxCode: true },
         }),
       ]);
@@ -1695,7 +1696,7 @@ export class InventoryService {
 
     const [boxes, skus] = await Promise.all([
       tx.box.findMany({
-        where: { id: { in: uniqueBoxIds } },
+        where: { id: { in: uniqueBoxIds }, status: { not: 2 } },
         select: { id: true },
       }),
       tx.sku.findMany({
@@ -1973,7 +1974,7 @@ export class InventoryService {
   ): Promise<{ id: bigint; boxCode: string }> {
     if (payload.boxId) {
       const box = await tx.box.findUnique({
-        where: { id: BigInt(payload.boxId) },
+        where: { status: { not: 2 }, id: BigInt(payload.boxId) },
         select: { id: true, boxCode: true },
       });
       if (!box) throw new NotFoundException('箱号不存在');
@@ -2182,6 +2183,7 @@ export class InventoryService {
     });
 
     if (!box) return null;
+    if (box.status === 2) throw new ConflictException(`箱号 ${box.boxCode} 已锁定，不能使用`);
 
     return {
       id: box.id,
@@ -2202,6 +2204,7 @@ export class InventoryService {
   ): Promise<number> {
     const aggregate = await tx.masterProductBoxInventory.aggregate({
       where: {
+        box: { status: { not: 2 } },
         productId,
       },
       _sum: {
@@ -2242,6 +2245,7 @@ export class InventoryService {
     const aggregates = await tx.masterProductBoxInventory.groupBy({
       by: ['productId'],
       where: {
+        box: { status: { not: 2 } },
         productId: {
           in: uniqueProductIds,
         },
@@ -2736,7 +2740,7 @@ async function getOverviewDashboardByProduct(
       },
     }),
     service.prisma.shelf.count(),
-    service.prisma.box.count(),
+    service.prisma.box.count({ where: { status: 1 } }),
     service.prisma.batchInboundOrder.count({
       where: {
         status: {
@@ -3917,6 +3921,7 @@ async function getMasterProductBoxRowsByProductId(
 
   return this.prisma.masterProductBoxInventory.findMany({
     where: {
+      box: { status: { not: 2 } },
       productId,
       qty: { gt: 0 },
     },

@@ -769,6 +769,7 @@ model Box {
   id                       BigInt                      @id @default(autoincrement()) @db.UnsignedBigInt
   boxCode                  String                      @unique @map("box_code") @db.VarChar(128)
   shelfId                  BigInt                      @map("shelf_id") @db.UnsignedBigInt
+  /// 0: disabled / archived, 1: active, 2: locked (excluded from usage and statistics)
   status                   Int                         @default(1) @db.TinyInt
   createdAt                DateTime                    @default(now()) @map("created_at")
   updatedAt                DateTime                    @updatedAt @map("updated_at")

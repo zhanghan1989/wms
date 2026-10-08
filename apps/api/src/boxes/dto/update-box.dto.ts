@@ -14,7 +14,8 @@ export class UpdateBoxDto {
   shelfId?: number;
 
   @IsOptional()
+  @IsInt()
   @Min(0)
-  @Max(1)
+  @Max(2)
   status?: number;
 }

@@ -379,7 +379,7 @@ export class MasterProductsService {
           length: true,
           width: true,
           stockQty: true,
-          boxInventories: { select: { qty: true } },
+          boxInventories: { where: { box: { status: { not: 2 } } }, select: { qty: true } },
           updatedAt: true,
           bomComponents: {
             orderBy: [{ position: 'asc' }, { id: 'asc' }],
@@ -392,7 +392,7 @@ export class MasterProductsService {
                   stockQty: true,
                   status: true,
                   productType: true,
-                  boxInventories: { select: { qty: true } },
+                  boxInventories: { where: { box: { status: { not: 2 } } }, select: { qty: true } },
                 },
               },
             },
@@ -441,7 +441,7 @@ export class MasterProductsService {
         productName: true,
         productType: true,
         stockQty: true,
-        boxInventories: { select: { qty: true } },
+        boxInventories: { where: { box: { status: { not: 2 } } }, select: { qty: true } },
         updatedAt: true,
       },
       orderBy: [{ productType: 'desc' }, { productId: 'asc' }],
@@ -751,7 +751,8 @@ export class MasterProductsService {
           const ids = missingStockIds.slice(offset, offset + MASTER_PRODUCT_EXPORT_BATCH_SIZE);
           const totals = await this.prisma.masterProductBoxInventory.groupBy({
             by: ['productId'],
-            where: { productId: { in: ids }, qty: { gt: 0 } },
+            where: {
+              box: { status: { not: 2 } }, productId: { in: ids }, qty: { gt: 0 } },
             _sum: { qty: true },
           });
           ids.forEach((id) => stockByProductId.set(id, 0));
@@ -1034,6 +1035,7 @@ export class MasterProductsService {
       }),
       this.prisma.masterProductBoxInventory.findMany({
         where: {
+          box: { status: { not: 2 } },
           productId,
           qty: { gt: 0 },
         },
@@ -1057,6 +1059,7 @@ export class MasterProductsService {
     const relatedBoxInventoryRows = relatedBoxIds.length
       ? await this.prisma.masterProductBoxInventory.findMany({
           where: {
+            box: { status: { not: 2 } },
             boxId: { in: relatedBoxIds },
             qty: { gt: 0 },
           },
@@ -1194,7 +1197,7 @@ export class MasterProductsService {
       orderBy: [{ position: 'asc' }, { id: 'asc' }],
       include: {
         componentProduct: {
-          include: { boxInventories: { select: { qty: true } } },
+          include: { boxInventories: { where: { box: { status: { not: 2 } } }, select: { qty: true } } },
         },
       },
     });
@@ -1506,7 +1509,7 @@ export class MasterProductsService {
           },
         }),
         tx.box.findUnique({
-          where: { boxCode },
+          where: { status: { not: 2 }, boxCode },
           select: {
             id: true,
             boxCode: true,
@@ -1644,7 +1647,7 @@ export class MasterProductsService {
           },
         }),
         tx.box.findUnique({
-          where: { boxCode },
+          where: { status: { not: 2 }, boxCode },
           select: {
             id: true,
             boxCode: true,
@@ -1873,7 +1876,7 @@ export class MasterProductsService {
           },
         }),
         tx.box.findUnique({
-          where: { boxCode },
+          where: { status: { not: 2 }, boxCode },
           select: {
             id: true,
             boxCode: true,
@@ -2001,7 +2004,7 @@ export class MasterProductsService {
           },
         }),
         tx.box.findUnique({
-          where: { boxCode },
+          where: { status: { not: 2 }, boxCode },
           select: {
             id: true,
             boxCode: true,
@@ -2095,6 +2098,7 @@ export class MasterProductsService {
   ): Promise<number> {
     const aggregate = await tx.masterProductBoxInventory.aggregate({
       where: {
+        box: { status: { not: 2 } },
         productId,
         qty: { gt: 0 },
       },

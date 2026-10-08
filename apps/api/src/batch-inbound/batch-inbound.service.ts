@@ -1017,10 +1017,12 @@ export class BatchInboundService {
       select: {
         id: true,
         boxCode: true,
+        status: true,
       },
       orderBy: { id: 'asc' },
     });
     if (existing) {
+      if (existing.status === 2) throw new UnprocessableEntityException(`箱号 ${existing.boxCode} 已锁定，不能入库`);
       return existing;
     }
 
@@ -1220,6 +1222,7 @@ export class BatchInboundService {
   private async recalculateMasterProductStockQty(tx: Tx, productId: string): Promise<number> {
     const aggregate = await tx.masterProductBoxInventory.aggregate({
       where: {
+        box: { status: { not: 2 } },
         productId,
         qty: { gt: 0 },
       },

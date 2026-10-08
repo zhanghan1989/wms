@@ -2820,7 +2820,8 @@ export class OrdersService {
 
       for (const productId of Array.from(new Set([...productIds, ...componentProductIds]))) {
         const totalQty = await tx.masterProductBoxInventory.aggregate({
-          where: { productId },
+          where: {
+            box: { status: { not: 2 } }, productId },
           _sum: { qty: true },
         });
         await tx.masterProduct.updateMany({

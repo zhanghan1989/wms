@@ -8209,7 +8209,8 @@ function renderBoxesManageTable() {
         </td>
         <td>
           <button class="tiny-btn secondary" data-action="queryBoxManage" data-id="${escapeHtml(item.id)}" data-code="${escapeHtml(item.boxCode || "")}">查询</button>
-          ${archiveReleaseAction}
+          <button class="tiny-btn secondary" data-action="toggleBoxLock" data-id="${escapeHtml(item.id)}" data-status="${Number(item.status)}">${Number(item.status) === 2 ? "解锁箱号" : "锁定箱号"}</button>
+          ${Number(item.status) === 2 ? '<span class="muted">已锁定（不计入统计）</span>' : archiveReleaseAction}
         </td>
       </tr>
     `;
@@ -21035,6 +21036,21 @@ function bindDelegates() {
     const shelfManageClose = event.target.closest("button[data-action='closeShelfManageModal']");
     if (shelfManageClose) {
       closeModal("shelfManageModal");
+      return;
+    }
+    const boxLockButton = event.target.closest("button[data-action='toggleBoxLock']");
+    if (boxLockButton) {
+      const locked = Number(boxLockButton.dataset.status) === 2;
+      boxLockButton.disabled = true;
+      try {
+        await request(`/boxes/${encodeURIComponent(boxLockButton.dataset.id)}`, {
+          method: "PUT", body: JSON.stringify({ status: locked ? 1 : 2 }),
+        });
+        state.overviewDashboardCache.clear();
+        await Promise.all([reloadBoxesAfterManageMutation(), loadBoxes(), loadEmptyBoxes()]);
+        showToast(locked ? "箱号已解锁" : "箱号已锁定，不可使用且不计入统计");
+      } catch (error) { showToast(error.message); }
+      finally { boxLockButton.disabled = false; }
       return;
     }
     const boxManageClose = event.target.closest("button[data-action='closeBoxManageModal']");
