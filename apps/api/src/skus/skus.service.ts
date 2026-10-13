@@ -88,19 +88,19 @@ const AMAZON_RB_LINK_STOCK_TEMPLATES = [
     key: 'arc',
     fileName: 'amazon-rb-stock-template-arc.xlsm',
     outputName: 'amazon-rb-stock-arc',
-    shopNamePatterns: [/^arc(?:diary)?(?:店|store)?$/i],
+    shopNamePatterns: [/^arc(?:diary)?(?:店|store)?$/i, /^arcdiary亚马逊日本(?:站)?$/i],
   },
   {
     key: 'store-1',
     fileName: 'amazon-rb-stock-template-store-1.xlsm',
     outputName: 'amazon-rb-stock-store-1',
-    shopNamePatterns: [/^(?:1|一)(?:号)?店(?:dgaz)?(?:store)?$/i, /^store1$/i],
+    shopNamePatterns: [/^(?:1|一)(?:号)?店(?:dgaz)?(?:store)?$/i, /^store1$/i, /^dgaz亚马逊日本(?:站)?$/i],
   },
   {
     key: 'store-2',
     fileName: 'amazon-rb-stock-template-store-2.xlsm',
     outputName: 'amazon-rb-stock-store-2',
-    shopNamePatterns: [/^(?:2|二)(?:号)?店(?:dgaz)?(?:store)?$/i, /^store2$/i],
+    shopNamePatterns: [/^(?:2|二)(?:号)?店(?:dgaz)?(?:store)?$/i, /^store2$/i, /^dgazstore亚马逊日本(?:站)?$/i],
   },
 ] as const;
 const AMAZON_RB_LINK_STOCK_TEMPLATE_SHEET_PATH = 'xl/worksheets/sheet5.xml';

@@ -40,24 +40,29 @@ describe('SkusService', () => {
   });
 
   describe('exportAmazonRbLinkStockExcel', () => {
-    it('returns only the requested account XLSM with that shop data', async () => {
+    it.each([
+      ['legacy names', 'Arcdiary', '1号店 DGAZ', '2号店-DGAZ store'],
+      ['renamed shops', 'ArcDiary亚马逊日本站', 'DGAZ亚马逊日本站', 'DGAZ Store亚马逊日本站'],
+      ['normalized names', 'ＡｒｃＤｉａｒｙ 亚马逊日本站', ' dgaz 亚马逊日本站 ', 'DGAZ_Store-亚马逊日本站'],
+      ['names without station suffix', 'ArcDiary亚马逊日本', 'DGAZ亚马逊日本', 'DGAZ Store亚马逊日本'],
+    ])('returns only the requested account XLSM with that shop data: %s', async (_label, arcShop, store1Shop, store2Shop) => {
       const prisma = {
         sku: {
           findMany: jest.fn().mockResolvedValue([
             {
               rbSku: 'rb-arc-sku',
               masterProduct: { stockQty: 15 },
-              shop: 'Arcdiary',
+              shop: arcShop,
             },
             {
               rbSku: 'rb-db-brooklyn -23-hei',
               masterProduct: { stockQty: 9 },
-              shop: '1号店 DGAZ',
+              shop: store1Shop,
             },
             {
               rbSku: ' rb-wrapped\r\n-sku\t ',
               masterProduct: { stockQty: 5 },
-              shop: '2号店-DGAZ store',
+              shop: store2Shop,
             },
           ]),
         },
