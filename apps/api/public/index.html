@@ -2557,8 +2557,8 @@
         <label>产品名称<input id="amazonManualProductName" readonly /></label>
         <label>数量<input id="amazonManualQuantity" inputmode="numeric" required /></label>
         <label>商品名<input id="amazonManualItemName" /></label>
-        <label>平台<input id="amazonManualMallName" maxlength="128" /></label>
-        <label>店铺<input id="amazonManualShopName" maxlength="128" /></label>
+        <label>平台<select id="amazonManualMallName"><option value="">请选择平台</option></select></label>
+        <label>店铺<select id="amazonManualShopName" disabled><option value="">请先选择平台</option></select></label>
         <label>收件人<input id="amazonManualRecipientName" maxlength="255" /></label>
         <label>电话<input id="amazonManualPhone" maxlength="64" /></label>
         <label>邮编<input id="amazonManualPostalCode" maxlength="32" /></label>
@@ -3279,10 +3279,11 @@
         <h3>店铺管理</h3>
         <button type="button" class="ghost" data-action="closeShopManageModal">关闭</button>
       </div>
-      <div class="shop-platform-tabs" role="tablist" aria-label="店铺平台">
-        <button id="amazonShopTab" type="button" class="shop-platform-tab active" data-action="switchShopPlatformTab" data-platform="amazon" role="tab" aria-selected="true">亚马逊店铺 <span id="amazonShopCount" class="shop-platform-count">0</span></button>
-        <button id="rakutenShopTab" type="button" class="shop-platform-tab" data-action="switchShopPlatformTab" data-platform="rakuten" role="tab" aria-selected="false">乐天店铺 <span id="rakutenShopCount" class="shop-platform-count">0</span></button>
-      </div>
+      <form id="shopPlatformForm" class="manage-inline-form shop-manage-create-form">
+        <label>平台名称<input id="shopPlatformNameInput" maxlength="128" placeholder="请输入平台名称" required /></label>
+        <button type="submit" class="small-btn manage-create-btn">新增平台</button>
+      </form>
+      <div id="shopPlatformTabs" class="shop-platform-tabs" role="tablist" aria-label="店铺平台"></div>
       <form id="shopForm" class="manage-inline-form shop-manage-create-form">
         <label>店铺名称<input id="shopNameInput" maxlength="128" placeholder="请输入店铺名称" required /></label>
         <button type="submit" class="small-btn manage-create-btn">新增店铺</button>

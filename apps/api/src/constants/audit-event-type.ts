@@ -21,6 +21,7 @@ export const AuditEventType = {
   SKU_TYPE_UPDATED: 'sku_type_updated',
   SKU_TYPE_DELETED: 'sku_type_deleted',
   SHOP_CREATED: 'shop_created',
+  SHOP_PLATFORM_CREATED: 'shop_platform_created',
   SHOP_UPDATED: 'shop_updated',
   SHOP_DELETED: 'shop_deleted',
   USER_CREATED: 'user_created',

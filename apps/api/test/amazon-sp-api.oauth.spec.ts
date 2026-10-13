@@ -3,7 +3,6 @@ import { AmazonSpApiClient } from '../src/amazon-sp-api/amazon-sp-api.client';
 import { AmazonSpApiCryptoService } from '../src/amazon-sp-api/amazon-sp-api-crypto.service';
 import { AmazonSpApiService } from '../src/amazon-sp-api/amazon-sp-api.service';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { ShopPlatform } from '@prisma/client';
 
 describe('Amazon public OAuth workflow', () => {
   const originalApplicationId = process.env.AMAZON_SP_API_APPLICATION_ID;
@@ -30,7 +29,7 @@ describe('Amazon public OAuth workflow', () => {
     const create = jest.fn().mockResolvedValue({});
     const prisma = {
       shop: {
-        findUnique: jest.fn().mockResolvedValue({ id: 7n, name: 'JP Store', platform: ShopPlatform.amazon }),
+        findUnique: jest.fn().mockResolvedValue({ id: 7n, name: 'JP Store', platform: 'amazon' }),
       },
       amazonSpApiOAuthState: { create, deleteMany: jest.fn().mockResolvedValue({ count: 0 }) },
     } as unknown as PrismaService;
@@ -68,7 +67,7 @@ describe('Amazon public OAuth workflow', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 9n,
           name: 'Independent Store',
-          platform: ShopPlatform.amazon,
+          platform: 'amazon',
         }),
       },
       amazonSpApiConnection: {
@@ -138,7 +137,7 @@ describe('Amazon public OAuth workflow', () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 9n,
           name: '乐天-1号店',
-          platform: ShopPlatform.rakuten,
+          platform: 'rakuten',
         }),
       },
       amazonSpApiOAuthState: { create: jest.fn(), deleteMany: jest.fn() },

@@ -8,7 +8,6 @@ import {
   RakutenOrderRecord,
   RakutenRmsConnection,
   RakutenRmsSyncStatus,
-  ShopPlatform,
 } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
 import * as XLSX from "xlsx";
@@ -378,7 +377,7 @@ export class RakutenRmsApiService {
       select: { id: true, platform: true },
     });
     if (!shop) throw new NotFoundException("店铺不存在");
-    if (shop.platform !== ShopPlatform.rakuten) {
+    if (shop.platform !== 'rakuten') {
       throw new BadRequestException("只有乐天店铺可以配置乐天 RMS API 连接");
     }
     const existing = await this.prisma.rakutenRmsConnection.findUnique({

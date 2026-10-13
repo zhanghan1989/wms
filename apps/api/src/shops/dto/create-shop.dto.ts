@@ -1,13 +1,13 @@
-import { ShopPlatform } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+import { IsOptional, IsString, Length, Max, Min } from 'class-validator';
 
 export class CreateShopDto {
   @IsString()
   @Length(1, 128)
   name!: string;
 
-  @IsEnum(ShopPlatform)
-  platform!: ShopPlatform;
+  @IsString()
+  @Length(1, 64)
+  platform!: string;
 
   @IsOptional()
   @Min(0)

@@ -1,10 +1,11 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateShopDto } from './dto/create-shop.dto';
+import { CreateShopPlatformDto } from './dto/create-shop-platform.dto';
 import { UpdateShopDto } from './dto/update-shop.dto';
 
 @Injectable()
@@ -13,6 +14,37 @@ export class ShopsService {
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
   ) {}
+
+  async listPlatforms(): Promise<unknown[]> {
+    return this.prisma.shopPlatformDefinition.findMany({ orderBy: { id: 'asc' } });
+  }
+
+  async createPlatform(payload: CreateShopPlatformDto, operatorId: bigint, requestId?: string): Promise<unknown> {
+    const name = payload.name.trim();
+    if (!name) throw new BadRequestException('平台名称不能为空');
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const created = await tx.shopPlatformDefinition.create({ data: { name } });
+        await this.auditService.create({
+          db: tx,
+          entityType: 'shop_platform',
+          entityId: created.id,
+          action: AuditAction.create,
+          eventType: AuditEventType.SHOP_PLATFORM_CREATED,
+          beforeData: null,
+          afterData: created as unknown as Record<string, unknown>,
+          operatorId,
+          requestId,
+        });
+        return created;
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new BadRequestException('平台已存在');
+      }
+      throw error;
+    }
+  }
 
   async list(q?: string): Promise<unknown[]> {
     return this.prisma.shop.findMany({
@@ -26,6 +58,8 @@ export class ShopsService {
     if (!name) {
       throw new BadRequestException('店铺名称不能为空');
     }
+    const platform = await this.prisma.shopPlatformDefinition.findUnique({ where: { key: payload.platform } });
+    if (!platform) throw new BadRequestException('平台不存在，请先新增平台');
     const exists = await this.prisma.shop.findUnique({ where: { name } });
     if (exists) {
       throw new BadRequestException('店铺已存在');

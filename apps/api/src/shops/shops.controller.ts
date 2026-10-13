@@ -4,6 +4,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { CreateShopDto } from './dto/create-shop.dto';
+import { CreateShopPlatformDto } from './dto/create-shop-platform.dto';
 import { UpdateShopDto } from './dto/update-shop.dto';
 import { ShopsService } from './shops.service';
 
@@ -11,6 +12,20 @@ import { ShopsService } from './shops.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ShopsController {
   constructor(private readonly shopsService: ShopsService) {}
+
+  @Get('platforms')
+  async listPlatforms(): Promise<unknown[]> {
+    return this.shopsService.listPlatforms();
+  }
+
+  @Post('platforms')
+  async createPlatform(
+    @Body() payload: CreateShopPlatformDto,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.shopsService.createPlatform(payload, user.id, req.requestId);
+  }
 
   @Get()
   async list(@Query('q') q?: string): Promise<unknown[]> {

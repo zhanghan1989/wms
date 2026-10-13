@@ -1,4 +1,3 @@
-import { ShopPlatform } from "@prisma/client";
 import { ROLES_KEY } from "../src/common/decorators/roles.decorator";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { RakutenRmsApiClient } from "../src/rakuten-rms-api/rakuten-rms-api.client";
@@ -81,7 +80,7 @@ describe("Rakuten RMS API integration", () => {
   it("rejects an RMS connection for an Amazon shop", async () => {
     const prisma = {
       shop: {
-        findUnique: jest.fn().mockResolvedValue({ id: 3n, platform: ShopPlatform.amazon }),
+        findUnique: jest.fn().mockResolvedValue({ id: 3n, platform: 'amazon' }),
       },
       rakutenRmsConnection: { findUnique: jest.fn(), create: jest.fn() },
     } as unknown as PrismaService;

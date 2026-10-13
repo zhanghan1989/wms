@@ -367,6 +367,7 @@ const state = {
   skuTypeEditingIds: new Set(),
   shopEditingIds: new Set(),
   shopManagePlatform: "amazon",
+  shopPlatforms: [],
   shelfEditingIds: new Set(),
   shelfManageVisibleCount: 10,
   boxManageVisibleCount: 30,
@@ -482,6 +483,7 @@ const AUDIT_EVENT_TEXT_MAP = {
   sku_type_updated: "更新类型",
   sku_type_deleted: "删除类型",
   shop_created: "新增店铺",
+  shop_platform_created: "新增平台",
   shop_updated: "更新店铺",
   shop_deleted: "删除店铺",
   user_created: "新增用户",
@@ -512,6 +514,7 @@ const AUDIT_ENTITY_TEXT_MAP = {
   brand: "品牌",
   sku_type: "类型",
   shop: "店铺",
+  shop_platform: "平台",
   inbound_order: "入库单",
   outbound_order: "出库单",
   stocktake_task: "盘点任务",
@@ -6498,27 +6501,26 @@ function renderShopsTable() {
   const body = $("shopsBody");
   const head = $("shopsHead");
   if (!body || !head) return;
-  const platform = state.shopManagePlatform === "rakuten" ? "rakuten" : "amazon";
-  const platformLabels = { amazon: "亚马逊", rakuten: "乐天" };
-  const allRows = Array.isArray(state.shops) ? state.shops : [];
-  const rows = allRows.filter((item) => String(item?.platform || "amazon") === platform).sort((a, b) =>
-    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true,
-    }),
-  );
-
-  for (const targetPlatform of ["amazon", "rakuten"]) {
-    const tab = $(`${targetPlatform}ShopTab`);
-    const active = platform === targetPlatform;
-    tab?.classList.toggle("active", active);
-    tab?.setAttribute("aria-selected", active ? "true" : "false");
-    const count = $(`${targetPlatform}ShopCount`);
-    if (count) {
-      count.textContent = String(
-        allRows.filter((item) => String(item?.platform || "amazon") === targetPlatform).length,
-      );
-    }
+  const platforms = Array.isArray(state.shopPlatforms) ? state.shopPlatforms : [];
+  if (!platforms.some((item) => item.key === state.shopManagePlatform)) {
+    state.shopManagePlatform = platforms[0]?.key || "";
   }
-  head.innerHTML = `<tr><th>店铺</th><th>${platform === "amazon" ? "Amazon SP-API连接" : "乐天 RMS API连接"}</th><th>操作</th></tr>`;
+  const platform = state.shopManagePlatform;
+  const platformName = platforms.find((item) => item.key === platform)?.name || "";
+  const hasConnection = platform === "amazon" || platform === "rakuten";
+  const allRows = Array.isArray(state.shops) ? state.shops : [];
+  const rows = allRows.filter((item) => item.platform === platform).sort((a, b) =>
+    String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
+  );
+  const tabs = $("shopPlatformTabs");
+  if (tabs) tabs.innerHTML = platforms.map((item) => {
+    const active = item.key === platform;
+    const count = allRows.filter((shop) => shop.platform === item.key).length;
+    return `<button type="button" class="shop-platform-tab${active ? " active" : ""}" data-action="switchShopPlatformTab" data-platform="${escapeHtml(item.key)}" role="tab" aria-selected="${active}">${escapeHtml(item.name)} <span class="shop-platform-count">${count}</span></button>`;
+  }).join("");
+  $("shopNameInput").disabled = !platform;
+  $("shopForm").querySelector('button[type="submit"]').disabled = !platform;
+  head.innerHTML = `<tr><th>店铺</th>${hasConnection ? `<th>${platform === "amazon" ? "Amazon SP-API连接" : "乐天 RMS API连接"}</th>` : ""}<th>操作</th></tr>`;
 
   body.innerHTML =
     rows
@@ -6566,12 +6568,14 @@ function renderShopsTable() {
             data-original-name="${escapeHtml(item.name)}"
           />
         </td>
+        ${hasConnection ? `
         <td data-label="${escapeHtml(platform === "amazon" ? "Amazon连接" : "乐天连接")}">
           <button class="tiny-btn ghost" data-action="${connectionAction}" data-id="${escapeHtml(item.id)}">
             ${connectionLabel}
           </button>
           ${connection?.lastSyncError ? '<span class="muted">同步异常</span>' : ""}
         </td>
+        ` : ""}
         <td data-label="操作">
           <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           ${platform === "rakuten"
@@ -6585,7 +6589,7 @@ function renderShopsTable() {
       </tr>
     `;
       })
-      .join("") || `<tr><td colspan="3" class="muted">暂无${platformLabels[platform]}店铺</td></tr>`;
+      .join("") || `<tr><td colspan="${hasConnection ? 3 : 2}" class="muted">${platform ? `暂无 ${escapeHtml(platformName)} 店铺` : "请先新增平台"}</td></tr>`;
 }
 
 async function loadAmazonSpApiConnections() {
@@ -9848,8 +9852,10 @@ async function loadSkuTypes() {
 }
 
 async function loadShops() {
-  const shops = await request("/shops");
+  const [shops, platforms] = await Promise.all([request("/shops"), request("/shops/platforms")]);
   state.shops = shops;
+  state.shopPlatforms = platforms;
+  renderManualOrderPlatformOptions();
   const latestIds = new Set((Array.isArray(shops) ? shops : []).map((item) => String(item.id)));
   state.shopEditingIds = new Set(
     [...state.shopEditingIds].filter((id) => latestIds.has(String(id))));
@@ -11306,10 +11312,38 @@ async function syncAmazonManualProductName() {
   return matched;
 }
 
-function openAmazonManualOrderModal() {
+function renderManualOrderShopOptions() {
+  const select = $("amazonManualShopName");
+  if (!select) return;
+  const previous = select.value;
+  const platformName = $("amazonManualMallName")?.value || "";
+  const platform = state.shopPlatforms.find((item) => item.name === platformName);
+  const shops = state.shops.filter((item) => item.platform === platform?.key && Number(item.status) === 1);
+  const placeholder = !platform ? "请先选择平台" : shops.length ? "请选择店铺" : "该平台暂无店铺，请先在店铺管理中新增";
+  select.innerHTML = `<option value="">${placeholder}</option>` + shops.map((item) =>
+    `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`,
+  ).join("");
+  select.disabled = !platform || !shops.length;
+  select.value = shops.some((item) => item.name === previous) ? previous : "";
+}
+
+function renderManualOrderPlatformOptions() {
+  const select = $("amazonManualMallName");
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = '<option value="">请选择平台</option>' + state.shopPlatforms.map((item) =>
+    `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`,
+  ).join("");
+  select.value = state.shopPlatforms.some((item) => item.name === previous) ? previous : "";
+  renderManualOrderShopOptions();
+}
+
+async function openAmazonManualOrderModal() {
+  await loadShops();
   const form = $("amazonManualOrderForm");
   if (form) form.reset();
   setOrderEditFieldValue("amazonManualMallName", "");
+  renderManualOrderShopOptions();
   setOrderEditFieldValue("amazonManualDispatchMode", "保存后自动判断");
   openModal("amazonManualOrderModal");
 }
@@ -15346,6 +15380,8 @@ async function reloadAll() {
     state.brands = [];
     state.skuTypes = [];
     state.shops = [];
+    state.shopPlatforms = [];
+    state.shopManagePlatform = "amazon";
     state.shelfEditingIds = new Set();
     state.departmentOptions = [];
     state.roleOptions = [];
@@ -17984,8 +18020,16 @@ function bindForms() {
     }
   });
 
-  $("openAmazonManualOrderModal")?.addEventListener("click", () => {
-    openAmazonManualOrderModal();
+  $("openAmazonManualOrderModal")?.addEventListener("click", async () => {
+    try {
+      await openAmazonManualOrderModal();
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("amazonManualMallName")?.addEventListener("change", () => {
+    $("amazonManualShopName").value = "";
+    renderManualOrderShopOptions();
   });
 
   $("closeAmazonOrderImportModal").addEventListener("click", () => {
@@ -19442,7 +19486,8 @@ function bindDelegates() {
   $("shopManageModal")?.addEventListener("click", (event) => {
     const tab = event.target.closest("button[data-action='switchShopPlatformTab']");
     if (!tab) return;
-    const platform = tab.dataset.platform === "rakuten" ? "rakuten" : "amazon";
+    const platform = tab.dataset.platform;
+    if (!state.shopPlatforms.some((item) => item.key === platform)) return;
     state.shopManagePlatform = platform;
     state.shopEditingIds = new Set();
     renderShopsTable();
@@ -19646,6 +19691,27 @@ function bindDelegates() {
     }
   });
 
+  $("shopPlatformForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await withBusyButton(getSubmitButton(event.currentTarget, event), "新增中...", async () => {
+      try {
+        const name = String($("shopPlatformNameInput").value || "").trim();
+        if (!name) throw new Error("请输入平台名称");
+        const created = await request("/shops/platforms", {
+          method: "POST",
+          body: JSON.stringify({ name }),
+        });
+        state.shopManagePlatform = created.key;
+        $("shopPlatformNameInput").value = "";
+        state.shopEditingIds = new Set();
+        await Promise.all([loadShops(), loadAudit()]);
+        showToast("平台已新增");
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  });
+
   $("shopForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -19653,7 +19719,8 @@ function bindDelegates() {
       if (!name) {
         throw new Error("请输入店铺名称");
       }
-      const platform = state.shopManagePlatform === "rakuten" ? "rakuten" : "amazon";
+      const platform = state.shopManagePlatform;
+      if (!platform) throw new Error("请先新增平台");
       await request("/shops", {
         method: "POST",
         body: JSON.stringify({ name, platform }),

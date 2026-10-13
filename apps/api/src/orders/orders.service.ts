@@ -3952,6 +3952,7 @@ export class OrdersService {
   }
 
   async createAmazonManualOrder(payload: CreateAmazonManualOrderPayload): Promise<ManualEnrichedOrderListItem> {
+    await this.assertManualOrderShopSelection(payload);
     const data = await this.buildAmazonManualOrderCreateData(payload, '', 'system_single');
     const row = await this.prisma.$transaction(
       async (tx) => {
@@ -3966,6 +3967,20 @@ export class OrdersService {
     await this.syncManualOrdersToXyjgBestEffort([row as ManualOrderRecordLike]);
     const [enriched] = await this.enrichManualOrderRows([row as ManualOrderRecordLike]);
     return enriched;
+  }
+
+  private async assertManualOrderShopSelection(payload: CreateAmazonManualOrderPayload): Promise<void> {
+    const mallName = this.normalizeEditableText(payload.mallName, 'mallName', 128);
+    const shopName = this.normalizeEditableText(payload.shopName, 'shopName', 128);
+    if (!mallName && !shopName) return;
+    if (!mallName) throw new BadRequestException('请先选择平台');
+    const platform = await this.prisma.shopPlatformDefinition.findUnique({ where: { name: mallName } });
+    if (!platform) throw new BadRequestException('平台不存在，请重新选择');
+    if (!shopName) return;
+    const shop = await this.prisma.shop.findUnique({ where: { name: shopName } });
+    if (!shop || shop.platform !== platform.key || shop.status !== 1) {
+      throw new BadRequestException('店铺不属于所选平台或已停用，请重新选择');
+    }
   }
 
   getAmazonManualOrderUploadTemplate(): { fileName: string; content: Buffer } {

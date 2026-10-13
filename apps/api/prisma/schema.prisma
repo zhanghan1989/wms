@@ -13,11 +13,6 @@ enum Role {
   system_admin
 }
 
-enum ShopPlatform {
-  amazon
-  rakuten
-}
-
 enum ItemCodeStatus {
   in_stock
   outbound
@@ -123,6 +118,7 @@ enum AuditEventType {
   shop_created
   shop_updated
   shop_deleted
+  shop_platform_created
   user_created
   user_updated
   user_disabled
@@ -378,10 +374,21 @@ model SkuType {
   @@map("sku_types")
 }
 
+model ShopPlatformDefinition {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  key       String   @unique @default(cuid()) @db.VarChar(64)
+  name      String   @unique @db.VarChar(128)
+  createdAt DateTime @default(now()) @map("created_at")
+  shops     Shop[]
+
+  @@map("shop_platforms")
+}
+
 model Shop {
   id                     BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
   name                   String                  @unique @db.VarChar(128)
-  platform               ShopPlatform            @default(amazon)
+  platform               String                  @default("amazon") @db.VarChar(64)
+  platformDefinition     ShopPlatformDefinition  @relation(fields: [platform], references: [key], onDelete: Restrict, onUpdate: Cascade)
   status                 Int                     @default(1) @db.TinyInt
   createdAt              DateTime                @default(now()) @map("created_at")
   updatedAt              DateTime                @updatedAt @map("updated_at")
@@ -389,6 +396,7 @@ model Shop {
   amazonSpApiOAuthStates AmazonSpApiOAuthState[]
   rakutenRmsConnection   RakutenRmsConnection?
 
+  @@index([platform])
   @@map("shops")
 }
 
