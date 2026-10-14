@@ -86,6 +86,10 @@ export class OrdersController {
       shippingPhone?: string | null;
       shipmentCompany?: string | null;
       shipmentNo?: string | null;
+      shipmentEditMode?: 'correction' | 'replacement';
+      expectedShipmentNo?: string;
+      expectedShipmentCompany?: string;
+      expectedWarehouseShippedAt?: string;
       deliveryDateRaw?: string | null;
       deliveryTimeSlot?: string | null;
       orderRemark?: string | null;

@@ -2994,6 +2994,14 @@
         <label class="order-edit-amazon-only">地址3<input id="orderEditAddress3" /></label>
         <label>发货公司<input id="orderEditShipmentCompany" maxlength="128" /></label>
         <label>发货单号<input id="orderEditShipmentNo" maxlength="128" /></label>
+        <label id="orderEditShipmentChangeLabel" class="order-edit-wide hidden">已出货包裹的修改方式
+          <select id="orderEditShipmentChangeMode">
+            <option value="">请选择修改方式</option>
+            <option value="correction">同一个已出货包裹，修正单号或公司（保留原出货时间）</option>
+            <option value="replacement">重新制单或重新出货（需要重新确认实际出货）</option>
+          </select>
+          <small id="orderEditShipmentChangeHint" class="muted"></small>
+        </label>
         <label class="order-edit-rakuten-only">お届け日指定<input id="orderEditDeliveryDate" maxlength="32" /></label>
         <label class="order-edit-rakuten-only">お届け時間帯<input id="orderEditDeliveryTimeSlot" maxlength="64" /></label>
         <label class="order-edit-rakuten-only order-edit-wide">订单备注<textarea id="orderEditRemark" rows="3"></textarea></label>

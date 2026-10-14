@@ -1,4 +1,5 @@
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
+import { basketIdOf } from '../rakuten-rms-api/rakuten-order-workflow';
 import { stockTransaction, lockStockProducts } from '../inventory/stock-transaction';
 import { availableStock } from '../inventory/stock-availability';
 import { execFile } from 'child_process';
@@ -116,6 +117,10 @@ interface UpdateRakutenOrderPayload {
   shippingPhone?: string | null;
   shipmentCompany?: string | null;
   shipmentNo?: string | null;
+  shipmentEditMode?: 'correction' | 'replacement';
+  expectedShipmentNo?: string;
+  expectedShipmentCompany?: string;
+  expectedWarehouseShippedAt?: string;
   deliveryDateRaw?: string | null;
   deliveryTimeSlot?: string | null;
   orderRemark?: string | null;
@@ -3462,33 +3467,104 @@ export class OrdersService {
     if (!current) {
       throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
     }
+    if (payload.shipmentEditMode && !['correction', 'replacement'].includes(payload.shipmentEditMode)) {
+      throw new BadRequestException('发货信息修改方式无效');
+    }
+    if (payload.shipmentEditMode === 'correction' && !this.hasRegisteredShipmentNo(current)) {
+      throw new BadRequestException('仅已登记单号的出货包裹可更正，请先核对出货记录');
+    }
     if (this.hasRegisteredShipmentNo(current)) {
       const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
       const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
+      const changed = shipmentNo !== current.shipmentNo || shipmentCompany !== current.shipmentCompany;
+      const correction = payload.shipmentEditMode === 'correction';
+      if (correction) {
+        if ((payload.expectedShipmentNo !== undefined && payload.expectedShipmentNo !== current.shipmentNo) ||
+          (payload.expectedShipmentCompany !== undefined && payload.expectedShipmentCompany !== current.shipmentCompany) ||
+          (payload.expectedWarehouseShippedAt !== undefined && payload.expectedWarehouseShippedAt !== current.warehouseShippedAt?.toISOString())) {
+          throw new ConflictException('包裹信息已变化，请刷新后重新更正');
+        }
+        if (this.isChinaDispatchMode(current.dispatchMode) || !current.warehouseShippedAt || !shipmentNo || !shipmentCompany) {
+          throw new BadRequestException('仅已确认实际出货的日本侧包裹可更正单号，请先核对出货记录');
+        }
+        try {
+          rakutenDeliveryCompanyCode(shipmentCompany);
+        } catch {
+          throw new BadRequestException(`无法识别配送公司“${shipmentCompany}”，请修正后再保存`);
+        }
+      }
       const manualOverrideAt = new Date();
       await this.prisma.$transaction(async (tx) => {
-        await tx.rakutenOrderRecord.update({
-        where: { deletedAt: null, id },
-        data: {
-          shipmentCompany,
-          shipmentNo,
-          shipmentNoRegisteredAt: this.resolveEditedShipmentRegisteredAt(current.shipmentNo, current.shipmentNoRegisteredAt, shipmentNo),
-          ...(shipmentNo !== current.shipmentNo || shipmentCompany !== current.shipmentCompany ? {
-            warehouseShippedAt: null,
-            warehouseShippedBy: null,
-            trackingStatusLabel: null,
-            trackingHasCustomsClearance: false,
-            trackingIsDelivered: false,
-            trackingCustomsClearanceDate: null,
-            trackingStatusOccurredAt: null,
-            trackingCheckedAt: null,
-            trackingError: null,
-          } : {}),
-          sendStatus: this.resolveSendStatus(shipmentNo),
-            rmsManualOverrideAt: manualOverrideAt,
-            rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
-          },
-      });
+        const token = correction && current.rmsConnectionId ? randomUUID() : null;
+        if (token) {
+          const locked = await tx.rakutenRmsConnection.updateMany({ where: { id: current.rmsConnectionId!, OR: [
+            { automationLockToken: null }, { automationLockedAt: null },
+            { automationLockedAt: { lt: new Date(Date.now() - 30 * 60_000) } },
+          ] }, data: { automationLockToken: token, automationLockedAt: manualOverrideAt } });
+          if (locked.count !== 1) throw new ConflictException('店铺正在回传或发送邮件，请稍后再更正单号');
+        }
+        // A correction must refer to the same confirmed parcel that was opened
+        // for editing. Do not preserve confirmation across a concurrent change.
+        if (correction) {
+          await tx.$queryRaw(Prisma.sql`SELECT id FROM rakuten_order_records WHERE deleted_at IS NULL
+            AND order_id = ${current.orderId} AND rms_connection_id <=> ${current.rmsConnectionId}
+            AND shipment_no = ${current.shipmentNo} ORDER BY id FOR UPDATE`);
+          const latest = await tx.rakutenOrderRecord.findUnique({ where: { id, deletedAt: null } });
+          if (!latest || latest.shipmentNo !== current.shipmentNo || latest.shipmentCompany !== current.shipmentCompany ||
+            latest.warehouseShippedAt?.getTime() !== current.warehouseShippedAt?.getTime() ||
+            latest.warehouseShippedBy !== current.warehouseShippedBy || latest.dispatchMode !== current.dispatchMode ||
+            latest.orderQuantity !== current.orderQuantity || latest.orderId !== current.orderId ||
+            latest.rmsConnectionId !== current.rmsConnectionId || basketIdOf(latest) !== basketIdOf(current)) {
+            throw new ConflictException('包裹或出货确认已变化，请刷新后重新更正');
+          }
+        }
+        let editedRows = [current];
+        if (correction && changed) {
+          editedRows = (await tx.rakutenOrderRecord.findMany({ where: { deletedAt: null, orderId: current.orderId,
+            rmsConnectionId: current.rmsConnectionId, shipmentNo: current.shipmentNo,
+            ...(current.rmsConnectionId === null ? { shopName: current.shopName } : {}),
+          }, orderBy: { id: 'asc' } })).filter((row) => basketIdOf(row) === basketIdOf(current) &&
+            !this.isChinaDispatchMode(row.dispatchMode) && row.shipmentCompany === current.shipmentCompany);
+          if (!editedRows.some((row) => row.id === id) || editedRows.some((row) => !row.warehouseShippedAt ||
+            row.warehouseShippedAt.getTime() !== current.warehouseShippedAt!.getTime() ||
+            row.warehouseShippedBy !== current.warehouseShippedBy)) {
+            throw new ConflictException('同包裹明细的实际出货确认不一致，请先核对');
+          }
+        }
+        for (const edited of editedRows) {
+          await tx.rakutenOrderRecord.update({
+            where: { deletedAt: null, id: edited.id },
+            data: {
+              shipmentCompany,
+              shipmentNo,
+              shipmentNoRegisteredAt: this.resolveEditedShipmentRegisteredAt(edited.shipmentNo, edited.shipmentNoRegisteredAt, shipmentNo),
+              ...(changed ? {
+                ...(correction ? {} : { warehouseShippedAt: null, warehouseShippedBy: null }),
+                trackingStatusLabel: null,
+                trackingHasCustomsClearance: false,
+                trackingIsDelivered: false,
+                trackingCustomsClearanceDate: null,
+                trackingStatusOccurredAt: null,
+                trackingCheckedAt: null,
+                trackingError: null,
+              } : {}),
+              ...(correction && changed ? { rawPayload: {
+                ...(edited.rawPayload && typeof edited.rawPayload === 'object' && !Array.isArray(edited.rawPayload) ? edited.rawPayload : {}),
+                _wmsShipmentCorrectionHistory: [
+                  ...(Array.isArray((edited.rawPayload as Prisma.JsonObject | null)?._wmsShipmentCorrectionHistory)
+                    ? (edited.rawPayload as Prisma.JsonObject)._wmsShipmentCorrectionHistory as Prisma.JsonArray : []),
+                  { at: manualOverrideAt.toISOString(), operator: this.normalizeRakutenManualOperator(operatorUsername),
+                    previousShipmentNo: current.shipmentNo, shipmentNo, previousCompany: current.shipmentCompany, shipmentCompany,
+                    warehouseShippedAt: current.warehouseShippedAt!.toISOString(),
+                  },
+                ],
+              } as Prisma.InputJsonObject } : {}),
+              sendStatus: this.resolveSendStatus(shipmentNo),
+              rmsManualOverrideAt: manualOverrideAt,
+              rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
+            },
+          });
+        }
         await this.freezeRelatedRakutenOrderRowsAfterManualEdit(
           tx,
           current.orderId,
@@ -3496,6 +3572,8 @@ export class OrdersService {
           manualOverrideAt,
           operatorUsername,
         );
+        if (token) await tx.rakutenRmsConnection.updateMany({ where: { id: current.rmsConnectionId!, automationLockToken: token },
+          data: { automationLockToken: null, automationLockedAt: null } });
       });
       const updated = await this.prisma.rakutenOrderRecord.findUniqueOrThrow({ where: { deletedAt: null, id } });
       const [enriched] = await this.enrichOrderRows([updated]);

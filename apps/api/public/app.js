@@ -11364,6 +11364,16 @@ function openOrderEditModalFromItem(normalizedSource, item) {
   const isManual = normalizedSource === "manual";
   const isAmazon = normalizedSource === "amazon" || isManual;
   const isShipmentRegistered = hasRegisteredShipmentNo(item);
+  const confirmedJapanParcel = normalizedSource === "rakuten" && Boolean(item.warehouseShippedAt) &&
+    !["china_pending", "china_no_stock"].includes(item.dispatchMode);
+  $("orderEditForm").dataset.confirmedJapanParcel = confirmedJapanParcel ? "true" : "false";
+  $("orderEditForm").dataset.originalShipmentNo = String(item.shipmentNo || "").trim();
+  $("orderEditForm").dataset.originalShipmentCompany = String(item.shipmentCompany || "").trim();
+  $("orderEditForm").dataset.originalWarehouseShippedAt = item.warehouseShippedAt || "";
+  $("orderEditShipmentChangeLabel")?.classList.toggle("hidden", !confirmedJapanParcel);
+  setOrderEditFieldValue("orderEditShipmentChangeMode", "");
+  setTextById("orderEditShipmentChangeHint", confirmedJapanParcel
+    ? `原实际出货时间：${formatDate(item.warehouseShippedAt)}。同包裹商品明细会同步更正，无需重复点击第5步；已完成回传或已发送邮件仍需核对原单号。` : "");
   setOrderEditSourceMode(normalizedSource);
   $("orderEditModalTitle").textContent = isShipmentRegistered
     ? "修改发货信息"
@@ -11419,6 +11429,21 @@ async function submitOrderEditForm() {
     shipmentCompany: getOrderEditFieldValue("orderEditShipmentCompany"),
     shipmentNo: getOrderEditFieldValue("orderEditShipmentNo"),
   };
+  if (source === "rakuten" && $("orderEditForm").dataset.confirmedJapanParcel === "true" &&
+    (common.shipmentNo !== $("orderEditForm").dataset.originalShipmentNo || common.shipmentCompany !== $("orderEditForm").dataset.originalShipmentCompany)) {
+    const mode = getOrderEditFieldValue("orderEditShipmentChangeMode");
+    if (!["correction", "replacement"].includes(mode)) throw new Error("请选择同包裹更正，或重新制单/出货");
+    if (mode === "correction" && (!common.shipmentNo || !common.shipmentCompany)) throw new Error("同包裹更正必须填写发货单号和公司");
+    if (!await openActionConfirmModal(mode === "correction"
+      ? `确认这是同一个已出货包裹的资料更正？单号：${$("orderEditForm").dataset.originalShipmentNo} → ${common.shipmentNo}。同包裹商品明细会同步更正，原实际出货时间会保留；已完成的回传和邮件记录保留，后续待处理流程使用更正后的信息。`
+        : "确认需要重新制单或重新出货？原出货确认将清除，需完成新包裹的实际出货确认后才能继续回传和通知。", "确认修改发货信息", "确认修改")) return false;
+    common.shipmentEditMode = mode;
+    if (mode === "correction") {
+      common.expectedShipmentNo = $("orderEditForm").dataset.originalShipmentNo;
+      common.expectedShipmentCompany = $("orderEditForm").dataset.originalShipmentCompany;
+      common.expectedWarehouseShippedAt = $("orderEditForm").dataset.originalWarehouseShippedAt;
+    }
+  }
 
   if (source === "amazon" || source === "manual") {
     const sku = getOrderEditFieldValue("orderEditSku");
@@ -16019,7 +16044,7 @@ function bindForms() {
     try {
       await withBusyButton(submitButton, "保存中...", async () => {
         const source = getOrderEditFieldValue("orderEditSource");
-        await submitOrderEditForm();
+        if (await submitOrderEditForm() === false) return;
         if (source === "amazon") {
           await loadAmazonOrders();
         } else if (source === "manual") {
