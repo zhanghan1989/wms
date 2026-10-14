@@ -119,7 +119,9 @@ describe('order-level Rakuten workflow', () => {
   it('automates other edits and complete combos but reviews product ID edits', () => {
     expect(mailReviewReason([row({ rmsManualOverrideAt: date })])).toBeNull();
     expect(mailReviewReason([row({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET' })])).toBeNull();
-    expect(mailReviewReason([row({ isComboOrder: true })])).toBe('combo_order');
+    expect(mailReviewReason([row({ isComboOrder: true })])).toBeNull();
+    expect(mailReviewReason([row({ isComboOrder: true }),
+      row({ id: 2n, isComboOrder: true, dispatchMode: 'china_pending' })])).toBe('combo_order');
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark: '納期について個別説明' })])).toBeNull();
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, rawPayload: { _wmsProductIdEdited: true } })])).toBe('manual_update');
   });

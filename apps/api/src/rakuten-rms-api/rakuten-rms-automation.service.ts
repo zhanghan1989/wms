@@ -20,7 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RakutenRmsApiClient } from './rakuten-rms-api.client';
 import { RakutenRmsApiCryptoService } from './rakuten-rms-api-crypto.service';
 import { RakutenScheduleControlService } from './rakuten-schedule-control.service';
-import { buildOrderWorkflow, hasRemovedOrderItems, fulfillmentOf, isChinaRow, validOrderQuantity, IGNORED_MAIL, VERIFIED_SHIPPING, shippingConditionReason, basketIdOf, japanWarehouseReady, mailEventReviewReason, mailOrderBlockReason, mailConditionReason, orderBlockReason, shippingSatisfied, shippingTargetRows, shippingTargetsReady, mailSatisfied, shippingFingerprint, trackingReady } from './rakuten-order-workflow';
+import { buildOrderWorkflow, mailReviewMessage, hasRemovedOrderItems, fulfillmentOf, isChinaRow, validOrderQuantity, IGNORED_MAIL, VERIFIED_SHIPPING, shippingConditionReason, basketIdOf, japanWarehouseReady, mailEventReviewReason, mailOrderBlockReason, mailConditionReason, orderBlockReason, shippingSatisfied, shippingTargetRows, shippingTargetsReady, mailSatisfied, shippingFingerprint, trackingReady } from './rakuten-order-workflow';
 
 export const RAKUTEN_ORDER_PROCESSING_CRON = process.env.RAKUTEN_RMS_AUTOMATION_CRON || '0 */20 * * * *';
 const AUTOMATION_TIMEZONE = 'Asia/Tokyo';
@@ -1278,7 +1278,7 @@ export class RakutenRmsAutomationService {
           id: mail.id, status: mail.status, failureCategory: mail.failureCategory, lastError: mail.lastError, sendStartedAt: null,
         }, data: {
           failureCategory: reviewRequired ? 'manual_review' : null,
-          lastError: reviewRequired ? '请人工核对产品ID修改或商品信息异常后确认正文' : null,
+          lastError: reviewRequired ? mailReviewMessage(this.manualMailReviewReason(mail.event, rows)) : null,
           nextAttemptAt: null,
         } });
       } catch (error) {
@@ -2602,7 +2602,7 @@ export class RakutenRmsAutomationService {
           const manual = Boolean(businessBlock || !template || reviewRequired || condition?.includes('人工') || condition?.includes('外部'));
           await this.prisma.rakutenOrderMail.update({ where: { id: mail.id }, data: {
             failureCategory: businessBlock ? 'order_changed' : !template ? 'template_missing' : reviewRequired ? 'manual_review' : manual ? 'order_changed' : 'waiting_conditions',
-            lastError: businessBlock || (!template ? templateIssue ?? '请配置并启用邮件模板' : reviewRequired ? '请人工核对产品ID修改或商品信息异常后确认正文' : condition),
+            lastError: businessBlock || (!template ? templateIssue ?? '请配置并启用邮件模板' : reviewRequired ? mailReviewMessage(this.manualMailReviewReason(mail.event, latestRows)) : condition),
             nextAttemptAt: manual ? null : new Date(Date.now() + 20 * 60_000),
           } });
           counts.blocked += 1;

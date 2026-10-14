@@ -115,20 +115,67 @@ describe('review fixes: shipment confirmation and whole-order deletion', () => {
   });
 });
 
-describe('review fixes: complete combo recipients and honest mail values', () => {
+describe('combo review follows the dispatch of the same purchased set', () => {
   const sender = new RakutenRmsAutomationService({} as any, {} as any, {} as any);
-  const combo = (extra = {}) => order({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET', ...extra });
-  it.each(['shippingName', 'shippingPostalCode', 'shippingPrefecture', 'shippingCity', 'shippingAddress'])('requires review when %s is missing', (field) => {
-    const row = combo({ [field]: null });
-    expect(mailReviewReason([row])).toBe('combo_order');
-    const result = buildOrderWorkflow({ rows: [row], connection: { status: 1, mailNotificationsEnabled: true,
-      autoShippingEnabled: true, id: 7n, shop: { name: '店铺' } } as any,
-      report: { id: 20n, status: 'sent' } as any,
-      mails: [{ id: 10n, event: 'new_order', status: 'sent' }, { id: 11n, event: 'japan_shipped', status: 'pending' }] as any,
-      templateVersions: new Map([['new_order', 1], ['japan_shipped', 1]]) });
-    expect(result.steps.find((step) => step.event === 'japan_shipped')).toMatchObject({ state: 'manual', executable: false, requiresManualReview: true });
+  const combo = (extra = {}) => order({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET',
+    rmsItemKey: 'ORDER|88|component:PART',
+    rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 88, itemName: 'セット商品', units: 1 } }, ...extra });
+  const china = (extra = {}) => combo({ id: 2n, skuCode: 'PART-CN', rmsItemKey: 'ORDER|88|component:PART-CN',
+    dispatchMode: 'china_pending', ...extra });
+  it.each(['overseas', 'china_pending', 'china_no_stock'])('automates a combo shipped entirely with %s', (dispatchMode) => {
+    expect(mailReviewReason([combo({ dispatchMode }), china({ dispatchMode })])).toBeNull();
   });
-  it('continues to automate complete combos', () => expect(mailReviewReason([combo()])).toBeNull());
+  it.each(['comboOrderSku', 'setComponentSkuCode', 'productName', 'shippingName', 'shippingPostalCode',
+    'shippingPrefecture', 'shippingCity', 'shippingAddress', 'rawPayload'])('does not treat missing %s as mixed combo dispatch', (field) => {
+    expect(mailReviewReason([combo({ [field]: null })])).toBeNull();
+  });
+  it.each(['china_pending', 'china_no_stock'])('reviews a complete combo split across Japan and %s', (dispatchMode) => {
+    expect(mailReviewReason([combo(), china({ dispatchMode })])).toBe('combo_order');
+  });
+  it('automates a Japan combo with an unrelated China product', () => {
+    expect(mailReviewReason([combo(), order({ id: 2n, dispatchMode: 'china_pending' })])).toBeNull();
+  });
+  it('does not merge separate purchases of the same combo SKU', () => {
+    expect(mailReviewReason([combo(), china({ rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 99 } } })])).toBeNull();
+    expect(mailReviewReason([combo(), china({ rawPayload: { rmsPackage: { basketId: 2 }, rmsItem: { itemDetailId: 88 } } })])).toBeNull();
+    expect(mailReviewReason([combo(), china({ orderId: 'OTHER-ORDER' })])).toBeNull();
+  });
+  it('recognizes the same purchase across manually split internal order IDs', () => {
+    expect(mailReviewReason([combo({ orderId: 'ORDER-A', rmsOrderId: 'ORDER' }),
+      china({ orderId: 'ORDER-B', rmsOrderId: 'ORDER' })])).toBe('combo_order');
+  });
+  it('uses the shared import key when the original item ID is missing', () => {
+    const rawPayload = { rmsPackage: { basketId: 1 } };
+    expect(mailReviewReason([combo({ rawPayload }), china({ rawPayload })])).toBe('combo_order');
+    expect(mailReviewReason([combo({ rawPayload }), china({ rawPayload, rmsItemKey: 'ORDER|99|component:PART-CN' })])).toBeNull();
+  });
+  it('ignores deleted components for combo dispatch classification', () => {
+    expect(mailReviewReason([combo(), china({ deletedAt: date })])).toBeNull();
+  });
+  it('offers an editable review for both mixed mails and keeps shipping independent', () => {
+    const rows = [combo(), china()];
+    const result = buildOrderWorkflow({ rows, connection: { status: 1, mailNotificationsEnabled: true,
+      autoShippingEnabled: true, id: 7n, shop: { name: '店铺' } } as any,
+      report: { id: 20n, status: 'pending', fulfillmentType: 'mixed' } as any,
+      mails: [{ id: 10n, event: 'new_order', status: 'sent' }, { id: 11n, event: 'mixed_partial', status: 'pending' }] as any,
+      templateVersions: new Map([['new_order', 1], ['mixed_partial', 1], ['mixed_customs', 1]]) });
+    expect(result.steps.find((step) => step.event === 'mixed_partial')).toMatchObject({
+      state: 'manual', executable: false, requiresManualReview: true, canReviewBody: true,
+      manualReviewReason: 'combo_order', reason: expect.stringContaining('「種類」'),
+    });
+    expect(result.steps.find((step) => step.event === 'shipping')).toMatchObject({
+      state: 'ready', executable: true, requiresManualReview: false,
+    });
+    const customs = buildOrderWorkflow({ rows, connection: { status: 1, mailNotificationsEnabled: true,
+      autoShippingEnabled: true, id: 7n, shop: { name: '店铺' } } as any,
+      report: { id: 20n, status: 'sent', fulfillmentType: 'mixed' } as any,
+      mails: [{ id: 10n, event: 'new_order', status: 'sent' }, { id: 11n, event: 'mixed_partial', status: 'sent' },
+        { id: 12n, event: 'mixed_customs', status: 'pending' }] as any,
+      templateVersions: new Map([['mixed_partial', 1], ['mixed_customs', 1]]) });
+    expect(customs.steps.find((step) => step.event === 'mixed_customs')).toMatchObject({
+      state: 'manual', canReviewBody: true, manualReviewReason: 'combo_order', reason: expect.stringContaining('「種類」'),
+    });
+  });
   it.each([null, 0, -1, 1.5, NaN])('does not invent a quantity for %s', (quantity) => {
     const row = order({ orderQuantity: quantity });
     expect(mailReviewReason([row])).toBe('manual_update');

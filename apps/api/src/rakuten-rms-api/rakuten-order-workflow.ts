@@ -82,7 +82,7 @@ export function orderBlockReason(rows: RakutenOrderRecord[], includeBusinessChan
   }
   return null;
 }
-// Product-ID edits and incomplete combo mappings need a reviewed body.
+// Product-ID edits and a purchased combo split across Japan/China need review.
 export function hasRemovedOrderItems(rows: RakutenOrderRecord[]): boolean {
   return rows.some((row) => Boolean((row.rawPayload as Record<string, unknown> | null)?._wmsDeletedItemsAt));
 }
@@ -104,18 +104,35 @@ export function productIdWasManuallyEdited(row: RakutenOrderRecord): boolean {
   const originalSku = sku?.variantId || sku?.merchantDefinedSkuId || item?.manageNumber || item?.skuManagementNumber || item?.itemNumber || item?.itemUrl;
   return Boolean(originalSku) && String(originalSku).trim() !== String(row.skuCode ?? '').trim();
 }
-export function mailReviewReason(rows: RakutenOrderRecord[]): 'manual_update' | 'combo_order' | 'manual_update_and_combo' | null {
+export function hasMixedDispatchCombo(rows: RakutenOrderRecord[]): boolean {
+  const origins = new Map<string, Set<'japan' | 'china'>>();
+  for (const row of rows) {
+    if (!row.isComboOrder || row.deletedAt) continue;
+    const raw = row.rawPayload as Record<string, any> | null;
+    const item = raw?.rmsItem;
+    // Components share the original purchased item, even after a WMS split.
+    // Basket and order identity distinguish separate purchases of the same set.
+    const itemId = String(item?.itemDetailId ?? item?.ItemDetailId ?? '').trim();
+    const itemKey = String(row.rmsItemKey ?? '').split('|component:')[0];
+    const key = JSON.stringify([row.rmsConnectionId?.toString() ?? null, originalRakutenOrderId(row),
+      basketIdOf(row), itemId || itemKey || row.comboOrderSku || row.setComponentSkuCode]);
+    const group = origins.get(key) ?? new Set<'japan' | 'china'>();
+    group.add(isChinaRow(row) ? 'china' : 'japan');
+    if (group.size === 2) return true;
+    origins.set(key, group);
+  }
+  return false;
+}
+export type MailReviewReason = 'manual_update' | 'combo_order' | 'manual_update_and_combo';
+export function mailReviewMessage(reason: MailReviewReason | null): string | null {
+  if (reason === 'combo_order') return '同一组合商品的组件分别从日本和中国发货，请拆分邮件中的「種類」并确认正文';
+  if (reason === 'manual_update_and_combo') return '请核对产品ID修改或商品信息异常，并拆分日中混发组合商品在邮件中的「種類」后确认正文';
+  return reason === 'manual_update' ? '请人工核对产品ID修改或商品信息异常后确认正文' : null;
+}
+export function mailReviewReason(rows: RakutenOrderRecord[]): MailReviewReason | null {
   const manual = hasRemovedOrderItems(rows) || rows.some((row) =>
     validOrderQuantity(row.orderQuantity) === null || productIdWasManuallyEdited(row));
-  const combo = rows.some((row) => {
-    if (!row.isComboOrder) return false;
-    const raw = row.rawPayload as Record<string, any> | null;
-    return !String(row.comboOrderSku ?? '').trim() || !String(row.setComponentSkuCode ?? '').trim() ||
-      !String(row.productName ?? '').trim() || validOrderQuantity(row.orderQuantity) === null ||
-      [row.shippingName, row.shippingPostalCode, row.shippingPrefecture, row.shippingCity, row.shippingAddress]
-        .some((value) => !String(value ?? '').trim()) ||
-      !String(raw?.rmsItem?.itemName ?? raw?.rmsItem?.ItemName ?? '').trim() || basketIdOf(row) === null;
-  });
+  const combo = hasMixedDispatchCombo(rows);
   return manual && combo ? 'manual_update_and_combo' : manual ? 'manual_update' : combo ? 'combo_order' : null;
 }
 export function mailOrderBlockReason(event: string, rows: RakutenOrderRecord[]) {
@@ -265,7 +282,8 @@ export function buildOrderWorkflow(input: {
     } else if (job.nextAttemptAt && job.nextAttemptAt > now) {
       state = 'retry'; reason = `等待重试时间 ${job.nextAttemptAt.toISOString()}`;
     } else if (review) {
-      state = 'manual'; reason = review === 'combo_order' ? '组合商品或收件信息不完整，请确认正文' : '订单产品ID修改或商品信息异常，请核对并确认正文';
+      state = 'manual'; reason = review === 'manual_update'
+        ? '订单产品ID修改或商品信息异常，请核对并确认正文' : mailReviewMessage(review);
     } else {
       state = job.status === 'failed' ? 'retry' : 'ready';
       reason = job.status === 'failed' ? job.lastError : null;

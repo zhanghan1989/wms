@@ -297,7 +297,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
         expect(text).not.toContain(internalNames[0]);
         expect(text).not.toContain('zh-internal-set');
       }
-      expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, [row])).toBe(true);
+      expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, [row])).toBe(false);
     });
 
     it('prefers the marketplace title over an internal name for a single product', () => {
@@ -1047,24 +1047,26 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
   it('reviews product-sensitive mails while keeping the fixed new-order acknowledgement automatic', () => {
     const manuallyUpdatedRows = [makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要', rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })];
-    const comboRows = [makeRow({ isComboOrder: true })];
-    const bothRows = [makeRow({
-      isComboOrder: true,
-      rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要', rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true },
-    })];
+    const japanCombo = makeRow({ isComboOrder: true, rmsItemKey: 'ORDER|88|component:PART-JP',
+      rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 88 } } });
+    const comboRows = [japanCombo, makeRow({ ...japanCombo, id: 2n, rmsItemKey: 'ORDER|88|component:PART-CN',
+      dispatchMode: 'china_pending' })];
+    const bothRows = [{ ...comboRows[0], rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'),
+      rawPayload: { ...(comboRows[0].rawPayload as object), _wmsProductIdEdited: true } }, comboRows[1]];
 
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, manuallyUpdatedRows)).toBe(true);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_customs, manuallyUpdatedRows)).toBe(true);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, manuallyUpdatedRows)).toBe(true);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_customs, manuallyUpdatedRows)).toBe(true);
-    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, comboRows)).toBe(true);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, [japanCombo])).toBe(false);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, comboRows)).toBe(true);
-    expect((service as any).manualMailReviewReason(RakutenOrderMailEvent.japan_shipped, comboRows)).toBe('combo_order');
-    expect((service as any).manualMailReviewReason(RakutenOrderMailEvent.japan_shipped, bothRows)).toBe('manual_update_and_combo');
+    expect((service as any).manualMailReviewReason(RakutenOrderMailEvent.mixed_customs, comboRows)).toBe('combo_order');
+    expect((service as any).manualMailReviewReason(RakutenOrderMailEvent.mixed_partial, bothRows)).toBe('manual_update_and_combo');
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.new_order, manuallyUpdatedRows)).toBe(false);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.new_order, comboRows)).toBe(false);
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_delay, manuallyUpdatedRows)).toBe(true);
-    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_delay, comboRows)).toBe(true);
+    expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.china_delay,
+      comboRows.map((row) => ({ ...row, dispatchMode: 'china_pending' })))).toBe(false);
   });
 
   it('blocks a confirmed mail when the WMS order changes after preview', async () => {
@@ -1110,13 +1112,20 @@ describe('Rakuten RMS shipping and mail automation', () => {
     });
   });
 
-  it('sends and persists the operator-edited body for a manually updated order', async () => {
-    const rows = [makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要', rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })];
+  it.each([RakutenOrderMailEvent.japan_shipped, RakutenOrderMailEvent.mixed_partial, RakutenOrderMailEvent.mixed_customs])
+    ('blocks automatic mail and sends the operator-edited body after review: %s', async (event) => {
+    const combo = makeRow({ isComboOrder: true, rmsItemKey: 'ORDER|88|component:PART-JP',
+      productNameExtra: '種類:インナーバッグ＋ピロー',
+      rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 88, itemName: 'セット商品' } } });
+    const rows = event === RakutenOrderMailEvent.japan_shipped
+      ? [makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })]
+      : [combo, makeRow({ ...combo, id: 2n, rmsItemKey: 'ORDER|88|component:PART-CN', dispatchMode: 'china_pending',
+        trackingHasCustomsClearance: true, trackingCustomsClearanceDate: new Date('2026-10-02T00:00:00Z') })];
     const mail = {
       id: 95n,
       connectionId: 7n,
       orderId: '421951-ORDER',
-      event: RakutenOrderMailEvent.japan_shipped,
+      event,
       attempts: 0,
       createdAt: new Date('2026-10-02T00:00:00Z'),
       connection: {
@@ -1147,7 +1156,16 @@ describe('Rakuten RMS shipping and mail automation', () => {
     const sendMail = jest.fn().mockResolvedValue({ messageId: '<accepted@example.jp>', accepted: ['masked@pc.fw.rakuten.ne.jp'] });
     jest.spyOn(scopedService as any, 'createSmtpTransport').mockReturnValue({ sendMail, close: jest.fn() });
     const fingerprint = (scopedService as any).mailOrderFingerprint(rows);
-    const editedBody = '担当者が確認・修正したメール本文';
+    const editedBody = event === RakutenOrderMailEvent.japan_shipped ? '担当者が確認・修正したメール本文'
+      : '日本国内在庫\n種類:インナーバッグ\n工場直送\n種類:ピロー';
+
+    expect(await (scopedService as any).processMails(7n)).toEqual({ sent: 0, failed: 0, blocked: 1 });
+    expect(sendMail).not.toHaveBeenCalled();
+    if (event !== RakutenOrderMailEvent.japan_shipped) {
+      expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({
+        failureCategory: 'manual_review', lastError: expect.stringContaining('「種類」'),
+      }) }));
+    }
 
     const result = await (scopedService as any).processMails(
       7n,
