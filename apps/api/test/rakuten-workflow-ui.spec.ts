@@ -203,7 +203,7 @@ describe('center navigation and selections', () => {
       setResult: (value) => { rakutenWorkflowResult = value; }, selected: rakutenCenterSelected })`, context);
     return { api, nodes, get, request, mails, templates, health, shipping, runs, context };
   };
-  it('shows records and settings inside the same center and loads only the selected content', async () => {
+  it('shows records, settings and templates inside the same center and loads only the selected content', async () => {
     const { api, get, mails, templates, health, shipping } = setup();
     await api.select('records', 'mail');
     expect(get('rakutenCenterWorkflowContent').classes.has('hidden')).toBe(true);
@@ -214,6 +214,12 @@ describe('center navigation and selections', () => {
     await api.select('settings');
     expect(get('rakutenCenterRecords').classes.has('hidden')).toBe(true);
     expect(get('rakutenCenterSettings').classes.has('hidden')).toBe(false);
+    expect(get('rakutenCenterTemplates').classes.has('hidden')).toBe(true);
+    expect(templates).not.toHaveBeenCalled();
+    expect(health).toHaveBeenCalledTimes(1);
+    await api.select('templates');
+    expect(get('rakutenCenterSettings').classes.has('hidden')).toBe(true);
+    expect(get('rakutenCenterTemplates').classes.has('hidden')).toBe(false);
     expect(templates).toHaveBeenCalledTimes(1);
     expect(health).toHaveBeenCalledTimes(1);
   });

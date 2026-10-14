@@ -2248,6 +2248,7 @@
         <button type="button" role="tab" data-center-view="processing" aria-controls="rakutenCenterWorkflowContent" aria-selected="false">处理中</button>
         <button type="button" role="tab" data-center-view="records" aria-controls="rakutenCenterRecords" aria-selected="false">处理记录</button>
         <button type="button" role="tab" data-center-view="settings" aria-controls="rakutenCenterSettings" aria-selected="false">店铺设置</button>
+        <button type="button" role="tab" data-center-view="templates" aria-controls="rakutenCenterTemplates" aria-selected="false">邮件模板管理</button>
       </div>
       <div id="rakutenCenterWorkflowContent" role="tabpanel">
         <p id="rakutenCenterViewDescription" class="muted">只显示需要你确认或处理的订单。</p>
@@ -2451,7 +2452,10 @@
               </tbody>
             </table>
           </div>
-        </article><article class="card rakuten-mail-template-card">
+        </article>
+      </div>
+      <div id="rakutenCenterTemplates" class="hidden" role="tabpanel">
+        <article class="card rakuten-mail-template-card">
           <div class="card-head">
             <div>
               <h3>邮件模板管理</h3>
@@ -2502,7 +2506,8 @@
               </div>
             </div>
           </div>
-        </article>      </div>
+        </article>
+      </div>
     </div>
   </div>
 

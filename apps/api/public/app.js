@@ -6720,8 +6720,8 @@ function renderRakutenMailConnectionFilter() {
   if (templateSelect) {
     const selected = String(templateSelect.value || "");
     templateSelect.innerHTML = '<option value="">请选择乐天店铺</option>' + options;
-    templateSelect.value = scopedConnectionId || selected || String(state.rakutenRmsConnections[0]?.id || "");
-    templateSelect.disabled = Boolean(scopedConnectionId);
+    templateSelect.value = selected;
+    templateSelect.disabled = false;
   }
   const scopedConnection = state.rakutenRmsConnections.find(
     (connection) => String(connection?.id || "") === scopedConnectionId,
@@ -7411,7 +7411,7 @@ function renderRakutenCenterWorkflows(result, view = rakutenCenterView) {
   $("rakutenWorkflowNext").disabled = rakutenWorkflowPage >= pages;
   document.querySelectorAll("[data-center-view]").forEach((button) => {
     const kind = button.dataset.centerView;
-    const text = { manual: "需要人工", processing: "处理中", records: "处理记录", settings: "店铺设置" }[kind];
+    const text = { manual: "需要人工", processing: "处理中", records: "处理记录", settings: "店铺设置", templates: "邮件模板管理" }[kind];
     button.textContent = text + (summary[kind] === undefined ? "" : ` ${summary[kind]}`);
   });
 }
@@ -7493,7 +7493,9 @@ async function refreshRakutenProcessingCenter() {
   if (["manual", "processing"].includes(rakutenCenterView)) {
     await Promise.all([loadRakutenOrderWorkflows(), issues, tracking]);
   } else if (rakutenCenterView === "settings") {
-    await Promise.all([loadRakutenMailTemplates(), loadRakutenAutomationHealth(), issues, tracking]);
+    await Promise.all([loadRakutenAutomationHealth(), issues, tracking]);
+  } else if (rakutenCenterView === "templates") {
+    await Promise.all([loadRakutenMailTemplates(), issues, tracking]);
   } else {
     const records = rakutenCenterRecord === "shipping" ? loadRakutenShippingManagementActions()
       : rakutenCenterRecord === "runs" ? loadRakutenAutomationRuns() : loadRakutenMails();
@@ -7502,7 +7504,7 @@ async function refreshRakutenProcessingCenter() {
 }
 
 async function selectRakutenCenterView(view, record = rakutenCenterRecord) {
-  if (!["manual", "processing", "records", "settings"].includes(view)) return;
+  if (!["manual", "processing", "records", "settings", "templates"].includes(view)) return;
   ++rakutenCenterRequestId;
   rakutenCenterView = view;
   rakutenCenterSelected.clear();
@@ -7514,8 +7516,9 @@ async function selectRakutenCenterView(view, record = rakutenCenterRecord) {
   $("rakutenCenterWorkflowContent").classList.toggle("hidden", !["manual", "processing"].includes(view));
   $("rakutenCenterRecords").classList.toggle("hidden", view !== "records");
   $("rakutenCenterSettings").classList.toggle("hidden", view !== "settings");
-  $("rakutenWorkflowOrderLabel").classList.toggle("hidden", view === "settings" || view === "records");
-  $("rakutenWorkflowFilter").classList.toggle("hidden", view === "settings" || view === "records");
+  $("rakutenCenterTemplates").classList.toggle("hidden", view !== "templates");
+  $("rakutenWorkflowOrderLabel").classList.toggle("hidden", ["settings", "records", "templates"].includes(view));
+  $("rakutenWorkflowFilter").classList.toggle("hidden", ["settings", "records", "templates"].includes(view));
   $("rakutenMailManagement").classList.toggle("hidden", view !== "records" || record !== "mail");
   $("rakutenShippingManagement").classList.toggle("hidden", view !== "records" || record !== "shipping");
   $("rakutenCenterRunRecords").classList.toggle("hidden", view !== "records" || record !== "runs");
@@ -7609,6 +7612,8 @@ async function openRakutenProcessingCenter({ connectionId = "", view = "manual",
   rakutenTrackingFailuresQuery = "";
   rakutenTrackingFailuresSelected.clear();
   $("rakutenTrackingFailuresSearch").value = "";
+  $("rakutenMailTemplateConnection").value = "";
+  await loadRakutenMailTemplates();
   await loadRakutenRmsConnections();
   const select = $("rakutenWorkflowShop");
   select.innerHTML = '<option value="">全部店铺</option>' + state.rakutenRmsConnections.map((connection) =>
@@ -7891,9 +7896,9 @@ async function loadRakutenRmsSyncRuns(connectionId) {
 }
 
 function openRakutenRmsConnectionModal(shopId) {
-  const shop = state.shops.find((item) => String(item.id) === String(shopId));
-  if (!shop) throw new Error("店铺不存在");
   const connection = state.rakutenRmsConnections.find((item) => String(item?.shop?.id || "") === String(shopId));
+  const shop = state.shops.find((item) => String(item.id) === String(shopId)) || connection?.shop;
+  if (!shop) throw new Error("店铺不存在");
   $("rakutenRmsConnectionId").value = connection?.id || "";
   $("rakutenRmsShopId").value = String(shopId);
   $("rakutenRmsShopName").value = shop.name || "";
@@ -17801,7 +17806,12 @@ function bindForms() {
   });
   $("rakutenCenterConnectionActions")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-center-shop-settings]");
-    if (button) openRakutenRmsConnectionModal(button.dataset.centerShopSettings);
+    if (!button) return;
+    try {
+      openRakutenRmsConnectionModal(button.dataset.centerShopSettings);
+    } catch (error) {
+      showToast(error.message, true);
+    }
   });
   $("rakutenWorkflowBody")?.addEventListener("change", (event) => {
     const checkbox = event.target.closest("input[data-center-select]");
