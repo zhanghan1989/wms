@@ -15,8 +15,8 @@ const order = (extra: object = {}) => ({
   ...extra,
 } as any);
 
-function editableOrder() {
-  let saved = order();
+function editableOrder(extra: object = {}) {
+  let saved = order(extra);
   const tx = { rakutenOrderRecord: {
     update: jest.fn(async ({ data }) => { saved = { ...saved, ...data }; return saved; }),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -28,6 +28,47 @@ function editableOrder() {
   jest.spyOn(service as any, 'enrichOrderRows').mockImplementation(async (rows) => rows);
   return { service, saved: () => saved };
 }
+
+describe('manual review is specific to actual product ID edits', () => {
+  const payload = { orderId: 'ORDER', productId: 'PART', skuCode: 'PART', orderQuantity: 1, productName: '商品',
+    shippingName: '購入者', shippingPostalCode: '123-4567', shippingPrefecture: '東京都', shippingCity: '千代田区',
+    shippingAddress: '1-2-3', orderRemark: '交換品を同梱してください' };
+  function fixture(extra: object = {}) {
+    const result = editableOrder({ shipmentNo: null, shipmentNoRegisteredAt: null, ...extra });
+    jest.spyOn(result.service as any, 'assertEditableOrderNotInActiveOverseasPickingBatch').mockResolvedValue(undefined);
+    jest.spyOn(result.service as any, 'assertEditedOrderIdentityDoesNotConflict').mockResolvedValue(undefined);
+    jest.spyOn(result.service as any, 'resolveDispatchModeForProductId').mockResolvedValue('overseas');
+    return result;
+  }
+  it.each([
+    { orderQuantity: 3 }, { shippingAddress: '新住所' }, { productName: '新商品名' }, { productId: ' PART ' }, {},
+  ])('does not require review when saving other fields: %j', async (extra) => {
+    const { service, saved } = fixture();
+    await service.updateRakutenOrder('1', { ...payload, ...extra }, 'reviewer');
+    expect(saved().rawPayload._wmsProductIdEdited).toBe(false);
+    expect(mailReviewReason([saved()])).toBeNull();
+  });
+  it.each([
+    {}, { sourceKind: 'csv', rmsConnectionId: null, rawPayload: {} },
+    { isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET' },
+  ])('records real product ID edits for every order source: %j', async (extra) => {
+    const { service, saved } = fixture(extra);
+    await service.updateRakutenOrder('1', { ...payload, productId: 'OTHER-PART' }, 'reviewer');
+    expect(saved().rawPayload._wmsProductIdEdited).toBe(true);
+    expect(mailReviewReason([saved()])).toBe('manual_update');
+    await service.updateRakutenOrder('1', { ...payload, productId: 'OTHER-PART', orderQuantity: 3 }, 'reviewer');
+    expect(mailReviewReason([saved()])).toBe('manual_update');
+    await service.updateRakutenOrder('1', payload, 'reviewer');
+    expect(mailReviewReason([saved()])).toBe('manual_update');
+  });
+  it('distinguishes historical combo edits from expanded components and sibling edit markers', () => {
+    const component = order({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET',
+      rmsItemKey: 'ORDER|ITEM|component:PART', rmsManualOverrideAt: date });
+    expect(mailReviewReason([component])).toBeNull();
+    expect(mailReviewReason([{ ...component, skuCode: 'OTHER' }])).toBe('manual_update');
+    expect(mailReviewReason([{ ...component, rmsItemKey: 'PREFIX|component:TRUNCATED|HASH' }])).toBeNull();
+  });
+});
 
 function scheduleControl(enabled = true): any {
   return { enabled: jest.fn().mockResolvedValue(enabled), execute: jest.fn((_key, action) => enabled ? action() : Promise.resolve(undefined)) };

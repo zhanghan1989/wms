@@ -1,5 +1,5 @@
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
-import { basketIdOf } from '../rakuten-rms-api/rakuten-order-workflow';
+import { basketIdOf, productIdWasManuallyEdited } from '../rakuten-rms-api/rakuten-order-workflow';
 import { stockTransaction, lockStockProducts } from '../inventory/stock-transaction';
 import { availableStock } from '../inventory/stock-availability';
 import { execFile } from 'child_process';
@@ -3641,6 +3641,8 @@ export class OrdersService {
           rmsManualOverrideAt: manualOverrideAt,
           rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
           rawPayload: this.mergeRawPayload(current.rawPayload, {
+            _wmsProductIdEdited: productIdWasManuallyEdited(current) ||
+              String(current.skuCode ?? '').trim() !== String(skuCode ?? '').trim(),
             _wmsManualOverrideFields: [
               "orderId",
               "skuCode",
@@ -10687,7 +10689,7 @@ export class OrdersService {
 
   private mergeRawPayload(
     rawPayload: Prisma.JsonValue | Prisma.InputJsonObject | null,
-    updates: Record<string, string | null>,
+    updates: Record<string, string | boolean | null>,
   ): Prisma.InputJsonObject {
     const base =
       rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)

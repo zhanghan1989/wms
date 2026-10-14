@@ -1278,7 +1278,7 @@ export class RakutenRmsAutomationService {
           id: mail.id, status: mail.status, failureCategory: mail.failureCategory, lastError: mail.lastError, sendStartedAt: null,
         }, data: {
           failureCategory: reviewRequired ? 'manual_review' : null,
-          lastError: reviewRequired ? '请人工核对商品调整、数量、特殊说明及收件资料后确认正文' : null,
+          lastError: reviewRequired ? '请人工核对产品ID修改或商品信息异常后确认正文' : null,
           nextAttemptAt: null,
         } });
       } catch (error) {
@@ -2602,7 +2602,7 @@ export class RakutenRmsAutomationService {
           const manual = Boolean(businessBlock || !template || reviewRequired || condition?.includes('人工') || condition?.includes('外部'));
           await this.prisma.rakutenOrderMail.update({ where: { id: mail.id }, data: {
             failureCategory: businessBlock ? 'order_changed' : !template ? 'template_missing' : reviewRequired ? 'manual_review' : manual ? 'order_changed' : 'waiting_conditions',
-            lastError: businessBlock || (!template ? templateIssue ?? '请配置并启用邮件模板' : reviewRequired ? '请人工核对商品调整、数量、特殊说明及收件资料后确认正文' : condition),
+            lastError: businessBlock || (!template ? templateIssue ?? '请配置并启用邮件模板' : reviewRequired ? '请人工核对产品ID修改或商品信息异常后确认正文' : condition),
             nextAttemptAt: manual ? null : new Date(Date.now() + 20 * 60_000),
           } });
           counts.blocked += 1;

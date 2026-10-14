@@ -27,7 +27,8 @@ const workflow = (rows: RakutenOrderRecord[], mails: RakutenOrderMail[], shippin
 
 describe('order-level Rakuten workflow', () => {
   it('keeps new-order acknowledgement and shipping independent of product-content review', () => {
-    const rows = [row({ rmsManualOverrideAt: date, orderRemark: '交換の説明' })];
+    const rows = [row({ rmsManualOverrideAt: date,
+      rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })];
     const result = workflow(rows, [mail('new_order')], report(rows, { status: 'pending' }));
     expect(result.steps.find((step) => step.event === 'new_order')).toMatchObject({ state: 'ready', requiresManualReview: false });
     expect(result.steps.find((step) => step.event === 'shipping')).toMatchObject({ state: 'waiting', executable: false });
@@ -115,17 +116,18 @@ describe('order-level Rakuten workflow', () => {
     expect(workflow(rows, [mail('new_order', { status: 'sent' })], report(rows, { fulfillmentType: 'china', status: 'skipped', lastError: '用户人工忽略单号回传' }))
       .steps.find((step) => step.event === 'china_customs')).toMatchObject({ state: 'manual', executable: false });
   });
-  it('automates structured edits and complete combos but reviews free-form instructions', () => {
+  it('automates other edits and complete combos but reviews product ID edits', () => {
     expect(mailReviewReason([row({ rmsManualOverrideAt: date })])).toBeNull();
     expect(mailReviewReason([row({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET' })])).toBeNull();
     expect(mailReviewReason([row({ isComboOrder: true })])).toBe('combo_order');
-    expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark: '納期について個別説明' })])).toBe('manual_update');
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark: '納期について個別説明' })])).toBeNull();
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date, rawPayload: { _wmsProductIdEdited: true } })])).toBe('manual_update');
   });
   it.each(['[配送日時指定:]', ' [配送日時指定:]\n[配送日時指定：] '])('does not review an empty RMS delivery heading: %s', (orderRemark) => {
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark })])).toBeNull();
-    expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark: `${orderRemark}\n交換品を同梱してください` })])).toBe('manual_update');
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark: `${orderRemark}\n交換品を同梱してください` })])).toBeNull();
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark, orderQuantity: 3,
-      rawPayload: { rmsItem: { units: 2 } } })])).toBe('manual_update');
+      rawPayload: { rmsItem: { units: 2 } } })])).toBeNull();
   });
   it('uses the current valid template after a historical template failure', () => {
     const rows = [row({ rmsManualOverrideAt: date, orderRemark: '[配送日時指定:]' })];
@@ -139,12 +141,12 @@ describe('order-level Rakuten workflow', () => {
       .toMatchObject({ state: 'manual', executable: false, reason: '旧模板需要修订', canReviewBody: false });
   });
   it('offers body review after a repaired template without bypassing shipment conditions', () => {
-    const rows = [row({ rmsManualOverrideAt: date, orderRemark: '交換品を同梱してください' })];
+    const rows = [row({ rmsManualOverrideAt: date, rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })];
     const mails = [mail('new_order', { status: 'sent' }), mail('japan_shipped', {
       failureCategory: 'template_missing', lastError: '旧模板需要修订',
     })];
     expect(workflow(rows, mails, report(rows)).steps.find((step) => step.event === 'japan_shipped'))
-      .toMatchObject({ state: 'manual', executable: false, canReviewBody: true, reason: '订单商品、数量或特殊说明需要核对，请确认正文' });
+      .toMatchObject({ state: 'manual', executable: false, canReviewBody: true, reason: '订单产品ID修改或商品信息异常，请核对并确认正文' });
     expect(workflow(rows, mails, report(rows, { status: 'pending' })).steps.find((step) => step.event === 'japan_shipped'))
       .toMatchObject({ executable: false, canReviewBody: false });
     expect(workflow(rows, [mail('new_order'), mails[1]], report(rows)).steps.find((step) => step.event === 'japan_shipped'))
@@ -244,8 +246,9 @@ describe('order-level Rakuten workflow', () => {
 });
 
 describe('recovery after a template has been repaired', () => {
-  const setup = (orderRemark: string) => {
-    const rows = [row({ rmsManualOverrideAt: date, orderRemark })];
+  const setup = (orderRemark: string, productIdEdited = false) => {
+    const rows = [row({ rmsManualOverrideAt: date, orderRemark,
+      rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: productIdEdited } })];
     const held = mail('japan_shipped', { failureCategory: 'template_missing', lastError: '旧模板需要修订' });
     const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const prisma = {
@@ -265,11 +268,24 @@ describe('recovery after a template has been repaired', () => {
       id: 10n, status: 'pending', failureCategory: 'template_missing', lastError: '旧模板需要修订', sendStartedAt: null,
     }, data: { failureCategory: null, lastError: null, nextAttemptAt: null } });
   });
+  it('releases an existing manual-review hold caused only by remarks and valid quantity edits', async () => {
+    const { service, prisma, updateMany } = setup('交換品を同梱してください');
+    const held = mail('japan_shipped', { failureCategory: 'manual_review', lastError: '旧人工编辑审核' });
+    prisma.rakutenOrderMail.findMany.mockResolvedValue([held]);
+    prisma.rakutenOrderRecord.findMany.mockResolvedValue([row({ rmsManualOverrideAt: date,
+      orderRemark: '交換品を同梱してください', orderQuantity: 3,
+      rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { units: 2, SkuModelList: [{ variantId: 'BOX' }] } } })]);
+    await (service as any).refreshMailHolds(7n);
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ failureCategory: 'manual_review' }),
+      data: { failureCategory: null, lastError: null, nextAttemptAt: null },
+    }));
+  });
   it('replaces the stale template failure with a real body-review requirement', async () => {
-    const { service, updateMany } = setup('交換品を同梱してください');
+    const { service, updateMany } = setup('交換品を同梱してください', true);
     await (service as any).refreshMailHolds(7n);
     expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: {
-      failureCategory: 'manual_review', lastError: '请人工核对商品调整、数量、特殊说明及收件资料后确认正文', nextAttemptAt: null,
+      failureCategory: 'manual_review', lastError: '请人工核对产品ID修改或商品信息异常后确认正文', nextAttemptAt: null,
     } }));
   });
   it('does not clear a hold while the prerequisite remains unfinished', async () => {
@@ -347,6 +363,8 @@ describe('scheduled queue boundaries', () => {
       rakutenOrderRecord: { findMany: jest.fn().mockImplementation(({ where }: any) => Promise.resolve([
         row({ orderId: where.orderId ?? where.OR?.[0]?.orderId ?? where.OR?.[0]?.rmsOrderId ?? where.OR?.[0]?.OR?.[0]?.rmsOrderId,
           rmsManualOverrideAt: (where.orderId ?? where.OR?.[0]?.orderId ?? where.OR?.[0]?.rmsOrderId ?? where.OR?.[0]?.OR?.[0]?.rmsOrderId) === 'ORDER-101' ? null : date,
+          rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited:
+            (where.orderId ?? where.OR?.[0]?.orderId ?? where.OR?.[0]?.rmsOrderId ?? where.OR?.[0]?.OR?.[0]?.rmsOrderId) !== 'ORDER-101' },
           orderRemark: (where.orderId ?? where.OR?.[0]?.orderId ?? where.OR?.[0]?.rmsOrderId ?? where.OR?.[0]?.OR?.[0]?.rmsOrderId) === 'ORDER-101' ? null : '個別説明' }),
       ])) },
       rakutenOrderShippingReport: { findUnique: jest.fn().mockResolvedValue(report([row()])) },
@@ -457,9 +475,9 @@ describe('human decisions for missing new-order mail', () => {
 });
 
 describe('modified purchase information', () => {
-  it('reviews quantity/SKU changes that can invalidate original order totals', () => {
+  it('reviews legacy product ID changes while automating valid quantity and address edits', () => {
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderQuantity: 3,
-      rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { units: 2 } } })])).toBe('manual_update');
+      rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { units: 2 } } })])).toBeNull();
     expect(mailReviewReason([row({ rmsManualOverrideAt: date,
       rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { SkuModelList: [{ variantId: 'ORIGINAL-SKU' }] } } })])).toBe('manual_update');
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, shippingAddress: '新住所',

@@ -7647,9 +7647,9 @@ async function previewRakutenManualMailAction(item, button) {
   }
   if (reviewWarning) {
     const warningByReason = {
-      manual_update: "该订单的商品调整、数量或特殊说明需要人工核对。请确认并按需要修改正文后发送。",
+      manual_update: "该订单存在产品ID修改或商品信息异常。请核对并按需要修改正文后发送。",
       combo_order: "该订单的组合商品或收件信息不完整。请核对商品、数量和收件资料，修改正文后发送。",
-      manual_update_and_combo: "该订单包含特殊说明且组合商品信息不完整。请核对并修改正文后发送。",
+      manual_update_and_combo: "该订单存在产品ID修改或商品信息异常，且组合商品信息不完整。请核对并修改正文后发送。",
     };
     reviewWarning.textContent = warningByReason[preview.manualReviewReason]
       || "该订单需要人工确认。请核对并按需要修改正文，确认后才会实际发送。";

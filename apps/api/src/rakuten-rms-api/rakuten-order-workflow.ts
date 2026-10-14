@@ -82,26 +82,31 @@ export function orderBlockReason(rows: RakutenOrderRecord[], includeBusinessChan
   }
   return null;
 }
-// Structured facts can be rendered automatically. Free-form instructions and
-// incomplete combo mappings need a reviewed body, irrespective of mail event.
+// Product-ID edits and incomplete combo mappings need a reviewed body.
 export function hasRemovedOrderItems(rows: RakutenOrderRecord[]): boolean {
   return rows.some((row) => Boolean((row.rawPayload as Record<string, unknown> | null)?._wmsDeletedItemsAt));
 }
+export function productIdWasManuallyEdited(row: RakutenOrderRecord): boolean {
+  const raw = row.rawPayload as Record<string, any> | null;
+  if (raw?._wmsProductIdEdited === true) return true;
+  if (!row.rmsManualOverrideAt) return false;
+  // Legacy form saves list every editable field, even when only an address or
+  // remark changed. Compare with the imported product instead of that list.
+  if (row.isComboOrder) {
+    const originalComponent = row.rmsItemKey?.split('|component:')[1];
+    // Long import keys end with a hash; a truncated component is not evidence
+    // that its product ID changed.
+    return Boolean(originalComponent && !originalComponent.includes('|') &&
+      originalComponent.trim() !== String(row.skuCode ?? '').trim());
+  }
+  const item = raw?.rmsItem;
+  const sku = (item?.SkuModelList ?? item?.skuModelList)?.[0];
+  const originalSku = sku?.variantId || sku?.merchantDefinedSkuId || item?.manageNumber || item?.skuManagementNumber || item?.itemNumber || item?.itemUrl;
+  return Boolean(originalSku) && String(originalSku).trim() !== String(row.skuCode ?? '').trim();
+}
 export function mailReviewReason(rows: RakutenOrderRecord[]): 'manual_update' | 'combo_order' | 'manual_update_and_combo' | null {
-  const manual = hasRemovedOrderItems(rows) || rows.some((row) => {
-    if (validOrderQuantity(row.orderQuantity) === null) return true;
-    if (!row.rmsManualOverrideAt) return false;
-    // RMS includes this empty delivery-instructions heading on ordinary orders.
-    // Only the remaining text represents a special instruction to review.
-    if (String(row.orderRemark ?? '').replace(/\[配送日時指定\s*[:：]\s*\]/g, '').trim()) return true;
-    const raw = row.rawPayload as Record<string, any> | null;
-    const item = raw?.rmsItem;
-    const quantity = item?.units ?? item?.quantity ?? item?.orderQuantity;
-    if (quantity !== undefined && quantity !== null && Number(quantity) !== Number(row.orderQuantity)) return true;
-    const sku = (item?.SkuModelList ?? item?.skuModelList)?.[0];
-    const originalSku = sku?.variantId || sku?.merchantDefinedSkuId || item?.manageNumber || item?.skuManagementNumber || item?.itemNumber || item?.itemUrl;
-    return !row.isComboOrder && Boolean(originalSku) && String(originalSku).trim() !== String(row.skuCode ?? '').trim();
-  });
+  const manual = hasRemovedOrderItems(rows) || rows.some((row) =>
+    validOrderQuantity(row.orderQuantity) === null || productIdWasManuallyEdited(row));
   const combo = rows.some((row) => {
     if (!row.isComboOrder) return false;
     const raw = row.rawPayload as Record<string, any> | null;
@@ -260,7 +265,7 @@ export function buildOrderWorkflow(input: {
     } else if (job.nextAttemptAt && job.nextAttemptAt > now) {
       state = 'retry'; reason = `等待重试时间 ${job.nextAttemptAt.toISOString()}`;
     } else if (review) {
-      state = 'manual'; reason = review === 'combo_order' ? '组合商品或收件信息不完整，请确认正文' : '订单商品、数量或特殊说明需要核对，请确认正文';
+      state = 'manual'; reason = review === 'combo_order' ? '组合商品或收件信息不完整，请确认正文' : '订单产品ID修改或商品信息异常，请核对并确认正文';
     } else {
       state = job.status === 'failed' ? 'retry' : 'ready';
       reason = job.status === 'failed' ? job.lastError : null;

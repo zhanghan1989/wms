@@ -1007,7 +1007,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
     });
   });
 
-  it('marks the preview for manual review after a WMS order edit', async () => {
+  it('marks the preview for manual review after a product ID edit', async () => {
     const connection = { id: 7n, shop: { id: 3n, name: '乐天店' } };
     const prisma = {
       rakutenOrderMail: {
@@ -1029,7 +1029,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
         }),
       },
       rakutenOrderRecord: {
-        findMany: jest.fn().mockResolvedValue([makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要' })]),
+        findMany: jest.fn().mockResolvedValue([makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要', rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })]),
       },
     } as any;
     const scopedService = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
@@ -1046,11 +1046,11 @@ describe('Rakuten RMS shipping and mail automation', () => {
   });
 
   it('reviews product-sensitive mails while keeping the fixed new-order acknowledgement automatic', () => {
-    const manuallyUpdatedRows = [makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要' })];
+    const manuallyUpdatedRows = [makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要', rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })];
     const comboRows = [makeRow({ isComboOrder: true })];
     const bothRows = [makeRow({
       isComboOrder: true,
-      rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要',
+      rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要', rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true },
     })];
 
     expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.japan_shipped, manuallyUpdatedRows)).toBe(true);
@@ -1111,7 +1111,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
   });
 
   it('sends and persists the operator-edited body for a manually updated order', async () => {
-    const rows = [makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要' })];
+    const rows = [makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要', rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })];
     const mail = {
       id: 95n,
       connectionId: 7n,
