@@ -469,6 +469,25 @@ export class OrdersController {
     return this.ordersService.getRakutenTrackingStatusSummary();
   }
 
+  @Get('rakuten/tracking-query-failures')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async listRakutenTrackingQueryFailures(
+    @Query('view') view?: string,
+    @Query('q') query?: string,
+    @Query('page') page?: string,
+  ): Promise<unknown> {
+    return this.ordersService.listRakutenTrackingQueryFailures(view, query, page);
+  }
+
+  @Post('rakuten/tracking-query-failures/ignore')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async updateRakutenTrackingQueryIgnores(
+    @Body() payload: { trackingNos?: unknown; ignored?: unknown },
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    return this.ordersService.updateRakutenTrackingQueryIgnores(payload, user.username);
+  }
+
   @Post('overseas-warehouse/yamato-batches/:batchId/upload-pdf')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @UseInterceptors(AnyFilesInterceptor({ limits: { files: 20, fileSize: 20 * 1024 * 1024 } }))

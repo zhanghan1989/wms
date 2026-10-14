@@ -1247,6 +1247,18 @@ model RakutenTrackingSyncLock {
   @@map("rakuten_tracking_sync_locks")
 }
 
+model RakutenTrackingQueryIgnore {
+  trackingNo String    @id @map("tracking_no") @db.VarChar(128)
+  isActive   Boolean   @default(true) @map("is_active")
+  ignoredAt  DateTime  @default(now()) @map("ignored_at")
+  ignoredBy  String    @map("ignored_by") @db.VarChar(64)
+  restoredAt DateTime? @map("restored_at")
+  restoredBy String?   @map("restored_by") @db.VarChar(64)
+
+  @@index([isActive, ignoredAt])
+  @@map("rakuten_tracking_query_ignores")
+}
+
 model AmazonOrderRecord {
   id                      BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   rowHash                 String                 @unique @map("row_hash") @db.Char(40)

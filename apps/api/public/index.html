@@ -2199,13 +2199,30 @@
           <thead><tr><th>定时任务</th><th>定时开关</th><th>运行状态</th><th>下一次计划启动（日本时间）</th><th>上次结果</th></tr></thead>
           <tbody>
             <tr data-schedule-row="import"><td>订单导入</td><td><button type="button" class="ghost" data-schedule-toggle="import" role="switch" aria-checked="false" aria-label="订单定时导入" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
-            <tr data-schedule-row="tracking"><td>物流自动查询</td><td><button type="button" class="ghost" data-schedule-toggle="tracking" role="switch" aria-checked="false" aria-label="物流自动查询" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
+            <tr data-schedule-row="tracking"><td>物流自动查询<br><button id="rakutenTrackingFailuresOpen" type="button" class="tiny-btn ghost">查看失败单号</button></td><td><button type="button" class="ghost" data-schedule-toggle="tracking" role="switch" aria-checked="false" aria-label="物流自动查询" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
             <tr data-schedule-row="shipping"><td>快递单号回传</td><td><button type="button" class="ghost" data-schedule-toggle="shipping" role="switch" aria-checked="false" aria-label="快递单号定时回传" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
             <tr data-schedule-row="mail"><td>邮件发送</td><td><button type="button" class="ghost" data-schedule-toggle="mail" role="switch" aria-checked="false" aria-label="邮件定时发送" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
           </tbody>
         </table></div>
         <p id="rakutenScheduleMeta" class="muted" aria-live="polite">正在读取定时状态...</p>
       </section>
+      <details id="rakutenTrackingFailuresPanel" class="rakuten-import-issues">
+        <summary id="rakutenTrackingFailuresSummary">物流查询失败与人工忽略</summary>
+        <p class="muted">这里显示全部店铺的物流查询异常，包括历史订单。忽略按快递单号生效，停止后续查询并保留原物流状态；不代表已通关或送达，回传和邮件仍需满足各自条件。可在“已忽略”中恢复查询。上方“上次结果”保留当轮记录。</p>
+        <div class="rakuten-center-toolbar">
+          <button type="button" class="ghost active" data-tracking-view="failed" aria-pressed="true">查询失败</button>
+          <button type="button" class="ghost" data-tracking-view="ignored" aria-pressed="false">已忽略</button>
+          <label>单号 / 订单号<input id="rakutenTrackingFailuresSearch" type="search" maxlength="128" placeholder="输入快递单号或订单号" /></label>
+          <button id="rakutenTrackingFailuresFilter" type="button" class="ghost">查询</button>
+          <button id="rakutenTrackingFailuresBatch" type="button" disabled>忽略所选单号</button>
+          <span id="rakutenTrackingFailuresSelected" class="muted">已选 0 个单号</span>
+        </div>
+        <div class="table-scroll"><table>
+          <thead><tr><th><input id="rakutenTrackingFailuresSelectPage" type="checkbox" aria-label="选择本页全部单号" /></th><th>快递单号 / 发货公司</th><th>店铺 / 关联订单</th><th>查询错误</th><th>最后查询 / 忽略记录</th><th>操作</th></tr></thead>
+          <tbody id="rakutenTrackingFailuresBody"><tr><td colspan="6">正在读取...</td></tr></tbody>
+        </table></div>
+        <div class="rakuten-manual-mail-pager"><button id="rakutenTrackingFailuresPrev" type="button" class="ghost">上一页</button><span id="rakutenTrackingFailuresPage"></span><button id="rakutenTrackingFailuresNext" type="button" class="ghost">下一页</button></div>
+      </details>
       <details id="rakutenImportIssuesPanel" class="rakuten-import-issues" open>
         <summary id="rakutenImportIssuesSummary">正在读取导入待处理订单...</summary>
         <p class="muted">以下订单因组合配置或产品ID缺失被整单跳过，其他订单正常导入。请按处理说明补齐配置或解决匹配冲突后，手动从乐天 API 再次导入，或等待开启的定时导入重新检查。</p>

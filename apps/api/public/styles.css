@@ -4417,3 +4417,5 @@ button.danger-solid {
 .rakuten-import-issues .table-scroll { overflow-x: auto; }
 .rakuten-import-issues table { width: 100%; min-width: 640px; font-size: 13px; }
 .rakuten-import-issues td { overflow-wrap: anywhere; }
+#rakutenTrackingFailuresPanel td small { display: block; }
+#rakutenTrackingFailuresPanel table { min-width: 800px; }

@@ -55,7 +55,8 @@ describe('Rakuten tracking candidate selection', () => {
 
   it('includes incomplete delivered parcels and errors, deduplicates, and retains bounded oldest-first selection', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
-    const service = new OrdersService({ rakutenOrderRecord: { findMany } } as any);
+    const service = new OrdersService({ rakutenOrderRecord: { findMany },
+      rakutenTrackingQueryIgnore: { findMany: jest.fn().mockResolvedValue([]) } } as any);
     jest.spyOn(service as any, 'acquireRakutenTrackingSyncLock').mockResolvedValue(true);
     jest.spyOn(service as any, 'startRakutenTrackingSyncLockHeartbeat').mockReturnValue(undefined);
     const release = jest.spyOn(service as any, 'releaseRakutenTrackingSyncLock').mockResolvedValue(undefined);

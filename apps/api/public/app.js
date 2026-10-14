@@ -7256,6 +7256,99 @@ function renderRakutenApiImportPreview() {
   );
 }
 
+let rakutenTrackingFailuresPage = 1;
+let rakutenTrackingFailuresView = "failed";
+let rakutenTrackingFailuresQuery = "";
+let rakutenTrackingFailuresRequestId = 0;
+let rakutenTrackingFailuresSaving = false;
+let rakutenTrackingFailuresResult = { items: [], total: 0, pageSize: 50 };
+const rakutenTrackingFailuresSelected = new Set();
+
+function updateRakutenTrackingFailureSelection() {
+  const items = rakutenTrackingFailuresResult.items || [];
+  const count = rakutenTrackingFailuresSelected.size;
+  setTextById("rakutenTrackingFailuresSelected", `已选 ${count} 个单号`);
+  const batch = $("rakutenTrackingFailuresBatch");
+  batch.textContent = rakutenTrackingFailuresView === "ignored" ? "恢复所选查询" : "忽略所选单号";
+  batch.disabled = count === 0 || rakutenTrackingFailuresSaving;
+  const all = $("rakutenTrackingFailuresSelectPage");
+  all.checked = items.length > 0 && count === items.length;
+  all.indeterminate = count > 0 && count < items.length;
+  all.disabled = items.length === 0 || rakutenTrackingFailuresSaving;
+}
+
+function renderRakutenTrackingFailures(result) {
+  const ignored = rakutenTrackingFailuresView === "ignored";
+  setTextById("rakutenTrackingFailuresSummary", `物流查询：失败 ${result.failedCount || 0} 个单号 · 已忽略 ${result.ignoredCount || 0} 个单号（全部店铺）`);
+  $("rakutenTrackingFailuresBody").innerHTML = (result.items || []).map((item) => {
+    const selected = rakutenTrackingFailuresSelected.has(item.trackingNo);
+    const orders = item.orderIds || [];
+    const orderHtml = orders.map(escapeHtml);
+    const ordersHtml = orders.length > 2 ? `<details><summary>${orders.length} 个关联订单</summary>${orderHtml.join("<br>")}</details>` : orderHtml.join("<br>");
+    return `<tr><td><input type="checkbox" data-tracking-select="${escapeHtml(item.trackingNo)}" aria-label="选择单号 ${escapeHtml(item.trackingNo)}" ${selected ? "checked" : ""} ${rakutenTrackingFailuresSaving ? "disabled" : ""} /></td>
+      <td><strong>${escapeHtml(item.trackingNo)}</strong><br><span class="muted">${escapeHtml((item.shipmentCompanies || []).join("、") || "未填写发货公司")}</span></td>
+      <td>${escapeHtml((item.shopNames || []).join("、") || "历史导入（未关联店铺）")}<br>${ordersHtml || '<span class="muted">当前无关联订单</span>'}<small class="muted">${Number(item.recordCount || 0)} 条明细</small></td>
+      <td>${escapeHtml(item.error || "无当前查询错误")}</td>
+      <td>${escapeHtml(item.checkedAt ? formatDate(item.checkedAt) : "尚未查询")}${item.ignoredAt ? `<br><small>忽略：${escapeHtml(item.ignoredBy)} · ${escapeHtml(formatDate(item.ignoredAt))}</small>` : ""}</td>
+      <td><button type="button" class="tiny-btn ghost" data-tracking-action="${ignored ? "restore" : "ignore"}" data-tracking-no="${escapeHtml(item.trackingNo)}" ${rakutenTrackingFailuresSaving ? "disabled" : ""}>${ignored ? "恢复查询" : "人工忽略"}</button></td></tr>`;
+  }).join("") || `<tr><td colspan="6" class="muted">${ignored ? "没有已忽略的单号" : "没有查询失败的单号"}${rakutenTrackingFailuresQuery ? "符合查询条件" : ""}</td></tr>`;
+  document.querySelectorAll("[data-tracking-view]").forEach((button) => {
+    const active = button.dataset.trackingView === rakutenTrackingFailuresView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+    button.textContent = button.dataset.trackingView === "ignored" ? `已忽略 ${result.ignoredCount || 0}` : `查询失败 ${result.failedCount || 0}`;
+  });
+  const pages = Math.max(1, Math.ceil(Number(result.total || 0) / Number(result.pageSize || 50)));
+  setTextById("rakutenTrackingFailuresPage", `第 ${rakutenTrackingFailuresPage} / ${pages} 页，共 ${result.total || 0} 个单号`);
+  $("rakutenTrackingFailuresPrev").disabled = rakutenTrackingFailuresPage <= 1 || rakutenTrackingFailuresSaving;
+  $("rakutenTrackingFailuresNext").disabled = rakutenTrackingFailuresPage >= pages || rakutenTrackingFailuresSaving;
+  updateRakutenTrackingFailureSelection();
+}
+
+async function loadRakutenTrackingFailures() {
+  const requestId = ++rakutenTrackingFailuresRequestId;
+  const params = new URLSearchParams({ view: rakutenTrackingFailuresView, page: String(rakutenTrackingFailuresPage), q: rakutenTrackingFailuresQuery });
+  try {
+    const result = await request(`/orders/rakuten/tracking-query-failures?${params}`);
+    if (requestId !== rakutenTrackingFailuresRequestId) return;
+    const pages = Math.max(1, Math.ceil(Number(result.total || 0) / Number(result.pageSize || 50)));
+    if (rakutenTrackingFailuresPage > pages) { rakutenTrackingFailuresPage = pages; await loadRakutenTrackingFailures(); return; }
+    rakutenTrackingFailuresResult = result;
+    const visible = new Set((result.items || []).map((item) => item.trackingNo));
+    for (const no of rakutenTrackingFailuresSelected) if (!visible.has(no)) rakutenTrackingFailuresSelected.delete(no);
+    renderRakutenTrackingFailures(result);
+  } catch (error) {
+    if (requestId !== rakutenTrackingFailuresRequestId) return;
+    rakutenTrackingFailuresResult = { items: [], total: 0, pageSize: 50 };
+    rakutenTrackingFailuresSelected.clear();
+    renderRakutenTrackingFailures(rakutenTrackingFailuresResult);
+    setTextById("rakutenTrackingFailuresSummary", `物流查询记录读取失败：${error.message}`);
+    $("rakutenTrackingFailuresBody").innerHTML = '<tr><td colspan="6">读取失败，请刷新重试。</td></tr>';
+  }
+}
+
+async function updateRakutenTrackingIgnores(trackingNos, ignored, button) {
+  if (!trackingNos.length || rakutenTrackingFailuresSaving) return;
+  const message = ignored
+    ? `确认忽略 ${trackingNos.length} 个快递单号的物流查询？这些单号将不再定时查询，原物流状态保留；忽略不代表已通关或送达。可在“已忽略”中恢复。`
+    : `确认恢复 ${trackingNos.length} 个快递单号的物流查询？开启定时查询后，下一轮将重新检查仍需查询的单号。`;
+  if (!await openActionConfirmModal(message, ignored ? "人工忽略物流查询" : "恢复物流查询", ignored ? "确认忽略" : "恢复查询")) return;
+  if (rakutenTrackingFailuresSaving) return;
+  rakutenTrackingFailuresSaving = true;
+  ++rakutenTrackingFailuresRequestId;
+  renderRakutenTrackingFailures(rakutenTrackingFailuresResult);
+  try {
+    const result = await withBusyButton(button, "处理中...", () => request("/orders/rakuten/tracking-query-failures/ignore", {
+      method: "POST", body: JSON.stringify({ trackingNos, ignored }),
+    }));
+    rakutenTrackingFailuresSelected.clear();
+    showToast(`${ignored ? "已忽略" : "已恢复"} ${Number(result.changedCount || 0)} 个单号${ignored ? "，可在已忽略列表恢复" : ""}`);
+  } finally {
+    rakutenTrackingFailuresSaving = false;
+    await loadRakutenTrackingFailures();
+  }
+}
+
 let rakutenWorkflowPage = 1;
 let rakutenCenterView = "manual";
 let rakutenCenterRecord = "mail";
@@ -7392,18 +7485,19 @@ function syncRakutenCenterScope() {
 }
 
 async function refreshRakutenProcessingCenter() {
+  const tracking = loadRakutenTrackingFailures();
   const issues = loadRakutenImportIssues().catch((error) => {
     setTextById("rakutenImportIssuesSummary", `导入待处理记录读取失败：${error.message}`);
     $("rakutenImportIssuesPanel").classList.remove("hidden");
   });
   if (["manual", "processing"].includes(rakutenCenterView)) {
-    await Promise.all([loadRakutenOrderWorkflows(), issues]);
+    await Promise.all([loadRakutenOrderWorkflows(), issues, tracking]);
   } else if (rakutenCenterView === "settings") {
-    await Promise.all([loadRakutenMailTemplates(), loadRakutenAutomationHealth(), issues]);
+    await Promise.all([loadRakutenMailTemplates(), loadRakutenAutomationHealth(), issues, tracking]);
   } else {
     const records = rakutenCenterRecord === "shipping" ? loadRakutenShippingManagementActions()
       : rakutenCenterRecord === "runs" ? loadRakutenAutomationRuns() : loadRakutenMails();
-    await Promise.all([records, issues]);
+    await Promise.all([records, issues, tracking]);
   }
 }
 
@@ -7501,12 +7595,18 @@ function startRakutenSchedulePolling() {
     }
     try { await loadRakutenImportIssues(); }
     catch (error) { setTextById("rakutenImportIssuesSummary", `导入待处理记录读取失败：${error.message}`); $("rakutenImportIssuesPanel").classList.remove("hidden"); }
+    if ($("rakutenTrackingFailuresPanel").open && !rakutenTrackingFailuresSaving) await loadRakutenTrackingFailures();
     if (generation === rakutenScheduleGeneration) rakutenScheduleTimer = setTimeout(poll, 5000);
   };
   void poll();
 }
 
 async function openRakutenProcessingCenter({ connectionId = "", view = "manual", record = "mail" } = {}) {
+  rakutenTrackingFailuresPage = 1;
+  rakutenTrackingFailuresView = "failed";
+  rakutenTrackingFailuresQuery = "";
+  rakutenTrackingFailuresSelected.clear();
+  $("rakutenTrackingFailuresSearch").value = "";
   await loadRakutenRmsConnections();
   const select = $("rakutenWorkflowShop");
   select.innerHTML = '<option value="">全部店铺</option>' + state.rakutenRmsConnections.map((connection) =>
@@ -17630,6 +17730,58 @@ function bindForms() {
     }
   });
 
+  $("rakutenTrackingFailuresOpen")?.addEventListener("click", async () => {
+    $("rakutenTrackingFailuresPanel").open = true;
+    $("rakutenTrackingFailuresPanel").scrollIntoView({ block: "nearest" });
+    await loadRakutenTrackingFailures();
+  });
+  $("rakutenTrackingFailuresPanel")?.addEventListener("click", async (event) => {
+    const viewButton = event.target.closest("[data-tracking-view]");
+    const actionButton = event.target.closest("[data-tracking-action]");
+    if (rakutenTrackingFailuresSaving) return;
+    try {
+      if (viewButton) {
+        rakutenTrackingFailuresView = viewButton.dataset.trackingView;
+        rakutenTrackingFailuresPage = 1;
+        rakutenTrackingFailuresSelected.clear();
+        await loadRakutenTrackingFailures();
+      } else if (actionButton) {
+        await updateRakutenTrackingIgnores([actionButton.dataset.trackingNo], actionButton.dataset.trackingAction === "ignore", actionButton);
+      }
+    } catch (error) { showToast(error.message, true); }
+  });
+  $("rakutenTrackingFailuresPanel")?.addEventListener("change", (event) => {
+    const checkbox = event.target.closest("[data-tracking-select]");
+    if (!checkbox || rakutenTrackingFailuresSaving) return;
+    if (checkbox.checked) rakutenTrackingFailuresSelected.add(checkbox.dataset.trackingSelect);
+    else rakutenTrackingFailuresSelected.delete(checkbox.dataset.trackingSelect);
+    updateRakutenTrackingFailureSelection();
+  });
+  $("rakutenTrackingFailuresSelectPage")?.addEventListener("change", (event) => {
+    if (rakutenTrackingFailuresSaving) return;
+    rakutenTrackingFailuresSelected.clear();
+    if (event.target.checked) for (const item of rakutenTrackingFailuresResult.items || []) rakutenTrackingFailuresSelected.add(item.trackingNo);
+    renderRakutenTrackingFailures(rakutenTrackingFailuresResult);
+  });
+  $("rakutenTrackingFailuresBatch")?.addEventListener("click", async (event) => {
+    try { await updateRakutenTrackingIgnores([...rakutenTrackingFailuresSelected], rakutenTrackingFailuresView !== "ignored", event.currentTarget); }
+    catch (error) { showToast(error.message, true); }
+  });
+  const filterTrackingFailures = async () => {
+    if (rakutenTrackingFailuresSaving) return;
+    rakutenTrackingFailuresQuery = $("rakutenTrackingFailuresSearch").value.trim();
+    rakutenTrackingFailuresPage = 1;
+    rakutenTrackingFailuresSelected.clear();
+    await loadRakutenTrackingFailures();
+  };
+  $("rakutenTrackingFailuresFilter")?.addEventListener("click", filterTrackingFailures);
+  $("rakutenTrackingFailuresSearch")?.addEventListener("keydown", (event) => { if (event.key === "Enter") void filterTrackingFailures(); });
+  for (const [id, direction] of [["rakutenTrackingFailuresPrev", -1], ["rakutenTrackingFailuresNext", 1]]) $(id)?.addEventListener("click", async () => {
+    if (rakutenTrackingFailuresSaving) return;
+    rakutenTrackingFailuresPage = Math.max(1, rakutenTrackingFailuresPage + direction);
+    rakutenTrackingFailuresSelected.clear();
+    await loadRakutenTrackingFailures();
+  });
   $("openRakutenWorkflowModal")?.addEventListener("click", async (event) => {
     try { await withBusyButton(event.currentTarget, "读取中...", () => openRakutenProcessingCenter()); } catch (error) { showToast(error.message, true); }
   });

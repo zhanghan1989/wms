@@ -8642,9 +8642,12 @@ export class OrdersService {
     }
     const heartbeat = this.startRakutenTrackingSyncLockHeartbeat(lockToken);
     try {
+      const ignored = await this.prisma.rakutenTrackingQueryIgnore.findMany({
+        where: { isActive: true }, select: { trackingNo: true },
+      });
       const rows = await this.prisma.rakutenOrderRecord.findMany({
         where: { deletedAt: null,
-          shipmentNo: { not: null, notIn: [''] },
+          shipmentNo: { not: null, notIn: ['', ...ignored.map((row) => row.trackingNo)] },
           OR: [
             { trackingIsDelivered: false },
             { trackingHasCustomsClearance: false },
@@ -8695,6 +8698,8 @@ export class OrdersService {
         SELECT COUNT(DISTINCT shipment_no) AS count
         FROM rakuten_order_records
         WHERE deleted_at IS NULL AND shipment_no IS NOT NULL AND shipment_no <> ''
+          AND NOT EXISTS (SELECT 1 FROM rakuten_tracking_query_ignores i
+            WHERE i.tracking_no = rakuten_order_records.shipment_no AND i.is_active = 1)
           AND (tracking_is_delivered = 0 OR tracking_has_customs_clearance = 0
             OR tracking_customs_clearance_date IS NULL OR tracking_error IS NOT NULL)
           AND dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
@@ -8703,6 +8708,8 @@ export class OrdersService {
         SELECT COUNT(DISTINCT shipment_no) AS count
         FROM rakuten_order_records
         WHERE deleted_at IS NULL AND shipment_no IS NOT NULL AND shipment_no <> ''
+          AND NOT EXISTS (SELECT 1 FROM rakuten_tracking_query_ignores i
+            WHERE i.tracking_no = rakuten_order_records.shipment_no AND i.is_active = 1)
           AND tracking_checked_at IS NULL
           AND dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
       `),
@@ -8712,6 +8719,116 @@ export class OrdersService {
       pendingTrackingNoCount: Number(pendingCountRows[0]?.count ?? 0),
       uncheckedTrackingNoCount: Number(uncheckedCountRows[0]?.count ?? 0),
     };
+  }
+
+  async listRakutenTrackingQueryFailures(view = 'failed', query = '', pageRaw = '1') {
+    if (!['failed', 'ignored'].includes(view)) throw new BadRequestException('不支持的物流查询列表');
+    const page = Number(pageRaw);
+    if (!Number.isSafeInteger(page) || page < 1) throw new BadRequestException('页码必须为正整数');
+    const search = query.trim();
+    if (search.length > 128) throw new BadRequestException('查询内容过长');
+    const pageSize = 50;
+    const activeIgnores = await this.prisma.rakutenTrackingQueryIgnore.findMany({
+      where: { isActive: true }, orderBy: [{ ignoredAt: 'desc' }, { trackingNo: 'asc' }],
+    });
+    const ignoreByNo = new Map(activeIgnores.map((row) => [row.trackingNo, row]));
+    // Search by an order selects its whole tracking-number group, including all item rows.
+    const searchWhere = search ? Prisma.sql`AND (r.shipment_no LIKE ${`%${search}%`}
+      OR EXISTS (SELECT 1 FROM rakuten_order_records o WHERE o.deleted_at IS NULL
+        AND o.shipment_no = r.shipment_no AND (o.order_id LIKE ${`%${search}%`} OR o.mall_order_no LIKE ${`%${search}%`})))` : Prisma.empty;
+    const failedWhere = Prisma.sql`r.deleted_at IS NULL AND r.shipment_no IS NOT NULL AND r.shipment_no <> ''
+      AND r.dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
+      AND r.tracking_error IS NOT NULL AND r.tracking_error <> ''
+      AND NOT EXISTS (SELECT 1 FROM rakuten_tracking_query_ignores i WHERE i.tracking_no = r.shipment_no AND i.is_active = 1)`;
+    const counts = await this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+      SELECT COUNT(DISTINCT r.shipment_no) AS count FROM rakuten_order_records r WHERE ${failedWhere}
+    `);
+    let total: number;
+    let trackingNos: string[];
+    if (view === 'ignored') {
+      // Keep ignored numbers reviewable even if their orders are later deleted or corrected.
+      const matches = search ? await this.prisma.rakutenOrderRecord.findMany({
+        where: { deletedAt: null, OR: [{ orderId: { contains: search } }, { mallOrderNo: { contains: search } }] },
+        select: { shipmentNo: true }, distinct: ['shipmentNo'],
+      }) : [];
+      const matchedNos = new Set(matches.map((row) => row.shipmentNo));
+      const filtered = activeIgnores.filter((row) => !search || row.trackingNo.toLowerCase().includes(search.toLowerCase()) || matchedNos.has(row.trackingNo));
+      total = filtered.length;
+      trackingNos = filtered.slice((page - 1) * pageSize, page * pageSize).map((row) => row.trackingNo);
+    } else {
+      const filteredCounts = search ? await this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
+        SELECT COUNT(DISTINCT r.shipment_no) AS count FROM rakuten_order_records r WHERE ${failedWhere} ${searchWhere}
+      `) : counts;
+      total = Number(filteredCounts[0]?.count ?? 0);
+      const groups = await this.prisma.$queryRaw<Array<{ trackingNo: string }>>(Prisma.sql`
+        SELECT r.shipment_no AS trackingNo FROM rakuten_order_records r WHERE ${failedWhere} ${searchWhere}
+        GROUP BY r.shipment_no ORDER BY MAX(r.tracking_checked_at) DESC, r.shipment_no ASC
+        LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+      `);
+      trackingNos = groups.map((row) => row.trackingNo);
+    }
+    const rows = trackingNos.length ? await this.prisma.rakutenOrderRecord.findMany({
+      where: { deletedAt: null, shipmentNo: { in: trackingNos }, ...this.buildRakutenChinaDispatchWhere() },
+      select: { orderId: true, mallOrderNo: true, shipmentNo: true, shipmentCompany: true, shopName: true,
+        trackingError: true, trackingCheckedAt: true,
+        rmsConnection: { select: { shop: { select: { name: true } } } } },
+      orderBy: [{ trackingCheckedAt: 'desc' }, { id: 'desc' }],
+    }) : [];
+    return { page, pageSize, total, failedCount: Number(counts[0]?.count ?? 0), ignoredCount: activeIgnores.length,
+      items: trackingNos.map((trackingNo) => {
+        const details = rows.filter((row) => row.shipmentNo === trackingNo);
+        const ignored = ignoreByNo.get(trackingNo);
+        const unique = (values: Array<string | null | undefined>) => [...new Set(values.filter((value): value is string => Boolean(value)))];
+        return { trackingNo, recordCount: details.length,
+          orderIds: unique(details.map((row) => row.orderId || row.mallOrderNo)),
+          shopNames: unique(details.map((row) => row.shopName || row.rmsConnection?.shop.name)),
+          shipmentCompanies: unique(details.map((row) => row.shipmentCompany)),
+          error: details.find((row) => row.trackingError)?.trackingError ?? null,
+          checkedAt: details[0]?.trackingCheckedAt?.toISOString() ?? null,
+          ignoredAt: ignored?.ignoredAt.toISOString() ?? null, ignoredBy: ignored?.ignoredBy ?? null,
+        };
+      }),
+    };
+  }
+
+  async updateRakutenTrackingQueryIgnores(payload: { trackingNos?: unknown; ignored?: unknown }, username: string) {
+    if (!Array.isArray(payload?.trackingNos) || payload.trackingNos.length < 1 || payload.trackingNos.length > 100
+      || payload.trackingNos.some((no: unknown) => typeof no !== 'string' || !no.trim() || no.trim().length > 128)
+      || typeof payload.ignored !== 'boolean') throw new BadRequestException('请选择1至100个单号，并指定忽略或恢复查询');
+    const trackingNos = [...new Set((payload.trackingNos as string[]).map((no) => no.trim()))];
+    const ignored = payload.ignored;
+    const lockToken = randomUUID();
+    if (!(await this.acquireRakutenTrackingSyncLock(lockToken))) {
+      throw new ConflictException('物流查询正在执行，请在本轮完成后再忽略或恢复');
+    }
+    try {
+      const changedCount = await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.rakutenTrackingQueryIgnore.findMany({ where: { trackingNo: { in: trackingNos } } });
+        const activeNos = new Set(existing.filter((row) => row.isActive).map((row) => row.trackingNo));
+        if (!ignored) {
+          const result = await tx.rakutenTrackingQueryIgnore.updateMany({
+            where: { trackingNo: { in: trackingNos }, isActive: true },
+            data: { isActive: false, restoredAt: new Date(), restoredBy: username },
+          });
+          return result.count;
+        }
+        const failures = await tx.rakutenOrderRecord.findMany({
+          where: { deletedAt: null, shipmentNo: { in: trackingNos }, trackingError: { not: null, notIn: [''] },
+            ...this.buildRakutenChinaDispatchWhere() }, select: { shipmentNo: true }, distinct: ['shipmentNo'],
+        });
+        const eligible = new Set(failures.map((row) => row.shipmentNo));
+        if (trackingNos.some((no) => !activeNos.has(no) && !eligible.has(no))) {
+          throw new BadRequestException('部分单号已不在查询失败列表，请刷新后重新选择');
+        }
+        const changes = trackingNos.filter((no) => !activeNos.has(no));
+        for (const trackingNo of changes) {
+          const data = { isActive: true, ignoredAt: new Date(), ignoredBy: username, restoredAt: null, restoredBy: null };
+          await tx.rakutenTrackingQueryIgnore.upsert({ where: { trackingNo }, create: { trackingNo, ...data }, update: data });
+        }
+        return changes.length;
+      });
+      return { changedCount, ignored };
+    } finally { await this.releaseRakutenTrackingSyncLock(lockToken); }
   }
 
   private async syncManualOrderIdsToXyjgBestEffort(ids: Array<bigint | number | string>): Promise<void> {

@@ -191,6 +191,7 @@ describe('center navigation and selections', () => {
         ? Promise.resolve({ items: [], total: 0, pageSize: 30 }) : request(path, ...args),
       loadRakutenMails: mails, loadRakutenMailTemplates: templates, loadRakutenAutomationHealth: health,
       loadRakutenShippingManagementActions: shipping, loadRakutenAutomationRuns: runs,
+      loadRakutenTrackingFailures: jest.fn().mockResolvedValue(undefined),
       openActionConfirmModal: jest.fn().mockResolvedValue(true), withBusyButton: (_button: unknown, _text: string, fn: () => unknown) => fn(),
       showToast: jest.fn(),
     };
