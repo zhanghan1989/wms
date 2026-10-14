@@ -121,6 +121,37 @@ describe('order-level Rakuten workflow', () => {
     expect(mailReviewReason([row({ isComboOrder: true })])).toBe('combo_order');
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark: '納期について個別説明' })])).toBe('manual_update');
   });
+  it.each(['[配送日時指定:]', ' [配送日時指定:]\n[配送日時指定：] '])('does not review an empty RMS delivery heading: %s', (orderRemark) => {
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark })])).toBeNull();
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark: `${orderRemark}\n交換品を同梱してください` })])).toBe('manual_update');
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark, orderQuantity: 3,
+      rawPayload: { rmsItem: { units: 2 } } })])).toBe('manual_update');
+  });
+  it('uses the current valid template after a historical template failure', () => {
+    const rows = [row({ rmsManualOverrideAt: date, orderRemark: '[配送日時指定:]' })];
+    const mails = [mail('new_order', { status: 'sent' }), mail('japan_shipped', {
+      failureCategory: 'template_missing', lastError: '旧模板需要修订',
+    })];
+    expect(workflow(rows, mails, report(rows)).steps.find((step) => step.event === 'japan_shipped'))
+      .toMatchObject({ state: 'ready', executable: true, reason: null, canReviewBody: false });
+    const result = buildOrderWorkflow({ rows, connection, report: report(rows), mails, templateVersions: new Map(), now: date });
+    expect(result.steps.find((step) => step.event === 'japan_shipped'))
+      .toMatchObject({ state: 'manual', executable: false, reason: '旧模板需要修订', canReviewBody: false });
+  });
+  it('offers body review after a repaired template without bypassing shipment conditions', () => {
+    const rows = [row({ rmsManualOverrideAt: date, orderRemark: '交換品を同梱してください' })];
+    const mails = [mail('new_order', { status: 'sent' }), mail('japan_shipped', {
+      failureCategory: 'template_missing', lastError: '旧模板需要修订',
+    })];
+    expect(workflow(rows, mails, report(rows)).steps.find((step) => step.event === 'japan_shipped'))
+      .toMatchObject({ state: 'manual', executable: false, canReviewBody: true, reason: '订单商品、数量或特殊说明需要核对，请确认正文' });
+    expect(workflow(rows, mails, report(rows, { status: 'pending' })).steps.find((step) => step.event === 'japan_shipped'))
+      .toMatchObject({ executable: false, canReviewBody: false });
+    expect(workflow(rows, [mail('new_order'), mails[1]], report(rows)).steps.find((step) => step.event === 'japan_shipped'))
+      .toMatchObject({ executable: false, canReviewBody: false });
+    expect(workflow(rows, [mails[0], mail('japan_shipped', { status: 'uncertain' })], report(rows))
+      .steps.find((step) => step.event === 'japan_shipped')).toMatchObject({ executable: false, canReviewBody: false });
+  });
   it('blocks pending actions for cancelled orders', () => {
     const rows = [row({ orderStatusText: '900' })];
     const result = workflow(rows, [mail('new_order')], report(rows, { status: 'pending' }));
@@ -154,6 +185,50 @@ describe('order-level Rakuten workflow', () => {
       mails: [mail('new_order')], templateVersions: new Map([['new_order', 1]]) });
     expect(result.steps[0]).toMatchObject({ state: 'waiting', executable: false });
   });
+});
+
+describe('recovery after a template has been repaired', () => {
+  const setup = (orderRemark: string) => {
+    const rows = [row({ rmsManualOverrideAt: date, orderRemark })];
+    const held = mail('japan_shipped', { failureCategory: 'template_missing', lastError: '旧模板需要修订' });
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      rakutenOrderMail: { findMany: jest.fn().mockResolvedValue([held]),
+        findUnique: jest.fn().mockResolvedValue(mail('new_order', { status: 'sent' })), updateMany },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
+      rakutenOrderShippingReport: { findUnique: jest.fn().mockResolvedValue(report(rows)) },
+    };
+    const service = new RakutenRmsAutomationService(prisma as any, {} as any, {} as any);
+    jest.spyOn(service as any, 'resolveActiveMailTemplate').mockResolvedValue({ subjectTemplate: '発送案内', bodyTemplate: '{{tracking_sections}}' });
+    return { service, prisma, updateMany };
+  };
+  it('resumes an ordinary edited order with only the empty RMS heading', async () => {
+    const { service, updateMany } = setup('[配送日時指定:]');
+    await (service as any).refreshMailHolds(7n);
+    expect(updateMany).toHaveBeenCalledWith({ where: {
+      id: 10n, status: 'pending', failureCategory: 'template_missing', lastError: '旧模板需要修订', sendStartedAt: null,
+    }, data: { failureCategory: null, lastError: null, nextAttemptAt: null } });
+  });
+  it('replaces the stale template failure with a real body-review requirement', async () => {
+    const { service, updateMany } = setup('交換品を同梱してください');
+    await (service as any).refreshMailHolds(7n);
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ data: {
+      failureCategory: 'manual_review', lastError: '请人工核对商品调整、数量、特殊说明及收件资料后确认正文', nextAttemptAt: null,
+    } }));
+  });
+  it('does not clear a hold while the prerequisite remains unfinished', async () => {
+    const { service, prisma, updateMany } = setup('[配送日時指定:]');
+    prisma.rakutenOrderMail.findUnique.mockResolvedValue(mail('new_order'));
+    await (service as any).refreshMailHolds(7n);
+    expect(updateMany).not.toHaveBeenCalled();
+  });
+  it.each([null, { subjectTemplate: '発送案内', bodyTemplate: '本日発送の手続きを行いました' }])
+    ('keeps the hold when there is no valid enabled template: %j', async (template) => {
+      const { service, updateMany } = setup('[配送日時指定:]');
+      jest.spyOn(service as any, 'resolveActiveMailTemplate').mockResolvedValue(template);
+      await (service as any).refreshMailHolds(7n);
+      expect(updateMany).not.toHaveBeenCalled();
+    });
 });
 
 describe('workflow history endpoint', () => {

@@ -84,7 +84,9 @@ export function mailReviewReason(rows: RakutenOrderRecord[]): 'manual_update' | 
   const manual = hasRemovedOrderItems(rows) || rows.some((row) => {
     if (validOrderQuantity(row.orderQuantity) === null) return true;
     if (!row.rmsManualOverrideAt) return false;
-    if (String(row.orderRemark ?? '').trim()) return true;
+    // RMS includes this empty delivery-instructions heading on ordinary orders.
+    // Only the remaining text represents a special instruction to review.
+    if (String(row.orderRemark ?? '').replace(/\[配送日時指定\s*[:：]\s*\]/g, '').trim()) return true;
     const raw = row.rawPayload as Record<string, any> | null;
     const item = raw?.rmsItem;
     const quantity = item?.units ?? item?.quantity ?? item?.orderQuantity;
@@ -234,10 +236,9 @@ export function buildOrderWorkflow(input: {
     } else if (!shipping && condition) {
       reason = condition;
       if (reason?.includes('人工') || reason?.includes('外部')) state = 'manual';
-    } else if (!shipping && mail?.failureCategory === 'template_missing') {
-      state = 'manual'; reason = mail.lastError ?? '请修正并启用邮件模板';
     } else if (!shipping && !templateVersion) {
-      state = 'manual'; reason = '尚未配置并启用该邮件模板';
+      state = 'manual'; reason = mail?.failureCategory === 'template_missing'
+        ? mail.lastError ?? '请修正并启用邮件模板' : '尚未配置并启用该邮件模板';
     } else if (!job) {
       state = event === 'new_order' || event === 'japan_shipped' && shippingSatisfied(report) ? 'manual' : 'waiting';
       reason = event === 'new_order' ? '缺少新規任务，请人工核对后补发或确认无需发送'
@@ -252,10 +253,13 @@ export function buildOrderWorkflow(input: {
     }
     const executable = Boolean(job && ['pending', 'failed'].includes(job.status) &&
       (state === 'ready' || state === 'retry' && (!job.nextAttemptAt || job.nextAttemptAt <= now)));
+    const canReviewBody = Boolean(mail && ['pending', 'failed'].includes(mail.status) && state === 'manual' && review &&
+      templateVersion && !stepBlock && !condition && connection.status && connection.mailNotificationsEnabled &&
+      !connection.mailCircuitOpenedAt && (!prerequisite || mailSatisfied(mails.find((item) => item.event === prerequisite))));
     return {
       event, label: labels[event], state, reason, status: job?.status ?? null,
       id: job?.id.toString() ?? null, kind: shipping ? 'shipping' : 'mail', templateVersion,
-      executable, requiresManualReview: Boolean(review), manualReviewReason: review,
+      executable, canReviewBody, requiresManualReview: Boolean(review), manualReviewReason: review,
       outcome: job?.status === 'sent' ? 'completed' : shipping && report?.status === 'skipped' && shippingSatisfied(report) ? 'verified'
         : mail?.status === 'cancelled' && mail.resolutionNote === IGNORED_MAIL ? 'ignored' : job?.status ?? null,
       completedAt: shipping ? report?.reportedAt?.toISOString() ?? null : mail?.sentAt?.toISOString() ?? null,

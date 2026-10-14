@@ -1260,7 +1260,7 @@ export class RakutenRmsAutomationService {
       try {
 
         const rows = await this.loadOrderRows(connectionId, mail.orderId);
-        if (mailOrderBlockReason(mail.event, rows) || this.requiresManualMailReview(mail.event, rows)) continue;
+        if (mailOrderBlockReason(mail.event, rows)) continue;
         const template = await this.resolveActiveMailTemplate(connectionId, mail.event);
         if (!template) continue;
         try { this.validateMailTemplate(template, mail.event); } catch { continue; }
@@ -1273,8 +1273,13 @@ export class RakutenRmsAutomationService {
           if (!mailSatisfied(prerequisite)) continue;
         }
         if (mailConditionReason(mail.event, rows, report)) continue;
-        await this.prisma.rakutenOrderMail.updateMany({ where: { id: mail.id, status: mail.status }, data: {
-          failureCategory: null, lastError: null, nextAttemptAt: null,
+        const reviewRequired = this.requiresManualMailReview(mail.event, rows);
+        await this.prisma.rakutenOrderMail.updateMany({ where: {
+          id: mail.id, status: mail.status, failureCategory: mail.failureCategory, lastError: mail.lastError, sendStartedAt: null,
+        }, data: {
+          failureCategory: reviewRequired ? 'manual_review' : null,
+          lastError: reviewRequired ? '请人工核对商品调整、数量、特殊说明及收件资料后确认正文' : null,
+          nextAttemptAt: null,
         } });
       } catch (error) {
         this.logger.error(`Rakuten refreshMailHolds 单笔处理失败：${this.errorMessage(error)}`);

@@ -7269,7 +7269,7 @@ function renderRakutenWorkflowStep(step, order) {
   const status = step.state === "manual" && ["sent", "skipped"].includes(step.status) ? "信息变化待核对" : step.status === "processing" ? "执行中" : step.outcome === "verified" ? "已核实完成" : step.outcome === "ignored" ? "已忽略" : step.status === "sent" ? "已完成" : step.status === "skipped" ? "已跳过" : step.status === "cancelled" ? "已取消" : labels[step.state] || "等待条件";
   const key = `${order.connectionId}:${order.orderId}:${step.event}`;
   const button = (action, text) => `<button type="button" class="tiny-btn${["workflowView", "workflowIgnore", "workflowIgnoreShipping", "workflowVerifyShipping", "workflowRetry"].includes(action) ? " ghost" : ""}" data-action="${action}" data-key="${escapeHtml(key)}">${text}</button>`;
-  const canReview = step.state === "manual" && step.requiresManualReview && /确认正文/.test(step.reason || "");
+  const canReview = step.canReviewBody === true;
   const actions = [];
   if (step.executable && !step.requiresManualReview) {
     const selected = typeof rakutenCenterSelected !== "undefined" && rakutenCenterSelected.has(key);

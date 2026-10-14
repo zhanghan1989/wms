@@ -13,9 +13,15 @@ describe('Rakuten order progress UI', () => {
   const order = { connectionId: '7', orderId: 'ORDER' };
   it('offers review for special content without an automatic-send control', () => {
     const html = render({ event: 'mixed_partial', label: '混発1', kind: 'mail', id: '1', status: 'pending',
-      state: 'manual', requiresManualReview: true, reason: '订单有特殊说明，请确认正文', executable: false }, order);
+      state: 'manual', canReviewBody: true, requiresManualReview: true, reason: '订单有特殊说明，请确认正文', executable: false }, order);
     expect(html).toContain('确认正文');
     expect(html).not.toContain('预览并发送');
+  });
+  it('uses body-review eligibility independently of the displayed wording', () => {
+    const step = { event: 'japan_shipped', label: '日本発', kind: 'mail', id: '1', status: 'pending',
+      state: 'manual', requiresManualReview: true, reason: '需要核对商品信息', executable: false };
+    expect(render({ ...step, canReviewBody: true }, order)).toContain('workflowExecute');
+    expect(render({ ...step, canReviewBody: false, reason: '订单已取消，请确认正文' }, order)).not.toContain('workflowExecute');
   });
   it('requires explicit human recovery for an unknown external-mail result', () => {
     const html = render({ event: 'japan_shipped', label: '日本発', kind: 'mail', id: '2', status: 'uncertain',
@@ -144,7 +150,7 @@ describe('single Rakuten processing center', () => {
     render({ items: [{ connectionId: '7', orderId: 'ORDER', shopName: '店铺', fulfillmentType: 'mixed', steps: [
       { id: '1', event: 'new_order', label: '新規', kind: 'mail', state: 'done', status: 'sent' },
       { id: '2', event: 'mixed_partial', label: '混発1', kind: 'mail', state: 'manual', status: 'pending',
-        reason: '订单有特殊说明，请确认正文', requiresManualReview: true },
+        reason: '订单有特殊说明，请确认正文', requiresManualReview: true, canReviewBody: true },
     ] }], total: 1, pageSize: 30 }, 'manual');
     expect(elements.rakutenWorkflowBody.innerHTML).toContain('确认正文');
     expect(elements.rakutenWorkflowBody.innerHTML.split('<details')[0]).not.toContain('新規');
