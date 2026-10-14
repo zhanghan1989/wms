@@ -200,6 +200,113 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(rendered.body).toContain('合計商品数   1(個)');
   });
 
+  describe('buyer-facing product names', () => {
+    const title = 'ピコタン インナーバッグ＋ピロー';
+    const choices = '種類:インナーバッグ＋ピロー\nサイズ:Picotin PM(18)用\nカラー:ワインレッド';
+    const internalNames = ['菜篮子 18 酒红色 绸缎内胆包', '菜篮子 18 酒红色 包撑'];
+    const comboRows = (removed: boolean) => internalNames.map((productName, index) => makeRow({
+      id: BigInt(index + 1),
+      rmsItemKey: `order|88|component:${index}`,
+      skuCode: `COMPONENT-${index}`,
+      isComboOrder: true,
+      comboOrderSku: 'zh-internal-set',
+      setComponentSkuCode: 'zh-internal-set',
+      productName,
+      productNameExtra: choices,
+      dispatchMode: index === 0 ? 'overseas' : 'china_pending',
+      rawPayload: {
+        rmsPackage: { basketId: 1 },
+        rmsItem: { itemDetailId: 88, itemName: title, units: 1, price: 10000 },
+        ...(removed ? { _wmsDeletedItemsAt: '2026-10-14T00:00:00Z' } : {}),
+      },
+    }));
+
+    it.each([
+      RakutenOrderMailEvent.japan_shipped,
+      RakutenOrderMailEvent.china_customs,
+      RakutenOrderMailEvent.mixed_partial,
+      RakutenOrderMailEvent.mixed_customs,
+    ])('uses marketplace names in every product-sensitive template: %s', (event) => {
+      const mixed = event === RakutenOrderMailEvent.mixed_partial || event === RakutenOrderMailEvent.mixed_customs;
+      const bodyTemplate = mixed
+        ? '日本国内在庫\n{{japan_items}}\n工場直送\n{{china_items}}\n{{order_summary}}'
+        : '{{order_summary}}';
+      for (const removed of [false, true]) {
+        const rows = comboRows(removed);
+        const rendered = (service as any).renderTemplate({ subjectTemplate: '商品について', bodyTemplate }, rows, event);
+        expect(rendered.body).toContain(title);
+        for (const choice of choices.split('\n')) expect(rendered.body).toContain(choice);
+        for (const name of internalNames) expect(rendered.body).not.toContain(name);
+        expect(rendered.body).not.toContain('zh-internal-set');
+        expect(rows.map((row) => row.productName)).toEqual(internalNames);
+        if (mixed || removed) expect(rendered.body).toContain('（構成商品）');
+      }
+    });
+
+    it('keeps a complete set as one purchase and lists every remaining component after partial deletion', () => {
+      const complete = (service as any).renderItemLines(comboRows(false));
+      expect(complete.match(/数量: 1/g)).toHaveLength(1);
+      expect(complete).not.toContain('（構成商品）');
+      const remaining = (service as any).renderOrderSummary(comboRows(true));
+      expect(remaining.match(/（構成商品）/g)).toHaveLength(2);
+      expect(remaining.match(/数量: 1/g)).toHaveLength(2);
+      expect(remaining).not.toContain('10,000');
+      expect(remaining).toContain('金額は確認が必要');
+    });
+
+    it('keeps each shop active template independent while fixing their shared product variables', async () => {
+      const templates = new Map([
+        [7n, { subjectTemplate: '【DGAZ楽天市場店】商品発送のご連絡',
+          bodyTemplate: 'DGAZ\n日本国内在庫\n{{japan_items}}\n工場直送\n{{china_items}}\n{{order_summary}}' }],
+        [8n, { subjectTemplate: '【ArcDiary楽天市場店】商品発送のご連絡',
+          bodyTemplate: 'ArcDiary\nご注文内容\n{{order_summary}}' }],
+      ]);
+      const findFirst = jest.fn(async ({ where }) => templates.get(where.connectionId));
+      const scopedService = new RakutenRmsAutomationService({ rakutenMailTemplateVersion: { findFirst } } as any, {} as any, {} as any);
+      const results = [];
+      for (const connectionId of [7n, 8n]) {
+        const result = await (scopedService as any).renderConfiguredMail(connectionId, RakutenOrderMailEvent.mixed_customs, comboRows(true));
+        expect(findFirst).toHaveBeenLastCalledWith(expect.objectContaining({
+          where: { connectionId, event: RakutenOrderMailEvent.mixed_customs, isActive: true },
+        }));
+        expect(result.subject).toBe(templates.get(connectionId)!.subjectTemplate);
+        expect(result.body).toContain(title);
+        for (const name of internalNames) expect(result.body).not.toContain(name);
+        results.push(result);
+      }
+      expect(results[0].body).toContain('日本国内在庫');
+      expect(results[0].body).not.toContain('ArcDiary');
+      expect(results[1].body).not.toContain('日本国内在庫');
+      expect(results[1].body).not.toContain('DGAZ');
+    });
+
+    it.each([
+      { rmsItem: { ItemName: title } },
+      { 商品名: title },
+    ])('accepts the original title from supported import payloads: %j', (rawPayload) => {
+      const row = makeRow({ isComboOrder: true, productName: internalNames[0], rawPayload });
+      expect((service as any).renderDispatchItems([row])).toContain(`${title}（構成商品）`);
+      expect((service as any).renderItemLines([row])).toContain(title);
+    });
+
+    it('uses a Japanese placeholder when a combo has no marketplace title', () => {
+      const row = makeRow({ isComboOrder: true, productName: internalNames[0], comboOrderSku: 'zh-internal-set' });
+      for (const method of ['renderDispatchItems', 'renderItemLines']) {
+        const text = (service as any)[method]([row]);
+        expect(text).toContain('セット構成商品（商品名は確認中）');
+        expect(text).not.toContain(internalNames[0]);
+        expect(text).not.toContain('zh-internal-set');
+      }
+      expect((service as any).requiresManualMailReview(RakutenOrderMailEvent.mixed_partial, [row])).toBe(true);
+    });
+
+    it('prefers the marketplace title over an internal name for a single product', () => {
+      const row = makeRow({ productName: internalNames[0], rawPayload: { rmsItem: { itemName: title } } });
+      expect((service as any).renderDispatchItems([row])).toContain(title);
+      expect((service as any).renderItemLines([row])).not.toContain(internalNames[0]);
+    });
+  });
+
   it('classifies a Japan/China order as mixed and selects only China rows for shipment return', () => {
     const japan = makeRow();
     const china = makeRow({

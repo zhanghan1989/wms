@@ -150,13 +150,15 @@ describe('automatic per-order deletion classification', () => {
   });
   it('shows every remaining combo component instead of deduplicating them as one purchased set', async () => {
     const component = (id: bigint) => row(id, { isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET',
-      rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 11, itemName: '原组合', price: 3000 } } });
+      rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 11, itemName: 'セット商品', price: 3000 } } });
     const { service, records, prisma } = fixture([component(1n), component(2n), component(3n)]);
     await service.deleteRakutenBatch({ ids: ['1'] }, 9n);
     const automation = new RakutenRmsAutomationService(prisma as any, {} as any, {} as any);
     const text = (automation as any).renderOrderSummary(records.filter((record) => !record.deletedAt));
-    expect(text).toContain('商品2'); expect(text).toContain('商品3'); expect(text).not.toContain('商品1');
-    expect(text).not.toContain('原组合'); expect(text).not.toContain('3,000');
+    expect(text.match(/セット商品（構成商品）/g)).toHaveLength(2);
+    expect(text.match(/数量: 1/g)).toHaveLength(2);
+    for (const name of ['商品1', '商品2', '商品3']) expect(text).not.toContain(name);
+    expect(text).not.toContain('3,000');
   });
   it('omits obsolete full-order prices from previews of remaining products', async () => {
     const { service, records, prisma } = fixture();

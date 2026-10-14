@@ -2933,7 +2933,7 @@ export class RakutenRmsAutomationService {
       const subtotal = (hasRemovedOrderItems(rows) ? null : this.pickObjectNumber(rawItem, 'subtotalPrice', 'subtotal')) ?? (price === null || quantity === null ? null : price * quantity);
       const itemUrl = this.pickObjectText(rawItem, 'itemUrl', 'itemURL');
       return [
-        `      ${row.isComboOrder && !adjusted ? this.pickObjectText(rawItem, 'itemName', 'ItemName') || String(row.comboOrderSku ?? row.productName ?? '') : String(row.productName ?? row.skuCode ?? '')}`,
+        `      ${this.renderBuyerItemName(row, row.isComboOrder && adjusted)}`,
         row.productNameExtra
           ? row.productNameExtra.split(/\r\n|\n|\r/).map((line) => `      ${line}`).join('\n')
           : '',
@@ -2946,12 +2946,22 @@ export class RakutenRmsAutomationService {
 
   private renderDispatchItems(rows: RakutenOrderRecord[]): string {
     return rows.map((row) => {
-      const raw = this.jsonObject(row.rawPayload);
-      const item = this.jsonObject(raw?.rmsItem);
-      const comboName = row.isComboOrder ? this.pickObjectText(item, 'itemName', 'ItemName') || String(row.comboOrderSku ?? '') : '';
-      return [comboName ? `${comboName}（構成商品）` : '', String(row.productName ?? row.skuCode ?? ''),
+      return [this.renderBuyerItemName(row, row.isComboOrder),
         row.productNameExtra ?? '', `数量: ${validOrderQuantity(row.orderQuantity) ?? '要確認'}`].filter(Boolean).join('\n');
     }).join('\n\n');
+  }
+
+  private renderBuyerItemName(row: RakutenOrderRecord, component: boolean): string {
+    const raw = this.jsonObject(row.rawPayload);
+    const item = this.jsonObject(raw?.rmsItem);
+    // Combo expansion replaces productName with the WMS component name. The
+    // original marketplace title remains in rawPayload and is the buyer-facing name.
+    const originalName = this.pickObjectText(item, 'itemName', 'ItemName') || this.pickObjectText(raw, '商品名');
+    if (row.isComboOrder) {
+      if (!originalName) return 'セット構成商品（商品名は確認中）';
+      return component ? `${originalName}（構成商品）` : originalName;
+    }
+    return originalName || String(row.productName ?? row.skuCode ?? '');
   }
 
   private renderTrackingLines(rows: RakutenOrderRecord[]): string {
