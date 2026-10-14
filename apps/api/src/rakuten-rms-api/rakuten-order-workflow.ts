@@ -220,9 +220,17 @@ export function buildOrderWorkflow(input: {
       reason = condition;
     } else if (!shipping && prerequisite && !mailSatisfied(mails.find((item) => item.event === prerequisite))) {
       const previous = mails.find((item) => item.event === prerequisite);
-      state = previous?.status === 'cancelled' ? 'done' : !previous || previous.status === 'dead_letter' ? 'manual' : 'waiting';
-      reason = previous?.status === 'cancelled' ? '前置邮件已取消，后续邮件停止' : !previous ? `缺少前置邮件 ${labels[prerequisite]}，请人工核对`
-        : `等待前置邮件 ${labels[prerequisite]} 完成或人工忽略`;
+      // First China/mixed notifications are created only when tracking/dispatch
+      // conditions are ready; their absence before then is normal workflow waiting.
+      const awaitingFirstMail = !previous && ['china_delay', 'mixed_partial'].includes(prerequisite);
+      if (awaitingFirstMail) {
+        reason = condition ?? `等待前置邮件 ${labels[prerequisite]} 生成并完成或人工忽略`;
+        state = condition?.includes('人工') || condition?.includes('外部') ? 'manual' : 'waiting';
+      } else {
+        state = previous?.status === 'cancelled' ? 'done' : !previous || previous.status === 'dead_letter' ? 'manual' : 'waiting';
+        reason = previous?.status === 'cancelled' ? '前置邮件已取消，后续邮件停止' : !previous ? `缺少前置邮件 ${labels[prerequisite]}，请人工核对`
+          : `等待前置邮件 ${labels[prerequisite]} 完成或人工忽略`;
+      }
     } else if (!shipping && condition) {
       reason = condition;
       if (reason?.includes('人工') || reason?.includes('外部')) state = 'manual';

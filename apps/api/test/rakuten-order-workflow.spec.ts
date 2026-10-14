@@ -64,6 +64,57 @@ describe('order-level Rakuten workflow', () => {
   it('routes missing new-order records to a human instead of silently backfilling', () => {
     expect(workflow([row()], []).steps.find((step) => step.event === 'new_order')).toMatchObject({ state: 'manual', id: null });
   });
+  it.each(['china_pending', 'china_no_stock'])('keeps %s orders waiting before tracking creates the first mail', (dispatchMode) => {
+    const rows = [row({ dispatchMode, shipmentNo: null, shipmentNoRegisteredAt: null })];
+    const result = workflow(rows, [mail('new_order', { status: 'sent' })]);
+    expect(result.state).toBe('processing');
+    expect(result.steps.find((step) => step.event === 'china_delay')).toMatchObject({ state: 'waiting', id: null, executable: false });
+    expect(result.steps.find((step) => step.event === 'china_customs')).toMatchObject({
+      state: 'waiting', id: null, executable: false, reason: '等待中国侧全部包裹通関許可及清关日期',
+    });
+  });
+  it('keeps mixed orders waiting before warehouse dispatch creates the first mail', () => {
+    const rows = [row({ warehouseShippedAt: null }), row({ id: 2n, dispatchMode: 'china_pending', shipmentNo: null })];
+    const result = workflow(rows, [mail('new_order', { status: 'sent' })]);
+    expect(result.state).toBe('processing');
+    expect(result.steps.find((step) => step.event === 'mixed_partial')).toMatchObject({ state: 'waiting', id: null, executable: false });
+    expect(result.steps.find((step) => step.event === 'mixed_customs')).toMatchObject({ state: 'waiting', id: null, executable: false });
+  });
+  it.each(['china', 'mixed'])('waits for the first %s mail to be prepared even when downstream conditions are ready', (type) => {
+    const china = row({ dispatchMode: 'china_pending', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: date });
+    const rows = type === 'china' ? [china] : [row({ id: 2n }), china];
+    const result = workflow(rows, [mail('new_order', { status: 'sent' })], report(rows, { fulfillmentType: type }));
+    expect(result.state).toBe('processing');
+    expect(result.steps.find((step) => step.event === (type === 'china' ? 'china_customs' : 'mixed_customs'))).toMatchObject({
+      state: 'waiting', executable: false, reason: `等待前置邮件 ${type === 'china' ? '中国発1' : '混発1'} 生成并完成或人工忽略`,
+    });
+  });
+  it.each(['china', 'mixed'])('preserves cancelled, dead-lettered, and uncertain first %s mail outcomes', (type) => {
+    const china = row({ dispatchMode: 'china_pending', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: date });
+    const rows = type === 'china' ? [china] : [row({ id: 2n }), china];
+    const first = type === 'china' ? 'china_delay' : 'mixed_partial';
+    const second = type === 'china' ? 'china_customs' : 'mixed_customs';
+    const shipping = report(rows, { fulfillmentType: type });
+    const base = [mail('new_order', { status: 'sent' })];
+    expect(workflow(rows, [...base, mail(first, { status: 'cancelled' })], shipping).steps.find((step) => step.event === second))
+      .toMatchObject({ state: 'done', executable: false, reason: '前置邮件已取消，后续邮件停止' });
+    expect(workflow(rows, [...base, mail(first, { status: 'dead_letter' })], shipping).steps.find((step) => step.event === second))
+      .toMatchObject({ state: 'manual', executable: false });
+    const uncertain = workflow(rows, [...base, mail(first, { status: 'uncertain' })], shipping);
+    expect(uncertain.state).toBe('manual');
+    expect(uncertain.steps.find((step) => step.event === second)).toMatchObject({ state: 'waiting', executable: false });
+    expect(workflow(rows, [...base, mail(first, { status: 'cancelled', resolutionNote: IGNORED_MAIL }), mail(second)], shipping)
+      .steps.find((step) => step.event === second)).toMatchObject({ state: 'ready', executable: true });
+  });
+  it('preserves shipping exceptions when the first China mail has not been prepared', () => {
+    const rows = [row({ dispatchMode: 'china_pending', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: date })];
+    const saved = report(rows, { fulfillmentType: 'china' });
+    const changed = [row({ ...rows[0], shipmentNo: 'CHANGED' })];
+    expect(workflow(changed, [mail('new_order', { status: 'sent' })], saved).steps.find((step) => step.event === 'china_customs'))
+      .toMatchObject({ state: 'manual', executable: false, reason: '回传后包裹信息已变化，请人工核对' });
+    expect(workflow(rows, [mail('new_order', { status: 'sent' })], report(rows, { fulfillmentType: 'china', status: 'skipped', lastError: '用户人工忽略单号回传' }))
+      .steps.find((step) => step.event === 'china_customs')).toMatchObject({ state: 'manual', executable: false });
+  });
   it('automates structured edits and complete combos but reviews free-form instructions', () => {
     expect(mailReviewReason([row({ rmsManualOverrideAt: date })])).toBeNull();
     expect(mailReviewReason([row({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET' })])).toBeNull();
