@@ -233,6 +233,11 @@ export class RakutenRmsApiController {
     return this.automation.ignoreShippingReport(id, user.id);
   }
 
+  @Post('automation/manual-actions/shipping/:id/verify-completed')
+  async verifyCompletedShippingAction(@Param('id') id: string, @CurrentUser() user: AuthUser): Promise<unknown> {
+    return this.automation.verifyCompletedShippingReport(id, user.id);
+  }
+
   @Post('automation/manual-actions/mails/:id/preview')
   async previewManualMailAction(
     @Param('id') id: string,

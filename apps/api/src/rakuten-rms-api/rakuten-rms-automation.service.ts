@@ -20,7 +20,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RakutenRmsApiClient } from './rakuten-rms-api.client';
 import { RakutenRmsApiCryptoService } from './rakuten-rms-api-crypto.service';
 import { RakutenScheduleControlService } from './rakuten-schedule-control.service';
-import { buildOrderWorkflow, hasRemovedOrderItems, fulfillmentOf, isChinaRow, validOrderQuantity, IGNORED_MAIL, VERIFIED_SHIPPING, shippingConditionReason, basketIdOf, japanWarehouseReady, mailEventReviewReason, mailOrderBlockReason, mailConditionReason, orderBlockReason, shippingSatisfied, shippingTargetRows, mailSatisfied, shippingFingerprint, trackingReady } from './rakuten-order-workflow';
+import { buildOrderWorkflow, hasRemovedOrderItems, fulfillmentOf, isChinaRow, validOrderQuantity, IGNORED_MAIL, VERIFIED_SHIPPING, shippingConditionReason, basketIdOf, japanWarehouseReady, mailEventReviewReason, mailOrderBlockReason, mailConditionReason, orderBlockReason, shippingSatisfied, shippingTargetRows, shippingTargetsReady, mailSatisfied, shippingFingerprint, trackingReady } from './rakuten-order-workflow';
 
 export const RAKUTEN_ORDER_PROCESSING_CRON = process.env.RAKUTEN_RMS_AUTOMATION_CRON || '0 */20 * * * *';
 const AUTOMATION_TIMEZONE = 'Asia/Tokyo';
@@ -775,6 +775,78 @@ export class RakutenRmsAutomationService {
       remark: '用户人工忽略邮件并允许继续后续邮件阶段',
     });
     return { ignored: true };
+  }
+
+  async verifyCompletedShippingReport(idRaw: string, userId: bigint): Promise<{ verified: boolean }> {
+    const id = parseId(idRaw, 'shippingReportId');
+    const report = await this.prisma.rakutenOrderShippingReport.findUnique({ where: { id }, include: { connection: true } });
+    if (!report) throw new NotFoundException('单号回传任务不存在');
+    if (report.status !== RakutenAutomationStatus.sent && report.status !== RakutenAutomationStatus.skipped) {
+      throw new BadRequestException('只有已完成或已跳过的回传记录可以核实，请刷新清单');
+    }
+    const token = randomUUID();
+    if (!await this.acquireConnectionLock(report.connectionId, token)) throw new BadRequestException('店铺正在处理任务，请稍后再核实');
+    const heartbeat = this.startConnectionLockHeartbeat(report.connectionId, token);
+    try {
+      const rows = await this.loadOrderRows(report.connectionId, report.orderId);
+      if (!await this.isAutomationEligibleOrder(rows)) throw new BadRequestException('订单不在2026年10月1日起导入范围内');
+      const block = orderBlockReason(rows);
+      if (block) throw new BadRequestException(block);
+      const type = fulfillmentOf(rows);
+      if (!shippingTargetsReady(rows, type)) throw new BadRequestException('包裹资料或出货、清关确认不完整，请先核对');
+      const fingerprint = shippingFingerprint(rows, type);
+      const baskets = this.buildShippingBaskets(shippingTargetRows(rows, type));
+      const verifiedBaskets = baskets.map((basket) => ({ ...basket, ShippingModelList: basket.ShippingModelList.map((shipping) => ({ ...shipping })) }));
+      const credentials = this.decryptApiCredentials(report.connection);
+      const orders = await this.client.getOrders(credentials.serviceSecret, credentials.licenseKey, [report.orderId]);
+      const current = this.resolveCurrentOrder(orders, report.orderId);
+      const progress = current && this.resolveOrderProgress(current);
+      if (!current || progress === null || ![100, 200, 300, 400, 500, 600, 700].includes(progress)) {
+        throw new BadRequestException('乐天目标订单或订单状态无法核实，请人工核对');
+      }
+      const packages = current.PackageModelList ?? current.packageModelList;
+      if (!Array.isArray(packages) || !baskets.every((basket) => {
+        const pkg = packages.find((value) => Number(value?.basketId ?? value?.BasketId) === basket.basketId);
+        const shipping = pkg?.ShippingModelList ?? pkg?.shippingModelList;
+        return Array.isArray(shipping) && basket.ShippingModelList.every((expected) => shipping.some((actual) =>
+          Number(actual?.shippingDeleteFlag ?? 0) !== 1 &&
+          String(actual?.shippingNumber ?? actual?.ShippingNumber ?? '').trim() === expected.shippingNumber &&
+          String(actual?.deliveryCompany ?? actual?.DeliveryCompany ?? '').trim() === expected.deliveryCompany &&
+          String(actual?.shippingDate ?? actual?.ShippingDate ?? '').trim() === expected.shippingDate));
+      })) throw new BadRequestException('乐天端单号、配送公司或発送日与当前包裹不一致，不能忽略提醒');
+      await this.assertExecutionLock(report.connectionId);
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM rakuten_order_records
+          WHERE rms_connection_id = ${report.connectionId} AND
+            (rms_order_id = ${report.orderId} OR (rms_order_id IS NULL AND order_id = ${report.orderId}))
+          ORDER BY id FOR UPDATE`);
+        const latestRows = await tx.rakutenOrderRecord.findMany({ where: {
+          deletedAt: null, rmsConnectionId: report.connectionId, ...rakutenOrderIdentityWhere(report.orderId),
+        }, orderBy: { id: 'asc' } });
+        if (orderBlockReason(latestRows) || fulfillmentOf(latestRows) !== type || !shippingTargetsReady(latestRows, type) ||
+          shippingFingerprint(latestRows, type) !== fingerprint) throw new BadRequestException('核实期间包裹信息已变化，请刷新后重试');
+        const result = await tx.rakutenOrderShippingReport.updateMany({ where: {
+          id, status: report.status, fingerprint: report.fingerprint, updatedAt: report.updatedAt,
+        }, data: {
+          fulfillmentType: type, fingerprint, nextAttemptAt: null, failureCategory: null, deadLetteredAt: null,
+          lastError: report.status === RakutenAutomationStatus.skipped ? VERIFIED_SHIPPING : null,
+          responsePayload: { ...this.jsonObject(report.responsePayload),
+            wmsManualShippingVerification: { verifiedAt: new Date().toISOString(), verifiedBy: userId.toString(), baskets: verifiedBaskets },
+          } as Prisma.InputJsonValue,
+        } });
+        if (result.count !== 1) throw new BadRequestException('回传记录已变化，请刷新后重试');
+        await this.createAudit({ db: tx, entityType: 'rakuten_shipping_report', entityId: id, action: AuditAction.update,
+          eventType: AuditEventType.RAKUTEN_SHIPPING_IGNORED, operatorId: userId,
+          beforeData: { status: report.status, fulfillmentType: report.fulfillmentType, fingerprint: report.fingerprint, lastError: report.lastError },
+          afterData: { status: report.status, fulfillmentType: type, fingerprint, verifiedBaskets: baskets },
+          remark: '用户确认已人工回传，核实乐天全部包裹信息一致后忽略信息变化提醒',
+        });
+      });
+      return { verified: true };
+    } finally {
+      clearInterval(heartbeat);
+      await this.releaseConnectionLock(report.connectionId, token);
+    }
   }
 
   async ignoreShippingReport(idRaw: string, userId: bigint): Promise<{ ignored: boolean }> {

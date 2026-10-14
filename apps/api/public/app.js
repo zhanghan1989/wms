@@ -7268,7 +7268,7 @@ function renderRakutenWorkflowStep(step, order) {
   const labels = { waiting: "等待条件", ready: "可以执行", manual: "等待人工", retry: "执行异常", done: "已结束" };
   const status = step.state === "manual" && ["sent", "skipped"].includes(step.status) ? "信息变化待核对" : step.status === "processing" ? "执行中" : step.outcome === "verified" ? "已核实完成" : step.outcome === "ignored" ? "已忽略" : step.status === "sent" ? "已完成" : step.status === "skipped" ? "已跳过" : step.status === "cancelled" ? "已取消" : labels[step.state] || "等待条件";
   const key = `${order.connectionId}:${order.orderId}:${step.event}`;
-  const button = (action, text) => `<button type="button" class="tiny-btn${["workflowView", "workflowIgnore", "workflowIgnoreShipping", "workflowRetry"].includes(action) ? " ghost" : ""}" data-action="${action}" data-key="${escapeHtml(key)}">${text}</button>`;
+  const button = (action, text) => `<button type="button" class="tiny-btn${["workflowView", "workflowIgnore", "workflowIgnoreShipping", "workflowVerifyShipping", "workflowRetry"].includes(action) ? " ghost" : ""}" data-action="${action}" data-key="${escapeHtml(key)}">${text}</button>`;
   const canReview = step.state === "manual" && step.requiresManualReview && /确认正文/.test(step.reason || "");
   const actions = [];
   if (step.executable && !step.requiresManualReview) {
@@ -7282,6 +7282,7 @@ function renderRakutenWorkflowStep(step, order) {
   if (step.executable || canReview) actions.push(button("workflowExecute", canReview ? "确认正文" : step.kind === "mail" ? "预览并发送" : "人工回传"));
   if (step.status === "uncertain") actions.push(button("workflowMarkSent", "确认已发送"), button("workflowRetry", "确认重发"));
   if (step.status === "dead_letter" || step.kind === "shipping" && step.state === "manual" && ["sent", "skipped"].includes(step.status)) actions.push(button("workflowRetry", "处理后重试"));
+  if (step.id && step.kind === "shipping" && step.state === "manual" && ["sent", "skipped"].includes(step.status)) actions.push(button("workflowVerifyShipping", "已人工回传，忽略提醒"));
   if (step.kind === "shipping" && ["pending", "failed", "dead_letter"].includes(step.status)) actions.push(button("workflowIgnoreShipping", "忽略回传"));
   if (step.kind === "mail" && step.status === "pending") actions.push(button("workflowIgnore", "忽略"));
   return `<div class="rakuten-manual-mail-stage"><strong>${escapeHtml(step.label)} · ${escapeHtml(status)}</strong>
@@ -17653,6 +17654,12 @@ function bindForms() {
         return;
       }
       if (!step.id) return;
+      if (action === "workflowVerifyShipping") {
+        if (!await openActionConfirmModal("确认已在乐天手动回传当前订单的全部包裹？系统将核对单号、配送公司和発送日，一致后忽略信息变化提醒。本操作不会回传单号或发送邮件；后续待发送邮件仍按流程处理。", "核实人工回传", "核实并忽略")) return;
+        await withBusyButton(button, "核实中...", () => request(`/rakuten-rms-api/automation/manual-actions/shipping/${encodeURIComponent(step.id)}/verify-completed`, { method: "POST", body: "{}" }));
+        await refreshRakutenProcessingCenter();
+        return;
+      }
       if (action === "workflowIgnoreShipping") {
         if (!await openActionConfirmModal("确认已由外部回传或无需系统回传，忽略此任务？这不会认定相关邮件已发送。", "确认忽略回传", "确认忽略")) return;
         await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/automation/manual-actions/shipping/${encodeURIComponent(step.id)}/ignore`, { method: "POST", body: "{}" }));

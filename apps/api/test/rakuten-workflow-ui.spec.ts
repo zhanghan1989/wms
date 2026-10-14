@@ -43,6 +43,49 @@ describe('Rakuten order progress UI', () => {
     expect(html).not.toContain('workflowExecute');
     expect(html).not.toContain('workflowRetry');
   });
+  it.each(['sent', 'skipped'])('offers verification for a changed %s shipment', status => {
+    const html = render({ event: 'shipping', label: '单号回传', kind: 'shipping', id: '84', status,
+      state: 'manual', executable: false }, order);
+    expect(html).toContain('已人工回传，忽略提醒');
+    expect(html).toContain('workflowVerifyShipping');
+    expect(html).toContain('处理后重试');
+  });
+  it('keeps ordinary pending ignores separate from verified completed shipments', () => {
+    const pending = render({ event: 'shipping', label: '单号回传', kind: 'shipping', id: '84', status: 'pending', state: 'waiting' }, order);
+    expect(pending).toContain('忽略回传');
+    expect(pending).not.toContain('workflowVerifyShipping');
+    expect(render({ event: 'shipping', label: '单号回传', kind: 'shipping', id: '84', status: 'sent', state: 'done' }, order))
+      .not.toContain('workflowVerifyShipping');
+  });
+});
+
+describe('completed-shipping verification action', () => {
+  it.each([true, false])('only verifies after human confirmation (%s)', async confirmed => {
+    const source = readFileSync(join(__dirname, '../public/app.js'), 'utf8');
+    const start = source.indexOf('$("rakutenWorkflowModal")?.addEventListener("click", async (event) => {');
+    const end = source.indexOf('$("rakutenWorkflowPrepare")?.addEventListener', start);
+    let handler!: (event: any) => Promise<void>;
+    const request = jest.fn().mockResolvedValue({ verified: true });
+    const refresh = jest.fn();
+    const confirmation = jest.fn().mockResolvedValue(confirmed);
+    runInNewContext(source.slice(start, end), {
+      $: () => ({ addEventListener: (_name: string, callback: typeof handler) => { handler = callback; } }),
+      rakutenWorkflowResult: { items: [{ connectionId: '7', orderId: 'ORDER', steps: [{ id: '84', event: 'shipping', kind: 'shipping' }] }] },
+      encodeURIComponent, openActionConfirmModal: confirmation, request,
+      withBusyButton: (_button: unknown, _text: string, fn: () => unknown) => fn(),
+      refreshRakutenProcessingCenter: refresh, showToast: jest.fn(),
+    });
+    await handler({ target: { closest: () => ({ dataset: { action: 'workflowVerifyShipping', key: '7:ORDER:shipping' } }) } });
+    expect(confirmation).toHaveBeenCalledWith(expect.stringContaining('全部包裹'), '核实人工回传', '核实并忽略');
+    if (confirmed) {
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledWith('/rakuten-rms-api/automation/manual-actions/shipping/84/verify-completed', { method: 'POST', body: '{}' });
+      expect(refresh).toHaveBeenCalledTimes(1);
+    } else {
+      expect(request).not.toHaveBeenCalled();
+      expect(refresh).not.toHaveBeenCalled();
+    }
+  });
 });
 
 describe('single Rakuten processing center', () => {
