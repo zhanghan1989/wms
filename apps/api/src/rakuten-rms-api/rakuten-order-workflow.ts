@@ -6,6 +6,13 @@ export type Fulfillment = 'japan' | 'china' | 'mixed';
 export type WorkflowState = 'waiting' | 'ready' | 'manual' | 'retry' | 'done';
 export const VERIFIED_SHIPPING = '乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理';
 export const IGNORED_MAIL = '用户人工忽略邮件';
+const CANCELLED_ORDER_REASON = '订单已取消，流程已终止';
+function orderCancellationConfirmed(rows: RakutenOrderRecord[], report?: Pick<RakutenOrderShippingReport, 'status' | 'lastError'> | null): boolean {
+  // RMS imports only status 300, so a later getOrder cancellation may exist only
+  // in the saved shipping result. Status 800 is still a cancellation request.
+  return rows.some((row) => String(row.orderStatusText ?? '').trim() === '900') ||
+    Boolean(report?.status === 'skipped' && /^乐天订单当前状态为\s*900[，,]/.test(report.lastError ?? ''));
+}
 export function validOrderQuantity(value: unknown): number | null {
   if (value === null || value === undefined || String(value).trim() === '') return null;
   const quantity = Number(value);
@@ -133,6 +140,7 @@ export function shippingConditionReason(rows: RakutenOrderRecord[], type: string
   return null;
 }
 export function mailConditionReason(event: string, rows: RakutenOrderRecord[], report?: (Pick<RakutenOrderShippingReport, 'status' | 'lastError'> & Partial<Pick<RakutenOrderShippingReport, 'fingerprint' | 'fulfillmentType'>>) | null): string | null {
+  if (orderCancellationConfirmed(rows, report)) return CANCELLED_ORDER_REASON;
   const block = mailOrderBlockReason(event, rows);
   if (block) return block;
   const type = fulfillmentOf(rows);
@@ -184,6 +192,7 @@ export function buildOrderWorkflow(input: {
   const first = fulfillmentType === 'japan' ? 'japan_shipped' : fulfillmentType === 'china' ? 'china_delay' : 'mixed_partial';
   const second = fulfillmentType === 'china' ? 'china_customs' : fulfillmentType === 'mixed' ? 'mixed_customs' : null;
   const events = ['new_order', 'shipping', first, ...(second ? [second] : [])];
+  const cancelled = orderCancellationConfirmed(rows, report);
   const block = orderBlockReason(rows);
   const steps = events.map((event) => {
     const shipping = event === 'shipping';
@@ -200,7 +209,12 @@ export function buildOrderWorkflow(input: {
     if (condition?.includes('外部') && mail?.resolutionNote === '用户确认重新发送结果不确定的邮件') condition = null;
     const prerequisite = event === 'new_order' || shipping ? null : event === 'china_customs' ? 'china_delay'
       : event === 'mixed_customs' ? 'mixed_partial' : 'new_order';
-    if (shipping && report && shippingSatisfied(report) && report.fingerprint &&
+    const terminated = cancelled && !(shipping ? shippingSatisfied(report) : job && ['sent', 'cancelled'].includes(job.status));
+    if (cancelled) {
+      state = 'done';
+      reason = terminated ? CANCELLED_ORDER_REASON
+        : mail?.status === 'cancelled' ? mail.resolutionNote ?? '邮件已取消' : null;
+    } else if (shipping && report && shippingSatisfied(report) && report.fingerprint &&
       (report.fulfillmentType !== fulfillmentType || !shippingTargetsReady(rows, fulfillmentType) || report.fingerprint !== shippingFingerprint(rows, fulfillmentType))) {
       state = 'manual'; reason = '完成回传后单号、配送公司、日期或发货范围已变化，请人工核对';
     } else if (job && ['sent', 'skipped', 'cancelled'].includes(job.status)) {
@@ -260,7 +274,7 @@ export function buildOrderWorkflow(input: {
       event, label: labels[event], state, reason, status: job?.status ?? null,
       id: job?.id.toString() ?? null, kind: shipping ? 'shipping' : 'mail', templateVersion,
       executable, canReviewBody, requiresManualReview: Boolean(review), manualReviewReason: review,
-      outcome: job?.status === 'sent' ? 'completed' : shipping && report?.status === 'skipped' && shippingSatisfied(report) ? 'verified'
+      outcome: terminated ? 'terminated' : job?.status === 'sent' ? 'completed' : shipping && report?.status === 'skipped' && shippingSatisfied(report) ? 'verified'
         : mail?.status === 'cancelled' && mail.resolutionNote === IGNORED_MAIL ? 'ignored' : job?.status ?? null,
       completedAt: shipping ? report?.reportedAt?.toISOString() ?? null : mail?.sentAt?.toISOString() ?? null,
     };

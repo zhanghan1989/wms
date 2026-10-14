@@ -49,6 +49,20 @@ describe('Rakuten order progress UI', () => {
     expect(html).not.toContain('workflowExecute');
     expect(html).not.toContain('workflowRetry');
   });
+  it.each(['pending', 'failed', 'processing', 'dead_letter', 'uncertain'])('shows terminated %s mail as history without recovery actions', (status) => {
+    const html = render({ event: 'china_customs', label: '中国発2', kind: 'mail', id: '1', status,
+      state: 'done', outcome: 'terminated', executable: false, canReviewBody: false, reason: '订单已取消，流程已终止' }, order);
+    expect(html).toContain('流程已终止');
+    expect(html).toContain('workflowView');
+    for (const action of ['workflowExecute', 'workflowRetry', 'workflowIgnore', 'workflowMarkSent']) expect(html).not.toContain(action);
+    expect(html).not.toContain('执行中');
+  });
+  it.each(['pending', 'failed', 'dead_letter', 'skipped'])('hides recovery actions for terminated %s shipping', (status) => {
+    const html = render({ event: 'shipping', label: '单号回传', kind: 'shipping', id: '84', status,
+      state: 'done', outcome: 'terminated', executable: false }, order);
+    expect(html).toContain('流程已终止');
+    for (const action of ['workflowExecute', 'workflowRetry', 'workflowIgnoreShipping', 'workflowVerifyShipping']) expect(html).not.toContain(action);
+  });
   it.each(['sent', 'skipped'])('offers verification for a changed %s shipment', status => {
     const html = render({ event: 'shipping', label: '单号回传', kind: 'shipping', id: '84', status,
       state: 'manual', executable: false }, order);

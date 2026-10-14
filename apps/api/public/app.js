@@ -7266,7 +7266,8 @@ let rakutenWorkflowResult = { items: [], total: 0, pageSize: 30 };
 function renderRakutenWorkflowStep(step, order) {
   if (!step) return '<span class="muted">不适用</span>';
   const labels = { waiting: "等待条件", ready: "可以执行", manual: "等待人工", retry: "执行异常", done: "已结束" };
-  const status = step.state === "manual" && ["sent", "skipped"].includes(step.status) ? "信息变化待核对" : step.status === "processing" ? "执行中" : step.outcome === "verified" ? "已核实完成" : step.outcome === "ignored" ? "已忽略" : step.status === "sent" ? "已完成" : step.status === "skipped" ? "已跳过" : step.status === "cancelled" ? "已取消" : labels[step.state] || "等待条件";
+  const terminated = step.outcome === "terminated";
+  const status = terminated ? "流程已终止" : step.state === "manual" && ["sent", "skipped"].includes(step.status) ? "信息变化待核对" : step.status === "processing" ? "执行中" : step.outcome === "verified" ? "已核实完成" : step.outcome === "ignored" ? "已忽略" : step.status === "sent" ? "已完成" : step.status === "skipped" ? "已跳过" : step.status === "cancelled" ? "已取消" : labels[step.state] || "等待条件";
   const key = `${order.connectionId}:${order.orderId}:${step.event}`;
   const button = (action, text) => `<button type="button" class="tiny-btn${["workflowView", "workflowIgnore", "workflowIgnoreShipping", "workflowVerifyShipping", "workflowRetry"].includes(action) ? " ghost" : ""}" data-action="${action}" data-key="${escapeHtml(key)}">${text}</button>`;
   const canReview = step.canReviewBody === true;
@@ -7280,11 +7281,11 @@ function renderRakutenWorkflowStep(step, order) {
   }
   if (step.id && step.kind === "mail") actions.push(button("workflowView", "查看"));
   if (step.executable || canReview) actions.push(button("workflowExecute", canReview ? "确认正文" : step.kind === "mail" ? "预览并发送" : "人工回传"));
-  if (step.status === "uncertain") actions.push(button("workflowMarkSent", "确认已发送"), button("workflowRetry", "确认重发"));
-  if (step.status === "dead_letter" || step.kind === "shipping" && step.state === "manual" && ["sent", "skipped"].includes(step.status)) actions.push(button("workflowRetry", "处理后重试"));
+  if (!terminated && step.status === "uncertain") actions.push(button("workflowMarkSent", "确认已发送"), button("workflowRetry", "确认重发"));
+  if (!terminated && (step.status === "dead_letter" || step.kind === "shipping" && step.state === "manual" && ["sent", "skipped"].includes(step.status))) actions.push(button("workflowRetry", "处理后重试"));
   if (step.id && step.kind === "shipping" && step.state === "manual" && ["sent", "skipped"].includes(step.status)) actions.push(button("workflowVerifyShipping", "已人工回传，忽略提醒"));
-  if (step.kind === "shipping" && ["pending", "failed", "dead_letter"].includes(step.status)) actions.push(button("workflowIgnoreShipping", "忽略回传"));
-  if (step.kind === "mail" && step.status === "pending") actions.push(button("workflowIgnore", "忽略"));
+  if (!terminated && step.kind === "shipping" && ["pending", "failed", "dead_letter"].includes(step.status)) actions.push(button("workflowIgnoreShipping", "忽略回传"));
+  if (!terminated && step.kind === "mail" && step.status === "pending") actions.push(button("workflowIgnore", "忽略"));
   return `<div class="rakuten-manual-mail-stage"><strong>${escapeHtml(step.label)} · ${escapeHtml(status)}</strong>
     ${step.reason ? `<small>${escapeHtml(step.reason)}</small>` : ""}
     ${step.completedAt ? `<small>${escapeHtml(formatDate(step.completedAt))}</small>` : ""}

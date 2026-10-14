@@ -156,7 +156,63 @@ describe('order-level Rakuten workflow', () => {
     const rows = [row({ orderStatusText: '900' })];
     const result = workflow(rows, [mail('new_order')], report(rows, { status: 'pending' }));
     expect(result.steps.every((step) => !step.executable)).toBe(true);
+    expect(result.state).toBe('done');
+    expect(result.steps.every((step) => step.state === 'done' && !step.canReviewBody)).toBe(true);
+    expect(result.steps.every((step) => step.reason === '订单已取消，流程已终止')).toBe(true);
+  });
+  it.each(['china', 'mixed', 'japan'])('terminates %s workflows from a saved RMS 900 result despite stale imported status', (type) => {
+    const china = row({ dispatchMode: 'china_pending', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: date });
+    const rows = type === 'japan' ? [row()] : type === 'china' ? [china] : [row({ id: 2n }), china];
+    const first = type === 'japan' ? 'japan_shipped' : type === 'china' ? 'china_delay' : 'mixed_partial';
+    const second = type === 'china' ? 'china_customs' : type === 'mixed' ? 'mixed_customs' : null;
+    const saved = report(rows, { fulfillmentType: type, status: 'skipped',
+      lastError: '乐天订单当前状态为 900，不是待発送（300），已停止自动回传' });
+    const mails = [mail('new_order', { status: 'sent', sentAt: date }), mail(first, { status: 'sent', sentAt: date })];
+    const snapshot = JSON.stringify({ saved, mails }, (_key, value) => typeof value === 'bigint' ? value.toString() : value);
+    const result = workflow(rows, mails, saved);
+    expect(result.state).toBe('done');
+    expect(result.steps.every((step) => step.state === 'done' && !step.executable && !step.canReviewBody)).toBe(true);
+    expect(result.steps.find((step) => step.event === 'shipping')).toMatchObject({ status: 'skipped', outcome: 'terminated' });
+    expect(result.steps.find((step) => step.event === first)).toMatchObject({ status: 'sent', outcome: 'completed', completedAt: date.toISOString() });
+    if (second) expect(result.steps.find((step) => step.event === second))
+      .toMatchObject({ id: null, outcome: 'terminated', reason: '订单已取消，流程已终止' });
+    expect(mailConditionReason(first, rows, saved)).toBe('订单已取消，流程已终止');
+    expect(JSON.stringify({ saved, mails }, (_key, value) => typeof value === 'bigint' ? value.toString() : value)).toBe(snapshot);
+  });
+  it.each(['pending', 'failed', 'processing', 'dead_letter', 'uncertain'] as const)('retains the original %s mail record when the order is cancelled', (status) => {
+    const rows = [row({ orderStatusText: '900' })];
+    const result = workflow(rows, [mail('new_order', { status: 'sent' }), mail('japan_shipped', { status })], report(rows));
+    expect(result.state).toBe('done');
+    expect(result.steps.find((step) => step.event === 'japan_shipped')).toMatchObject({
+      state: 'done', status, outcome: 'terminated', executable: false, canReviewBody: false,
+    });
+  });
+  it('does not reopen changed completed shipping for a cancelled order', () => {
+    const saved = report([row()]);
+    const result = workflow([row({ orderStatusText: '900', shipmentNo: 'CHANGED' })], [mail('new_order', { status: 'sent' })], saved);
+    expect(result.state).toBe('done');
+    expect(result.steps.find((step) => step.event === 'shipping')).toMatchObject({ state: 'done', status: 'sent', outcome: 'completed' });
+  });
+  it('keeps cancellation requests awaiting human review', () => {
+    expect(workflow([row({ orderStatusText: '800' })], [mail('new_order')]).state).toBe('manual');
+  });
+  it.each([
+    '乐天订单当前状态为 800，不是待発送（300），已停止自动回传',
+    '乐天订单当前状态为 500，不是待発送（300），已停止自动回传',
+    '用户人工忽略单号回传',
+    '乐天订单当前状态为 9000，不是待発送（300），已停止自动回传',
+  ])('does not treat other skipped results as confirmed cancellation: %s', (lastError) => {
+    const rows = [row({ dispatchMode: 'china_pending', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: date })];
+    const saved = report(rows, { fulfillmentType: 'china', status: 'skipped', lastError });
+    const result = workflow(rows, [mail('new_order', { status: 'sent' }), mail('china_delay', { status: 'sent' })], saved);
     expect(result.state).toBe('manual');
+    expect(result.steps.find((step) => step.event === 'china_customs')).toMatchObject({ state: 'manual', executable: false });
+  });
+  it('does not infer cancellation from an unsuccessful shipping status check', () => {
+    const rows = [row()];
+    const result = workflow(rows, [mail('new_order', { status: 'sent' })], report(rows, { status: 'failed',
+      lastError: '乐天订单当前状态为 900，不是待発送（300），已停止自动回传' }));
+    expect(result.state).not.toBe('done');
   });
   it('requires clearance date, not only clearance flag, for China second mail', () => {
     const rows = [row({ dispatchMode: 'china_pending', trackingHasCustomsClearance: true, trackingCustomsClearanceDate: null })];
@@ -232,6 +288,24 @@ describe('recovery after a template has been repaired', () => {
 });
 
 describe('workflow history endpoint', () => {
+  it('excludes cancelled orders from manual and processing inboxes while retaining done history', async () => {
+    const rows = [row({ dispatchMode: 'china_pending' })];
+    const saved = report(rows, { fulfillmentType: 'china', status: 'skipped',
+      lastError: '乐天订单当前状态为 900，不是待発送（300），已停止自动回传' });
+    const prisma = {
+      $queryRaw: jest.fn().mockResolvedValue([{ connectionId: 7n, orderId: 'ORDER' }]),
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
+      rakutenOrderMail: { findMany: jest.fn().mockResolvedValue([mail('new_order', { status: 'sent' }), mail('china_delay', { status: 'sent' })]) },
+      rakutenOrderShippingReport: { findMany: jest.fn().mockResolvedValue([saved]) },
+      rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([connection]) },
+      rakutenMailTemplateVersion: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new RakutenRmsAutomationService(prisma as any, {} as any, {} as any);
+    for (const view of ['manual', 'processing']) {
+      expect(await service.listOrderWorkflows({ view })).toMatchObject({ total: 0, items: [], summary: { manual: 0, processing: 0, done: 1 } });
+    }
+    expect(await service.listOrderWorkflows({ view: 'done' })).toMatchObject({ total: 1, items: [{ orderId: 'ORDER', state: 'done' }] });
+  });
   it('uses the earliest import cutoff and does not generate or execute jobs when reading', async () => {
     const rows = [row()];
     const prisma = {
