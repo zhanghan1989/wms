@@ -116,7 +116,9 @@ describe('single Rakuten processing center', () => {
     expect(toolbar).toContain('自动处理中心');
     expect(toolbar).toContain('openRakutenApiImportModal');
     expect(toolbar).not.toContain('openRakutenOrderImportModal');
-    expect(toolbar).toContain('<summary>批量操作</summary>');
+    expect(toolbar).toContain('rakutenBatchChangeOrderIdBtn');
+    expect(toolbar).toContain('rakutenBatchDeleteBtn');
+    expect(toolbar).not.toContain('<summary>批量操作</summary>');
     expect(toolbar).not.toContain('openRakutenManualShippingModal');
     expect(toolbar).not.toContain('openRakutenManualMailModal');
     expect(toolbar).not.toContain('downloadRakutenShipmentConfirmation');
