@@ -368,8 +368,8 @@ export class OrdersController {
 
   @Post('overseas-warehouse/picking-batches/:batchId/complete-work')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  async completeOverseasPickingBatchWork(@Param('batchId') batchId: string): Promise<unknown> {
-    return this.ordersService.completeOverseasPickingBatchWork(batchId);
+  async completeOverseasPickingBatchWork(@Param('batchId') batchId: string, @CurrentUser() user: AuthUser): Promise<unknown> {
+    return this.ordersService.completeOverseasPickingBatchWork(batchId, user.id);
   }
 
   @Post('overseas-warehouse/picking-batches/:batchId/scan')
@@ -457,34 +457,6 @@ export class OrdersController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   getYamatoShipmentPrintConfig(): unknown {
     return this.ordersService.getYamatoShipmentPrintConfig();
-  }
-
-  @Post('rakuten/shipment-confirmation-csv')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  async downloadRakutenShipmentConfirmationCsv(
-    @Body() payload: { days?: string | number; purpose?: string | null },
-    @Res() res: Response,
-  ): Promise<void> {
-    const file = await this.ordersService.buildRakutenShipmentConfirmationCsv(payload);
-    res.setHeader('Content-Type', 'text/csv; charset=Shift_JIS');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
-    );
-    res.setHeader('Content-Length', String(file.content.length));
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Rakuten-Shipment-Confirmation-Row-Count', String(file.rowCount));
-    res.setHeader(
-      'X-Rakuten-Shipment-Confirmation-Skipped-Without-Customs-Clearance-Count',
-      String(file.skippedWithoutCustomsClearanceCount),
-    );
-    res.status(200).send(file.content);
-  }
-
-  @Post('rakuten/sync-tracking-statuses')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  async syncRakutenTrackingStatuses(): Promise<unknown> {
-    return this.ordersService.syncRakutenTrackingStatuses();
   }
 
   @Get('rakuten/tracking-status-summary')
@@ -669,7 +641,7 @@ export class OrdersController {
   async deleteRakutenBatch(
     @Body() payload: { ids?: Array<string | number> },
     @CurrentUser() user: AuthUser,
-  ): Promise<{ deletedCount: number }> {
+  ): Promise<{ deletedCount: number; fullOrderCount: number; partialOrderCount: number }> {
     return this.ordersService.deleteRakutenBatch(payload, user.id);
   }
 
@@ -680,18 +652,6 @@ export class OrdersController {
     @CurrentUser() user: AuthUser,
   ): Promise<{ updatedCount: number; previousOrderId: string; newOrderId: string }> {
     return this.ordersService.changeRakutenOrderIdBatch(payload, user.username);
-  }
-
-  @Post('rakuten/import-csv')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @UseInterceptors(FileInterceptor('file'))
-  async importCsv(
-    @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
-  ): Promise<unknown> {
-    if (!file?.buffer) {
-      throw new BadRequestException('请上传订单CSV文件');
-    }
-    return this.ordersService.importUploadedCsv(file.buffer, file.originalname);
   }
 
   @Post('amazon/import-txt')

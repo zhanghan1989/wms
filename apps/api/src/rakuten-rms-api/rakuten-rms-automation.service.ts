@@ -1,6 +1,7 @@
+import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
+import { rakutenDeliveryCompanyCode } from '../common/rakuten-delivery-company';
 import { createHash, randomUUID } from 'crypto';
 import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
 import {
   Prisma,
   AuditAction,
@@ -18,8 +19,10 @@ import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
 import { RakutenRmsApiClient } from './rakuten-rms-api.client';
 import { RakutenRmsApiCryptoService } from './rakuten-rms-api-crypto.service';
+import { RakutenScheduleControlService } from './rakuten-schedule-control.service';
+import { buildOrderWorkflow, hasRemovedOrderItems, fulfillmentOf, isChinaRow, validOrderQuantity, IGNORED_MAIL, VERIFIED_SHIPPING, shippingConditionReason, basketIdOf, japanWarehouseReady, mailEventReviewReason, mailOrderBlockReason, mailConditionReason, orderBlockReason, shippingSatisfied, shippingTargetRows, mailSatisfied, shippingFingerprint, trackingReady } from './rakuten-order-workflow';
 
-const AUTOMATION_CRON = process.env.RAKUTEN_RMS_AUTOMATION_CRON || '0 */5 * * * *';
+export const RAKUTEN_ORDER_PROCESSING_CRON = process.env.RAKUTEN_RMS_AUTOMATION_CRON || '0 */20 * * * *';
 const AUTOMATION_TIMEZONE = 'Asia/Tokyo';
 const SCHEDULED_AUTOMATION_PAUSED =
   String(process.env.RAKUTEN_RMS_AUTOMATION_SCHEDULED_PAUSED ?? 'true').toLowerCase() !== 'false';
@@ -29,19 +32,9 @@ const MAX_ATTEMPTS = 10;
 const STALE_PROCESSING_MS = 30 * 60 * 1000;
 const AUTOMATION_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 const PENDING_SHIPMENT_ORDER_PROGRESS = 300;
-const CHINA_MODES = new Set(['china_pending', 'china_no_stock']);
-const MANUAL_REVIEW_MAIL_EVENTS = new Set<RakutenOrderMailEvent>([
-  RakutenOrderMailEvent.japan_shipped,
-  RakutenOrderMailEvent.china_customs,
-  RakutenOrderMailEvent.mixed_partial,
-  RakutenOrderMailEvent.mixed_customs,
-]);
-const MANUALLY_IGNORED_MAIL_NOTE = '用户人工忽略邮件';
-// Keep this exact value compatible with previously verified skipped reports.
-const VERIFIED_EXISTING_SHIPPING_NOTE = '乐天侧在本次自动任务前已经存在相同快递单号，按人工或其他系统回传处理';
 const MANUALLY_IGNORED_SHIPPING_NOTE = '用户人工忽略单号回传';
-// 2026-09-01 00:00:00 Asia/Tokyo. Automation applies only to orders first imported after this instant.
-const AUTOMATION_ORDER_IMPORT_CUTOFF = new Date('2026-08-31T15:00:00.000Z');
+// 2026-10-01 00:00:00 Asia/Tokyo. Automation applies only to orders first imported after this instant.
+const AUTOMATION_ORDER_IMPORT_CUTOFF = new Date('2026-09-30T15:00:00.000Z');
 
 type FulfillmentType = 'japan' | 'china' | 'mixed';
 type ManualMailReviewReason = 'manual_update' | 'combo_order' | 'manual_update_and_combo';
@@ -144,18 +137,6 @@ interface ManualAutomationSelection {
   bodyOverride?: string;
 }
 
-type ManualAutomationKind = 'shipping' | 'mail';
-
-interface ManualAutomationPreviewQuery {
-  kind?: string;
-  connectionId?: string;
-  orderId?: string;
-  fulfillmentType?: string;
-  status?: string;
-  page?: number;
-  pageSize?: number;
-}
-
 const MAIL_TEMPLATE_VARIABLES = [
   { key: 'buyer_name', label: '购买者姓名' },
   { key: 'order_number', label: '乐天订单号' },
@@ -170,13 +151,17 @@ const MAIL_TEMPLATE_VARIABLES = [
 
 @Injectable()
 export class RakutenRmsAutomationService {
+  private readonly ownedLocks = new Map<bigint, { token: string; lost: boolean }>();
   private readonly logger = new Logger(RakutenRmsAutomationService.name);
+
+  private readonly candidateCursors = new Map<string, string>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly client: RakutenRmsApiClient,
     private readonly crypto: RakutenRmsApiCryptoService,
     @Optional() private readonly audit?: AuditService,
+    @Optional() private readonly schedules?: RakutenScheduleControlService,
   ) {}
 
   async enqueueNewOrderMails(
@@ -203,22 +188,72 @@ export class RakutenRmsAutomationService {
     });
   }
 
-  @Cron(AUTOMATION_CRON, { name: 'rakuten-rms-shipping-mail-automation', timeZone: AUTOMATION_TIMEZONE })
-  async runScheduledAutomation(): Promise<void> {
-    if (SCHEDULED_AUTOMATION_PAUSED) return;
+  // Every API import entry calls this after commit, before logistics or shipping.
+  // Only the imported orders' new_order tasks are eligible for this immediate phase.
+  async sendImportedNewOrderMails(connectionId: bigint, orderIds: string[], trigger: RakutenAutomationRunTrigger): Promise<MailRunCounts & { deferred?: boolean }> {
+    if (this.schedules) {
+      const result = await this.schedules.execute('mail', () => this.sendImportedNewOrderMailsNow(connectionId, orderIds, trigger),
+        (counts) => ({ status: counts.failed || counts.blocked ? 'partial' : 'success', errors: counts.failed || counts.blocked ? [`${counts.failed} 封失败，${counts.blocked} 封等待处理`] : [] }));
+      return result ?? { sent: 0, failed: 0, blocked: 0, deferred: true };
+    }
+    if (SCHEDULED_AUTOMATION_PAUSED) return { sent: 0, failed: 0, blocked: 0, deferred: true };
+    return this.sendImportedNewOrderMailsNow(connectionId, orderIds, trigger);
+  }
+
+  private async sendImportedNewOrderMailsNow(connectionId: bigint, orderIds: string[], trigger: RakutenAutomationRunTrigger): Promise<MailRunCounts & { deferred?: boolean }> {
+    const counts: MailRunCounts = { sent: 0, failed: 0, blocked: 0 };
+    if (!orderIds.length) return { ...counts, deferred: true };
+    const connection = await this.prisma.rakutenRmsConnection.findUnique({ where: { id: connectionId } });
+    if (!connection || connection.status !== 1 || !connection.mailNotificationsEnabled || connection.mailCircuitOpenedAt) {
+      return { ...counts, deferred: true };
+    }
+    const token = randomUUID();
+    if (!await this.acquireConnectionLock(connectionId, token)) return { ...counts, deferred: true };
+    const heartbeat = this.startConnectionLockHeartbeat(connectionId, token);
     try {
-      await this.runAutomation(undefined, RakutenAutomationRunTrigger.scheduled);
-    } catch (error) {
-      this.logger.error(`Rakuten shipping/mail automation failed: ${this.errorMessage(error)}`);
+      const run = await this.prisma.rakutenAutomationRun.create({ data: { connectionId, trigger }, select: { id: true } });
+      try {
+        const unique = [...new Set(orderIds)];
+        for (let offset = 0; offset < unique.length; offset += 100) {
+          const current = await this.prisma.rakutenRmsConnection.findUnique({ where: { id: connectionId } });
+          if (!current || current.status !== 1 || !current.mailNotificationsEnabled || current.mailCircuitOpenedAt) break;
+          const tasks = await this.prisma.rakutenOrderMail.findMany({ where: {
+            connectionId, orderId: { in: unique.slice(offset, offset + 100) }, event: RakutenOrderMailEvent.new_order,
+            status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] }, attempts: { lt: MAX_ATTEMPTS },
+            AND: [{ OR: [{ failureCategory: null }, { failureCategory: { notIn: ['manual_review', 'template_missing', 'order_changed', 'prerequisite_missing'] } }] }],
+            OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
+          }, orderBy: { id: 'asc' }, select: { id: true } });
+          if (!tasks.length) continue;
+          const result = await this.processMails(connectionId, tasks.map((task) => task.id));
+          counts.sent += result.sent; counts.failed += result.failed; counts.blocked += result.blocked;
+        }
+        await this.prisma.rakutenAutomationRun.update({ where: { id: run.id }, data: {
+          status: counts.failed || counts.blocked ? RakutenAutomationRunStatus.partial : RakutenAutomationRunStatus.success,
+          mailSent: counts.sent, mailFailed: counts.failed, mailBlocked: counts.blocked, finishedAt: new Date(),
+        } });
+      } catch (error) {
+        await this.prisma.rakutenAutomationRun.update({ where: { id: run.id }, data: {
+          status: RakutenAutomationRunStatus.failed, errorMessage: this.errorMessage(error), finishedAt: new Date(),
+        } });
+        throw error;
+      }
+      return counts;
+    } finally {
+      clearInterval(heartbeat);
+      await this.releaseConnectionLock(connectionId, token);
     }
   }
 
-  async runConnection(idRaw: string): Promise<AutomationRunResult> {
-    if (SCHEDULED_AUTOMATION_PAUSED) {
-      throw new BadRequestException('自动执行当前已暂停，请使用“单号回传”或“邮件发送”清单逐项确认');
+  async runScheduledAutomation(trigger: RakutenAutomationRunTrigger = RakutenAutomationRunTrigger.scheduled, stage?: 'shipping' | 'mail'): Promise<{
+    status: 'completed' | 'paused' | 'failed'; result?: AutomationRunResult; error?: string;
+  }> {
+    if (!stage && SCHEDULED_AUTOMATION_PAUSED) return { status: 'paused' };
+    try {
+      return { status: 'completed', result: await this.runAutomation(undefined, trigger, stage) };
+    } catch (error) {
+      this.logger.error(`Rakuten shipping/mail automation failed: ${this.errorMessage(error)}`);
+      return { status: 'failed', error: this.errorMessage(error) };
     }
-    const connectionId = parseId(idRaw, 'connectionId');
-    return this.runAutomation(connectionId, RakutenAutomationRunTrigger.manual);
   }
 
   async testSmtpConnection(idRaw: string): Promise<unknown> {
@@ -353,6 +388,15 @@ export class RakutenRmsAutomationService {
       deadLetteredAt: null,
     } as const;
     if (payload?.kind === 'shipping') {
+      const existing = await this.prisma.rakutenOrderShippingReport.findUnique({ where: { id: jobId } });
+      if (!existing || existing.connectionId !== connectionId) throw new BadRequestException('回传任务不存在或不属于该连接');
+      const rows = await this.loadOrderRows(connectionId, existing.orderId);
+      if (!await this.isAutomationEligibleOrder(rows)) throw new BadRequestException('订单不在2026年10月1日起导入范围内');
+      const currentType = fulfillmentOf(rows);
+      const currentFingerprint = shippingFingerprint(rows, currentType);
+      const changedCompleted = existing.status === RakutenAutomationStatus.sent &&
+        (existing.fulfillmentType !== currentType || existing.fingerprint !== currentFingerprint);
+      if (existing.status === RakutenAutomationStatus.sent && !changedCompleted) throw new BadRequestException('已完成且单号未变化，无需重新回传');
       const result = await this.prisma.rakutenOrderShippingReport.updateMany({
         where: {
           id: jobId,
@@ -362,16 +406,13 @@ export class RakutenRmsAutomationService {
               RakutenAutomationStatus.failed,
               RakutenAutomationStatus.skipped,
               RakutenAutomationStatus.dead_letter,
+              ...(changedCompleted ? [RakutenAutomationStatus.sent] : []),
             ],
           },
         },
-        data,
+        data: { ...data, fulfillmentType: currentType, fingerprint: currentFingerprint, responsePayload: Prisma.DbNull },
       });
       if (result.count !== 1) throw new BadRequestException('该回传任务不存在或当前状态不能重试');
-      await this.prisma.rakutenRmsConnection.update({
-        where: { id: connectionId },
-        data: { shippingCircuitOpenedAt: null, shippingCircuitReason: null },
-      });
       await this.createAudit({
         entityType: 'rakuten_shipping_report',
         entityId: jobId,
@@ -384,6 +425,9 @@ export class RakutenRmsAutomationService {
       return { retried: true };
     }
     if (payload?.kind === 'mail') {
+      const existing = await this.prisma.rakutenOrderMail.findUnique({ where: { id: jobId } });
+      if (!existing || existing.connectionId !== connectionId) throw new BadRequestException('邮件任务不存在或不属于该连接');
+      await this.assertOrderNotDeleted(connectionId, existing.orderId);
       const result = await this.prisma.rakutenOrderMail.updateMany({
         where: {
           id: jobId,
@@ -393,10 +437,6 @@ export class RakutenRmsAutomationService {
         data,
       });
       if (result.count !== 1) throw new BadRequestException('该邮件任务不存在或当前状态不能重试');
-      await this.prisma.rakutenRmsConnection.update({
-        where: { id: connectionId },
-        data: { mailCircuitOpenedAt: null, mailCircuitReason: null },
-      });
       await this.createAudit({
         entityType: 'rakuten_order_mail',
         entityId: jobId,
@@ -527,6 +567,7 @@ export class RakutenRmsAutomationService {
     const id = parseId(idRaw, 'mailId');
     const mail = await this.prisma.rakutenOrderMail.findUnique({ where: { id } });
     if (!mail) throw new NotFoundException('邮件任务不存在');
+    await this.assertOrderNotDeleted(mail.connectionId, mail.orderId);
     if (
       mail.status !== RakutenAutomationStatus.failed &&
       mail.status !== RakutenAutomationStatus.cancelled &&
@@ -586,12 +627,6 @@ export class RakutenRmsAutomationService {
       }),
     ]);
     if (result.count !== 1) throw new BadRequestException('邮件状态已变化，请刷新后重试');
-    if (mail.status === RakutenAutomationStatus.dead_letter) {
-      await this.prisma.rakutenRmsConnection.update({
-        where: { id: mail.connectionId },
-        data: { mailCircuitOpenedAt: null, mailCircuitReason: null },
-      });
-    }
     await this.createAudit({
       entityType: 'rakuten_order_mail',
       entityId: id,
@@ -725,7 +760,7 @@ export class RakutenRmsAutomationService {
         deadLetteredAt: null,
         resolvedAt: new Date(),
         resolvedBy: userId,
-        resolutionNote: MANUALLY_IGNORED_MAIL_NOTE,
+        resolutionNote: IGNORED_MAIL,
       },
     });
     if (result.count !== 1) throw new BadRequestException('只有待发送邮件可以忽略，请刷新清单');
@@ -736,7 +771,7 @@ export class RakutenRmsAutomationService {
       eventType: AuditEventType.RAKUTEN_MAIL_CANCELLED,
       operatorId: userId,
       beforeData: { status: mail.status },
-      afterData: { status: RakutenAutomationStatus.cancelled, resolutionNote: MANUALLY_IGNORED_MAIL_NOTE },
+      afterData: { status: RakutenAutomationStatus.cancelled, resolutionNote: IGNORED_MAIL },
       remark: '用户人工忽略邮件并允许继续后续邮件阶段',
     });
     return { ignored: true };
@@ -790,7 +825,7 @@ export class RakutenRmsAutomationService {
       templates: Object.values(RakutenOrderMailEvent).map((event) => {
         const active = activeByEvent.get(event);
         if (active) return this.serializeMail(active);
-        return { event, version: 0, isActive: true, isSystemDefault: true, ...this.defaultMailTemplate(event) };
+        return { event, version: 0, isActive: false, isSystemDefault: true, ...this.defaultMailTemplate(event) };
       }),
     };
   }
@@ -803,7 +838,6 @@ export class RakutenRmsAutomationService {
       orderBy: { version: 'desc' },
       include: { creator: { select: { id: true, username: true } } },
     });
-    const hasActive = versions.some((version) => version.isActive);
     return {
       event,
       versions: [
@@ -811,7 +845,7 @@ export class RakutenRmsAutomationService {
         {
           event,
           version: 0,
-          isActive: !hasActive,
+          isActive: false,
           isSystemDefault: true,
           createdAt: null,
           creator: null,
@@ -829,7 +863,7 @@ export class RakutenRmsAutomationService {
   ): Promise<unknown> {
     const connectionId = await this.requireConnection(connectionIdRaw);
     const event = this.parseMailEvent(eventRaw);
-    const template = this.validateMailTemplate(payload);
+    const template = this.validateMailTemplate(payload, event);
     const created = await this.prisma.$transaction(async (tx) => {
       const maximum = await tx.rakutenMailTemplateVersion.aggregate({
         where: { connectionId, event },
@@ -875,25 +909,15 @@ export class RakutenRmsAutomationService {
     const event = this.parseMailEvent(eventRaw);
     const version = this.parsePositiveInteger(versionRaw, 0, 0, 1_000_000);
     if (version === 0) {
-      await this.prisma.rakutenMailTemplateVersion.updateMany({
-        where: { connectionId, event, isActive: true },
-        data: { isActive: false },
-      });
-      await this.createAudit({
-        entityType: 'rakuten_mail_template',
-        entityId: connectionId,
-        action: AuditAction.update,
-        eventType: AuditEventType.RAKUTEN_MAIL_TEMPLATE_ACTIVATED,
-        operatorId: userId,
-        afterData: { event, version: 0, isSystemDefault: true },
-        remark: `恢复乐天邮件系统默认模板 ${event}`,
-      });
-      return { event, version: 0, isActive: true, isSystemDefault: true, ...this.defaultMailTemplate(event) };
+      // Explicit restoration saves a real active version; a preview-only default
+      // must never silently become the scheduled sender's fallback.
+      return this.saveMailTemplate(connectionIdRaw, eventRaw, this.defaultMailTemplate(event), userId);
     }
     const target = await this.prisma.rakutenMailTemplateVersion.findUnique({
       where: { connectionId_event_version: { connectionId, event, version } },
     });
     if (!target) throw new NotFoundException('邮件模板版本不存在');
+    this.validateMailTemplate(target, event);
     const activated = await this.prisma.$transaction(async (tx) => {
       await tx.rakutenMailTemplateVersion.updateMany({
         where: { connectionId, event, isActive: true },
@@ -926,21 +950,21 @@ export class RakutenRmsAutomationService {
     const event = this.parseMailEvent(eventRaw);
     const hasDraft = payload.subjectTemplate !== undefined || payload.bodyTemplate !== undefined;
     const template = hasDraft
-      ? this.validateMailTemplate(payload)
-      : (await this.resolveActiveMailTemplate(connectionId, event)) ?? this.defaultMailTemplate(event);
+      ? this.validateMailTemplate(payload, event)
+      : await this.resolveActiveMailTemplate(connectionId, event);
     let orderId = String(payload.orderId ?? '').trim();
     if (!orderId) {
       const latest = await this.prisma.rakutenOrderRecord.findFirst({
-        where: { rmsConnectionId: connectionId, orderId: { not: null } },
+        where: { deletedAt: null, rmsConnectionId: connectionId, orderId: { not: null } },
         orderBy: { createdAt: 'desc' },
-        select: { orderId: true },
+        select: { orderId: true, rmsOrderId: true },
       });
-      orderId = String(latest?.orderId ?? '').trim();
+      orderId = latest ? originalRakutenOrderId(latest) : '';
     }
     if (!orderId) throw new BadRequestException('该店铺没有可用于预览的订单，请输入订单号');
     const rows = await this.loadOrderRows(connectionId, orderId);
     if (!rows.length) throw new NotFoundException('该店铺下未找到预览订单');
-    const rendered = this.renderTemplate(template, rows);
+    const rendered = template ? this.renderTemplate(template, rows, event) : this.renderMail(event, rows);
     return {
       orderId,
       recipient: this.resolveRecipient(rows),
@@ -1018,300 +1042,201 @@ export class RakutenRmsAutomationService {
     });
   }
 
-  async prepareManualActions(input: ManualAutomationPreviewQuery | string = {}): Promise<unknown> {
-    const query = typeof input === 'string' ? { kind: input } : (input ?? {});
-    const kind = String(query.kind || '').trim();
-    if (kind && kind !== 'shipping' && kind !== 'mail') {
-      throw new BadRequestException('任务类型只支持shipping或mail');
+  async resolveMissingOrderMail(connectionIdRaw: string, orderIdRaw: string, eventRaw: string, mode: string, userId: bigint): Promise<unknown> {
+    const connectionId = parseId(connectionIdRaw, 'connectionId');
+    const orderId = String(orderIdRaw ?? '').trim();
+    if (!['new_order', 'japan_shipped'].includes(eventRaw)) throw new BadRequestException('此处仅支持缺失的新規或日本発邮件');
+    const event = this.parseMailEvent(eventRaw);
+    const label = event === RakutenOrderMailEvent.new_order ? '新規' : '日本発';
+    if (!orderId || !['create', 'ignore'].includes(mode)) throw new BadRequestException('请选择生成邮件任务或确认无需发送');
+    const connection = await this.prisma.rakutenRmsConnection.findUnique({ where: { id: connectionId } });
+    if (!connection || connection.status !== 1 || !connection.mailNotificationsEnabled) throw new BadRequestException('该店铺邮件功能未启用');
+    const rows = await this.loadOrderRows(connectionId, orderId);
+    if (!await this.isAutomationEligibleOrder(rows) || !rows.some((row) => row.sourceKind === 'rms_api')) {
+      throw new BadRequestException('订单不在2026年10月1日起首次导入的API订单范围内');
     }
-    const requestedKind = kind as ManualAutomationKind | '';
-    const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 30));
-    const connectionId = String(query.connectionId || '').trim()
-      ? parseId(String(query.connectionId), 'connectionId')
-      : undefined;
-    const orderKeyword = String(query.orderId || '').trim();
-    const fulfillmentFilter = String(query.fulfillmentType || '').trim();
-    if (fulfillmentFilter && !['japan', 'china', 'mixed'].includes(fulfillmentFilter)) {
-      throw new BadRequestException('发货类型无效');
-    }
-    const statusFilter = String(query.status || '').trim();
-    const attentionStatuses: RakutenAutomationStatus[] = [
-      RakutenAutomationStatus.pending,
-      RakutenAutomationStatus.failed,
-      RakutenAutomationStatus.uncertain,
-      RakutenAutomationStatus.dead_letter,
-    ];
-    if (statusFilter && !attentionStatuses.includes(statusFilter as RakutenAutomationStatus)) {
-      throw new BadRequestException('邮件状态无效');
-    }
-    await this.recoverStaleJobs();
-    const connections = await this.prisma.rakutenRmsConnection.findMany({
-      where: {
-        status: 1,
-        ...(connectionId ? { id: connectionId } : {}),
-        ...(requestedKind === 'shipping'
-          ? { autoShippingEnabled: true }
-          : requestedKind === 'mail'
-            ? { mailNotificationsEnabled: true }
-            : { OR: [{ autoShippingEnabled: true }, { mailNotificationsEnabled: true }] }),
-      },
-      include: { shop: { select: { id: true, name: true } } },
-      orderBy: { id: 'asc' },
-    });
-    for (const connection of connections) {
-      if (connection.autoShippingEnabled && requestedKind !== 'mail') await this.prepareShippingReports(connection);
-      if (connection.mailNotificationsEnabled && requestedKind !== 'shipping') {
-        await this.prepareTrackingMails(connection);
-        await this.prepareCustomsMails(connection);
+    const block = mailOrderBlockReason(event, rows);
+    if (block) throw new BadRequestException(block);
+    let externalShipping = false;
+    if (event === RakutenOrderMailEvent.japan_shipped) {
+      const report = await this.prisma.rakutenOrderShippingReport.findUnique({ where: { connectionId_orderId: { connectionId, orderId } } });
+      if (fulfillmentOf(rows) !== 'japan' || !shippingSatisfied(report) || !japanWarehouseReady(rows)) {
+        throw new BadRequestException('请先确认日本侧实际出货及单号回传完成');
       }
+      const condition = mailConditionReason(event, rows, report);
+      if (condition && !condition.includes('外部')) throw new BadRequestException(condition);
+      externalShipping = report?.status === RakutenAutomationStatus.skipped;
     }
-    const connectionIds = connections.map((connection) => connection.id);
-    if (!connectionIds.length) {
-      return { generatedAt: new Date().toISOString(), scheduledPaused: SCHEDULED_AUTOMATION_PAUSED, items: [], summary: {}, page, pageSize, totalOrders: 0, totalPages: 0 };
+    const existing = await this.prisma.rakutenOrderMail.findUnique({ where: { connectionId_orderId_event: {
+      connectionId, orderId, event,
+    } } });
+    if (existing) throw new BadRequestException(`${label}任务已存在，请刷新订单进度`);
+    let created;
+    try {
+      created = await this.prisma.rakutenOrderMail.create({ data: {
+        connectionId, orderId, event,
+        ...(mode === 'create' && externalShipping ? { resolutionNote: '用户确认重新发送结果不确定的邮件', resolvedAt: new Date(), resolvedBy: userId } : {}),
+        ...(mode === 'ignore' ? { status: RakutenAutomationStatus.cancelled, resolutionNote: IGNORED_MAIL,
+          resolvedAt: new Date(), resolvedBy: userId } : {}),
+      } });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) throw new BadRequestException(`${label}任务已存在，请刷新订单进度`);
+      throw error;
     }
-    const [shippingRows, mailCandidates] = await Promise.all([
-      requestedKind === 'mail' ? Promise.resolve([]) : this.prisma.rakutenOrderShippingReport.findMany({
-        where: {
-          connectionId: { in: connectionIds },
-          status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter] },
-        },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        take: 500,
-        include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
-      }),
-      requestedKind === 'shipping' ? Promise.resolve([]) : this.prisma.rakutenOrderMail.findMany({
-        where: {
-          connectionId: { in: connectionIds },
-          status: statusFilter
-            ? statusFilter as RakutenAutomationStatus
-            : { in: attentionStatuses },
-          ...(orderKeyword ? { orderId: { contains: orderKeyword } } : {}),
-        },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        take: 2000,
-        include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
-      }),
-    ]);
-    let mailOrderRefs = Array.from(new Map(mailCandidates.map((row) => [
-      this.automationOrderKey(row.connectionId, row.orderId),
-      { connectionId: row.connectionId, orderId: row.orderId },
-    ])).values());
-    const mailOrderRecords = mailOrderRefs.length
-      ? await this.prisma.rakutenOrderRecord.findMany({
-          where: {
-            OR: mailOrderRefs.map((ref) => ({
-              rmsConnectionId: ref.connectionId,
-              orderId: ref.orderId,
-            })),
-          },
-          select: {
-            rmsConnectionId: true,
-            orderId: true,
-            dispatchMode: true,
-            isComboOrder: true,
-            rmsManualOverrideAt: true,
-            createdAt: true,
-          },
-        })
-      : [];
-    const fulfillmentFlags = new Map<string, { hasChina: boolean; hasJapan: boolean }>();
-    const earliestCreatedAt = new Map<string, Date>();
-    const manuallyUpdatedOrderKeys = new Set<string>();
-    const comboOrderKeys = new Set<string>();
-    for (const record of mailOrderRecords) {
-      if (!record.rmsConnectionId || !record.orderId) continue;
-      const key = this.automationOrderKey(record.rmsConnectionId, record.orderId);
-      if (record.rmsManualOverrideAt) manuallyUpdatedOrderKeys.add(key);
-      if (record.isComboOrder) comboOrderKeys.add(key);
-      const flags = fulfillmentFlags.get(key) ?? { hasChina: false, hasJapan: false };
-      if (this.isChina(record)) flags.hasChina = true;
-      else flags.hasJapan = true;
-      fulfillmentFlags.set(key, flags);
-      const earliest = earliestCreatedAt.get(key);
-      if (!earliest || record.createdAt < earliest) earliestCreatedAt.set(key, record.createdAt);
-    }
-    const resolveFulfillment = (ref: { connectionId: bigint; orderId: string }): FulfillmentType => {
-      const flags = fulfillmentFlags.get(this.automationOrderKey(ref.connectionId, ref.orderId));
-      return flags?.hasChina && flags.hasJapan ? 'mixed' : flags?.hasChina ? 'china' : 'japan';
-    };
-    mailOrderRefs = mailOrderRefs.filter((ref) => {
-      const createdAt = earliestCreatedAt.get(this.automationOrderKey(ref.connectionId, ref.orderId));
-      return Boolean(createdAt && createdAt >= AUTOMATION_ORDER_IMPORT_CUTOFF) &&
-        (!fulfillmentFilter || resolveFulfillment(ref) === fulfillmentFilter);
+    await this.createAudit({ entityType: 'rakuten_order_mail', entityId: created.id, action: AuditAction.update,
+      eventType: mode === 'ignore' ? AuditEventType.RAKUTEN_MAIL_CANCELLED : AuditEventType.RAKUTEN_MAIL_RETRIED,
+      operatorId: userId, afterData: { connectionId, orderId, event, status: created.status },
+      remark: mode === 'ignore' ? `用户确认缺失的${label}邮件无需发送` : `用户核实发送记录后补建缺失的${label}邮件任务`,
     });
-    const totalOrders = mailOrderRefs.length;
-    const totalPages = totalOrders ? Math.ceil(totalOrders / pageSize) : 0;
-    const safePage = totalPages ? Math.min(page, totalPages) : 1;
-    const pagedMailOrderRefs = requestedKind === 'shipping'
-      ? []
-      : mailOrderRefs.slice((safePage - 1) * pageSize, safePage * pageSize);
-    const mailRows = pagedMailOrderRefs.length
-      ? await this.prisma.rakutenOrderMail.findMany({
-          where: { OR: pagedMailOrderRefs },
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-          include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
-        })
-      : [];
-    const activeTemplates = requestedKind === 'shipping' || !pagedMailOrderRefs.length
-      ? []
-      : await this.prisma.rakutenMailTemplateVersion.findMany({
-          where: { connectionId: { in: connectionIds }, isActive: true },
-          select: { connectionId: true, event: true, version: true },
-        });
-    const activeTemplateVersions = new Map(activeTemplates.map((template) => [
-      `${template.connectionId.toString()}:${template.event}`,
-      template.version,
-    ]));
-    const eligibleKeys = await this.loadEligibleAutomationOrderKeys([
-      ...shippingRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
-      ...mailRows.map((row) => ({ connectionId: row.connectionId, orderId: row.orderId })),
-    ]);
-    const eligibleShippingRowsWithOrders = await Promise.all(
-      shippingRows
-        .filter((row) => eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)))
-        .map(async (row) => ({ row, orderRows: await this.loadOrderRows(row.connectionId, row.orderId) })),
-    );
-    const eligibleShippingRows = eligibleShippingRowsWithOrders
-      .filter(({ row, orderRows }) => this.isShippingCustomsReady(orderRows, row.fulfillmentType as FulfillmentType))
-      .map(({ row }) => row);
-    const eligibleMailRows = mailRows.filter((row) =>
-      eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
-    const items: Array<Record<string, unknown>> = [];
-    const now = new Date();
-    for (const row of eligibleShippingRows) {
-      const blockedReason = row.connection.shippingCircuitOpenedAt
-        ? `单号回传已暂停：${row.connection.shippingCircuitReason || '请先恢复回传功能'}`
-        : row.status === RakutenAutomationStatus.dead_letter
-          ? '已停止自动重试，请先在连接管理中处理并重试'
-          : row.nextAttemptAt && row.nextAttemptAt > now
-            ? `等待重试时间 ${row.nextAttemptAt.toISOString()}`
-            : null;
-      items.push({
-        kind: 'shipping',
-        id: row.id.toString(),
-        connectionId: row.connectionId.toString(),
-        shopName: row.connection.shop.name,
-        orderId: row.orderId,
-        actionLabel: row.fulfillmentType === 'japan'
-          ? '回传日本快递单号'
-          : row.fulfillmentType === 'china'
-            ? '回传中国快递单号'
-            : '回传混发订单的中国快递单号',
-        event: null,
-        status: row.status,
-        attempts: row.attempts,
-        lastError: row.lastError,
-        nextAttemptAt: row.nextAttemptAt?.toISOString() ?? null,
-        createdAt: row.createdAt.toISOString(),
-        executable: !blockedReason,
-        blockedReason,
-      });
-    }
-    for (const row of eligibleMailRows) {
-      const executableStatus =
-        row.status === RakutenAutomationStatus.pending || row.status === RakutenAutomationStatus.failed;
-      let blockedReason: string | null = row.connection.mailCircuitOpenedAt
-        ? `邮件发送已暂停：${row.connection.mailCircuitReason || '请先恢复邮件功能'}`
-        : row.status === RakutenAutomationStatus.uncertain
-          ? '发送结果待确认，请到乐天邮件管理中确认已发送或确认重发'
-          : row.status === RakutenAutomationStatus.dead_letter
-            ? '已停止自动重试，请先到乐天邮件管理中处理并重试'
-            : row.nextAttemptAt && row.nextAttemptAt > now
-              ? `等待重试时间 ${row.nextAttemptAt.toISOString()}`
-              : null;
-      const templateVersion = activeTemplateVersions.get(`${row.connectionId.toString()}:${row.event}`) ?? null;
-      if (!blockedReason && executableStatus && !templateVersion) {
-        blockedReason = `该店铺尚未配置并启用 ${row.event} 邮件模板`;
-      }
-      const prerequisiteEvent = this.mailPrerequisiteEvent(row.event);
-      if (!blockedReason && prerequisiteEvent) {
-        const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
-          where: {
-            connectionId_orderId_event: {
-              connectionId: row.connectionId,
-              orderId: row.orderId,
-              event: prerequisiteEvent,
-            },
-          },
-          select: { status: true, resolutionNote: true },
-        });
-        if (!this.isMailPrerequisiteSatisfied(prerequisite)) {
-          blockedReason = prerequisite
-            ? `等待前置邮件 ${prerequisiteEvent} 发送成功`
-            : `等待前置邮件 ${prerequisiteEvent} 生成并发送`;
+    return this.serializeMail(created);
+  }
+
+  async listOrderWorkflows(query: { connectionId?: string; orderId?: string; view?: string; page?: string; pageSize?: string }): Promise<unknown> {
+    const page = this.parsePositiveInteger(query.page, 1, 1, 100000);
+    const pageSize = this.parsePositiveInteger(query.pageSize, 30, 1, 100);
+    const connectionId = query.connectionId ? parseId(query.connectionId, 'connectionId') : null;
+    const keyword = String(query.orderId ?? '').trim();
+    const view = String(query.view || 'all');
+    if (!['all', 'manual', 'processing', 'done'].includes(view)) throw new BadRequestException('订单流程视图无效');
+    const scope = Prisma.sql`
+      FROM rakuten_order_records records
+      INNER JOIN rakuten_rms_connections connections ON connections.id = records.rms_connection_id
+      WHERE records.deleted_at IS NULL AND COALESCE(records.rms_order_id, records.order_id) IS NOT NULL AND COALESCE(records.rms_order_id, records.order_id) <> ''
+        ${connectionId ? Prisma.sql`AND records.rms_connection_id = ${connectionId}` : Prisma.empty}
+        ${keyword ? Prisma.sql`AND (COALESCE(records.rms_order_id, records.order_id) LIKE ${`%${keyword}%`} OR records.order_id LIKE ${`%${keyword}%`})` : Prisma.empty}
+        AND NOT EXISTS (
+          SELECT 1 FROM rakuten_order_records older_records
+          WHERE older_records.rms_connection_id = records.rms_connection_id
+            AND COALESCE(older_records.rms_order_id, older_records.order_id) = COALESCE(records.rms_order_id, records.order_id)
+            AND older_records.created_at < ${AUTOMATION_ORDER_IMPORT_CUTOFF}
+        )
+      GROUP BY records.rms_connection_id, COALESCE(records.rms_order_id, records.order_id)
+      HAVING MIN(records.created_at) >= ${AUTOMATION_ORDER_IMPORT_CUTOFF}
+        AND SUM(records.source_kind = 'rms_api') > 0
+    `;
+    if (view !== 'all') {
+      // Workflow state depends on facts and independent results. Evaluate before
+      // pagination so manual cases on later pages cannot disappear from the inbox.
+      const refs = await this.prisma.$queryRaw<Array<{ connectionId: bigint; orderId: string }>>(Prisma.sql`
+        SELECT records.rms_connection_id AS connectionId, COALESCE(records.rms_order_id, records.order_id) AS orderId ${scope}
+        ORDER BY MIN(records.created_at) DESC, records.rms_connection_id ASC, COALESCE(records.rms_order_id, records.order_id) ASC
+      `);
+      const summary = { manual: 0, processing: 0, done: 0 };
+      const items: ReturnType<typeof buildOrderWorkflow>[] = [];
+      let total = 0;
+      const offset = (page - 1) * pageSize;
+      for (let index = 0; index < refs.length; index += 100) {
+        const workflows = await this.loadOrderWorkflowBatch(refs.slice(index, index + 100));
+        for (const workflow of workflows) {
+          summary[workflow.state as keyof typeof summary] += 1;
+          if (workflow.state !== view) continue;
+          if (total >= offset && items.length < pageSize) items.push(workflow);
+          total += 1;
         }
       }
-      const flags = fulfillmentFlags.get(this.automationOrderKey(row.connectionId, row.orderId));
-      const fulfillmentType: FulfillmentType = flags?.hasChina && flags.hasJapan
-        ? 'mixed'
-        : flags?.hasChina
-          ? 'china'
-          : 'japan';
-      const orderKey = this.automationOrderKey(row.connectionId, row.orderId);
-      const manualReviewReason = MANUAL_REVIEW_MAIL_EVENTS.has(row.event)
-        ? this.resolveManualMailReviewReason(
-            manuallyUpdatedOrderKeys.has(orderKey),
-            comboOrderKeys.has(orderKey),
-          )
-        : null;
-      items.push({
-        kind: 'mail',
-        id: row.id.toString(),
-        connectionId: row.connectionId.toString(),
-        shopName: row.connection.shop.name,
-        orderId: row.orderId,
-        actionLabel: `发送 ${row.event} 邮件`,
-        event: row.event,
-        templateVersion,
-        templateMissing: !templateVersion,
-        requiresManualReview: Boolean(manualReviewReason),
-        manualReviewReason,
-        fulfillmentType,
-        status: row.status,
-        attempts: row.attempts,
-        recipient: row.recipient,
-        subject: row.subject,
-        resolutionNote: row.resolutionNote,
-        lastError: row.lastError,
-        nextAttemptAt: row.nextAttemptAt?.toISOString() ?? null,
-        sentAt: row.sentAt?.toISOString() ?? null,
-        createdAt: row.createdAt.toISOString(),
-        executable: executableStatus && !blockedReason,
-        blockedReason,
-      });
+      return { items, total, summary, view, page, pageSize, intervalMinutes: 20 };
     }
-    items.sort((left, right) => {
-      const connectionDifference = String(left.connectionId).localeCompare(String(right.connectionId), undefined, { numeric: true });
-      if (connectionDifference) return connectionDifference;
-      const orderDifference = String(left.orderId).localeCompare(String(right.orderId), undefined, { numeric: true });
-      if (orderDifference) return orderDifference;
-      if (left.kind !== right.kind) return left.kind === 'shipping' ? -1 : 1;
-      return String(left.createdAt).localeCompare(String(right.createdAt));
+    const [countRows, refs] = await Promise.all([
+      this.prisma.$queryRaw<Array<{ total: bigint }>>(Prisma.sql`SELECT COUNT(*) AS total FROM (SELECT COALESCE(records.rms_order_id, records.order_id) ${scope}) scoped`),
+      this.prisma.$queryRaw<Array<{ connectionId: bigint; orderId: string }>>(Prisma.sql`
+        SELECT records.rms_connection_id AS connectionId, COALESCE(records.rms_order_id, records.order_id) AS orderId ${scope}
+        ORDER BY MIN(records.created_at) DESC, records.rms_connection_id ASC, COALESCE(records.rms_order_id, records.order_id) ASC
+        LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
+      `),
+    ]);
+    const total = Number(countRows[0]?.total ?? 0);
+    if (!refs.length) return { items: [], total, page, pageSize, intervalMinutes: 20 };
+    const items = await this.loadOrderWorkflowBatch(refs);
+    return { items, total, page, pageSize, intervalMinutes: 20 };
+  }
+
+  private async loadOrderWorkflowBatch(refs: Array<{ connectionId: bigint; orderId: string }>): Promise<ReturnType<typeof buildOrderWorkflow>[]> {
+    if (!refs.length) return [];
+    const connectionIds = Array.from(new Set(refs.map((ref) => BigInt(ref.connectionId))));
+    const orderRefs = refs.map((ref) => ({ connectionId: BigInt(ref.connectionId), orderId: ref.orderId }));
+    const [records, reports, mails, connections, templates] = await Promise.all([
+      this.prisma.rakutenOrderRecord.findMany({ where: { deletedAt: null, OR: orderRefs.map((ref) => ({ rmsConnectionId: ref.connectionId, ...rakutenOrderIdentityWhere(ref.orderId) })) }, orderBy: { id: 'asc' } }),
+      this.prisma.rakutenOrderShippingReport.findMany({ where: { OR: orderRefs } }),
+      this.prisma.rakutenOrderMail.findMany({ where: { OR: orderRefs } }),
+      this.prisma.rakutenRmsConnection.findMany({ where: { id: { in: connectionIds } }, include: { shop: { select: { name: true } } } }),
+      this.prisma.rakutenMailTemplateVersion.findMany({ where: { connectionId: { in: connectionIds }, isActive: true }, select: { connectionId: true, event: true, version: true, subjectTemplate: true, bodyTemplate: true } }),
+    ]);
+    return orderRefs.flatMap((ref) => {
+      const connection = connections.find((row) => row.id === ref.connectionId);
+      if (!connection) return [];
+      return [buildOrderWorkflow({
+        connection,
+        rows: records.filter((row) => row.rmsConnectionId === ref.connectionId && originalRakutenOrderId(row) === ref.orderId),
+        report: reports.find((row) => row.connectionId === ref.connectionId && row.orderId === ref.orderId) ?? null,
+        mails: mails.filter((row) => row.connectionId === ref.connectionId && row.orderId === ref.orderId),
+        templateVersions: new Map(templates.filter((row) => { if (row.connectionId !== ref.connectionId) return false; try { this.validateMailTemplate(row, row.event); return true; } catch { return false; } }).map((row) => [row.event, row.version])),
+      })];
     });
-    const summary = items.reduce<Record<string, number>>((counts, item) => {
-      const status = String(item.status || '');
-      const needsAttention = new Set<RakutenAutomationStatus>([
-        RakutenAutomationStatus.pending,
-        RakutenAutomationStatus.failed,
-        RakutenAutomationStatus.uncertain,
-        RakutenAutomationStatus.dead_letter,
-      ]).has(status as RakutenAutomationStatus);
-      if (!item.executable && !needsAttention) return counts;
-      const key = item.executable ? String(item.kind) : 'blocked';
-      counts[key] = (counts[key] ?? 0) + 1;
-      return counts;
-    }, {});
-    return {
-      generatedAt: new Date().toISOString(),
-      scheduledPaused: SCHEDULED_AUTOMATION_PAUSED,
-      items,
-      summary,
-      page: requestedKind === 'mail' ? safePage : 1,
-      pageSize,
-      totalOrders: requestedKind === 'mail' ? totalOrders : 0,
-      totalPages: requestedKind === 'mail' ? totalPages : 0,
-    };
+  }
+
+  // Human holds are excluded from the execution queue. Recheck them separately
+  // with a rotating cursor so fixing facts/templates can resume eligible tasks.
+  private async refreshMailHolds(connectionId: bigint): Promise<void> {
+    const key = `holds:${connectionId}`;
+    const cursor = this.candidateCursors.get(key) ?? '0';
+    const held = await this.prisma.rakutenOrderMail.findMany({ where: {
+      connectionId, id: { gt: BigInt(cursor) }, status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
+      failureCategory: { in: ['manual_review', 'template_missing', 'order_changed', 'prerequisite_missing'] },
+    }, orderBy: { id: 'asc' }, take: 100 });
+    this.candidateCursors.set(key, held.length >= 100 ? held[held.length - 1].id.toString() : '0');
+    for (const mail of held) {
+      try {
+
+        const rows = await this.loadOrderRows(connectionId, mail.orderId);
+        if (mailOrderBlockReason(mail.event, rows) || this.requiresManualMailReview(mail.event, rows)) continue;
+        const template = await this.resolveActiveMailTemplate(connectionId, mail.event);
+        if (!template) continue;
+        try { this.validateMailTemplate(template, mail.event); } catch { continue; }
+        const report = await this.prisma.rakutenOrderShippingReport.findUnique({ where: { connectionId_orderId: { connectionId, orderId: mail.orderId } } });
+        const prerequisiteEvent = this.mailPrerequisiteEvent(mail.event);
+        if (prerequisiteEvent) {
+          const prerequisite = await this.prisma.rakutenOrderMail.findUnique({ where: { connectionId_orderId_event: {
+            connectionId, orderId: mail.orderId, event: prerequisiteEvent,
+          } } });
+          if (!mailSatisfied(prerequisite)) continue;
+        }
+        if (mailConditionReason(mail.event, rows, report)) continue;
+        await this.prisma.rakutenOrderMail.updateMany({ where: { id: mail.id, status: mail.status }, data: {
+          failureCategory: null, lastError: null, nextAttemptAt: null,
+        } });
+      } catch (error) {
+        this.logger.error(`Rakuten refreshMailHolds 单笔处理失败：${this.errorMessage(error)}`);
+      }
+    }
+  }
+
+  async prepareOrderTasks(connectionIdRaw?: string): Promise<unknown> {
+    const connectionId = connectionIdRaw ? parseId(connectionIdRaw, 'connectionId') : undefined;
+    await this.recoverStaleJobs();
+    const connections = await this.prisma.rakutenRmsConnection.findMany({ where: {
+      ...(connectionId ? { id: connectionId } : {}), status: 1,
+      OR: [{ autoShippingEnabled: true }, { mailNotificationsEnabled: true }],
+    }, include: { shop: { select: { id: true, name: true } } }, orderBy: { id: 'asc' } });
+    let preparedConnections = 0;
+    let lockedConnections = 0;
+    for (const connection of connections) {
+      const token = randomUUID();
+      if (!await this.acquireConnectionLock(connection.id, token)) { lockedConnections += 1; continue; }
+      const heartbeat = this.startConnectionLockHeartbeat(connection.id, token);
+      try {
+        if (connection.autoShippingEnabled) await this.prepareShippingReports(connection);
+        if (connection.mailNotificationsEnabled) {
+          await this.refreshMailHolds(connection.id);
+          await this.prepareTrackingMails(connection);
+          await this.prepareCustomsMails(connection);
+        }
+        preparedConnections += 1;
+      } finally {
+        clearInterval(heartbeat);
+        await this.releaseConnectionLock(connection.id, token);
+      }
+    }
+    return { preparedConnections, lockedConnections };
   }
 
   async previewManualMailAction(idRaw: string, templateVersionRaw?: number): Promise<unknown> {
@@ -1345,7 +1270,7 @@ export class RakutenRmsAutomationService {
     const recipient = this.resolveRecipient(rows);
     if (!recipient) throw new BadRequestException('乐天订单没有返回可用的买家匿名邮箱');
     const smtp = this.decryptSmtpCredentials(mail.connection);
-    const rendered = this.renderTemplate(template, rows);
+    const rendered = this.renderTemplate(template, rows, mail.event);
     const manualReviewReason = this.manualMailReviewReason(mail.event, rows);
     return this.serializeMail({
       id: mail.id,
@@ -1358,7 +1283,7 @@ export class RakutenRmsAutomationService {
       fromName: smtp.fromName,
       bccAddresses: smtp.bccAddresses,
       templateVersion: template.version,
-      orderFingerprint: this.mailOrderFingerprint(rows),
+      orderFingerprint: this.mailOrderFingerprint(rows, mail.event),
       requiresManualReview: Boolean(manualReviewReason),
       manualReviewReason,
       subject: rendered.subject,
@@ -1421,7 +1346,7 @@ export class RakutenRmsAutomationService {
     const ineligibleRow = [...shippingRows, ...mailRows].find((row) =>
       !eligibleKeys.has(this.automationOrderKey(row.connectionId, row.orderId)));
     if (ineligibleRow) {
-      throw new BadRequestException(`订单 ${ineligibleRow.orderId} 在2026年9月1日前导入，不适用单号回传和邮件发送功能`);
+      throw new BadRequestException(`订单 ${ineligibleRow.orderId} 在2026年10月1日前导入，不适用单号回传和邮件发送功能`);
     }
     const now = new Date();
     for (const row of shippingRows) {
@@ -1432,9 +1357,8 @@ export class RakutenRmsAutomationService {
         throw new BadRequestException(`订单 ${row.orderId} 的单号回传状态已变化，请刷新清单`);
       }
       const orderRows = await this.loadOrderRows(row.connectionId, row.orderId);
-      if (!this.isShippingCustomsReady(orderRows, row.fulfillmentType as FulfillmentType)) {
-        throw new BadRequestException(`订单 ${row.orderId} 的中国侧快递单号尚未全部达到通関許可，当前不能回传`);
-      }
+      const executionCondition = shippingConditionReason(orderRows, row.fulfillmentType, await this.shippingPrerequisiteSatisfied(row.connectionId, row.orderId));
+      if (executionCondition) throw new BadRequestException(executionCondition);
     }
     for (const row of mailRows) {
       if (!row.connection.mailNotificationsEnabled || row.connection.status !== 1 || row.connection.mailCircuitOpenedAt) {
@@ -1464,7 +1388,7 @@ export class RakutenRmsAutomationService {
       if (!requiresManualReview && (selected?.manualReviewConfirmed || selected?.bodyOverride !== undefined)) {
         throw new BadRequestException(`订单 ${row.orderId} 无需人工修改邮件正文，请刷新清单`);
       }
-      if (selected?.orderFingerprint && this.mailOrderFingerprint(orderRows) !== selected.orderFingerprint) {
+      if (selected?.orderFingerprint && this.mailOrderFingerprint(orderRows, row.event) !== selected.orderFingerprint) {
         throw new BadRequestException(`订单 ${row.orderId} 在预览后已发生变化，请重新预览邮件后再发送`);
       }
     }
@@ -1545,13 +1469,15 @@ export class RakutenRmsAutomationService {
   async runAutomation(
     connectionId?: bigint,
     trigger: RakutenAutomationRunTrigger = RakutenAutomationRunTrigger.manual,
+    stage?: 'shipping' | 'mail',
   ): Promise<AutomationRunResult> {
     await this.recoverStaleJobs();
     const connections = await this.prisma.rakutenRmsConnection.findMany({
       where: {
         ...(connectionId ? { id: connectionId } : {}),
         status: 1,
-        OR: [{ autoShippingEnabled: true }, { mailNotificationsEnabled: true }],
+        ...(stage === 'shipping' ? { autoShippingEnabled: true } : stage === 'mail' ? { mailNotificationsEnabled: true }
+          : { OR: [{ autoShippingEnabled: true }, { mailNotificationsEnabled: true }] }),
       },
       include: { shop: { select: { id: true, name: true } } },
     });
@@ -1570,7 +1496,7 @@ export class RakutenRmsAutomationService {
       }
       const heartbeat = this.startConnectionLockHeartbeat(connection.id, lockToken);
       try {
-        const result = await this.runConnectionAutomation(connection, trigger);
+        const result = await this.runConnectionAutomation(connection, trigger, stage);
         connectionRuns.push(result);
         shipping.sent += result.shipping.sent;
         shipping.skipped += result.shipping.skipped;
@@ -1621,19 +1547,40 @@ export class RakutenRmsAutomationService {
       },
       data: { automationLockToken: lockToken, automationLockedAt: new Date() },
     });
+    if (result.count === 1) this.ownedLocks.set(connectionId, { token: lockToken, lost: false });
     return result.count === 1;
   }
 
+  private async shippingPrerequisiteSatisfied(connectionId: bigint, orderId: string): Promise<boolean> {
+    const mail = await this.prisma.rakutenOrderMail.findUnique({ where: { connectionId_orderId_event: { connectionId, orderId, event: RakutenOrderMailEvent.new_order } } });
+    return mailSatisfied(mail);
+  }
+
+  private async assertExecutionLock(connectionId: bigint): Promise<void> {
+    const owned = this.ownedLocks.get(connectionId);
+    if (!owned || owned.lost) throw new Error("执行锁已失效，停止后续操作");
+    const result = await this.prisma.rakutenRmsConnection.updateMany({
+      where: { id: connectionId, automationLockToken: owned.token },
+      data: { automationLockedAt: new Date() },
+    });
+    if (result.count !== 1) { owned.lost = true; throw new Error("执行锁已失效，停止后续操作"); }
+  }
+
   private startConnectionLockHeartbeat(connectionId: bigint, lockToken: string): ReturnType<typeof setInterval> {
+    this.ownedLocks.set(connectionId, { token: lockToken, lost: false });
     return setInterval(() => {
       void this.prisma.rakutenRmsConnection.updateMany({
         where: { id: connectionId, automationLockToken: lockToken },
         data: { automationLockedAt: new Date() },
       }).then((result) => {
         if (result.count !== 1) {
+          const owned = this.ownedLocks.get(connectionId);
+          if (owned?.token === lockToken) owned.lost = true;
           this.logger.error(`Rakuten automation lock lost for connection ${connectionId.toString()}`);
         }
       }).catch((error) => {
+        const owned = this.ownedLocks.get(connectionId);
+        if (owned?.token === lockToken) owned.lost = true;
         this.logger.error(
           `Rakuten automation lock heartbeat failed for connection ${connectionId.toString()}: ${this.errorMessage(error)}`,
         );
@@ -1642,6 +1589,7 @@ export class RakutenRmsAutomationService {
   }
 
   private async releaseConnectionLock(connectionId: bigint, lockToken: string): Promise<void> {
+    if (this.ownedLocks.get(connectionId)?.token === lockToken) this.ownedLocks.delete(connectionId);
     try {
       await this.prisma.rakutenRmsConnection.updateMany({
         where: { id: connectionId, automationLockToken: lockToken },
@@ -1668,6 +1616,7 @@ export class RakutenRmsAutomationService {
   private async runConnectionAutomation(
     connection: ConnectionWithShop,
     trigger: RakutenAutomationRunTrigger,
+    stage?: 'shipping' | 'mail',
   ): Promise<ConnectionAutomationRunResult> {
     const run = await this.prisma.rakutenAutomationRun.create({
       data: { connectionId: connection.id, trigger },
@@ -1676,9 +1625,9 @@ export class RakutenRmsAutomationService {
     const shipping: ShippingRunCounts = { sent: 0, skipped: 0, failed: 0 };
     const mail: MailRunCounts = { sent: 0, failed: 0, blocked: 0 };
     const errors: string[] = [];
-    if (connection.autoShippingEnabled && connection.shippingCircuitOpenedAt) {
+    if (stage !== 'mail' && connection.autoShippingEnabled && connection.shippingCircuitOpenedAt) {
       errors.push(`单号回传阶段已暂停：${connection.shippingCircuitReason || '检测到店铺级配置错误'}`);
-    } else if (connection.autoShippingEnabled) {
+    } else if (stage !== 'mail' && connection.autoShippingEnabled) {
       try {
         await this.prepareShippingReports(connection);
         Object.assign(shipping, await this.processShippingReports(connection.id));
@@ -1686,12 +1635,15 @@ export class RakutenRmsAutomationService {
         errors.push(`单号回传阶段：${this.errorMessage(error)}`);
       }
     }
-    if (connection.mailNotificationsEnabled && connection.mailCircuitOpenedAt) {
+    if (stage !== 'shipping') try {
+      await this.prepareTrackingMails(connection);
+      await this.prepareCustomsMails(connection);
+    } catch (error) { errors.push(`邮件任务整理：${this.errorMessage(error)}`); }
+    if (stage !== 'shipping' && connection.mailNotificationsEnabled && connection.mailCircuitOpenedAt) {
       errors.push(`邮件阶段已暂停：${connection.mailCircuitReason || '检测到店铺级配置错误'}`);
-    } else if (connection.mailNotificationsEnabled) {
+    } else if (stage !== 'shipping' && connection.mailNotificationsEnabled) {
       try {
-        await this.prepareTrackingMails(connection);
-        await this.prepareCustomsMails(connection);
+        await this.refreshMailHolds(connection.id);
         Object.assign(mail, await this.processMails(connection.id));
       } catch (error) {
         errors.push(`邮件阶段：${this.errorMessage(error)}`);
@@ -1732,9 +1684,10 @@ export class RakutenRmsAutomationService {
 
   private async recoverStaleJobs(): Promise<void> {
     const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
+    const disconnected = { OR: [{ automationLockToken: null }, { automationLockedAt: null }, { automationLockedAt: { lt: staleBefore } }] };
     await this.prisma.$transaction([
       this.prisma.rakutenOrderShippingReport.updateMany({
-        where: { status: RakutenAutomationStatus.processing, updatedAt: { lt: staleBefore } },
+        where: { connection: disconnected, status: RakutenAutomationStatus.processing, updatedAt: { lt: staleBefore } },
         data: {
           status: RakutenAutomationStatus.failed,
           nextAttemptAt: new Date(),
@@ -1743,6 +1696,7 @@ export class RakutenRmsAutomationService {
       }),
       this.prisma.rakutenOrderMail.updateMany({
         where: {
+          connection: disconnected,
           status: RakutenAutomationStatus.processing,
           sendStartedAt: null,
           updatedAt: { lt: staleBefore },
@@ -1755,6 +1709,7 @@ export class RakutenRmsAutomationService {
       }),
       this.prisma.rakutenOrderMail.updateMany({
         where: {
+          connection: disconnected,
           status: RakutenAutomationStatus.processing,
           sendStartedAt: { not: null },
           updatedAt: { lt: staleBefore },
@@ -1766,10 +1721,10 @@ export class RakutenRmsAutomationService {
         },
       }),
       this.prisma.rakutenAutomationRun.updateMany({
-        where: { status: RakutenAutomationRunStatus.running, startedAt: { lt: staleBefore } },
+        where: { connection: disconnected, status: RakutenAutomationRunStatus.running, startedAt: { lt: staleBefore } },
         data: {
           status: RakutenAutomationRunStatus.failed,
-          errorMessage: '任务运行超过30分钟且未正常结束，已在下一轮自动标记为中断',
+          errorMessage: '执行者已失联且运行记录超过30分钟未结束，已标记为中断',
           finishedAt: new Date(),
         },
       }),
@@ -1816,7 +1771,7 @@ export class RakutenRmsAutomationService {
       }),
     ]);
     return {
-      cron: AUTOMATION_CRON,
+      cron: RAKUTEN_ORDER_PROCESSING_CRON,
       timezone: AUTOMATION_TIMEZONE,
       running: activeLocks > 0,
       activeConnections: activeLocks,
@@ -1901,12 +1856,12 @@ export class RakutenRmsAutomationService {
       }),
       this.prisma.rakutenOrderShippingReport.groupBy({
         by: ['connectionId'],
-        where: { ...taskWhere, status: RakutenAutomationStatus.pending },
+        where: { ...taskWhere, status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter, RakutenAutomationStatus.uncertain] } },
         _min: { createdAt: true },
       }),
       this.prisma.rakutenOrderMail.groupBy({
         by: ['connectionId'],
-        where: { ...taskWhere, status: RakutenAutomationStatus.pending },
+        where: { ...taskWhere, status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter, RakutenAutomationStatus.uncertain] } },
         _min: { createdAt: true },
       }),
       this.prisma.rakutenOrderShippingReport.groupBy({
@@ -1920,6 +1875,19 @@ export class RakutenRmsAutomationService {
         _max: { sentAt: true },
       }),
     ]);
+    const diagnostics = await Promise.all(connections.map(async (connection) => {
+      const [runs, templates] = await Promise.all([
+        this.prisma.rakutenAutomationRun.findMany({ where: { connectionId: connection.id, status: { not: RakutenAutomationRunStatus.running } }, orderBy: { startedAt: 'desc' }, take: 100 }),
+        this.prisma.rakutenMailTemplateVersion.findMany({ where: { connectionId: connection.id, isActive: true } }),
+      ]);
+      let noProgressRounds = 0;
+      for (const run of runs) { if (run.shippingSent > 0 || run.mailSent > 0) break; noProgressRounds += 1; }
+      const templateIssues = templates.flatMap((template) => {
+        try { this.validateMailTemplate(template, template.event); return []; }
+        catch (error) { return [{ event: template.event, version: template.version, reason: this.errorMessage(error) }]; }
+      });
+      return { connectionId: connection.id.toString(), noProgressRounds, historyLimitReached: noProgressRounds === 100, templateIssues };
+    }));
     const statusMap = (
       rows: Array<{ connectionId: bigint; status: RakutenAutomationStatus; _count: { _all: number } }>,
     ) => {
@@ -1962,6 +1930,10 @@ export class RakutenRmsAutomationService {
       const licenseDaysRemaining = connection.licenseExpiresAt
         ? Math.ceil((connection.licenseExpiresAt.getTime() - Date.now()) / 86_400_000)
         : null;
+      const diagnostic = diagnostics.find((item) => item.connectionId === key)!;
+      const oldest = [oldestShippingMap.get(key), oldestMailMap.get(key)].filter((value): value is Date => Boolean(value)).sort((a, b) => a.getTime() - b.getTime())[0];
+      const oldestWaitingMinutes = oldest ? Math.max(0, Math.floor((Date.now() - oldest.getTime()) / 60_000)) : 0;
+      const backlog = Boolean(oldest);
       const alerts: string[] = [];
       let health: 'healthy' | 'warning' | 'critical' | 'disabled' = 'healthy';
       const warn = (message: string, critical = false) => {
@@ -1996,6 +1968,8 @@ export class RakutenRmsAutomationService {
         if (staleMailCount > 0) warn(`有${staleMailCount}封邮件待处理超过30分钟`);
         if (staleShippingCount > 0) warn(`有${staleShippingCount}个单号回传待处理超过30分钟`);
         if (connection.lastSyncError) warn('最近一次订单同步存在错误');
+        for (const issue of diagnostic.templateIssues) warn(`${issue.event} 模板v${issue.version}需修订并明确启用新版：${issue.reason}`, true);
+        if (backlog && diagnostic.noProgressRounds >= 3) warn(`存在积压，最近${diagnostic.noProgressRounds}轮无回传或邮件完成`);
       }
       return {
         connectionId: key,
@@ -2029,6 +2003,8 @@ export class RakutenRmsAutomationService {
         shipping,
         mail,
         stale: { shipping: staleShippingCount, mail: staleMailCount },
+        backlog: { oldestWaitingMinutes, noProgressRounds: backlog ? diagnostic.noProgressRounds : 0, historyLimitReached: diagnostic.historyLimitReached, oldestWaitingAt: oldest?.toISOString() ?? null },
+        templateIssues: diagnostic.templateIssues,
         oldestPendingAt: {
           shipping: oldestShippingMap.get(key)?.toISOString() ?? null,
           mail: oldestMailMap.get(key)?.toISOString() ?? null,
@@ -2054,312 +2030,389 @@ export class RakutenRmsAutomationService {
   }
 
   private async prepareShippingReports(connection: ConnectionWithShop): Promise<void> {
+    const cursorKey = `shipping:${connection.id}`;
+    const cursor = this.candidateCursors.get(cursorKey) ?? '';
     const candidates = await this.prisma.$queryRaw<Array<{ orderId: string }>>(Prisma.sql`
-      SELECT DISTINCT records.order_id AS orderId
+      SELECT DISTINCT COALESCE(records.rms_order_id, records.order_id) AS orderId
       FROM rakuten_order_records records
       LEFT JOIN rakuten_order_shipping_reports reports
         ON reports.connection_id = records.rms_connection_id
-        AND reports.order_id = records.order_id
-      WHERE records.rms_connection_id = ${connection.id}
+        AND reports.order_id = COALESCE(records.rms_order_id, records.order_id)
+      WHERE records.deleted_at IS NULL AND records.rms_connection_id = ${connection.id}
         AND records.source_kind = 'rms_api'
         AND records.created_at >= ${AUTOMATION_ORDER_IMPORT_CUTOFF}
         AND NOT EXISTS (
           SELECT 1
           FROM rakuten_order_records older_records
           WHERE older_records.rms_connection_id = records.rms_connection_id
-            AND older_records.order_id = records.order_id
+            AND COALESCE(older_records.rms_order_id, older_records.order_id) = COALESCE(records.rms_order_id, records.order_id)
             AND older_records.created_at < ${AUTOMATION_ORDER_IMPORT_CUTOFF}
         )
-        AND records.order_id IS NOT NULL
+        AND COALESCE(records.rms_order_id, records.order_id) IS NOT NULL
+        AND COALESCE(records.rms_order_id, records.order_id) > ${cursor}
         AND records.shipment_no IS NOT NULL
         AND records.shipment_no <> ''
         AND reports.id IS NULL
-      ORDER BY records.order_id ASC
+      ORDER BY COALESCE(records.rms_order_id, records.order_id) ASC
       LIMIT 500
     `);
+    this.candidateCursors.set(cursorKey, candidates.length >= 500 ? String(candidates[candidates.length - 1].orderId) : '');
     for (const candidate of candidates) {
-      const orderId = String(candidate.orderId ?? '').trim();
-      if (!orderId) continue;
-      const existing = await this.prisma.rakutenOrderShippingReport.findUnique({
-        where: { connectionId_orderId: { connectionId: connection.id, orderId } },
-        select: { id: true },
-      });
-      if (existing) continue;
-      const rows = await this.loadOrderRows(connection.id, orderId);
-      const fulfillmentType = this.resolveFulfillmentType(rows);
-      if (!this.isShippingCustomsReady(rows, fulfillmentType)) continue;
-      const reportRows = this.shippingTargetRows(rows, fulfillmentType);
-      const baskets = this.buildShippingBaskets(reportRows, false);
-      if (!this.allBasketsReady(reportRows, baskets)) continue;
-      const fingerprint = createHash('sha1').update(JSON.stringify(baskets)).digest('hex');
-      await this.prisma.rakutenOrderShippingReport.create({
-        data: { connectionId: connection.id, orderId, fulfillmentType, fingerprint },
-      }).catch((error: unknown) => {
-        if (!this.isUniqueConstraintError(error)) throw error;
-      });
+      try {
+
+        const orderId = String(candidate.orderId ?? '').trim();
+        if (!orderId) continue;
+        const existing = await this.prisma.rakutenOrderShippingReport.findUnique({
+          where: { connectionId_orderId: { connectionId: connection.id, orderId } },
+          select: { id: true },
+        });
+        if (existing) continue;
+        const rows = await this.loadOrderRows(connection.id, orderId);
+        const fulfillmentType = fulfillmentOf(rows);
+        if (shippingConditionReason(rows, fulfillmentType, true)) continue;
+        const fingerprint = shippingFingerprint(rows, fulfillmentType);
+        await this.prisma.rakutenOrderShippingReport.create({
+          data: { connectionId: connection.id, orderId, fulfillmentType, fingerprint },
+        }).catch((error: unknown) => {
+          if (!this.isUniqueConstraintError(error)) throw error;
+        });
+      } catch (error) {
+        this.logger.error(`Rakuten prepareShippingReports 单笔处理失败：${this.errorMessage(error)}`);
+      }
     }
   }
 
   private async processShippingReports(connectionId?: bigint, selectedIds?: bigint[]): Promise<ShippingRunCounts> {
+    const cursorKey = `shipping_jobs:${connectionId ?? 'all'}`;
+    const cursor = selectedIds ? 0n : BigInt(this.candidateCursors.get(cursorKey) ?? '0');
     const rows = await this.prisma.rakutenOrderShippingReport.findMany({
       where: {
         ...(connectionId ? { connectionId } : {}),
-        ...(selectedIds ? { id: { in: selectedIds } } : {}),
+        ...(selectedIds ? { id: { in: selectedIds } } : { id: { gt: cursor } }),
         status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
         attempts: { lt: MAX_ATTEMPTS },
         OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
         connection: { status: 1, autoShippingEnabled: true },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { id: 'asc' },
       take: selectedIds ? selectedIds.length : 50,
       include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
     });
+    if (!selectedIds) this.candidateCursors.set(cursorKey, rows.length >= 50 ? rows[rows.length - 1].id.toString() : '0');
     const counts: ShippingRunCounts = { sent: 0, skipped: 0, failed: 0 };
     for (const report of rows) {
-      const claimed = await this.prisma.rakutenOrderShippingReport.updateMany({
-        where: {
-          id: report.id,
-          status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
-        },
-        data: {
-          status: RakutenAutomationStatus.processing,
-          attempts: { increment: 1 },
-          lastError: null,
-          failureCategory: null,
-          deadLetteredAt: null,
-        },
-      });
-      if (claimed.count !== 1) continue;
+      await this.assertExecutionLock(report.connectionId);
       try {
-        const orderRows = await this.loadOrderRows(report.connectionId, report.orderId);
-        if (!this.isAutomationEligibleOrder(orderRows)) {
-          await this.markShippingSkipped(report.id, '订单在2026年9月1日前导入，不适用自动单号回传');
-          counts.skipped += 1;
+
+        const latestRows = await this.loadOrderRows(report.connectionId, report.orderId);
+        if (!await this.isAutomationEligibleOrder(latestRows)) { await this.markShippingSkipped(report.id, '订单在2026年10月1日前导入，不适用单号回传'); counts.skipped += 1; continue; }
+        const condition = shippingConditionReason(latestRows, report.fulfillmentType, await this.shippingPrerequisiteSatisfied(report.connectionId, report.orderId));
+        if (condition) {
+          const manual = Boolean(orderBlockReason(latestRows) || fulfillmentOf(latestRows) !== report.fulfillmentType);
+          await this.prisma.rakutenOrderShippingReport.update({ where: { id: report.id }, data: {
+            ...(manual ? { status: RakutenAutomationStatus.dead_letter, deadLetteredAt: new Date() } : {}),
+            nextAttemptAt: manual ? null : new Date(Date.now() + 20 * 60_000), failureCategory: manual ? 'order_changed' : 'waiting_conditions', lastError: condition,
+          } });
+          if (manual) counts.failed += 1;
           continue;
         }
-        const fulfillmentType = report.fulfillmentType as FulfillmentType;
-        if (!this.isShippingCustomsReady(orderRows, fulfillmentType)) {
-          throw new Error('中国发或日中混发订单的中国侧快递单号尚未全部达到通関許可或缺少节点日期');
-        }
-        const selectedRows = this.shippingTargetRows(orderRows, fulfillmentType);
-        const baskets = this.buildShippingBaskets(selectedRows);
-        if (!this.allBasketsReady(selectedRows, baskets)) {
-          throw new Error('自动回传仍在等待同一订单全部目标包裹取得快递单号');
-        }
-        const credentials = this.decryptApiCredentials(report.connection);
-        const currentOrders = await this.client.getOrders(
-          credentials.serviceSecret,
-          credentials.licenseKey,
-          [report.orderId],
-        );
-        const currentOrder = this.resolveCurrentOrder(currentOrders, report.orderId);
-        if (!currentOrder) throw new Error('乐天 getOrder 未返回目标订单，已停止回传并等待重试');
-        const alreadyReported = this.shippingAlreadyReported([currentOrder], baskets);
-        if (alreadyReported && report.attempts === 0) {
-          await this.markShippingSkipped(report.id, VERIFIED_EXISTING_SHIPPING_NOTE);
-          counts.skipped += 1;
-          continue;
-        }
-        const orderProgress = this.resolveOrderProgress(currentOrder);
-        if (orderProgress === null) {
-          throw new Error('乐天 getOrder 响应缺少 orderProgress，无法确认订单仍为待発送');
-        }
-        if (!alreadyReported && orderProgress !== PENDING_SHIPMENT_ORDER_PROGRESS) {
-          await this.markShippingSkipped(
-            report.id,
-            `乐天订单当前状态为 ${orderProgress}，不是待発送（${PENDING_SHIPMENT_ORDER_PROGRESS}），已停止自动回传`,
-          );
-          counts.skipped += 1;
-          continue;
-        }
-        const response = alreadyReported
-          ? { MessageModelList: [], alreadyReportedAfterRetry: true }
-          : await this.client.updateOrderShipping(
-            credentials.serviceSecret,
-            credentials.licenseKey,
-            report.orderId,
-            baskets,
-          );
-        const markSent = this.prisma.rakutenOrderShippingReport.update({
-          where: { id: report.id },
+        const claimed = await this.prisma.rakutenOrderShippingReport.updateMany({
+          where: {
+            id: report.id,
+            status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
+          },
           data: {
-            status: RakutenAutomationStatus.sent,
-            reportedAt: new Date(),
-            nextAttemptAt: null,
+            status: RakutenAutomationStatus.processing,
+            attempts: { increment: 1 },
             lastError: null,
             failureCategory: null,
             deadLetteredAt: null,
-            responsePayload: response as Prisma.InputJsonValue,
           },
         });
-        if (fulfillmentType === 'japan' && report.connection.mailNotificationsEnabled) {
-          await this.prisma.$transaction([
-            markSent,
-            this.prisma.rakutenOrderMail.upsert({
-              where: {
-                connectionId_orderId_event: {
+        if (claimed.count !== 1) continue;
+        try {
+          const orderRows = await this.loadOrderRows(report.connectionId, report.orderId);
+          const finalCondition = shippingConditionReason(orderRows, report.fulfillmentType, await this.shippingPrerequisiteSatisfied(report.connectionId, report.orderId));
+          if (finalCondition) throw new BadRequestException(finalCondition);
+          if (!await this.isAutomationEligibleOrder(orderRows)) {
+            await this.markShippingSkipped(report.id, '订单在2026年10月1日前导入，不适用自动单号回传');
+            counts.skipped += 1;
+            continue;
+          }
+          const fulfillmentType = report.fulfillmentType as FulfillmentType;
+          const selectedRows = this.shippingTargetRows(orderRows, fulfillmentType);
+          const baskets = this.buildShippingBaskets(selectedRows);
+          const credentials = this.decryptApiCredentials(report.connection);
+          const currentOrders = await this.client.getOrders(
+            credentials.serviceSecret,
+            credentials.licenseKey,
+            [report.orderId],
+          );
+          const currentOrder = this.resolveCurrentOrder(currentOrders, report.orderId);
+          if (!currentOrder) throw new Error('乐天 getOrder 未返回目标订单，已停止回传并等待重试');
+          const alreadyReported = this.shippingAlreadyReported([currentOrder], baskets);
+          const previousPayload = this.jsonObject(report.responsePayload);
+          const previousRequest = previousPayload?.wmsUpdateRequestedAt && previousPayload.wmsRequestFingerprint === shippingFingerprint(orderRows, fulfillmentType);
+          if (alreadyReported && !previousRequest) {
+            const markVerified = this.prisma.rakutenOrderShippingReport.update({ where: { id: report.id }, data: {
+              status: RakutenAutomationStatus.skipped, lastError: VERIFIED_SHIPPING,
+              fingerprint: shippingFingerprint(orderRows, fulfillmentType), nextAttemptAt: null, failureCategory: null, deadLetteredAt: null,
+            } });
+            if (fulfillmentType === 'japan') {
+              await this.prisma.$transaction([
+                markVerified,
+                this.prisma.rakutenOrderMail.upsert({
+                  where: { connectionId_orderId_event: { connectionId: report.connectionId, orderId: report.orderId, event: RakutenOrderMailEvent.japan_shipped } },
+                  create: { connectionId: report.connectionId, orderId: report.orderId, event: RakutenOrderMailEvent.japan_shipped,
+                    status: RakutenAutomationStatus.uncertain, failureCategory: 'external_shipping',
+                    lastError: '乐天已有日本侧单号，请核实外部是否已发送邮件，再确认已发送或确认重发' }, update: {},
+                }),
+                this.prisma.rakutenOrderMail.updateMany({ where: {
+                  connectionId: report.connectionId, orderId: report.orderId, event: RakutenOrderMailEvent.japan_shipped,
+                  status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
+                }, data: { status: RakutenAutomationStatus.uncertain, nextAttemptAt: null, failureCategory: 'external_shipping',
+                  lastError: '乐天已有日本侧单号，请核实外部是否已发送邮件，再确认已发送或确认重发' } }),
+              ]);
+            } else {
+              await markVerified;
+            }
+            counts.skipped += 1;
+            continue;
+          }
+          const orderProgress = this.resolveOrderProgress(currentOrder);
+          if (!alreadyReported && orderProgress === null) {
+            throw new Error('乐天 getOrder 响应缺少 orderProgress，无法确认订单仍为待発送');
+          }
+          if (!alreadyReported && orderProgress !== PENDING_SHIPMENT_ORDER_PROGRESS) {
+            await this.markShippingSkipped(
+              report.id,
+              `乐天订单当前状态为 ${orderProgress}，不是待発送（${PENDING_SHIPMENT_ORDER_PROGRESS}），已停止自动回传`,
+            );
+            counts.skipped += 1;
+            continue;
+          }
+          await this.assertExecutionLock(report.connectionId);
+          if (!alreadyReported) {
+            await this.prisma.rakutenOrderShippingReport.update({ where: { id: report.id }, data: {
+              responsePayload: { wmsUpdateRequestedAt: new Date().toISOString(), wmsRequestFingerprint: shippingFingerprint(orderRows, fulfillmentType) },
+            } });
+          }
+          await this.assertExecutionLock(report.connectionId);
+          const response = alreadyReported
+            ? { MessageModelList: [], alreadyReportedAfterRetry: true }
+            : await this.client.updateOrderShipping(
+              credentials.serviceSecret,
+              credentials.licenseKey,
+              report.orderId,
+              baskets,
+            );
+          const markSent = this.prisma.rakutenOrderShippingReport.update({
+            where: { id: report.id },
+            data: {
+              status: RakutenAutomationStatus.sent,
+              reportedAt: new Date(),
+              fingerprint: shippingFingerprint(orderRows, fulfillmentType),
+              nextAttemptAt: null,
+              lastError: null,
+              failureCategory: null,
+              deadLetteredAt: null,
+              responsePayload: response as Prisma.InputJsonValue,
+            },
+          });
+          if (fulfillmentType === 'japan') {
+            await this.prisma.$transaction([
+              markSent,
+              this.prisma.rakutenOrderMail.upsert({
+                where: {
+                  connectionId_orderId_event: {
+                    connectionId: report.connectionId,
+                    orderId: report.orderId,
+                    event: RakutenOrderMailEvent.japan_shipped,
+                  },
+                },
+                create: {
                   connectionId: report.connectionId,
                   orderId: report.orderId,
                   event: RakutenOrderMailEvent.japan_shipped,
                 },
-              },
-              create: {
-                connectionId: report.connectionId,
-                orderId: report.orderId,
-                event: RakutenOrderMailEvent.japan_shipped,
-              },
-              update: {},
-            }),
-          ]);
-        } else {
-          await markSent;
+                update: {},
+              }),
+            ]);
+          } else {
+            await markSent;
+          }
+          counts.sent += 1;
+        } catch (error) {
+          const handling = await this.markShippingFailed(report.id, report.attempts + 1, error);
+          counts.failed += 1;
+          if (this.shouldOpenCircuit(handling)) {
+            await this.openCircuit(report.connectionId, 'shipping', this.errorMessage(error));
+            break;
+          }
         }
-        counts.sent += 1;
       } catch (error) {
-        const handling = await this.markShippingFailed(report.id, report.attempts + 1, error);
+        this.logger.error(`Rakuten processShippingReports 单笔处理失败：${this.errorMessage(error)}`);
         counts.failed += 1;
-        if (this.shouldOpenCircuit(handling)) {
-          await this.openCircuit(report.connectionId, 'shipping', this.errorMessage(error));
-          break;
-        }
       }
     }
     return counts;
   }
 
   private async prepareTrackingMails(connection: ConnectionWithShop): Promise<void> {
+    const cursorKey = `tracking:${connection.id}`;
+    const cursor = this.candidateCursors.get(cursorKey) ?? '';
     const candidates = await this.prisma.$queryRaw<Array<{ orderId: string }>>(Prisma.sql`
-      SELECT DISTINCT records.order_id AS orderId
+      SELECT DISTINCT COALESCE(records.rms_order_id, records.order_id) AS orderId
       FROM rakuten_order_records records
       LEFT JOIN rakuten_order_mails mails
         ON mails.connection_id = records.rms_connection_id
-        AND mails.order_id = records.order_id
+        AND mails.order_id = COALESCE(records.rms_order_id, records.order_id)
         AND mails.event IN ('china_delay', 'mixed_partial')
-      WHERE records.rms_connection_id = ${connection.id}
+      WHERE records.deleted_at IS NULL AND records.rms_connection_id = ${connection.id}
         AND records.source_kind = 'rms_api'
         AND records.created_at >= ${AUTOMATION_ORDER_IMPORT_CUTOFF}
         AND NOT EXISTS (
           SELECT 1
           FROM rakuten_order_records older_records
           WHERE older_records.rms_connection_id = records.rms_connection_id
-            AND older_records.order_id = records.order_id
+            AND COALESCE(older_records.rms_order_id, older_records.order_id) = COALESCE(records.rms_order_id, records.order_id)
             AND older_records.created_at < ${AUTOMATION_ORDER_IMPORT_CUTOFF}
         )
-        AND records.order_id IS NOT NULL
+        AND COALESCE(records.rms_order_id, records.order_id) IS NOT NULL
+        AND COALESCE(records.rms_order_id, records.order_id) > ${cursor}
         AND records.shipment_no IS NOT NULL
         AND records.shipment_no <> ''
         AND mails.id IS NULL
-      ORDER BY records.order_id ASC
+      ORDER BY COALESCE(records.rms_order_id, records.order_id) ASC
       LIMIT 500
     `);
+    this.candidateCursors.set(cursorKey, candidates.length >= 500 ? String(candidates[candidates.length - 1].orderId) : '');
     for (const candidate of candidates) {
-      const orderId = String(candidate.orderId ?? '').trim();
-      if (!orderId) continue;
-      const rows = await this.loadOrderRows(connection.id, orderId);
-      const fulfillmentType = this.resolveFulfillmentType(rows);
-      if (fulfillmentType === 'japan') continue;
-      const targetRows = fulfillmentType === 'china'
-        ? rows.filter((row) => this.isChina(row))
-        : rows.filter((row) => !this.isChina(row));
-      // Pre-clearance notification readiness only requires registered tracking numbers.
-      const baskets = this.buildShippingBaskets(targetRows, false, false);
-      if (!this.allBasketsReady(targetRows, baskets)) continue;
-      const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
-        where: {
-          connectionId_orderId_event: {
-            connectionId: connection.id,
-            orderId,
-            event: RakutenOrderMailEvent.new_order,
+      try {
+
+        const orderId = String(candidate.orderId ?? '').trim();
+        if (!orderId) continue;
+        const rows = await this.loadOrderRows(connection.id, orderId);
+        if (orderBlockReason(rows)) continue;
+        const fulfillmentType = fulfillmentOf(rows);
+        if (fulfillmentType === 'japan') continue;
+        const targetRows = fulfillmentType === 'china'
+          ? rows.filter((row) => isChinaRow(row))
+          : rows.filter((row) => !isChinaRow(row));
+        if (fulfillmentType === 'mixed' && !japanWarehouseReady(targetRows)) continue;
+        if (!trackingReady(targetRows)) continue;
+        const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
+          where: {
+            connectionId_orderId_event: {
+              connectionId: connection.id,
+              orderId,
+              event: RakutenOrderMailEvent.new_order,
+            },
           },
-        },
-        select: { status: true, resolutionNote: true },
-      });
-      if (!this.isMailPrerequisiteSatisfied(prerequisite)) continue;
-      const event = fulfillmentType === 'china'
-        ? RakutenOrderMailEvent.china_delay
-        : RakutenOrderMailEvent.mixed_partial;
-      await this.prisma.rakutenOrderMail.create({
-        data: { connectionId: connection.id, orderId, event },
-      }).catch((error: unknown) => {
-        if (!this.isUniqueConstraintError(error)) throw error;
-      });
+          select: { status: true, resolutionNote: true },
+        });
+        if (!mailSatisfied(prerequisite)) continue;
+        const event = fulfillmentType === 'china'
+          ? RakutenOrderMailEvent.china_delay
+          : RakutenOrderMailEvent.mixed_partial;
+        await this.prisma.rakutenOrderMail.create({
+          data: { connectionId: connection.id, orderId, event },
+        }).catch((error: unknown) => {
+          if (!this.isUniqueConstraintError(error)) throw error;
+        });
+      } catch (error) {
+        this.logger.error(`Rakuten prepareTrackingMails 单笔处理失败：${this.errorMessage(error)}`);
+      }
     }
   }
 
   private async prepareCustomsMails(connection: ConnectionWithShop): Promise<void> {
+    const cursorKey = `customs:${connection.id}`;
+    const cursor = this.candidateCursors.get(cursorKey) ?? '';
     const candidates = await this.prisma.$queryRaw<Array<{ orderId: string }>>(Prisma.sql`
-      SELECT DISTINCT records.order_id AS orderId
+      SELECT DISTINCT COALESCE(records.rms_order_id, records.order_id) AS orderId
       FROM rakuten_order_records records
       INNER JOIN rakuten_order_shipping_reports reports
         ON reports.connection_id = records.rms_connection_id
-        AND reports.order_id = records.order_id
+        AND reports.order_id = COALESCE(records.rms_order_id, records.order_id)
         AND (
           reports.status = 'sent'
-          OR (reports.status = 'skipped' AND reports.last_error = ${VERIFIED_EXISTING_SHIPPING_NOTE})
+          OR (reports.status = 'skipped' AND reports.last_error = ${VERIFIED_SHIPPING})
         )
       INNER JOIN rakuten_order_mails prerequisite
         ON prerequisite.connection_id = records.rms_connection_id
-        AND prerequisite.order_id = records.order_id
+        AND prerequisite.order_id = COALESCE(records.rms_order_id, records.order_id)
         AND prerequisite.event IN ('china_delay', 'mixed_partial')
         AND (
           prerequisite.status = 'sent'
-          OR (prerequisite.status = 'cancelled' AND prerequisite.resolution_note = ${MANUALLY_IGNORED_MAIL_NOTE})
+          OR (prerequisite.status = 'cancelled' AND prerequisite.resolution_note = ${IGNORED_MAIL})
         )
       LEFT JOIN rakuten_order_mails mails
         ON mails.connection_id = records.rms_connection_id
-        AND mails.order_id = records.order_id
+        AND mails.order_id = COALESCE(records.rms_order_id, records.order_id)
         AND mails.event IN ('china_customs', 'mixed_customs')
-      WHERE records.rms_connection_id = ${connection.id}
-        AND records.order_id IS NOT NULL
+      WHERE records.deleted_at IS NULL AND records.rms_connection_id = ${connection.id}
+        AND COALESCE(records.rms_order_id, records.order_id) IS NOT NULL
+        AND COALESCE(records.rms_order_id, records.order_id) > ${cursor}
         AND records.created_at >= ${AUTOMATION_ORDER_IMPORT_CUTOFF}
         AND NOT EXISTS (
           SELECT 1
           FROM rakuten_order_records older_records
           WHERE older_records.rms_connection_id = records.rms_connection_id
-            AND older_records.order_id = records.order_id
+            AND COALESCE(older_records.rms_order_id, older_records.order_id) = COALESCE(records.rms_order_id, records.order_id)
             AND older_records.created_at < ${AUTOMATION_ORDER_IMPORT_CUTOFF}
         )
         AND records.dispatch_mode IN ('china_pending', 'china_no_stock')
         AND records.tracking_has_customs_clearance = TRUE
         AND mails.id IS NULL
-      ORDER BY records.order_id ASC
+      ORDER BY COALESCE(records.rms_order_id, records.order_id) ASC
       LIMIT 500
     `);
+    this.candidateCursors.set(cursorKey, candidates.length >= 500 ? String(candidates[candidates.length - 1].orderId) : '');
     for (const candidate of candidates) {
-      const orderId = String(candidate.orderId ?? '').trim();
-      if (!orderId) continue;
-      const rows = await this.loadOrderRows(connection.id, orderId);
-      const chinaRows = rows.filter((row) => this.isChina(row));
-      if (!chinaRows.length || chinaRows.some((row) => !row.trackingHasCustomsClearance)) continue;
-      const report = await this.prisma.rakutenOrderShippingReport.findUnique({
-        where: { connectionId_orderId: { connectionId: connection.id, orderId } },
-      });
-      if (report?.status !== RakutenAutomationStatus.sent && !(
-        report?.status === RakutenAutomationStatus.skipped &&
-        report.lastError === VERIFIED_EXISTING_SHIPPING_NOTE
-      )) continue;
-      const event = this.resolveFulfillmentType(rows) === 'mixed'
-        ? RakutenOrderMailEvent.mixed_customs
-        : RakutenOrderMailEvent.china_customs;
-      const prerequisiteEvent = event === RakutenOrderMailEvent.mixed_customs
-        ? RakutenOrderMailEvent.mixed_partial
-        : RakutenOrderMailEvent.china_delay;
-      const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
-        where: {
-          connectionId_orderId_event: {
-            connectionId: connection.id,
-            orderId,
-            event: prerequisiteEvent,
+      try {
+
+        const orderId = String(candidate.orderId ?? '').trim();
+        if (!orderId) continue;
+        const rows = await this.loadOrderRows(connection.id, orderId);
+        if (orderBlockReason(rows)) continue;
+        const chinaRows = rows.filter((row) => isChinaRow(row));
+        if (!trackingReady(chinaRows, true)) continue;
+        const report = await this.prisma.rakutenOrderShippingReport.findUnique({
+          where: { connectionId_orderId: { connectionId: connection.id, orderId } },
+        });
+        if (report?.status !== RakutenAutomationStatus.sent && !(
+          report?.status === RakutenAutomationStatus.skipped &&
+          report.lastError === VERIFIED_SHIPPING
+        )) continue;
+        const event = fulfillmentOf(rows) === 'mixed'
+          ? RakutenOrderMailEvent.mixed_customs
+          : RakutenOrderMailEvent.china_customs;
+        const prerequisiteEvent = event === RakutenOrderMailEvent.mixed_customs
+          ? RakutenOrderMailEvent.mixed_partial
+          : RakutenOrderMailEvent.china_delay;
+        const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
+          where: {
+            connectionId_orderId_event: {
+              connectionId: connection.id,
+              orderId,
+              event: prerequisiteEvent,
+            },
           },
-        },
-        select: { status: true, resolutionNote: true },
-      });
-      if (!this.isMailPrerequisiteSatisfied(prerequisite)) continue;
-      await this.prisma.rakutenOrderMail.create({
-        data: { connectionId: connection.id, orderId, event },
-      }).catch((error: unknown) => {
-        if (!this.isUniqueConstraintError(error)) throw error;
-      });
+          select: { status: true, resolutionNote: true },
+        });
+        if (!mailSatisfied(prerequisite)) continue;
+        await this.prisma.rakutenOrderMail.create({
+          data: { connectionId: connection.id, orderId, event,
+            ...(report.status === RakutenAutomationStatus.skipped ? { status: RakutenAutomationStatus.uncertain,
+              failureCategory: 'external_shipping', lastError: '乐天已有中国侧单号，请核实外部是否已发送邮件，再确认已发送或确认重发' } : {}),
+          },
+        }).catch((error: unknown) => {
+          if (!this.isUniqueConstraintError(error)) throw error;
+        });
+      } catch (error) {
+        this.logger.error(`Rakuten prepareCustomsMails 单笔处理失败：${this.errorMessage(error)}`);
+      }
     }
   }
 
@@ -2370,205 +2423,297 @@ export class RakutenRmsAutomationService {
     expectedOrderFingerprints?: Map<string, string>,
     reviewedBodyOverrides?: Map<string, string>,
   ): Promise<MailRunCounts> {
+    const cursorKey = `mail_jobs:${connectionId ?? 'all'}`;
+    const cursor = selectedIds ? 0n : BigInt(this.candidateCursors.get(cursorKey) ?? '0');
     const mails = await this.prisma.rakutenOrderMail.findMany({
       where: {
         ...(connectionId ? { connectionId } : {}),
-        ...(selectedIds ? { id: { in: selectedIds } } : {}),
+        ...(selectedIds ? { id: { in: selectedIds } } : {
+          id: { gt: cursor },
+          AND: [{ OR: [{ failureCategory: null }, { failureCategory: { notIn: ['manual_review', 'template_missing', 'order_changed', 'prerequisite_missing'] } }] }],
+        }),
         status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] },
         attempts: { lt: MAX_ATTEMPTS },
         OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
         connection: { status: 1, mailNotificationsEnabled: true },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { id: 'asc' },
       take: selectedIds ? selectedIds.length : 100,
       include: { connection: { include: { shop: { select: { id: true, name: true } } } } },
     });
+    if (!selectedIds) this.candidateCursors.set(cursorKey, mails.length >= 100 ? mails[mails.length - 1].id.toString() : '0');
     const counts: MailRunCounts = { sent: 0, failed: 0, blocked: 0 };
     for (const mail of mails) {
-      const prerequisiteEvent = this.mailPrerequisiteEvent(mail.event);
-      if (prerequisiteEvent) {
-        const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
-          where: {
-            connectionId_orderId_event: {
-              connectionId: mail.connectionId,
-              orderId: mail.orderId,
-              event: prerequisiteEvent,
+      await this.assertExecutionLock(mail.connectionId);
+      try {
+
+        const prerequisiteEvent = this.mailPrerequisiteEvent(mail.event);
+        if (prerequisiteEvent) {
+          const prerequisite = await this.prisma.rakutenOrderMail.findUnique({
+            where: {
+              connectionId_orderId_event: {
+                connectionId: mail.connectionId,
+                orderId: mail.orderId,
+                event: prerequisiteEvent,
+              },
             },
-          },
-          select: { status: true, resolutionNote: true },
-        });
-        if (!this.isMailPrerequisiteSatisfied(prerequisite)) {
-          if (!prerequisite) {
+            select: { status: true, resolutionNote: true },
+          });
+          if (!mailSatisfied(prerequisite)) {
+            if (!prerequisite) {
+              await this.prisma.rakutenOrderMail.update({
+                where: { id: mail.id },
+                data: {
+                  nextAttemptAt: null, failureCategory: 'prerequisite_missing',
+                  lastError: `缺少前置邮件 ${prerequisiteEvent}，请人工核对`,
+                },
+              });
+              counts.blocked += 1;
+              continue;
+            }
+            if (prerequisite.status === RakutenAutomationStatus.cancelled) {
+              await this.prisma.rakutenOrderMail.update({ where: { id: mail.id }, data: {
+                status: RakutenAutomationStatus.cancelled, nextAttemptAt: null,
+                resolutionNote: '前置邮件已取消', lastError: '前置邮件已取消', failureCategory: null,
+              } });
+              counts.blocked += 1;
+              continue;
+            }
+            if (prerequisite.status === RakutenAutomationStatus.dead_letter) {
+              await this.prisma.rakutenOrderMail.update({
+                where: { id: mail.id },
+                data: {
+                  status: RakutenAutomationStatus.dead_letter,
+                  nextAttemptAt: null,
+                  failureCategory: 'prerequisite',
+                  deadLetteredAt: new Date(),
+                  lastError: `前置邮件 ${prerequisiteEvent} 需要人工处理，本邮件已停止自动重试`,
+                },
+              });
+              counts.failed += 1;
+              continue;
+            }
             await this.prisma.rakutenOrderMail.update({
               where: { id: mail.id },
               data: {
-                nextAttemptAt: new Date(Date.now() + 5 * 60_000),
-                lastError: `等待前置邮件 ${prerequisiteEvent} 生成并发送`,
+                nextAttemptAt: new Date(Date.now() + 20 * 60_000),
+                lastError: `等待前置邮件 ${prerequisiteEvent} 发送成功`,
               },
             });
             counts.blocked += 1;
             continue;
           }
-          if (prerequisite.status === RakutenAutomationStatus.dead_letter) {
-            await this.prisma.rakutenOrderMail.update({
-              where: { id: mail.id },
-              data: {
-                status: RakutenAutomationStatus.dead_letter,
-                nextAttemptAt: null,
-                failureCategory: 'prerequisite',
-                deadLetteredAt: new Date(),
-                lastError: `前置邮件 ${prerequisiteEvent} 需要人工处理，本邮件已停止自动重试`,
-              },
-            });
-            counts.failed += 1;
-            continue;
-          }
-          await this.prisma.rakutenOrderMail.update({
-            where: { id: mail.id },
-            data: {
-              nextAttemptAt: new Date(Date.now() + 5 * 60_000),
-              lastError: `等待前置邮件 ${prerequisiteEvent} 发送成功`,
-            },
-          });
+        }
+        const latestRows = await this.loadOrderRows(mail.connectionId, mail.orderId);
+        const businessBlock = mailOrderBlockReason(mail.event, latestRows);
+        const reviewRequired = this.requiresManualMailReview(mail.event, latestRows);
+        let template = await this.resolveActiveMailTemplate(mail.connectionId, mail.event);
+        let templateIssue: string | null = null;
+        if (template) {
+          try { this.validateMailTemplate(template, mail.event); }
+          catch (error) { templateIssue = this.errorMessage(error); template = null; }
+        }
+        const report = mail.event === RakutenOrderMailEvent.new_order ? null :
+          await this.prisma.rakutenOrderShippingReport.findUnique({ where: { connectionId_orderId: {
+            connectionId: mail.connectionId, orderId: mail.orderId,
+          } } });
+        let condition = mailConditionReason(mail.event, latestRows, report);
+        // An explicit human resend of externally registered shipping resolves only
+        // external-mail ambiguity, not tracking, cancellation or other prerequisites.
+        if (condition?.includes('外部') && mail.resolutionNote === '用户确认重新发送结果不确定的邮件') condition = null;
+        if (businessBlock || !template || reviewRequired && !reviewedBodyOverrides?.has(mail.id.toString()) || condition) {
+          const manual = Boolean(businessBlock || !template || reviewRequired || condition?.includes('人工') || condition?.includes('外部'));
+          await this.prisma.rakutenOrderMail.update({ where: { id: mail.id }, data: {
+            failureCategory: businessBlock ? 'order_changed' : !template ? 'template_missing' : reviewRequired ? 'manual_review' : manual ? 'order_changed' : 'waiting_conditions',
+            lastError: businessBlock || (!template ? templateIssue ?? '请配置并启用邮件模板' : reviewRequired ? '请人工核对商品调整、数量、特殊说明及收件资料后确认正文' : condition),
+            nextAttemptAt: manual ? null : new Date(Date.now() + 20 * 60_000),
+          } });
           counts.blocked += 1;
           continue;
         }
-      }
-      const claimed = await this.prisma.rakutenOrderMail.updateMany({
-        where: { id: mail.id, status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] } },
-        data: {
-          status: RakutenAutomationStatus.processing,
-          attempts: { increment: 1 },
-          lastError: null,
-          failureCategory: null,
-          deadLetteredAt: null,
-        },
-      });
-      if (claimed.count !== 1) continue;
-      let sendAttemptStarted = false;
-      let smtpAccepted = false;
-      try {
-        const rows = await this.loadOrderRows(mail.connectionId, mail.orderId);
-        const expectedOrderFingerprint = expectedOrderFingerprints?.get(mail.id.toString());
-        if (expectedOrderFingerprint && this.mailOrderFingerprint(rows) !== expectedOrderFingerprint) {
-          await this.prisma.rakutenOrderMail.update({
-            where: { id: mail.id },
-            data: {
-              status: RakutenAutomationStatus.pending,
-              attempts: { decrement: 1 },
-              nextAttemptAt: null,
-              lastError: '订单在预览后已发生变化，请重新预览邮件后再发送',
-              failureCategory: null,
-              deadLetteredAt: null,
-            },
-          });
-          counts.blocked += 1;
-          continue;
-        }
-        const requiresManualReview = this.requiresManualMailReview(mail.event, rows);
-        const reviewedBody = reviewedBodyOverrides?.get(mail.id.toString());
-        if (requiresManualReview && (!expectedOrderFingerprint || reviewedBody === undefined)) {
-          await this.prisma.rakutenOrderMail.update({
-            where: { id: mail.id },
-            data: {
-              status: RakutenAutomationStatus.pending,
-              attempts: { decrement: 1 },
-              nextAttemptAt: null,
-              lastError: '订单需要人工确认，请确认邮件正文后再发送',
-              failureCategory: 'manual_review',
-              deadLetteredAt: null,
-            },
-          });
-          counts.blocked += 1;
-          continue;
-        }
-        if (!this.isAutomationEligibleOrder(rows)) {
-          await this.prisma.rakutenOrderMail.update({
-            where: { id: mail.id },
-            data: {
-              status: RakutenAutomationStatus.cancelled,
-              nextAttemptAt: null,
-              lastError: '订单在2026年9月1日前导入，不适用邮件发送功能',
-              failureCategory: null,
-              deadLetteredAt: null,
-            },
-          });
-          counts.blocked += 1;
-          continue;
-        }
-        const recipient = this.resolveRecipient(rows);
-        if (!recipient) throw new Error('乐天订单没有返回可用的买家匿名邮箱');
-        const smtp = this.decryptSmtpCredentials(mail.connection);
-        const bccAddresses = smtp.bccAddresses ?? [];
-        const expectedTemplateVersion = expectedTemplateVersions?.get(mail.id.toString());
-        const generated = expectedTemplateVersion
-          ? await this.renderMailTemplateVersion(mail.connectionId, mail.event, expectedTemplateVersion, rows)
-          : await this.renderConfiguredMail(mail.connectionId, mail.event, rows);
-        const rendered = reviewedBody === undefined ? generated : { ...generated, body: reviewedBody };
-        const smtpMessageId = this.buildSmtpMessageId(mail.id, smtp.fromAddress);
-        let recordedSmtpMessageId = smtpMessageId;
-        await this.prisma.rakutenOrderMail.update({
-          where: { id: mail.id },
+        const claimed = await this.prisma.rakutenOrderMail.updateMany({
+          where: { id: mail.id, status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed] } },
           data: {
-            recipient,
-            bccRecipients: bccAddresses.join(', ') || null,
-            subject: rendered.subject,
-            body: rendered.body,
-            smtpMessageId,
-            sendStartedAt: new Date(),
-          },
-        });
-        sendAttemptStarted = true;
-        const transport = this.createSmtpTransport(smtp);
-        try {
-          const info = await transport.sendMail({
-            from: { address: smtp.fromAddress, name: smtp.fromName },
-            to: recipient,
-            ...(bccAddresses.length ? { bcc: bccAddresses } : {}),
-            subject: rendered.subject,
-            text: rendered.body,
-            messageId: smtpMessageId,
-          });
-          smtpAccepted = true;
-          const returnedMessageId = String(info?.messageId || '').trim();
-          if (returnedMessageId && returnedMessageId !== smtpMessageId) {
-            recordedSmtpMessageId = returnedMessageId;
-            await this.prisma.rakutenOrderMail.update({
-              where: { id: mail.id },
-              data: { smtpMessageId: returnedMessageId },
-            });
-          }
-        } finally {
-          transport.close();
-        }
-        await this.prisma.rakutenOrderMail.update({
-          where: { id: mail.id },
-          data: {
-            status: RakutenAutomationStatus.sent,
-            recipient,
-            subject: rendered.subject,
-            body: rendered.body,
-            smtpMessageId: recordedSmtpMessageId,
-            sentAt: new Date(),
-            nextAttemptAt: null,
+            status: RakutenAutomationStatus.processing,
+            attempts: { increment: 1 },
             lastError: null,
             failureCategory: null,
             deadLetteredAt: null,
           },
         });
-        counts.sent += 1;
-      } catch (error) {
-        if (smtpAccepted || (sendAttemptStarted && this.isUncertainSmtpError(error))) {
-          await this.markMailUncertain(mail.id, error);
-          counts.blocked += 1;
-        } else {
-          const handling = await this.markMailFailed(mail.id, mail.attempts + 1, error);
-          counts.failed += 1;
-          if (this.shouldOpenCircuit(handling)) {
-            await this.openCircuit(mail.connectionId, 'mail', this.errorMessage(error));
-            break;
+        if (claimed.count !== 1) continue;
+        let sendAttemptStarted = false;
+        let smtpAccepted = false;
+        try {
+          const rows = await this.loadOrderRows(mail.connectionId, mail.orderId);
+          const expectedOrderFingerprint = expectedOrderFingerprints?.get(mail.id.toString());
+          if (expectedOrderFingerprint && this.mailOrderFingerprint(rows, mail.event) !== expectedOrderFingerprint) {
+            await this.prisma.rakutenOrderMail.update({
+              where: { id: mail.id },
+              data: {
+                status: RakutenAutomationStatus.dead_letter,
+                attempts: { decrement: 1 },
+                nextAttemptAt: null,
+                lastError: '订单在预览后已发生变化，请重新预览邮件后再发送',
+                failureCategory: 'order_changed',
+                deadLetteredAt: new Date(),
+              },
+            });
+            counts.blocked += 1;
+            continue;
+          }
+          const requiresManualReview = this.requiresManualMailReview(mail.event, rows);
+          const reviewedBody = reviewedBodyOverrides?.get(mail.id.toString());
+          if (requiresManualReview && (!expectedOrderFingerprint || reviewedBody === undefined)) {
+            await this.prisma.rakutenOrderMail.update({
+              where: { id: mail.id },
+              data: {
+                status: RakutenAutomationStatus.pending,
+                attempts: { decrement: 1 },
+                nextAttemptAt: null,
+                lastError: '订单需要人工确认，请确认邮件正文后再发送',
+                failureCategory: 'manual_review',
+                deadLetteredAt: null,
+              },
+            });
+            counts.blocked += 1;
+            continue;
+          }
+          if (!await this.isAutomationEligibleOrder(rows)) {
+            await this.prisma.rakutenOrderMail.update({
+              where: { id: mail.id },
+              data: {
+                status: RakutenAutomationStatus.cancelled,
+                nextAttemptAt: null,
+                lastError: '订单在2026年10月1日前导入，不适用邮件发送功能',
+                failureCategory: null,
+                deadLetteredAt: null,
+              },
+            });
+            counts.blocked += 1;
+            continue;
+          }
+          const refreshedReport = mail.event === RakutenOrderMailEvent.new_order ? null : await this.prisma.rakutenOrderShippingReport.findUnique({ where: { connectionId_orderId: { connectionId: mail.connectionId, orderId: mail.orderId } } });
+          let refreshedCondition = mailConditionReason(mail.event, rows, refreshedReport);
+          if (refreshedCondition?.includes('外部') && mail.resolutionNote === '用户确认重新发送结果不确定的邮件') refreshedCondition = null;
+          const refreshedBlock = mailOrderBlockReason(mail.event, rows) || refreshedCondition;
+          const refreshedPrerequisite = prerequisiteEvent ? await this.prisma.rakutenOrderMail.findUnique({ where: { connectionId_orderId_event: { connectionId: mail.connectionId, orderId: mail.orderId, event: prerequisiteEvent } } }) : null;
+          if (refreshedBlock || prerequisiteEvent && !mailSatisfied(refreshedPrerequisite)) {
+            const manual = Boolean(refreshedBlock && /人工|外部|不存在|取消|变更/.test(refreshedBlock));
+            await this.prisma.rakutenOrderMail.update({ where: { id: mail.id }, data: { status: RakutenAutomationStatus.pending, attempts: { decrement: 1 }, nextAttemptAt: manual ? null : new Date(Date.now() + 20 * 60_000), failureCategory: manual ? 'order_changed' : 'waiting_conditions', lastError: refreshedBlock || '前置邮件状态已变化' } });
+            counts.blocked += 1;
+            continue;
+          }
+          const recipient = this.resolveRecipient(rows);
+          if (!recipient) throw new Error('乐天订单没有返回可用的买家匿名邮箱');
+          const smtp = this.decryptSmtpCredentials(mail.connection);
+          const bccAddresses = smtp.bccAddresses ?? [];
+          const expectedTemplateVersion = expectedTemplateVersions?.get(mail.id.toString());
+          const generated = expectedTemplateVersion
+            ? await this.renderMailTemplateVersion(mail.connectionId, mail.event, expectedTemplateVersion, rows)
+            : await this.renderConfiguredMail(mail.connectionId, mail.event, rows);
+          const rendered = reviewedBody === undefined ? generated : { ...generated, body: reviewedBody };
+          let liveBlock: string | null;
+          try {
+            liveBlock = await this.liveMailBlockReason(mail.connection, mail.orderId, mail.event);
+          } catch (error) {
+            // A read outage is not an SMTP attempt and cannot prove cancellation.
+            const retryable = this.classifyFailure(error, 'mail').retryable;
+            await this.prisma.rakutenOrderMail.update({ where: { id: mail.id }, data: {
+              status: retryable ? RakutenAutomationStatus.pending : RakutenAutomationStatus.dead_letter, attempts: { decrement: 1 },
+              failureCategory: retryable ? 'live_check' : 'order_changed', lastError: `发送前核实失败，${retryable ? '等待下一轮' : '请人工核对'}：${this.errorMessage(error)}`,
+              nextAttemptAt: retryable ? new Date(Date.now() + 20 * 60_000) : null,
+              deadLetteredAt: retryable ? null : new Date(),
+            } });
+            counts.blocked += 1;
+            continue;
+          }
+          if (liveBlock) {
+            await this.prisma.rakutenOrderMail.update({ where: { id: mail.id }, data: {
+              status: RakutenAutomationStatus.dead_letter, failureCategory: 'order_changed',
+              attempts: { decrement: 1 },
+              lastError: liveBlock, nextAttemptAt: null, deadLetteredAt: new Date(),
+            } });
+            counts.blocked += 1;
+            continue;
+          }
+          await this.assertExecutionLock(mail.connectionId);
+          const smtpMessageId = this.buildSmtpMessageId(mail.id, smtp.fromAddress);
+          let recordedSmtpMessageId = smtpMessageId;
+          await this.prisma.rakutenOrderMail.update({
+            where: { id: mail.id },
+            data: {
+              recipient,
+              bccRecipients: bccAddresses.join(', ') || null,
+              subject: rendered.subject,
+              body: rendered.body,
+              smtpMessageId,
+              sendStartedAt: new Date(),
+            },
+          });
+          sendAttemptStarted = true;
+          const transport = this.createSmtpTransport(smtp);
+          try {
+            await this.assertExecutionLock(mail.connectionId);
+            const info = await transport.sendMail({
+              from: { address: smtp.fromAddress, name: smtp.fromName },
+              to: recipient,
+              ...(bccAddresses.length ? { bcc: bccAddresses } : {}),
+              subject: rendered.subject,
+              text: rendered.body,
+              messageId: smtpMessageId,
+            });
+            const accepted = (info?.accepted ?? []).map((address: string | { address: string }) => String(typeof address === "string" ? address : address.address).trim().toLowerCase());
+            if (!accepted.includes(recipient.trim().toLowerCase())) {
+              const error = Object.assign(new Error("买家地址未被SMTP明确接受"), { code: "EENVELOPE" });
+              throw error;
+            }
+            smtpAccepted = true;
+            const returnedMessageId = String(info?.messageId || '').trim();
+            if (returnedMessageId && returnedMessageId !== smtpMessageId) {
+              recordedSmtpMessageId = returnedMessageId;
+              await this.prisma.rakutenOrderMail.update({
+                where: { id: mail.id },
+                data: { smtpMessageId: returnedMessageId },
+              });
+            }
+          } finally {
+            transport.close();
+          }
+          await this.prisma.rakutenOrderMail.update({
+            where: { id: mail.id },
+            data: {
+              status: RakutenAutomationStatus.sent,
+              recipient,
+              subject: rendered.subject,
+              body: rendered.body,
+              smtpMessageId: recordedSmtpMessageId,
+              sentAt: new Date(),
+              nextAttemptAt: null,
+              lastError: null,
+              failureCategory: null,
+              deadLetteredAt: null,
+            },
+          });
+          counts.sent += 1;
+        } catch (error) {
+          // SMTP cannot guarantee that a rejected promise means no delivery.
+          // After starting an attempt, never retry without human verification.
+          if (smtpAccepted || sendAttemptStarted) {
+            await this.markMailUncertain(mail.id, error);
+            counts.blocked += 1;
+          } else {
+            const handling = await this.markMailFailed(mail.id, mail.attempts + 1, error);
+            counts.failed += 1;
+            if (this.shouldOpenCircuit(handling)) {
+              await this.openCircuit(mail.connectionId, 'mail', this.errorMessage(error));
+              break;
+            }
           }
         }
+      } catch (error) {
+        this.logger.error(`Rakuten processMails 单笔处理失败：${this.errorMessage(error)}`);
+        counts.failed += 1;
       }
     }
     return counts;
@@ -2638,13 +2783,13 @@ export class RakutenRmsAutomationService {
       subjectTemplate: '商品発送のご連絡',
       bodyTemplate: [
         '{{buyer_name}}様', '', 'いつもお世話になっております。', '',
-        'ご注文いただきました商品のご用意ができましたので、本日発送の手続きを行いました。',
+        ...(isDirect ? ['工場直送分のお荷物の通関許可を確認いたしました。配送情報をご案内いたします。'] : ['ご注文いただきました商品の発送が完了いたしました。']),
         ...(isDirect ? [] : ['商品はご指定いただいた日時にお送りいたします。']), '',
         '只今当店ではレビュー書いて頂くとプレゼントを差し上げます。', '',
         'レビュー記入後、連絡するだけでDGAZ楽天市場店で使える500円OFFクーポンを無料プレゼント致します。',
         '', '宜しければ是非ご評価してください。', 'よろしくお願いいたします。', '',
         '※※※お知らせ※※※',
-        '発送日のご指定がない場合は最短お届け日を設定いたします。', '',
+        ...(isDirect ? [] : ['発送日のご指定がない場合は最短お届け日を設定いたします。', '']),
         '{{order_summary}}', '',
         ...(isDirect ? [
           '大変申し訳ございませんが、',
@@ -2663,23 +2808,30 @@ export class RakutenRmsAutomationService {
   private renderTemplate(
     template: MailTemplateDefinition,
     rows: RakutenOrderRecord[],
+    event?: RakutenOrderMailEvent,
   ): { subject: string; body: string } {
+    this.validateMailTemplate(template, event);
     const first = rows[0];
     if (!first) throw new Error('订单明细不存在');
-    const japanRows = rows.filter((row) => !this.isChina(row));
-    const chinaRows = rows.filter((row) => this.isChina(row));
-    const values: Record<string, string> = {
-      buyer_name: this.resolveBuyerName(rows),
-      order_number: String(first.orderId ?? ''),
-      order_summary: this.renderOrderSummary(rows),
-      tracking_sections: this.renderTrackingSections(rows),
-      china_tracking_sections: this.renderTrackingSections(chinaRows),
-      japan_items: this.renderItemLines(japanRows, false, false, '\n\n'),
-      china_items: this.renderItemLines(chinaRows, false, false, '\n\n'),
-      japan_tracking: this.renderCompactTrackingLines(japanRows),
-      signature: this.renderSignature(),
+    const japanRows = rows.filter((row) => !isChinaRow(row));
+    const chinaRows = rows.filter((row) => isChinaRow(row));
+    const values: Record<string, () => string> = {
+      buyer_name: () => this.resolveBuyerName(rows),
+      order_number: () => originalRakutenOrderId(first),
+      order_summary: () => this.renderOrderSummary(rows),
+      tracking_sections: () => this.renderTrackingSections(rows),
+      china_tracking_sections: () => this.renderTrackingSections(chinaRows),
+      japan_items: () => this.renderDispatchItems(japanRows),
+      china_items: () => this.renderDispatchItems(chinaRows),
+      japan_tracking: () => this.renderCompactTrackingLines(japanRows),
+      signature: () => this.renderSignature(),
     };
-    const replace = (source: string) => source.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_match, key: string) => values[key] ?? '');
+    const renderedValues = new Map<string, string>();
+    const replace = (source: string) => source.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_match, key: string) => {
+      if (!values[key]) throw new Error(`未知邮件模板变量：${key}`);
+      if (!renderedValues.has(key)) renderedValues.set(key, values[key]());
+      return renderedValues.get(key) ?? '';
+    });
     const subject = replace(template.subjectTemplate).trim();
     const body = replace(template.bodyTemplate);
     if (!subject || subject.length > 255 || /[\r\n]/.test(subject)) {
@@ -2705,7 +2857,8 @@ export class RakutenRmsAutomationService {
     rows: RakutenOrderRecord[],
   ): Promise<{ subject: string; body: string }> {
     const template = await this.resolveActiveMailTemplate(connectionId, event);
-    return template ? this.renderTemplate(template, rows) : this.renderMail(event, rows);
+    if (!template) throw new Error('请配置并启用邮件模板');
+    return this.renderTemplate(template, rows, event);
   }
 
   private async renderMailTemplateVersion(
@@ -2719,32 +2872,32 @@ export class RakutenRmsAutomationService {
       select: { subjectTemplate: true, bodyTemplate: true, isActive: true },
     });
     if (!template?.isActive) throw new Error('邮件模板已变化或未启用，请重新整理清单');
-    return this.renderTemplate(template, rows);
+    return this.renderTemplate(template, rows, event);
   }
 
   private renderMail(
     event: RakutenOrderMailEvent,
     rows: RakutenOrderRecord[],
   ): { subject: string; body: string } {
-    return this.renderTemplate(this.defaultMailTemplate(event), rows);
+    return this.renderTemplate(this.defaultMailTemplate(event), rows, event);
   }
 
   private renderOrderSummary(rows: RakutenOrderRecord[]): string {
     const first = rows[0];
     if (!first) return '';
-    const order = this.resolveRawOrder(rows);
+    const order = hasRemovedOrderItems(rows) ? null : this.resolveRawOrder(rows);
     const settlement = this.jsonObject(order?.SettlementModel ?? order?.settlementModel);
     const point = this.jsonObject(order?.PointModel ?? order?.pointModel);
     const paymentMethod = this.pickObjectText(settlement, 'settlementMethod', 'settlementMethodName', 'paymentMethod');
     const couponAmount = this.pickObjectNumber(order, 'couponAllTotalPrice', 'CouponAllTotalPrice');
     const usedPoint = this.pickObjectNumber(point, 'usedPoint', 'UsedPoint') ?? this.pickObjectNumber(order, 'usedPoint');
     const lines = [
-      `[受注番号] ${String(first.orderId ?? '')}`,
+      `[受注番号] ${originalRakutenOrderId(first)}`,
       `[日時] ${String(first.orderImportedAtRaw ?? '')}`,
       `[注文者] ${this.resolveBuyerName(rows)} 様`,
       paymentMethod ? `[支払方法] ${paymentMethod}` : '',
-      `[クーポン利用] ${couponAmount && couponAmount > 0 ? 'あり' : 'なし'}`,
-      `[ポイント利用] ${usedPoint && usedPoint > 0 ? 'あり' : 'なし'}`,
+      couponAmount === null ? '' : `[クーポン利用] ${couponAmount > 0 ? 'あり' : 'なし'}`,
+      usedPoint === null ? '' : `[ポイント利用] ${usedPoint > 0 ? 'あり' : 'なし'}`,
       `[配送方法] ${String(first.deliveryMethod ?? '')}`,
       `[備考] ${String(first.orderRemark ?? '')}`,
       '[配送日時指定:]',
@@ -2769,29 +2922,36 @@ export class RakutenRmsAutomationService {
     return lines.filter((line, index, values) => line !== '' || values[index - 1] !== '').join('\n');
   }
 
-  private renderItemLines(
-    rows: RakutenOrderRecord[],
-    includeProductName = true,
-    includePrice = true,
-    itemSeparator = '\n',
-  ): string {
-    return this.uniquePurchasedRows(rows).map((row) => {
+  private renderItemLines(rows: RakutenOrderRecord[]): string {
+    const adjusted = hasRemovedOrderItems(rows);
+    const items = adjusted ? rows : this.uniquePurchasedRows(rows);
+    return items.map((row) => {
       const raw = this.jsonObject(row.rawPayload);
       const rawItem = this.jsonObject(raw?.rmsItem);
-      const quantity = Number(row.orderQuantity ?? 1);
-      const price = this.pickObjectNumber(rawItem, 'price', 'itemPrice', 'unitPrice');
-      const subtotal = this.pickObjectNumber(rawItem, 'subtotalPrice', 'subtotal') ?? (price === null ? null : price * quantity);
+      const quantity = validOrderQuantity(row.orderQuantity);
+      const price = hasRemovedOrderItems(rows) ? null : this.pickObjectNumber(rawItem, 'price', 'itemPrice', 'unitPrice');
+      const subtotal = (hasRemovedOrderItems(rows) ? null : this.pickObjectNumber(rawItem, 'subtotalPrice', 'subtotal')) ?? (price === null || quantity === null ? null : price * quantity);
       const itemUrl = this.pickObjectText(rawItem, 'itemUrl', 'itemURL');
       return [
-        includeProductName ? `      ${String(row.productName ?? row.skuCode ?? '')}` : '',
+        `      ${row.isComboOrder && !adjusted ? this.pickObjectText(rawItem, 'itemName', 'ItemName') || String(row.comboOrderSku ?? row.productName ?? '') : String(row.productName ?? row.skuCode ?? '')}`,
         row.productNameExtra
           ? row.productNameExtra.split(/\r\n|\n|\r/).map((line) => `      ${line}`).join('\n')
           : '',
-        `      数量: ${quantity}`,
+        `      数量: ${quantity ?? '要確認'}`,
         itemUrl ? `      ${itemUrl}` : '',
-        !includePrice || price === null ? '' : `      価格 ${this.formatYen(price)} x ${quantity}(個) = ${this.formatYen(subtotal ?? price * quantity)} (税込)`,
+        price === null || quantity === null || subtotal === null ? '' : `      価格 ${this.formatYen(price)} x ${quantity}(個) = ${this.formatYen(subtotal)} (税込)`,
       ].filter(Boolean).join('\n');
-    }).join(itemSeparator);
+    }).join('\n');
+  }
+
+  private renderDispatchItems(rows: RakutenOrderRecord[]): string {
+    return rows.map((row) => {
+      const raw = this.jsonObject(row.rawPayload);
+      const item = this.jsonObject(raw?.rmsItem);
+      const comboName = row.isComboOrder ? this.pickObjectText(item, 'itemName', 'ItemName') || String(row.comboOrderSku ?? '') : '';
+      return [comboName ? `${comboName}（構成商品）` : '', String(row.productName ?? row.skuCode ?? ''),
+        row.productNameExtra ?? '', `数量: ${validOrderQuantity(row.orderQuantity) ?? '要確認'}`].filter(Boolean).join('\n');
+    }).join('\n\n');
   }
 
   private renderTrackingLines(rows: RakutenOrderRecord[]): string {
@@ -2801,9 +2961,9 @@ export class RakutenRmsAutomationService {
       const trackingNo = String(row.shipmentNo ?? '').trim();
       if (!trackingNo || seen.has(trackingNo)) continue;
       seen.add(trackingNo);
-      const shippingDate = this.isChina(row)
+      const shippingDate = isChinaRow(row)
         ? (row.trackingCustomsClearanceDate ? this.formatMailDate(row.trackingCustomsClearanceDate) : '確認中')
-        : this.formatMailDate(row.shipmentNoRegisteredAt);
+        : this.formatMailDate(row.warehouseShippedAt);
       lines.push(`[発送日] ${shippingDate}`);
       lines.push(`[お荷物伝票番号] ${trackingNo}`);
       lines.push(`[配送会社] ${this.deliveryCompanyName(row)}`);
@@ -2868,26 +3028,28 @@ export class RakutenRmsAutomationService {
   }
 
   private renderOrderTotals(order: Record<string, unknown> | null, rows: RakutenOrderRecord[]): string[] {
+    if (hasRemovedOrderItems(rows)) return ['商品内容が変更されています。金額は確認が必要です。'];
     const goodsPrice = this.pickObjectNumber(order, 'goodsPrice', 'GoodsPrice') ?? this.sumItemSubtotal(rows);
-    const postagePrice = this.pickObjectNumber(order, 'postagePrice', 'deliveryPrice', 'PostagePrice') ?? 0;
-    const paymentCharge = this.pickObjectNumber(order, 'paymentCharge', 'PaymentCharge') ?? 0;
-    const couponAmount = this.pickObjectNumber(order, 'couponAllTotalPrice', 'CouponAllTotalPrice') ?? 0;
+    const postagePrice = this.pickObjectNumber(order, 'postagePrice', 'deliveryPrice', 'PostagePrice');
+    const paymentCharge = this.pickObjectNumber(order, 'paymentCharge', 'PaymentCharge');
+    const couponAmount = this.pickObjectNumber(order, 'couponAllTotalPrice', 'CouponAllTotalPrice');
     const point = this.jsonObject(order?.PointModel ?? order?.pointModel);
-    const usedPoint = this.pickObjectNumber(point, 'usedPoint', 'UsedPoint') ?? this.pickObjectNumber(order, 'usedPoint') ?? 0;
+    const usedPoint = this.pickObjectNumber(point, 'usedPoint', 'UsedPoint') ?? this.pickObjectNumber(order, 'usedPoint');
     const requestPrice = this.pickObjectNumber(order, 'requestPrice', 'totalPrice', 'RequestPrice');
     const purchasedRows = this.uniquePurchasedRows(rows);
-    const quantity = purchasedRows.reduce((sum, row) => sum + Number(row.orderQuantity ?? 1), 0);
+    const quantities = purchasedRows.map((row) => validOrderQuantity(row.orderQuantity));
+    const quantity = quantities.every((value) => value !== null) ? quantities.reduce<number>((sum, value) => sum + value!, 0) : null;
     const lines = [
       '****************************************************************',
       `送付先件数   ${this.groupRowsByBasket(rows).length}(件)`,
-      `合計商品数   ${quantity}(個)`,
+      quantity === null ? '' : `合計商品数   ${quantity}(個)`,
       goodsPrice === null ? '' : `商品価格計(税込) ${this.formatYen(goodsPrice)}`,
       '--------------------------------',
       goodsPrice === null ? '' : `商品小計(税込)   ${this.formatYen(goodsPrice)}`,
-      `送料(税込)   ${this.formatYen(postagePrice)}`,
-      paymentCharge > 0 ? `決済手数料(税込)   ${this.formatYen(paymentCharge)}` : '',
-      usedPoint > 0 ? `ポイント利用 -${this.formatYen(usedPoint)}` : '',
-      couponAmount > 0 ? `クーポン利用 -${this.formatYen(couponAmount)}` : '',
+      postagePrice === null ? '' : `送料(税込)   ${this.formatYen(postagePrice)}`,
+      paymentCharge !== null && paymentCharge > 0 ? `決済手数料(税込)   ${this.formatYen(paymentCharge)}` : '',
+      usedPoint !== null && usedPoint > 0 ? `ポイント利用 -${this.formatYen(usedPoint)}` : '',
+      couponAmount !== null && couponAmount > 0 ? `クーポン利用 -${this.formatYen(couponAmount)}` : '',
       '----------------------------------------------------------------',
       requestPrice === null ? '' : `お支払い金額(税込)   ${this.formatYen(requestPrice)}`,
       '----------------------------------------------------------------',
@@ -2901,15 +3063,17 @@ export class RakutenRmsAutomationService {
     for (const row of this.uniquePurchasedRows(rows)) {
       const raw = this.jsonObject(row.rawPayload);
       const item = this.jsonObject(raw?.rmsItem);
-      const quantity = Number(row.orderQuantity ?? 1);
+      const quantity = validOrderQuantity(row.orderQuantity);
       const subtotal = this.pickObjectNumber(item, 'subtotalPrice', 'subtotal');
       const price = this.pickObjectNumber(item, 'price', 'itemPrice', 'unitPrice');
       if (subtotal !== null) {
         total += subtotal;
         found = true;
-      } else if (price !== null) {
+      } else if (price !== null && quantity !== null) {
         total += price * quantity;
         found = true;
+      } else {
+        return null;
       }
     }
     return found ? total : null;
@@ -2969,13 +3133,13 @@ export class RakutenRmsAutomationService {
     ].join('\n');
   }
 
-  private buildShippingBaskets(rows: RakutenOrderRecord[], strictCarrier = true, useCustomsDate = true): ShippingBasket[] {
+  private buildShippingBaskets(rows: RakutenOrderRecord[]): ShippingBasket[] {
     const byBasket = new Map<number, Map<string, RakutenOrderRecord>>();
     for (const row of rows) {
       const trackingNo = String(row.shipmentNo ?? '').trim();
       const basketId = this.resolveBasketId(row.rawPayload);
       if (!trackingNo || basketId === null) continue;
-      const shippingDate = useCustomsDate && this.isChina(row) ? row.trackingCustomsClearanceDate : row.shipmentNoRegisteredAt;
+      const shippingDate = isChinaRow(row) ? row.trackingCustomsClearanceDate : row.warehouseShippedAt;
       if (!shippingDate) continue;
       const trackingRows = byBasket.get(basketId) ?? new Map<string, RakutenOrderRecord>();
       if (!trackingRows.has(trackingNo)) trackingRows.set(trackingNo, row);
@@ -2985,23 +3149,11 @@ export class RakutenRmsAutomationService {
       basketId,
       ShippingModelList: Array.from(trackingRows.entries()).map(([shippingNumber, row]) => ({
         shippingNumber,
-        deliveryCompany: strictCarrier
-          ? this.deliveryCompanyCode(row)
-          : String(row.shipmentCompany ?? '').trim(),
-        shippingDate: this.formatShippingDate(useCustomsDate && this.isChina(row) ? row.trackingCustomsClearanceDate : row.shipmentNoRegisteredAt),
+        deliveryCompany: this.deliveryCompanyCode(row),
+        shippingDate: this.formatShippingDate(isChinaRow(row) ? row.trackingCustomsClearanceDate : row.warehouseShippedAt),
         shippingDeleteFlag: 0,
       })),
     }));
-  }
-
-  private allBasketsReady(rows: RakutenOrderRecord[], baskets: ShippingBasket[]): boolean {
-    const expected = new Set<number>();
-    for (const row of rows) {
-      const basketId = this.resolveBasketId(row.rawPayload);
-      if (basketId === null) return false;
-      expected.add(basketId);
-    }
-    return expected.size > 0 && baskets.length === expected.size && baskets.every((basket) => basket.ShippingModelList.length > 0);
   }
 
   private shippingAlreadyReported(currentOrders: Array<Record<string, unknown>>, baskets: ShippingBasket[]): boolean {
@@ -3040,6 +3192,29 @@ export class RakutenRmsAutomationService {
     });
   }
 
+  private async assertOrderNotDeleted(connectionId: bigint, orderId: string): Promise<void> {
+    const active = await this.prisma.rakutenOrderRecord.findFirst({ where: {
+      rmsConnectionId: connectionId, ...rakutenOrderIdentityWhere(orderId), deletedAt: null,
+    }, select: { id: true } });
+    if (!active) throw new BadRequestException('订单已人工确认逻辑删除，不能恢复后续任务');
+  }
+
+  private async liveMailBlockReason(connection: RakutenRmsConnection, orderId: string, event: RakutenOrderMailEvent): Promise<string | null> {
+    const credentials = this.decryptApiCredentials(connection);
+    const orders = await this.client.getOrders(credentials.serviceSecret, credentials.licenseKey, [orderId]);
+    const order = this.resolveCurrentOrder(orders, orderId);
+    if (!order) return '乐天未返回可核实的目标订单，邮件停止发送，请人工核对';
+    const progress = this.resolveOrderProgress(order);
+    if (progress === 800 || progress === 900) return '乐天状态为取消相关状态，请人工核对是否逻辑删除；邮件暂不发送';
+    if (progress === null || ![100, 200, 300, 400, 500, 600, 700].includes(progress)) {
+      return '乐天订单状态无法确认，邮件停止发送，请人工核对';
+    }
+    if (event === RakutenOrderMailEvent.new_order && progress !== 300) {
+      return '乐天订单已离开待发货状态，请人工核对是否仍需发送新規邮件';
+    }
+    return null;
+  }
+
   private resolveCurrentOrder(
     orders: Array<Record<string, unknown>>,
     orderId: string,
@@ -3047,75 +3222,41 @@ export class RakutenRmsAutomationService {
     const matched = orders.find((order) =>
       String(order.orderNumber ?? order.OrderNumber ?? '').trim() === orderId,
     );
-    if (matched) return matched;
-    if (orders.length !== 1) return null;
-    const returnedOrderId = String(orders[0]?.orderNumber ?? orders[0]?.OrderNumber ?? '').trim();
-    return returnedOrderId ? null : orders[0];
+    return matched ?? null;
   }
 
   private resolveOrderProgress(order: Record<string, unknown>): number | null {
-    const parsed = Number(order.orderProgress ?? order.OrderProgress);
+    const value = order.orderProgress ?? order.OrderProgress;
+    if (value === null || value === undefined || String(value).trim() === '') return null;
+    const parsed = Number(value);
     return Number.isInteger(parsed) ? parsed : null;
   }
 
   private resolveBasketId(rawPayload: Prisma.JsonValue | null): number | null {
-    const root = this.jsonObject(rawPayload);
-    const pkg = this.jsonObject(root?.rmsPackage);
-    const value = pkg?.basketId ?? pkg?.BasketId ?? root?.['送付先ID'];
-    const parsed = Number(value);
-    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+    return basketIdOf({ rawPayload } as RakutenOrderRecord);
   }
 
   private resolveRecipient(rows: RakutenOrderRecord[]): string | null {
-    return rows.map((row) => String(row.buyerEmail ?? '').trim()).find(Boolean) ?? null;
-  }
-
-  private resolveFulfillmentType(rows: RakutenOrderRecord[]): FulfillmentType {
-    const hasChina = rows.some((row) => this.isChina(row));
-    const hasJapan = rows.some((row) => !this.isChina(row));
-    return hasChina && hasJapan ? 'mixed' : hasChina ? 'china' : 'japan';
+    const recipients = new Set(rows.map((row) => String(row.buyerEmail ?? '').trim().toLowerCase()));
+    if (recipients.size > 1) throw new BadRequestException('同一订单的买家邮箱不一致，请人工核对');
+    return Array.from(recipients)[0] || null;
   }
 
   private shippingTargetRows(rows: RakutenOrderRecord[], fulfillmentType: FulfillmentType): RakutenOrderRecord[] {
-    return fulfillmentType === 'japan'
-      ? rows.filter((row) => !this.isChina(row))
-      : rows.filter((row) => this.isChina(row));
+    return shippingTargetRows(rows, fulfillmentType);
   }
 
-  private isShippingCustomsReady(
-    rows: RakutenOrderRecord[],
-    fulfillmentType: FulfillmentType = this.resolveFulfillmentType(rows),
-  ): boolean {
-    if (fulfillmentType === 'japan') return true;
-    const chinaRows = rows.filter((row) => this.isChina(row));
-    if (!chinaRows.length) return false;
-    return chinaRows.every((row) =>
-      Boolean(String(row.shipmentNo ?? '').trim()) && row.trackingHasCustomsClearance === true
-      && Boolean(row.trackingCustomsClearanceDate));
-  }
-
-  private isChina(row: Pick<RakutenOrderRecord, 'dispatchMode'>): boolean {
-    return CHINA_MODES.has(String(row.dispatchMode ?? '').trim());
-  }
-
-  private deliveryCompanyCode(row: Pick<RakutenOrderRecord, 'shipmentCompany'>): string {
-    const value = String(row.shipmentCompany ?? '').trim().toLowerCase();
-    if (value.includes('yamato') || value.includes('ヤマト')) return '1001';
-    if (value.includes('xiya-sagawa') || value.includes('sagawa') || value.includes('佐川')) return '1002';
-    if (value.includes('japan post') || value.includes('日本郵便')) return '1003';
-    throw new Error(`无法识别配送公司“${String(row.shipmentCompany ?? '')}”，已停止自动回传`);
+  private deliveryCompanyCode(row: Pick<RakutenOrderRecord, 'shipmentCompany'>) {
+    return rakutenDeliveryCompanyCode(row.shipmentCompany);
   }
 
   private deliveryCompanyName(row: Pick<RakutenOrderRecord, 'shipmentCompany'>): string {
-    const code = this.deliveryCompanyCode(row);
-    if (code === '1001') return 'ヤマト運輸';
-    if (code === '1002') return '佐川急便';
-    if (code === '1003') return '日本郵便';
-    return String(row.shipmentCompany ?? 'その他');
+    return { '1001': 'ヤマト運輸', '1002': '佐川急便', '1003': '日本郵便' }[this.deliveryCompanyCode(row)];
   }
 
   private formatShippingDate(value: Date | null): string {
-    const date = value ?? new Date();
+    if (!value || Number.isNaN(value.getTime())) throw new BadRequestException('缺少有效的实际出货或清关日期，不能生成発送日');
+    const date = value;
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: AUTOMATION_TIMEZONE,
       year: 'numeric', month: '2-digit', day: '2-digit',
@@ -3128,8 +3269,12 @@ export class RakutenRmsAutomationService {
     return `${connectionId.toString()}:${orderId}`;
   }
 
-  private isAutomationEligibleOrder(rows: Array<Pick<RakutenOrderRecord, 'createdAt'>>): boolean {
-    return rows.length > 0 && rows.every((row) => row.createdAt >= AUTOMATION_ORDER_IMPORT_CUTOFF);
+  private async isAutomationEligibleOrder(rows: RakutenOrderRecord[]): Promise<boolean> {
+    const first = rows[0];
+    if (!first?.rmsConnectionId || !first.orderId || rows.some((row) => row.createdAt < AUTOMATION_ORDER_IMPORT_CUTOFF)) return false;
+    const orderId = originalRakutenOrderId(first);
+    const eligible = await this.loadEligibleAutomationOrderKeys([{ connectionId: first.rmsConnectionId, orderId }]);
+    return eligible.has(this.automationOrderKey(first.rmsConnectionId, orderId));
   }
 
   private async loadEligibleAutomationOrderKeys(
@@ -3143,33 +3288,40 @@ export class RakutenRmsAutomationService {
     if (!uniqueRefs.length) return new Set();
     const records = await db.rakutenOrderRecord.findMany({
       where: {
-        OR: uniqueRefs.map((ref) => ({ rmsConnectionId: ref.connectionId, orderId: ref.orderId })),
+        OR: uniqueRefs.map((ref) => ({ rmsConnectionId: ref.connectionId, ...rakutenOrderIdentityWhere(ref.orderId) })),
       },
-      select: { rmsConnectionId: true, orderId: true, createdAt: true },
+      select: { rmsConnectionId: true, orderId: true, rmsOrderId: true, createdAt: true, deletedAt: true },
     });
     const earliestByOrder = new Map<string, Date>();
+    const activeKeys = new Set<string>();
     for (const record of records) {
       if (!record.rmsConnectionId || !record.orderId) continue;
-      const key = this.automationOrderKey(record.rmsConnectionId, record.orderId);
+      const key = this.automationOrderKey(record.rmsConnectionId, originalRakutenOrderId(record));
+      if (!record.deletedAt) activeKeys.add(key);
       const earliest = earliestByOrder.get(key);
       if (!earliest || record.createdAt < earliest) earliestByOrder.set(key, record.createdAt);
     }
     return new Set(Array.from(earliestByOrder.entries())
-      .filter(([, createdAt]) => createdAt >= AUTOMATION_ORDER_IMPORT_CUTOFF)
+      .filter(([key, createdAt]) => activeKeys.has(key) && createdAt >= AUTOMATION_ORDER_IMPORT_CUTOFF)
       .map(([key]) => key));
   }
 
   private async loadOrderRows(connectionId: bigint, orderId: string): Promise<RakutenOrderRecord[]> {
     return this.prisma.rakutenOrderRecord.findMany({
-      where: { rmsConnectionId: connectionId, orderId },
+      where: { deletedAt: null, rmsConnectionId: connectionId, ...rakutenOrderIdentityWhere(orderId) },
       orderBy: { id: 'asc' },
     });
   }
 
-  private mailOrderFingerprint(rows: RakutenOrderRecord[]): string {
+  private mailOrderFingerprint(rows: RakutenOrderRecord[], event?: RakutenOrderMailEvent): string {
+    if (event === RakutenOrderMailEvent.new_order) {
+      return createHash('sha1').update(JSON.stringify({ orderId: rows[0] ? originalRakutenOrderId(rows[0]) : null,
+        recipient: this.resolveRecipient(rows), buyerName: this.resolveBuyerName(rows) })).digest('hex');
+    }
     const snapshot = rows.map((row) => ({
       id: row.id.toString(),
       orderId: row.orderId,
+      rmsOrderId: originalRakutenOrderId(row),
       buyerEmail: row.buyerEmail,
       skuCode: row.skuCode,
       orderQuantity: row.orderQuantity,
@@ -3184,6 +3336,13 @@ export class RakutenRmsAutomationService {
       shipmentCompany: row.shipmentCompany,
       shipmentNo: row.shipmentNo,
       shipmentNoRegisteredAt: row.shipmentNoRegisteredAt?.toISOString() ?? null,
+      warehouseShippedAt: row.warehouseShippedAt?.toISOString() ?? null,
+      trackingCustomsClearanceDate: row.trackingCustomsClearanceDate?.toISOString() ?? null,
+      trackingHasCustomsClearance: row.trackingHasCustomsClearance,
+      rmsManualOverrideAt: row.rmsManualOverrideAt?.toISOString() ?? null,
+      isComboOrder: row.isComboOrder,
+      comboOrderSku: row.comboOrderSku,
+      setComponentSkuCode: row.setComponentSkuCode,
       dispatchMode: row.dispatchMode,
       deliveryMethod: row.deliveryMethod,
       deliveryDateRaw: row.deliveryDateRaw,
@@ -3194,32 +3353,12 @@ export class RakutenRmsAutomationService {
     return createHash('sha1').update(JSON.stringify(snapshot)).digest('hex');
   }
 
-  private requiresManualMailReview(
-    event: RakutenOrderMailEvent,
-    rows: RakutenOrderRecord[],
-  ): boolean {
+  private requiresManualMailReview(event: RakutenOrderMailEvent, rows: RakutenOrderRecord[]): boolean {
     return Boolean(this.manualMailReviewReason(event, rows));
   }
 
-  private manualMailReviewReason(
-    event: RakutenOrderMailEvent,
-    rows: RakutenOrderRecord[],
-  ): ManualMailReviewReason | null {
-    if (!MANUAL_REVIEW_MAIL_EVENTS.has(event)) return null;
-    return this.resolveManualMailReviewReason(
-      rows.some((row) => Boolean(row.rmsManualOverrideAt)),
-      rows.some((row) => row.isComboOrder),
-    );
-  }
-
-  private resolveManualMailReviewReason(
-    manuallyUpdated: boolean,
-    comboOrder: boolean,
-  ): ManualMailReviewReason | null {
-    if (manuallyUpdated && comboOrder) return 'manual_update_and_combo';
-    if (manuallyUpdated) return 'manual_update';
-    if (comboOrder) return 'combo_order';
-    return null;
+  private manualMailReviewReason(event: RakutenOrderMailEvent, rows: RakutenOrderRecord[]): ManualMailReviewReason | null {
+    return mailEventReviewReason(event, rows);
   }
 
   private decryptApiCredentials(connection: RakutenRmsConnection): { serviceSecret: string; licenseKey: string } {
@@ -3305,13 +3444,6 @@ export class RakutenRmsAutomationService {
     return null;
   }
 
-  private isMailPrerequisiteSatisfied(
-    mail: { status: RakutenAutomationStatus; resolutionNote?: string | null } | null | undefined,
-  ): boolean {
-    return mail?.status === RakutenAutomationStatus.sent ||
-      (mail?.status === RakutenAutomationStatus.cancelled && mail.resolutionNote === MANUALLY_IGNORED_MAIL_NOTE);
-  }
-
   private dependentMailEvents(event: RakutenOrderMailEvent): RakutenOrderMailEvent[] {
     if (event === RakutenOrderMailEvent.new_order) {
       return [
@@ -3351,7 +3483,7 @@ export class RakutenRmsAutomationService {
     return connectionId;
   }
 
-  private validateMailTemplate(payload: MailTemplatePayload): MailTemplateDefinition {
+  private validateMailTemplate(payload: MailTemplatePayload, event?: RakutenOrderMailEvent): MailTemplateDefinition {
     const subjectTemplate = String(payload.subjectTemplate ?? '').trim();
     const bodyTemplate = String(payload.bodyTemplate ?? '');
     if (!subjectTemplate) throw new BadRequestException('邮件主题不能为空');
@@ -3359,7 +3491,11 @@ export class RakutenRmsAutomationService {
     if (/[\r\n]/.test(subjectTemplate)) throw new BadRequestException('邮件主题不能换行');
     if (!bodyTemplate.trim()) throw new BadRequestException('邮件正文不能为空');
     if (bodyTemplate.length > 50_000) throw new BadRequestException('邮件正文不能超过50000个字符');
-    const allowed = new Set(MAIL_TEMPLATE_VARIABLES.map((variable) => variable.key));
+    if (event && ['japan_shipped', 'china_customs', 'mixed_customs'].includes(event) && /本日発送/.test(bodyTemplate) || event && ['china_customs', 'mixed_customs'].includes(event) && /最短お届け日を設定/.test(bodyTemplate)) {
+      throw new BadRequestException('模板含旧発送日期或送达日说明，请修订并明确启用新版');
+    }
+    const allowed = new Set(MAIL_TEMPLATE_VARIABLES.filter((variable) => event !== RakutenOrderMailEvent.new_order ||
+      ['buyer_name', 'order_number', 'signature'].includes(variable.key)).map((variable) => variable.key));
     const subjectAllowed = new Set(['buyer_name', 'order_number']);
     const unknown = new Set<string>();
     const inspect = (source: string, valid: Set<string>) => {
@@ -3458,15 +3594,6 @@ export class RakutenRmsAutomationService {
     });
   }
 
-  private isUncertainSmtpError(error: unknown): boolean {
-    const code = String((error as { code?: unknown })?.code ?? '').toUpperCase();
-    const message = this.errorMessage(error).toLowerCase();
-    return ['ETIMEDOUT', 'ESOCKET', 'ECONNRESET', 'EPIPE', 'ECONNABORTED'].includes(code) ||
-      message.includes('timeout') ||
-      message.includes('connection reset') ||
-      message.includes('socket closed');
-  }
-
   private shouldOpenCircuit(result: FailureHandlingResult): boolean {
     return result.deadLetter && ['authentication', 'configuration'].includes(result.category);
   }
@@ -3551,7 +3678,7 @@ export class RakutenRmsAutomationService {
     ) {
       return { retryable: true, category: 'temporary_remote' };
     }
-    return { retryable: true, category: 'unknown' };
+    return { retryable: false, category: 'unknown' };
   }
 
   private nextRetry(attempts: number, key: string): Date {

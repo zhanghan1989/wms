@@ -1,5 +1,5 @@
+import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
-import { Cron } from "@nestjs/schedule";
 import {
   BatchInboundItemStatus,
   BatchInboundOrderStatus,
@@ -7,6 +7,7 @@ import {
   Prisma,
   RakutenOrderRecord,
   RakutenRmsConnection,
+  RakutenAutomationRunTrigger,
   RakutenRmsSyncStatus,
 } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
@@ -27,8 +28,6 @@ import { RakutenRmsAutomationService } from "./rakuten-rms-automation.service";
 import { RakutenJsonObject } from "./rakuten-rms-api.types";
 import { buildRakutenStoreDashboard } from "./rakuten-store-dashboard";
 
-const RAKUTEN_SYNC_CRON = process.env.RAKUTEN_RMS_API_SYNC_CRON || "0 */15 * * * *";
-const RAKUTEN_SYNC_TIMEZONE = process.env.RAKUTEN_RMS_API_SYNC_TIMEZONE || "Asia/Tokyo";
 const RAKUTEN_SCHEDULED_SYNC_ENABLED =
   String(process.env.RAKUTEN_RMS_API_SCHEDULED_SYNC_ENABLED ?? "false").toLowerCase() === "true";
 const RAKUTEN_SCHEDULED_SYNC_PAUSED =
@@ -117,6 +116,14 @@ interface MappedRakutenItem {
   rawPayload: Prisma.InputJsonValue;
 }
 
+interface CatalogImportIssue {
+  orderId: string;
+  comboSkus: string[];
+  missingProductIds?: string[];
+  reason: string;
+  skippedItemCount: number;
+}
+
 interface RakutenDashboardQueryRow {
   rmsConnectionId: bigint | null;
   orderId: string | null;
@@ -149,6 +156,27 @@ export class RakutenRmsApiService {
       orderBy: { id: "asc" },
     });
     return rows.map((row) => this.serializeConnection(row));
+  }
+
+  async listImportIssues(query: { connectionId?: string; orderId?: string; page?: string }): Promise<unknown> {
+    const page = Math.max(1, Math.min(Number(query.page) || 1, 100_000));
+    if (!Number.isInteger(page)) throw new BadRequestException('页码必须为整数');
+    const pageSize = 30;
+    const where: Prisma.RakutenOrderImportIssueWhereInput = {
+      resolvedAt: null,
+      ...(query.connectionId ? { connectionId: parseId(query.connectionId, 'connectionId') } : {}),
+      ...(query.orderId?.trim() ? { orderId: { contains: query.orderId.trim() } } : {}),
+    };
+    const [total, rows] = await Promise.all([
+      this.prisma.rakutenOrderImportIssue.count({ where }),
+      this.prisma.rakutenOrderImportIssue.findMany({ where, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize, take: pageSize, include: { connection: { select: { shop: { select: { name: true } } } } },
+      }),
+    ]);
+    return { total, page, pageSize, items: rows.map((row) => ({
+      id: row.id.toString(), connectionId: row.connectionId.toString(), shopName: row.connection.shop.name,
+      orderId: row.orderId, comboSkus: row.comboSkus, missingProductIds: row.missingProductIds ?? [], reason: row.reason, createdAt: row.createdAt.toISOString(),
+    })) };
   }
 
   async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string): Promise<unknown> {
@@ -195,7 +223,7 @@ export class RakutenRmsApiService {
       this.prisma.$queryRaw<RakutenDashboardQueryRow[]>(Prisma.sql`
         SELECT /*+ MAX_EXECUTION_TIME(15000) */
           rms_connection_id AS rmsConnectionId,
-          order_id AS orderId,
+          COALESCE(rms_order_id, order_id) AS orderId,
           sku_code AS skuCode,
           product_name AS productName,
           order_quantity AS orderQuantity,
@@ -215,12 +243,12 @@ export class RakutenRmsApiService {
             0
           ) AS salesAmount
         FROM rakuten_order_records
-        WHERE ${orderScope}
+        WHERE deleted_at IS NULL AND ${orderScope}
           AND order_imported_date >= ${this.formatTokyoDateKey(analysisStart, "-")}
           AND order_imported_date < ${this.formatTokyoDateKey(analysisEndDay, "-")}
       `),
       this.prisma.rakutenOrderRecord.findMany({
-        where: {
+        where: { deletedAt: null,
           OR: [
             { rmsConnectionId: { in: activeConnectionIds } },
             { rmsConnectionId: null },
@@ -229,7 +257,7 @@ export class RakutenRmsApiService {
         },
         select: {
           rmsConnectionId: true,
-          orderId: true,
+          orderId: true, rmsOrderId: true,
           skuCode: true,
           productName: true,
           orderQuantity: true,
@@ -248,6 +276,7 @@ export class RakutenRmsApiService {
     }));
     const factoryOrders = factoryOrderRows.map((row) => ({
       ...row,
+      orderId: originalRakutenOrderId(row),
       orderImportedAtRaw: row.orderImportedDate,
       salesAmount: 0,
     }));
@@ -546,6 +575,8 @@ export class RakutenRmsApiService {
     }
     const previewData = preview.previewData as unknown as {
       mappedItems: MappedRakutenItem[];
+      importIssues?: CatalogImportIssue[];
+      resolvedIssueOrderIds?: string[];
       planDescriptors: SyncPlanDescriptor[];
       searchedOrderCount: number;
       reconciledOrderCount: number;
@@ -558,10 +589,16 @@ export class RakutenRmsApiService {
     if (previewData.mappedItems.length !== previewData.planDescriptors.length) {
       throw new BadRequestException("同步预览数据不完整，请重新预览");
     }
+    const importIssues = (previewData.importIssues ?? []).map((issue) => ({ ...issue }));
+    // A product can be removed while a manual preview is awaiting confirmation.
+    const mappedItems = await this.filterMissingProducts(previewData.mappedItems, importIssues);
+    const blockedOrders = new Set(importIssues.map((issue) => issue.orderId));
     return this.runSync(connection, {
       previewToken: preview.token,
-      mappedItems: previewData.mappedItems,
-      expectedPlans: previewData.planDescriptors,
+      mappedItems,
+      importIssues,
+      resolvedIssueOrderIds: previewData.resolvedIssueOrderIds?.filter((orderId) => !blockedOrders.has(orderId)),
+      expectedPlans: previewData.planDescriptors.filter((_plan, index) => !blockedOrders.has(previewData.mappedItems[index].orderId)),
       searchedOrderCount: previewData.searchedOrderCount,
       reconciledOrderCount: previewData.reconciledOrderCount,
       requestedOrderCount: previewData.requestedOrderCount,
@@ -580,7 +617,10 @@ export class RakutenRmsApiService {
     }
     const conflictCount = plans.filter((plan) => plan.action === "conflict").length;
     const summary = {
-      fetched: plans.length,
+      fetched: plans.length + fetched.importIssues.reduce((count, issue) => count + issue.skippedItemCount, 0),
+      comboMissingOrderCount: fetched.importIssues.filter((issue) => issue.comboSkus.length).length,
+      productMissingOrderCount: fetched.importIssues.filter((issue) => issue.missingProductIds?.length).length,
+      catalogMissingOrderCount: fetched.importIssues.length,
       create: plans.filter((plan) => plan.action === "create").length,
       update: plans.filter((plan) => plan.action === "update" && plan.changedFields.length > 0).length,
       unchanged: plans.filter((plan) => plan.action === "update" && plan.changedFields.length === 0).length,
@@ -621,6 +661,8 @@ export class RakutenRmsApiService {
         expiresAt,
         previewData: this.toJson({
           mappedItems: fetched.mappedItems,
+          importIssues: fetched.importIssues,
+          resolvedIssueOrderIds: fetched.resolvedIssueOrderIds,
           planDescriptors,
           searchedOrderCount: fetched.searchedOrderCount,
           reconciledOrderCount: fetched.reconciledOrderCount,
@@ -637,7 +679,10 @@ export class RakutenRmsApiService {
       mappedItems: undefined,
       summary,
       canConfirm: conflictCount === 0,
-      items: previewItems,
+      items: [...previewItems, ...fetched.importIssues.map((issue) => ({
+        orderId: issue.orderId, skuCode: [...issue.comboSkus, ...(issue.missingProductIds ?? []).map((id) => id || '（未提供产品ID）')].join('、'), action: 'catalog_missing',
+        reason: issue.reason, changedFields: [], itemKey: '', existingId: null,
+      }))],
     };
   }
 
@@ -813,6 +858,7 @@ export class RakutenRmsApiService {
         lastSyncError?: string | null;
       };
       changes?: SyncChangeSnapshot[];
+      resolvedImportIssueIds?: string[];
     } | null;
     const changes = Array.isArray(snapshot?.changes) ? snapshot.changes : [];
     if (!changes.length) throw new BadRequestException("该同步批次没有可回滚的订单变更");
@@ -821,7 +867,7 @@ export class RakutenRmsApiService {
       for (const change of [...changes].reverse()) {
         const recordId = parseId(change.recordId, "recordId");
         const current = await tx.rakutenOrderRecord.findUnique({
-          where: { id: recordId },
+          where: { deletedAt: null, id: recordId },
         });
         if (!current) throw new ConflictException(`订单记录 ${change.recordId} 已不存在，无法安全回滚`);
         if (current.updatedAt.toISOString() !== change.afterUpdatedAt) {
@@ -832,13 +878,19 @@ export class RakutenRmsApiService {
           throw new ConflictException(`订单记录 ${change.recordId}${freezeReason}，已拒绝回滚`);
         }
         if (change.action === "created") {
-          await tx.rakutenOrderRecord.delete({ where: { id: recordId } });
+          await tx.rakutenOrderRecord.delete({ where: { deletedAt: null, id: recordId } });
         } else if (change.before) {
           await tx.rakutenOrderRecord.update({
-            where: { id: recordId },
+            where: { deletedAt: null, id: recordId },
             data: this.restoreOrderSnapshot(change.before),
           });
         }
+      }
+      if (snapshot?.resolvedImportIssueIds?.length && run.finishedAt) {
+        await tx.rakutenOrderImportIssue.updateMany({ where: {
+          id: { in: snapshot.resolvedImportIssueIds.map((value) => parseId(value, 'importIssueId')) },
+          connectionId: run.connectionId, resolvedAt: run.finishedAt,
+        }, data: { resolvedAt: null } });
       }
       await tx.rakutenRmsConnection.update({
         where: { id: run.connectionId },
@@ -860,18 +912,12 @@ export class RakutenRmsApiService {
     };
   }
 
-  @Cron(RAKUTEN_SYNC_CRON, {
-    name: "rakuten-rms-api-sync",
-    timeZone: RAKUTEN_SYNC_TIMEZONE,
-  })
-  async runScheduledSync(): Promise<void> {
-    if (!RAKUTEN_SCHEDULED_SYNC_ENABLED || RAKUTEN_SCHEDULED_SYNC_PAUSED) return;
-    try {
-      const result = await this.syncAllConnections();
-      this.logger.log(`Rakuten scheduled sync completed: connections=${result.results.length}`);
-    } catch (error) {
-      this.logger.error(`Rakuten scheduled sync failed: ${this.errorMessage(error)}`);
-    }
+  // Called by the single twenty-minute coordinator; no independent import timer.
+  async runScheduledSync(enabledByControl = false): Promise<unknown> {
+    if (!enabledByControl && (!RAKUTEN_SCHEDULED_SYNC_ENABLED || RAKUTEN_SCHEDULED_SYNC_PAUSED)) return;
+    const result = await this.syncAllConnections();
+    this.logger.log(`Rakuten scheduled import completed: connections=${result.results.length}`);
+    return result;
   }
 
   private async runSync(
@@ -881,6 +927,8 @@ export class RakutenRmsApiService {
       searchedOrderCount: number;
       reconciledOrderCount: number;
       requestedOrderCount: number;
+      importIssues?: CatalogImportIssue[];
+      resolvedIssueOrderIds?: string[];
       previewToken?: string;
       expectedPlans?: SyncPlanDescriptor[];
       truncated?: boolean;
@@ -901,8 +949,17 @@ export class RakutenRmsApiService {
       skipped: 0,
       manualActions: 0,
     };
+    const importIssues = input.importIssues ?? [];
+    const blockedItemCount = importIssues.reduce((count, issue) => count + issue.skippedItemCount, 0);
+    counters.fetched = blockedItemCount;
+    counters.skipped = blockedItemCount;
+    counters.manualActions = importIssues.length;
+    const conflictingOrderIds = new Set<string>();
+    const conflictReasons = new Map<string, string>();
+    let importWarning: string | null = null;
     let conflictCount = 0;
     const now = new Date();
+    const createdOrderIds = new Set<string>();
     try {
       const activeRun = await this.prisma.rakutenRmsSyncRun.create({
         data: { connectionId: connection.id },
@@ -910,8 +967,15 @@ export class RakutenRmsApiService {
       run = activeRun;
       const finishedAt = new Date();
       const changes = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM rakuten_rms_connections WHERE id = ${connection.id} FOR UPDATE`);
         const snapshots: SyncChangeSnapshot[] = [];
-        const createdOrderIds = new Set<string>();
+        for (const issue of importIssues) {
+          await tx.rakutenOrderImportIssue.upsert({
+            where: { connectionId_orderId: { connectionId: connection.id, orderId: issue.orderId } },
+            create: { connectionId: connection.id, orderId: issue.orderId, comboSkus: issue.comboSkus, missingProductIds: issue.missingProductIds ?? [], reason: issue.reason },
+            update: { comboSkus: issue.comboSkus, missingProductIds: issue.missingProductIds ?? [], reason: issue.reason, resolvedAt: null },
+          });
+        }
         if (input.previewToken) {
           const consumed = await tx.rakutenRmsSyncPreview.updateMany({
             where: {
@@ -941,13 +1005,13 @@ export class RakutenRmsApiService {
             plan.action === "ignored"
           ) {
             counters.skipped += 1;
-            if (plan.action === "conflict") conflictCount += 1;
+            if (plan.action === "conflict") { conflictCount += 1; conflictingOrderIds.add(item.orderId); conflictReasons.set(item.orderId, plan.reason ?? "订单明细匹配冲突"); }
             if (plan.action === "manual_action") {
               await this.recordXiyaManualAction(tx, plan, now);
               counters.manualActions += 1;
             } else if (plan.action === "frozen" && plan.existing?.xiyaExportedAt) {
               await tx.rakutenOrderRecord.update({
-                where: { id: plan.existing.id },
+                where: { deletedAt: null, id: plan.existing.id },
                 data: { rmsLastSyncedAt: now },
               });
             }
@@ -960,17 +1024,36 @@ export class RakutenRmsApiService {
           else counters.updated += 1;
           if (plan.action === "create") createdOrderIds.add(item.orderId);
         }
-        if (connection.mailNotificationsEnabled) {
-          await this.automation?.enqueueNewOrderMails(tx, connection.id, createdOrderIds);
+        // Keep a unique task while notifications are disabled; enabling sends
+        // these fixed acknowledgements through the same normal queue.
+        await this.automation?.enqueueNewOrderMails(tx, connection.id, createdOrderIds);
+        for (const orderId of input.resolvedIssueOrderIds ?? []) {
+          if (!conflictingOrderIds.has(orderId)) continue;
+          await tx.rakutenOrderImportIssue.updateMany({ where: { connectionId: connection.id, orderId, resolvedAt: null },
+            data: { reason: `商品配置已补齐，但导入存在匹配冲突：${conflictReasons.get(orderId)}。请重新预览并人工处理。` },
+          });
         }
+        const resolvedOrderIds = (input.resolvedIssueOrderIds ?? []).filter((orderId) => !conflictingOrderIds.has(orderId));
+        const resolvedImportIssues = resolvedOrderIds.length ? await tx.rakutenOrderImportIssue.findMany({
+          where: { connectionId: connection.id, resolvedAt: null, orderId: { in: resolvedOrderIds } }, select: { id: true },
+        }) : [];
+        if (resolvedImportIssues.length) await tx.rakutenOrderImportIssue.updateMany({
+          where: { id: { in: resolvedImportIssues.map((issue) => issue.id) }, resolvedAt: null }, data: { resolvedAt: finishedAt },
+        });
         const hasConflicts = conflictCount > 0;
         const incompleteByLimit = Boolean(input.truncated);
-        const isPartial = hasConflicts || incompleteByLimit;
+        const isPartial = hasConflicts || incompleteByLimit || importIssues.length > 0;
+        importWarning = [
+          hasConflicts ? `${conflictCount} 条订单存在严格匹配冲突，请人工处理` : '',
+          incompleteByLimit ? '本次预览设置了订单数量限制，同步水位未推进' : '',
+          importIssues.length ? `${importIssues.length} 个订单商品配置缺失，已跳过并等待人工处理` : '',
+        ].filter(Boolean).join('；') || null;
         await tx.rakutenRmsSyncRun.update({
           where: { id: activeRun.id },
           data: {
             status: isPartial ? RakutenRmsSyncStatus.partial : RakutenRmsSyncStatus.success,
             finishedAt,
+            errorMessage: importWarning,
             fetchedCount: counters.fetched,
             createdCount: counters.created,
             updatedCount: counters.updated,
@@ -983,6 +1066,8 @@ export class RakutenRmsApiService {
                 lastSyncError: connection.lastSyncError,
               },
               changes: snapshots,
+              importIssues,
+              resolvedImportIssueIds: resolvedImportIssues.map((issue) => issue.id.toString()),
             }),
           },
         });
@@ -991,16 +1076,31 @@ export class RakutenRmsApiService {
           data: {
             ...(!hasConflicts && !input.truncated ? { lastOrdersSyncedAt: now } : {}),
             ...(!hasConflicts ? { lastSuccessfulSyncAt: finishedAt } : {}),
-            lastSyncError: hasConflicts
-              ? `${conflictCount} 条订单存在严格匹配冲突，请人工处理`
-              : incompleteByLimit
-                ? "本次预览设置了订单数量限制，同步水位未推进"
-                : null,
+            lastSyncError: importWarning,
           },
         });
         return snapshots;
       }, SYNC_TRANSACTION_OPTIONS);
+      // SMTP starts only after the import transaction has committed. Failure in
+      // this phase must never turn a committed import into a failed import.
+      let newOrderMail: unknown;
+      if (createdOrderIds.size && this.automation) {
+        try {
+          newOrderMail = await this.automation.sendImportedNewOrderMails(connection.id, [...createdOrderIds],
+            input.previewToken ? RakutenAutomationRunTrigger.manual : RakutenAutomationRunTrigger.scheduled);
+        } catch (error) {
+          const message = this.errorMessage(error);
+          this.logger.warn(`Rakuten import committed; new-order mail deferred: ${message}`);
+          newOrderMail = { deferred: true, error: message };
+        }
+      }
       return {
+        newOrderMail,
+        importIssues,
+        comboMissingOrderCount: importIssues.filter((issue) => issue.comboSkus.length).length,
+        productMissingOrderCount: importIssues.filter((issue) => issue.missingProductIds?.length).length,
+        catalogMissingOrderCount: importIssues.length,
+        importWarning,
         syncRunId: activeRun.id.toString(),
         connectionId: connectionKey,
         shopName: connection.shop.name,
@@ -1047,6 +1147,8 @@ export class RakutenRmsApiService {
     maxOrders?: number,
   ): Promise<{
     mappedItems: MappedRakutenItem[];
+    importIssues: CatalogImportIssue[];
+    resolvedIssueOrderIds: string[];
     searchedOrderCount: number;
     reconciledOrderCount: number;
     requestedOrderCount: number;
@@ -1064,29 +1166,57 @@ export class RakutenRmsApiService {
       dateType: ORDER_FIX_DATETIME_SEARCH_TYPE,
       orderProgressList: IMPORTABLE_ORDER_PROGRESS,
     });
-    const allOrderNumbers = Array.from(new Set(searchedOrderNumbers));
+    const pendingIssues = await this.prisma.rakutenOrderImportIssue.findMany({
+      where: { connectionId: connection.id, resolvedAt: null }, select: { orderId: true }, orderBy: { createdAt: 'asc' },
+    });
+    // A skipped order remains eligible after the normal incremental window has advanced.
+    const allOrderNumbers = Array.from(new Set([...pendingIssues.map((issue) => issue.orderId), ...searchedOrderNumbers]));
     const orderNumbers = maxOrders ? allOrderNumbers.slice(0, maxOrders) : allOrderNumbers;
     const orders = await this.client.getOrders(credentials.serviceSecret, credentials.licenseKey, orderNumbers);
+    const excludedOrders = orders.length ? await this.prisma.rakutenOrderSyncExclusion.findMany({
+      where: {
+        orderId: { in: orders.map((order) => this.pickText(order, 'orderNumber', 'OrderNumber')).filter(Boolean) },
+        OR: [{ rmsConnectionId: connection.id }, { rmsConnectionId: null, shopName: connection.shop.name }, { rmsConnectionId: null, shopName: null }],
+      }, select: { orderId: true, rmsItemKey: true, skuCode: true },
+    }) : [];
+    const excludedOrderIds = new Set(excludedOrders.filter((order) => !order.rmsItemKey && !order.skuCode).map((order) => order.orderId));
     const pendingShipmentOrders = orders.filter(
       (order) =>
-        this.pickText(order, "orderProgress", "OrderProgress") === String(PENDING_SHIPMENT_ORDER_PROGRESS),
+        this.pickText(order, "orderProgress", "OrderProgress") === String(PENDING_SHIPMENT_ORDER_PROGRESS)
+        && !excludedOrderIds.has(this.pickText(order, "orderNumber", "OrderNumber")),
     );
+    const importIssues: CatalogImportIssue[] = [];
+    const mappedItems = await this.mapOrders(pendingShipmentOrders, importIssues, excludedOrders);
+    const blockedOrderIds = new Set(importIssues.map((issue) => issue.orderId));
+    const inspectedOrderIds = pendingShipmentOrders.filter((order) => {
+      const packages = this.pickObjectList(order, 'PackageModelList', 'packageModelList');
+      return (packages.length ? packages : [order]).some((pkg) => this.pickObjectList(pkg, 'ItemModelList', 'itemModelList').length > 0);
+    }).map((order) => this.pickText(order, 'orderNumber', 'OrderNumber')).filter((orderId) => orderId && !blockedOrderIds.has(orderId));
+    const resolvedIssueOrderIds = [...new Set([
+      ...inspectedOrderIds,
+      ...excludedOrderIds,
+      ...orders.filter((order) => {
+        const progress = this.pickText(order, 'orderProgress', 'OrderProgress');
+        return ['100', '200', '400', '500', '600', '700', '800', '900'].includes(progress);
+      }).map((order) => this.pickText(order, 'orderNumber', 'OrderNumber')).filter(Boolean),
+    ])];
     return {
-      mappedItems: await this.mapOrders(pendingShipmentOrders),
+      mappedItems, importIssues, resolvedIssueOrderIds,
       searchedOrderCount: searchedOrderNumbers.length,
-      reconciledOrderCount: 0,
+      reconciledOrderCount: pendingIssues.filter((issue) => orderNumbers.includes(issue.orderId)).length,
       requestedOrderCount: orderNumbers.length,
       truncated: orderNumbers.length < allOrderNumbers.length,
     };
   }
 
-  private async mapOrders(orders: RakutenJsonObject[]): Promise<MappedRakutenItem[]> {
+  private async mapOrders(orders: RakutenJsonObject[], importIssues: CatalogImportIssue[] = [],
+    exclusions: Array<{ orderId: string; rmsItemKey: string | null; skuCode: string | null }> = [],
+  ): Promise<MappedRakutenItem[]> {
     const baseItems = orders.flatMap((order) => this.mapOrder(order));
     const comboSkus = Array.from(
       new Set(baseItems.map((item) => item.comboLookupSku ?? "").filter(Boolean)),
     );
-    if (!comboSkus.length) return baseItems;
-    const combos = await this.prisma.rakutenComboProduct.findMany({
+    const combos = comboSkus.length ? await this.prisma.rakutenComboProduct.findMany({
       where: { comboName: { in: comboSkus } },
       include: {
         items: {
@@ -1096,14 +1226,29 @@ export class RakutenRmsApiService {
           },
         },
       },
+    }) : [];
+    const keyOf = (sku: string) => sku.trim().toLowerCase();
+    const comboMap = new Map(combos.map((combo) => [keyOf(combo.comboName), combo] as const));
+    const missingByOrder = new Map<string, Set<string>>();
+    const itemCounts = new Map<string, number>();
+    for (const item of baseItems) {
+      itemCounts.set(item.orderId, (itemCounts.get(item.orderId) ?? 0) + 1);
+      const sku = item.comboLookupSku;
+      if (!sku) continue;
+      const combo = comboMap.get(keyOf(sku));
+      if (combo?.items.length && combo.items.every((component) => String(component.productId ?? '').trim())) continue;
+      const missing = missingByOrder.get(item.orderId) ?? new Set<string>();
+      missing.add(sku); missingByOrder.set(item.orderId, missing);
+    }
+    for (const [orderId, missing] of missingByOrder) importIssues.push({
+      orderId, comboSkus: [...missing], reason: `组合配置不存在或没有有效明细：${[...missing].join('、')}。请配置组合产品后重新导入。`,
+      skippedItemCount: itemCounts.get(orderId)!,
     });
-    const comboMap = new Map(combos.map((combo) => [combo.comboName, combo] as const));
-    const missing = comboSkus.filter((sku) => !comboMap.has(sku));
-    if (missing.length) throw new BadRequestException(`以下乐天组合SKU未配置组合产品：${missing.join("、")}`);
-    return baseItems.flatMap((item) => {
+    const expandedItems = baseItems.flatMap((item) => {
       const comboSku = item.comboLookupSku ?? "";
       if (!comboSku) return [item];
-      const combo = comboMap.get(comboSku);
+      if (missingByOrder.get(item.orderId)?.has(comboSku)) return [];
+      const combo = comboMap.get(keyOf(comboSku));
       return (combo?.items ?? []).map((component) => ({
         ...item,
         itemKey: this.compactItemKey(`${item.itemKey}|component:${component.productId}`),
@@ -1114,6 +1259,42 @@ export class RakutenRmsApiService {
         productName: component.product?.productName || item.productName,
       }));
     });
+    // Deleted/ignored items must not hold the remaining order for catalogue registration.
+    const exclusionsByOrder = new Map<string, typeof exclusions>();
+    for (const exclusion of exclusions) {
+      const scoped = exclusionsByOrder.get(exclusion.orderId) ?? [];
+      scoped.push(exclusion); exclusionsByOrder.set(exclusion.orderId, scoped);
+    }
+    const includedItems = expandedItems.filter((item) => !(exclusionsByOrder.get(item.orderId) ?? []).some((exclusion) =>
+      exclusion.rmsItemKey ? exclusion.rmsItemKey === item.itemKey
+        : exclusion.skuCode ? this.normalizeSku(exclusion.skuCode) === this.normalizeSku(item.skuCode) : true));
+    return this.filterMissingProducts(includedItems, importIssues);
+  }
+
+  private async filterMissingProducts(items: MappedRakutenItem[], importIssues: CatalogImportIssue[]): Promise<MappedRakutenItem[]> {
+    const ids = [...new Set(items.map((item) => String(item.skuCode ?? '').trim()).filter(Boolean))];
+    const products = ids.length ? await this.prisma.masterProduct.findMany({ where: { productId: { in: ids } }, select: { productId: true } }) : [];
+    const existingIds = new Set(products.map((product) => this.normalizeSku(product.productId)));
+    const issueByOrder = new Map(importIssues.map((issue) => [issue.orderId, issue]));
+    const missingByOrder = new Map<string, Set<string>>();
+    const counts = new Map<string, number>();
+    for (const item of items) {
+      counts.set(item.orderId, (counts.get(item.orderId) ?? 0) + 1);
+      const productId = String(item.skuCode ?? '').trim();
+      if (productId && existingIds.has(this.normalizeSku(productId))) continue;
+      const missing = missingByOrder.get(item.orderId) ?? new Set<string>();
+      missing.add(productId); missingByOrder.set(item.orderId, missing);
+    }
+    for (const [orderId, missing] of missingByOrder) {
+      const reason = `系统中不存在产品ID：${[...missing].map((id) => id || '（未提供产品ID）').join('、')}。请配置主产品或核对乐天商品的产品ID后重新导入。`;
+      const previous = issueByOrder.get(orderId);
+      if (previous) {
+        previous.missingProductIds = [...new Set([...(previous.missingProductIds ?? []), ...missing])];
+        previous.reason = `${previous.reason} ${reason}`;
+      } else importIssues.push({ orderId, comboSkus: [], missingProductIds: [...missing], reason, skippedItemCount: counts.get(orderId)! });
+    }
+    const blockedOrders = new Set(importIssues.map((issue) => issue.orderId));
+    return items.filter((item) => !blockedOrders.has(item.orderId));
   }
 
   private mapOrder(order: RakutenJsonObject): MappedRakutenItem[] {
@@ -1258,7 +1439,7 @@ export class RakutenRmsApiService {
       };
     }
     const exact = await db.rakutenOrderRecord.findUnique({
-      where: {
+      where: { deletedAt: null,
         rmsConnectionId_rmsItemKey: {
           rmsConnectionId: connection.id,
           rmsItemKey: item.itemKey,
@@ -1268,7 +1449,7 @@ export class RakutenRmsApiService {
     let existing = exact;
     if (!existing) {
       const candidates = await db.rakutenOrderRecord.findMany({
-        where: { orderId: item.orderId },
+        where: { deletedAt: null, ...rakutenOrderIdentityWhere(item.orderId) },
         orderBy: { id: "asc" },
       });
       const normalizedItemSku = this.normalizeSku(item.skuCode);
@@ -1371,8 +1552,8 @@ export class RakutenRmsApiService {
         AND: [
           {
             OR: [
-              { shopName: connection.shop.name },
-              { shopName: null, rmsConnectionId: connection.id },
+              { rmsConnectionId: connection.id },
+              { rmsConnectionId: null, shopName: connection.shop.name },
               { shopName: null, rmsConnectionId: null },
             ],
           },
@@ -1395,7 +1576,7 @@ export class RakutenRmsApiService {
     if (plan.existing) {
       const before = this.snapshotOrderRecord(plan.existing);
       const updated = await db.rakutenOrderRecord.update({
-        where: { id: plan.existing.id },
+        where: { deletedAt: null, id: plan.existing.id },
         data,
       });
       return {
@@ -1433,7 +1614,8 @@ export class RakutenRmsApiService {
       rmsConnectionId: connection.id,
       rmsItemKey: item.itemKey,
       sourceKind: "rms_api",
-      orderId: item.orderId,
+      orderId: existing?.rmsOrderId && existing.orderId !== existing.rmsOrderId ? existing.orderId : item.orderId,
+      rmsOrderId: item.orderId,
       itemDetailStatus: item.deliveryClass,
       skuCode: item.skuCode,
       isComboOrder: item.isComboOrder,
@@ -1462,7 +1644,11 @@ export class RakutenRmsApiService {
       productNameExtra: item.productNameExtra,
       sourceFileName: "Rakuten RMS API",
       sourceFilePath: `rms-api:${connection.id.toString()}`,
-      rawPayload: item.rawPayload,
+      rawPayload: this.toJson({ ...(item.rawPayload as Prisma.JsonObject),
+        ...((existing?.rawPayload as Prisma.JsonObject | null)?._wmsDeletedItemsAt ? {
+          _wmsDeletedItemsAt: (existing!.rawPayload as Prisma.JsonObject)._wmsDeletedItemsAt,
+        } : {}),
+      }),
       // csvImportedAt is the first time this record entered WMS. Re-syncing an
       // existing RMS item must only advance rmsLastSyncedAt; otherwise the UI's
       // "导入时间" changes whenever Rakuten returns the order again.
@@ -1556,6 +1742,7 @@ export class RakutenRmsApiService {
   private changedBusinessOrderFields(existing: RakutenOrderRecord, data: RakutenOrderWriteData): string[] {
     const syncMetadataFields = new Set([
       "rmsConnectionId",
+      "rmsOrderId",
       "rmsItemKey",
       "sourceKind",
       "sourceFileName",
@@ -1597,13 +1784,13 @@ export class RakutenRmsApiService {
     if (!plan.existing || !plan.manualActionType || !plan.observedHash) return;
     if (plan.existing.rmsManualActionObservedHash === plan.observedHash) {
       await db.rakutenOrderRecord.update({
-        where: { id: plan.existing.id },
+        where: { deletedAt: null, id: plan.existing.id },
         data: { rmsLastSyncedAt: detectedAt },
       });
       return;
     }
     await db.rakutenOrderRecord.update({
-      where: { id: plan.existing.id },
+      where: { deletedAt: null, id: plan.existing.id },
       data: {
         rmsManualActionType: plan.manualActionType,
         rmsManualActionChangedFields: this.toJson(plan.changedFields),
@@ -1639,6 +1826,7 @@ export class RakutenRmsApiService {
       sourceKind: row.sourceKind,
       rmsLastSyncedAt: row.rmsLastSyncedAt?.toISOString() ?? null,
       orderId: row.orderId,
+      rmsOrderId: originalRakutenOrderId(row),
       itemDetailStatus: row.itemDetailStatus,
       skuCode: row.skuCode,
       isComboOrder: row.isComboOrder,
@@ -1678,6 +1866,7 @@ export class RakutenRmsApiService {
       sourceKind: String(snapshot.sourceKind ?? "csv"),
       rmsLastSyncedAt: this.parseSnapshotDate(snapshot.rmsLastSyncedAt),
       orderId: this.snapshotNullableText(snapshot.orderId),
+      rmsOrderId: this.snapshotNullableText(snapshot.rmsOrderId ?? snapshot.orderId),
       itemDetailStatus: this.snapshotNullableText(snapshot.itemDetailStatus),
       skuCode: this.snapshotNullableText(snapshot.skuCode),
       isComboOrder: Boolean(snapshot.isComboOrder),
@@ -1787,9 +1976,6 @@ export class RakutenRmsApiService {
       lastOrdersSyncedAt: row.lastOrdersSyncedAt?.toISOString() ?? null,
       lastSuccessfulSyncAt: row.lastSuccessfulSyncAt?.toISOString() ?? null,
       lastSyncError: row.lastSyncError,
-      scheduledSyncEnabled: RAKUTEN_SCHEDULED_SYNC_ENABLED,
-      scheduledSyncCron: RAKUTEN_SYNC_CRON,
-      scheduledSyncTimezone: RAKUTEN_SYNC_TIMEZONE,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };

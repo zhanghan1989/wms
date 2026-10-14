@@ -22,9 +22,9 @@ describe('Rakuten delivery time slot', () => {
     expect(normalizeRakutenDeliveryTimeSlot(input)).toBe(expected);
   });
 
-  it('applies the manual-import normalization when mapping an API order', async () => {
+  it('retains the delivery-time normalization when mapping a registered API product', async () => {
     const service = new RakutenRmsApiService(
-      {} as PrismaService,
+      { masterProduct: { findMany: jest.fn().mockResolvedValue([{ productId: 'sku-1' }]) } } as unknown as PrismaService,
       {} as RakutenRmsApiClient,
       {} as RakutenRmsApiCryptoService,
     );

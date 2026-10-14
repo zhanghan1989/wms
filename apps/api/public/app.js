@@ -187,7 +187,6 @@ const state = {
   rakutenMailLoading: false,
   rakutenMailDetail: null,
   rakutenMailScopedConnectionId: "",
-  rakutenMailViewStates: new Map(),
   rakutenShopAutomationHealthItems: [],
   rakutenMailTemplates: [],
   rakutenMailTemplateVariables: [],
@@ -203,14 +202,6 @@ const state = {
   rakutenAutomationRunsTotal: 0,
   rakutenAutomationRunsLoading: false,
   rakutenApiImportPreview: null,
-  rakutenManualAutomationKind: "shipping",
-  rakutenManualAutomationItems: [],
-  rakutenManualAutomationSelected: new Set(),
-  rakutenManualAutomationLoading: false,
-  rakutenManualMailPage: 1,
-  rakutenManualMailPageSize: 30,
-  rakutenManualMailTotalOrders: 0,
-  rakutenManualMailTotalPages: 0,
   rakutenManualMailPreviewItem: null,
   rakutenShippingScopedConnectionId: "",
   rakutenShippingManagementItems: [],
@@ -3120,6 +3111,10 @@ async function openStartupView() {
 }
 
 function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
+  if (targetId === "rakutenMailManagement" || targetId === "rakutenShippingManagement") {
+    void openRakutenProcessingCenter({ view: "records", record: targetId === "rakutenShippingManagement" ? "shipping" : "mail" }).catch((error) => showToast(error.message, true));
+    return;
+  }
   if (markAsUserNavigation && state.token) {
     hasUserNavigatedSinceBootstrap = true;
   }
@@ -6580,8 +6575,8 @@ function renderShopsTable() {
           <button class="tiny-btn" data-action="editShop" data-id="${escapeHtml(item.id)}">${editing ? "确认变更" : "变更"}</button>
           ${platform === "rakuten"
             ? rakutenConnection
-              ? `<button class="tiny-btn ghost" data-action="manageRakutenMail" data-id="${escapeHtml(item.id)}">邮件管理${mailAttentionCount > 0 ? `<span class="shop-mail-badge" aria-label="${mailAttentionCount}项需要处理">${formatOverviewNumber(mailAttentionCount)}</span>` : ""}</button>
-                 <button class="tiny-btn ghost" data-action="manageRakutenShipping" data-id="${escapeHtml(item.id)}">回传单号管理</button>`
+              ? `<button class="tiny-btn ghost" data-action="manageRakutenCenter" data-id="${escapeHtml(item.id)}">自动处理中心${mailAttentionCount > 0 ? `<span class="shop-mail-badge" aria-label="${mailAttentionCount}项需要处理">${formatOverviewNumber(mailAttentionCount)}</span>` : ""}</button>
+`
               : `<button class="tiny-btn ghost" data-action="rakutenRmsApi" data-id="${escapeHtml(item.id)}">请先连接</button>`
             : ""}
           <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
@@ -6605,72 +6600,16 @@ async function loadRakutenRmsConnections() {
   return state.rakutenRmsConnections;
 }
 
-function captureRakutenMailViewState() {
-  const connectionId = String(state.rakutenMailScopedConnectionId || "");
-  if (!connectionId) return;
-  const fieldIds = [
-    "rakutenMailStatusFilter", "rakutenMailEventFilter", "rakutenMailOrderFilter",
-    "rakutenMailDateFromFilter", "rakutenMailDateToFilter", "rakutenAutomationRunStatusFilter",
-  ];
-  state.rakutenMailViewStates.set(connectionId, {
-    fields: Object.fromEntries(fieldIds.map((id) => [id, String($(id)?.value || "")])),
-    mailPage: state.rakutenMailPage,
-    runPage: state.rakutenAutomationRunsPage,
-    templateEvent: state.rakutenMailTemplateEvent,
-    scrollTop: Number(window.scrollY || document.documentElement?.scrollTop || 0),
-  });
-}
-
-function restoreRakutenMailViewState(connectionId) {
-  const saved = state.rakutenMailViewStates.get(String(connectionId || "")) || {};
-  Object.entries(saved.fields || {}).forEach(([id, value]) => {
-    if ($(id)) $(id).value = String(value || "");
-  });
-  state.rakutenMailPage = Math.max(1, Number(saved.mailPage || 1));
-  state.rakutenAutomationRunsPage = Math.max(1, Number(saved.runPage || 1));
-  state.rakutenMailTemplateEvent = String(saved.templateEvent || "new_order");
-  return Math.max(0, Number(saved.scrollTop || 0));
-}
-
 async function openRakutenMailManagementForShop(shopIdRaw) {
-  const shopId = String(shopIdRaw || "").trim();
-  if (!shopId) throw new Error("店铺不存在");
   await loadRakutenRmsConnections();
-  const connection = state.rakutenRmsConnections.find(
-    (item) => String(item?.shop?.id || "") === shopId,
-  );
+  const connection = state.rakutenRmsConnections.find((item) => String(item.shop?.id || "") === String(shopIdRaw || ""));
   if (!connection) throw new Error("请先为该店铺建立乐天 RMS API连接");
-  state.rakutenMailScopedConnectionId = String(connection.id || "");
-  renderRakutenMailConnectionFilter();
-  const scrollTop = restoreRakutenMailViewState(state.rakutenMailScopedConnectionId);
   closeModal("shopManageModal");
-  switchPanel("rakutenMailManagement");
-  await Promise.all([
-    loadRakutenMails(),
-    loadRakutenMailTemplates(),
-    loadRakutenAutomationHealth(),
-    loadRakutenAutomationRuns(),
-  ]);
-  requestAnimationFrame(() => window.scrollTo({ top: scrollTop, behavior: "auto" }));
+  await openRakutenProcessingCenter({ connectionId: String(connection.id) });
 }
 
 async function openRakutenShippingManagementForShop(shopIdRaw) {
-  const shopId = String(shopIdRaw || "").trim();
-  if (!shopId) throw new Error("店铺不存在");
-  await loadRakutenRmsConnections();
-  const connection = state.rakutenRmsConnections.find(
-    (item) => String(item?.shop?.id || "") === shopId,
-  );
-  if (!connection) throw new Error("请先为该店铺建立乐天 RMS API连接");
-  state.rakutenShippingScopedConnectionId = String(connection.id || "");
-  state.rakutenShippingManagementItems = [];
-  state.rakutenShippingManagementStats = {};
-  state.rakutenShippingManagementPage = 1;
-  setTextById("rakutenShippingManagementTitle", `${connection?.shop?.name || "乐天店铺"} / 回传单号管理`);
-  setTextById("rakutenShippingShopContext", `当前管理店铺：${connection?.shop?.name || "乐天店铺"}`);
-  closeModal("shopManageModal");
-  switchPanel("rakutenShippingManagement");
-  await loadRakutenShippingManagementActions();
+  return openRakutenMailManagementForShop(shopIdRaw);
 }
 
 function renderRakutenRmsSyncRuns() {
@@ -6698,7 +6637,7 @@ function renderRakutenRmsSyncRuns() {
             - Number(run?.updatedCount || 0)
             - Number(run?.skippedCount || 0),
         );
-        const result = `取得 ${formatOverviewNumber(run?.fetchedCount)} / 新增 ${formatOverviewNumber(run?.createdCount)} / 更新 ${formatOverviewNumber(run?.updatedCount)} / 无业务变化 ${formatOverviewNumber(unchangedCount)} / 跳过 ${formatOverviewNumber(run?.skippedCount)} / 待人工通知 ${formatOverviewNumber(run?.manualActionCount)}`;
+        const result = `取得 ${formatOverviewNumber(run?.fetchedCount)} / 新增 ${formatOverviewNumber(run?.createdCount)} / 更新 ${formatOverviewNumber(run?.updatedCount)} / 无业务变化 ${formatOverviewNumber(unchangedCount)} / 跳过 ${formatOverviewNumber(run?.skippedCount)} / 待人工处理 ${formatOverviewNumber(run?.manualActionCount)}`;
         const errorMessage = String(run?.errorMessage || "").trim();
         return `<tr>
       <td>${escapeHtml(displayText(run?.startedAt ? formatDate(run.startedAt) : null))}</td>
@@ -6748,7 +6687,7 @@ const RAKUTEN_FAILURE_CATEGORY_LABELS = {
   validation: "数据校验错误",
   rate_limit: "远端限流",
   temporary_remote: "临时网络或远端错误",
-  unknown: "未分类临时错误",
+  unknown: "无法判断的异常，需人工处理",
   max_attempts: "已达到自动重试上限",
   prerequisite: "前置邮件需人工处理",
   smtp_uncertain: "SMTP发送结果不确定",
@@ -6789,11 +6728,11 @@ function renderRakutenMailConnectionFilter() {
   );
   setTextById(
     "rakutenMailManagementTitle",
-    scopedConnection ? `${scopedConnection?.shop?.name || "乐天店铺"} / 邮件管理` : "乐天邮件管理",
+    scopedConnection ? `${scopedConnection?.shop?.name || "乐天店铺"} / 邮件记录` : "邮件记录",
   );
   setTextById(
     "rakutenMailShopContext",
-    scopedConnection ? `当前管理店铺：${scopedConnection?.shop?.name || "乐天店铺"}` : "当前管理店铺：-",
+    scopedConnection ? `当前店铺：${scopedConnection?.shop?.name || "乐天店铺"}` : "全部店铺",
   );
 }
 
@@ -6877,7 +6816,7 @@ function renderRakutenAutomationHealth() {
       <td data-label="启用功能">${escapeHtml(enabledFeatures)}</td>
       <td data-label="SMTP">${features.smtpReady ? "完整" : features.mailNotifications ? "配置不完整" : "未启用"}</td>
       <td data-label="License">${escapeHtml(licenseText)}</td>
-      <td data-label="任务状态">${escapeHtml(taskText)}</td>
+      <td data-label="任务状态">${escapeHtml(taskText)}<br>${item?.backlog?.oldestWaitingAt ? `最久等待 ${Number(item.backlog.oldestWaitingMinutes || 0)} 分钟；最近 ${Number(item.backlog.noProgressRounds || 0)} 轮无完成${item.backlog.historyLimitReached ? "（至少）" : ""}` : "无积压"}</td>
       <td data-label="最近成功">${escapeHtml(formatDate(latestSuccess))}</td>
       <td data-label="异常说明" class="rakuten-health-alerts">${alerts.length ? alerts.map((alert) => `• ${escapeHtml(alert)}`).join("<br>") : "-"}</td>
       <td data-label="操作">
@@ -7042,10 +6981,12 @@ function rakutenMailFilterQuery() {
 
 async function loadRakutenMails({ reset = false } = {}) {
   if (reset) state.rakutenMailPage = 1;
+  const query = rakutenMailFilterQuery();
   state.rakutenMailLoading = true;
   renderRakutenMails();
   try {
-    const result = await request(`/rakuten-rms-api/mails?${rakutenMailFilterQuery()}`) || {};
+    const result = await request(`/rakuten-rms-api/mails?${query}`) || {};
+    if (query !== rakutenMailFilterQuery()) return;
     state.rakutenMails = Array.isArray(result.items) ? result.items : [];
     state.rakutenMailStats = result.stats || {};
     state.rakutenMailTotal = Number(result.total || 0);
@@ -7121,7 +7062,7 @@ function renderRakutenMailTemplateEditor({ hydrate = false } = {}) {
     $("rakutenMailTemplateVersionMeta").textContent = state.rakutenMailTemplateLoading
       ? "正在读取模板..."
       : template
-        ? `当前启用：${template.isSystemDefault ? "系统默认" : `版本 ${template.version}`}`
+        ? template.isActive ? `当前启用：版本 ${template.version}` : "尚未启用；默认内容仅供编辑预览"
         : "请选择已配置乐天连接的店铺";
   }
   if (hydrate) {
@@ -7131,7 +7072,8 @@ function renderRakutenMailTemplateEditor({ hydrate = false } = {}) {
   }
   const variables = $("rakutenMailTemplateVariables");
   if (variables) {
-    variables.innerHTML = state.rakutenMailTemplateVariables.map((variable) =>
+    variables.innerHTML = state.rakutenMailTemplateVariables.filter((variable) =>
+      state.rakutenMailTemplateEvent !== "new_order" || ["buyer_name", "order_number", "signature"].includes(variable.key)).map((variable) =>
       `<button type="button" class="tiny-btn ghost" data-action="insertRakutenMailTemplateVariable" data-key="${escapeHtml(variable?.key)}" title="${escapeHtml(variable?.label)}">{{${escapeHtml(variable?.key)}}} · ${escapeHtml(variable?.label)}</button>`,
     ).join("") || '<span class="muted">读取模板后显示变量</span>';
   }
@@ -7197,6 +7139,7 @@ async function loadRakutenMailTemplates({ hydrate = true } = {}) {
   renderRakutenMailTemplateEditor();
   try {
     const result = await request(`/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/mail-templates`) || {};
+    if (connectionId !== String($("rakutenMailTemplateConnection")?.value || "")) return;
     state.rakutenMailTemplates = Array.isArray(result.templates) ? result.templates : [];
     state.rakutenMailTemplateVariables = Array.isArray(result.variables) ? result.variables : [];
     await loadRakutenMailTemplateHistory();
@@ -7246,8 +7189,9 @@ function renderRakutenSyncPreview(node, confirmButton, preview, context) {
     excluded: "已删除并禁止重新拉取",
     ignored: "人工忽略",
     conflict: "冲突",
+    catalog_missing: "整单跳过，商品配置待人工处理",
   };
-  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，无业务变化 ${formatOverviewNumber(summary.unchanged)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。`;
+  const summaryText = `明细统计：新增 ${formatOverviewNumber(summary.create)}，更新 ${formatOverviewNumber(summary.update)}，无业务变化 ${formatOverviewNumber(summary.unchanged)}，认领CSV ${formatOverviewNumber(summary.claim)}，冻结 ${formatOverviewNumber(summary.frozen)}，已删除排除 ${formatOverviewNumber(summary.excluded)}，人工忽略 ${formatOverviewNumber(summary.ignored)}，待日本人工通知中国 ${formatOverviewNumber(summary.manualAction)}，冲突 ${formatOverviewNumber(summary.conflict)}。商品配置缺失：${formatOverviewNumber(summary.catalogMissingOrderCount ?? summary.comboMissingOrderCount)} 个订单，整单跳过并等待人工配置。`;
   const itemRows = (Array.isArray(preview.items) ? [...preview.items] : [])
     .sort((left, right) => {
       const leftTime = new Date(String(left?.orderImportedAtRaw || "")).getTime();
@@ -7312,256 +7256,267 @@ function renderRakutenApiImportPreview() {
   );
 }
 
-function rakutenManualAutomationKey(item) {
-  return `${String(item?.kind || "")}:${String(item?.id || "")}`;
+let rakutenWorkflowPage = 1;
+let rakutenCenterView = "manual";
+let rakutenCenterRecord = "mail";
+let rakutenCenterRequestId = 0;
+const rakutenCenterSelected = new Set();
+let rakutenWorkflowResult = { items: [], total: 0, pageSize: 30 };
+
+function renderRakutenWorkflowStep(step, order) {
+  if (!step) return '<span class="muted">不适用</span>';
+  const labels = { waiting: "等待条件", ready: "可以执行", manual: "等待人工", retry: "执行异常", done: "已结束" };
+  const status = step.state === "manual" && ["sent", "skipped"].includes(step.status) ? "信息变化待核对" : step.status === "processing" ? "执行中" : step.outcome === "verified" ? "已核实完成" : step.outcome === "ignored" ? "已忽略" : step.status === "sent" ? "已完成" : step.status === "skipped" ? "已跳过" : step.status === "cancelled" ? "已取消" : labels[step.state] || "等待条件";
+  const key = `${order.connectionId}:${order.orderId}:${step.event}`;
+  const button = (action, text) => `<button type="button" class="tiny-btn${["workflowView", "workflowIgnore", "workflowIgnoreShipping", "workflowRetry"].includes(action) ? " ghost" : ""}" data-action="${action}" data-key="${escapeHtml(key)}">${text}</button>`;
+  const canReview = step.state === "manual" && step.requiresManualReview && /确认正文/.test(step.reason || "");
+  const actions = [];
+  if (step.executable && !step.requiresManualReview) {
+    const selected = typeof rakutenCenterSelected !== "undefined" && rakutenCenterSelected.has(key);
+    actions.push(`<label><input type="checkbox" data-center-select="${escapeHtml(key)}" ${selected ? "checked" : ""} /> 选择</label>`);
+  }
+  if (!step.id && ["new_order", "japan_shipped"].includes(step.event) && step.state === "manual" && /缺少/.test(step.reason || "")) {
+    actions.push(button("workflowCreateMail", `生成${step.label}任务`), button("workflowSkipMail", "确认无需发送"));
+  }
+  if (step.id && step.kind === "mail") actions.push(button("workflowView", "查看"));
+  if (step.executable || canReview) actions.push(button("workflowExecute", canReview ? "确认正文" : step.kind === "mail" ? "预览并发送" : "人工回传"));
+  if (step.status === "uncertain") actions.push(button("workflowMarkSent", "确认已发送"), button("workflowRetry", "确认重发"));
+  if (step.status === "dead_letter" || step.kind === "shipping" && step.state === "manual" && ["sent", "skipped"].includes(step.status)) actions.push(button("workflowRetry", "处理后重试"));
+  if (step.kind === "shipping" && ["pending", "failed", "dead_letter"].includes(step.status)) actions.push(button("workflowIgnoreShipping", "忽略回传"));
+  if (step.kind === "mail" && step.status === "pending") actions.push(button("workflowIgnore", "忽略"));
+  return `<div class="rakuten-manual-mail-stage"><strong>${escapeHtml(step.label)} · ${escapeHtml(status)}</strong>
+    ${step.reason ? `<small>${escapeHtml(step.reason)}</small>` : ""}
+    ${step.completedAt ? `<small>${escapeHtml(formatDate(step.completedAt))}</small>` : ""}
+    <div class="rakuten-manual-mail-stage-actions">${actions.join("")}</div></div>`;
 }
 
-function renderRakutenManualMailStage(item, emptyText) {
-  if (!item) return `<span class="muted">${escapeHtml(emptyText)}</span>`;
-  const key = rakutenManualAutomationKey(item);
-  const status = String(item?.status || "");
-  const statusLabel = rakutenMailStatusLabel(item);
-  const note = String(item?.blockedReason || item?.lastError || "").trim();
-  const sentAt = status === "sent" && item?.sentAt ? formatDate(item.sentAt) : "";
-  const ignoreAction = status === "pending"
-    ? `<button type="button" class="tiny-btn ghost" data-action="ignoreRakutenManualMail" data-id="${escapeHtml(item.id)}">忽略</button>`
-    : "";
-  const requiresManualReview = item?.requiresManualReview === true;
-  const sendAction = item?.executable === true
-    ? `<div class="rakuten-manual-mail-stage-actions">
-        ${requiresManualReview
-          ? ""
-          : `<label><input type="checkbox" data-action="selectRakutenManualAutomation" data-key="${escapeHtml(key)}" ${state.rakutenManualAutomationSelected.has(key) ? "checked" : ""} /> 选择</label>`}
-        <button type="button" class="tiny-btn${requiresManualReview ? " danger rakuten-mail-review-btn" : ""}" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">${requiresManualReview ? "待确认" : status === "failed" ? "重试" : "发送"}</button>
-        ${ignoreAction}
-      </div>`
-    : "";
-  const recoveryActions = status === "uncertain"
-    ? `<button type="button" class="tiny-btn" data-action="markRakutenManualMailSent" data-id="${escapeHtml(item.id)}">确认已发送</button><button type="button" class="tiny-btn" data-action="retryRakutenManualMail" data-id="${escapeHtml(item.id)}">确认重发</button>`
-    : status === "dead_letter"
-      ? `<button type="button" class="tiny-btn" data-action="retryRakutenManualMail" data-id="${escapeHtml(item.id)}">处理后重试</button>`
-      : "";
-  return `<div class="rakuten-manual-mail-stage" title="${escapeHtml(note)}">
-    <span class="rakuten-manual-mail-status status-${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>
-    ${sentAt ? `<small>${escapeHtml(sentAt)}</small>` : ""}
-    ${note ? `<small class="muted">${escapeHtml(note)}</small>` : ""}
-    <div class="rakuten-manual-mail-stage-actions"><button type="button" class="tiny-btn ghost" data-action="viewRakutenManualMail" data-id="${escapeHtml(item.id)}">查看</button>${recoveryActions}${item?.executable === true ? "" : ignoreAction}</div>
-    ${sendAction}
-  </div>`;
+function renderRakutenCenterWorkflows(result, view = rakutenCenterView) {
+  const manual = view === "manual";
+  const body = $("rakutenWorkflowBody");
+  $("rakutenWorkflowHead").innerHTML = manual
+    ? '<tr><th>店铺 / 订单</th><th>类型</th><th>需要处理</th><th>当前进度</th></tr>'
+    : '<tr><th>店铺 / 订单</th><th>类型</th><th>新規</th><th>单号回传</th><th>第一封邮件</th><th>第二封邮件</th><th>当前进度</th></tr>';
+  const summary = result.summary || {};
+  setTextById("rakutenCenterViewDescription", manual
+    ? `需要人工 ${Number(result.total || 0)} 个订单。确认正文、核实发送结果和异常恢复均在这里处理。`
+    : `处理中 ${Number(result.total || 0)} 个订单。等待条件、可执行和重试中的步骤会在这里展示。`);
+  if (body) body.innerHTML = (result.items || []).map((order) => {
+    const steps = order.steps || [];
+    const mailSteps = steps.filter((step) => step.kind === "mail" && step.event !== "new_order");
+    const type = { japan: "日本发", china: "中国发", mixed: "日中混发" }[order.fulfillmentType] || "-";
+    const start = `<tr><td>${escapeHtml(order.shopName)}<br>${escapeHtml(order.orderId)}${order.internalOrderIds?.some((id) => id !== order.orderId) ? `<small class="muted">内部包裹：${order.internalOrderIds.map(escapeHtml).join("、")}</small>` : ""}</td><td>${type}</td>`;
+    if (manual) return `${start}<td>${steps.filter((step) => step.state === "manual").map((step) => renderRakutenWorkflowStep(step, order)).join("")}<details class="rakuten-center-order-details"><summary>查看完整流程</summary>${steps.filter((step) => step.state !== "manual").map((step) => renderRakutenWorkflowStep(step, order)).join("")}</details></td><td>需要人工</td></tr>`;
+    return `${start}<td>${renderRakutenWorkflowStep(steps.find((step) => step.event === "new_order"), order)}</td>
+      <td>${renderRakutenWorkflowStep(steps.find((step) => step.kind === "shipping"), order)}</td>
+      <td>${renderRakutenWorkflowStep(mailSteps[0], order)}</td><td>${renderRakutenWorkflowStep(mailSteps[1], order)}</td><td>处理中</td></tr>`;
+  }).join("") || `<tr><td colspan="${manual ? 4 : 7}" class="muted">${manual ? "当前没有需要人工处理的订单。" : "当前没有处理中的订单。"}</td></tr>`;
+  const pages = Math.max(1, Math.ceil(Number(result.total || 0) / Number(result.pageSize || 30)));
+  setTextById("rakutenWorkflowPage", `第 ${rakutenWorkflowPage} / ${pages} 页，共 ${result.total || 0} 个订单`);
+  $("rakutenWorkflowPrev").disabled = rakutenWorkflowPage <= 1;
+  $("rakutenWorkflowNext").disabled = rakutenWorkflowPage >= pages;
+  document.querySelectorAll("[data-center-view]").forEach((button) => {
+    const kind = button.dataset.centerView;
+    const text = { manual: "需要人工", processing: "处理中", records: "处理记录", settings: "店铺设置" }[kind];
+    button.textContent = text + (summary[kind] === undefined ? "" : ` ${summary[kind]}`);
+  });
 }
 
-function renderRakutenManualMailOrders(items) {
-  const grouped = new Map();
-  for (const item of items) {
-    const key = `${String(item?.connectionId || "")}:${String(item?.orderId || "")}`;
-    const group = grouped.get(key) || {
-      connectionId: String(item?.connectionId || ""),
-      shopName: item?.shopName,
-      orderId: item?.orderId,
-      fulfillmentType: item?.fulfillmentType || "japan",
-      events: new Map(),
-    };
-    group.events.set(String(item?.event || ""), item);
-    grouped.set(key, group);
-  }
-  const fulfillmentLabels = { japan: "日本发", china: "中国发", mixed: "日中混发" };
-  return Array.from(grouped.values()).map((group) => {
-    const fulfillmentType = ["china", "mixed"].includes(group.fulfillmentType)
-      ? group.fulfillmentType
-      : "japan";
-    const firstEvent = fulfillmentType === "japan"
-      ? "japan_shipped"
-      : fulfillmentType === "china"
-        ? "china_delay"
-        : "mixed_partial";
-    const secondEvent = fulfillmentType === "china"
-      ? "china_customs"
-      : fulfillmentType === "mixed"
-        ? "mixed_customs"
-        : "";
-    const groupItems = Array.from(group.events.values());
-    const executableItems = groupItems.filter((item) => item?.executable === true);
-    const manualReviewCount = executableItems.filter((item) => item?.requiresManualReview === true).length;
-    const selectableItems = executableItems.filter((item) => item?.requiresManualReview !== true);
-    const selectedCount = selectableItems.filter((item) =>
-      state.rakutenManualAutomationSelected.has(rakutenManualAutomationKey(item))).length;
-    const attentionCount = groupItems.filter((item) =>
-      ["pending", "failed", "uncertain", "dead_letter"].includes(String(item?.status || ""))).length;
-    const progressText = executableItems.length
-      ? manualReviewCount
-        ? `待人工确认 ${manualReviewCount} 封`
-        : `可发送 ${executableItems.length} 封`
-      : attentionCount
-        ? "等待处理条件"
-        : "无需操作";
-    return `<tr class="${executableItems.length ? "" : "is-disabled"}">
-      <td>${selectableItems.length
-        ? `<span class="rakuten-manual-order-selection">${selectedCount}/${selectableItems.length}</span>`
-        : manualReviewCount
-          ? '<span class="danger-text">待确认</span>'
-        : '<span class="muted">—</span>'}</td>
-      <td>${escapeHtml(displayText(group.shopName))}</td>
-      <td>${escapeHtml(displayText(group.orderId))}</td>
-      <td>${escapeHtml(fulfillmentLabels[fulfillmentType])}</td>
-      <td>${renderRakutenManualMailStage(group.events.get("new_order"), "未生成")}</td>
-      <td>${renderRakutenManualMailStage(group.events.get(firstEvent), "等待单号回传")}</td>
-      <td>${secondEvent
-        ? renderRakutenManualMailStage(group.events.get(secondEvent), "等待通関許可")
-        : '<span class="muted">不适用</span>'}</td>
-      <td>${escapeHtml(progressText)}</td>
-    </tr>`;
-  }).join("");
+function updateRakutenCenterSelection() {
+  $("rakutenCenterBatchBar")?.classList.toggle("hidden", rakutenCenterSelected.size === 0);
+  setTextById("rakutenCenterSelectedCount", `已选 ${rakutenCenterSelected.size} 项`);
 }
 
-function renderRakutenManualAutomation() {
-  const body = $("rakutenManualAutomationBody");
-  if (!body) return;
-  const items = Array.isArray(state.rakutenManualAutomationItems)
-    ? state.rakutenManualAutomationItems.filter((item) => item?.kind === state.rakutenManualAutomationKind)
-    : [];
-  const executableItems = items.filter(
-    (item) => item?.executable === true && item?.requiresManualReview !== true,
-  );
-  const selectedKeys = state.rakutenManualAutomationSelected;
-  const selectedCount = executableItems.filter((item) => selectedKeys.has(rakutenManualAutomationKey(item))).length;
-  const selectAll = $("rakutenManualAutomationSelectAll");
-  if (selectAll) {
-    selectAll.disabled = state.rakutenManualAutomationLoading || executableItems.length === 0;
-    selectAll.checked = executableItems.length > 0 && selectedCount === executableItems.length;
-    selectAll.indeterminate = selectedCount > 0 && selectedCount < executableItems.length;
-  }
-  const executeButton = $("executeSelectedRakutenManualAutomationBtn");
-  if (executeButton) executeButton.disabled = state.rakutenManualAutomationLoading || selectedCount === 0;
-  setTextById("rakutenManualAutomationSelectionMeta", `已选择 ${selectedCount} 项`);
-  const isShipping = state.rakutenManualAutomationKind === "shipping";
-  $("rakutenManualMailFilters")?.classList.toggle("hidden", isShipping);
-  $("rakutenManualMailPager")?.classList.toggle("hidden", isShipping);
-  if (!isShipping) {
-    setTextById(
-      "rakutenManualMailPageMeta",
-      `第 ${state.rakutenManualMailPage} / ${Math.max(1, state.rakutenManualMailTotalPages)} 页，共 ${state.rakutenManualMailTotalOrders} 个待处理订单`,
-    );
-    const prev = $("prevRakutenManualMailPageBtn");
-    const next = $("nextRakutenManualMailPageBtn");
-    if (prev) prev.disabled = state.rakutenManualAutomationLoading || state.rakutenManualMailPage <= 1;
-    if (next) next.disabled = state.rakutenManualAutomationLoading || state.rakutenManualMailPage >= state.rakutenManualMailTotalPages;
-  }
-  const headRow = $("rakutenManualAutomationHeadRow");
-  if (headRow) {
-    const labels = isShipping
-      ? ["店铺", "订单号", "类型", "需要执行的内容", "状态", "说明", "操作"]
-      : ["店铺", "订单号", "发货类型", "新規", "第一封发货邮件", "第二封通关邮件", "当前进度"];
-    Array.from(headRow.children).slice(1).forEach((cell, index) => {
-      cell.textContent = labels[index] || "";
-    });
-    $("rakutenManualAutomationSelectAll")?.setAttribute(
-      "aria-label",
-      isShipping ? "选择全部可执行任务" : "选择全部可发送邮件",
-    );
-  }
-  const attentionStatuses = new Set(["pending", "failed", "uncertain", "dead_letter"]);
-  const blockedCount = items.filter((item) =>
-    attentionStatuses.has(String(item?.status || "")) && item?.executable !== true).length;
-  const sentCount = items.filter((item) => item?.status === "sent").length;
-  const summary = $("rakutenManualAutomationSummary");
-  if (summary) {
-    const orderCount = isShipping
-      ? new Set(items.map((item) => `${String(item?.connectionId || "")}:${String(item?.orderId || "")}`)).size
-      : state.rakutenManualMailTotalOrders;
-    const stats = isShipping
-      ? [["待确认回传", executableItems.length], ["暂不可执行", blockedCount]]
-      : [["订单", orderCount], ["当前可发送", executableItems.length], ["暂不可发送", blockedCount], ["已发送阶段", sentCount]];
-    summary.innerHTML = stats.map(([label, count]) => `<span class="rakuten-mail-stat">${escapeHtml(label)}<strong>${formatOverviewNumber(count)}</strong></span>`).join("");
-  }
-  if (state.rakutenManualAutomationLoading) {
-    body.innerHTML = '<tr><td colspan="8" class="muted">正在整理当前任务，请稍候...</td></tr>';
-    return;
-  }
-  if (!isShipping) {
-    body.innerHTML = renderRakutenManualMailOrders(items) || '<tr><td colspan="8" class="muted">当前没有需要发送邮件的订单。</td></tr>';
-    return;
-  }
-  body.innerHTML = items.map((item) => {
-    const key = rakutenManualAutomationKey(item);
-    const executable = item?.executable === true;
-    const kindLabel = item?.kind === "shipping" ? "单号回传" : RAKUTEN_MAIL_EVENT_LABELS[item?.event] || "发送邮件";
-    const status = String(item?.status || "");
-    const note = String(item?.blockedReason || item?.lastError || "").trim();
-    return `<tr class="${executable ? "" : "is-disabled"}">
-      <td><input type="checkbox" data-action="selectRakutenManualAutomation" data-key="${escapeHtml(key)}" ${selectedKeys.has(key) ? "checked" : ""} ${executable ? "" : "disabled"} /></td>
-      <td>${escapeHtml(displayText(item?.shopName))}</td>
-      <td>${escapeHtml(displayText(item?.orderId))}</td>
-      <td>${escapeHtml(kindLabel)}</td>
-      <td>${escapeHtml(displayText(item?.actionLabel))}</td>
-      <td>${escapeHtml(rakutenShippingStatusLabel(item))}</td>
-      <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
-      <td><div class="action-row">${executable ? `<button type="button" class="tiny-btn" data-action="executeRakutenManualAutomation" data-key="${escapeHtml(key)}">回传</button>` : '<span class="muted">请先处理异常</span>'}${["pending", "failed", "dead_letter"].includes(status) ? `<button type="button" class="tiny-btn ghost" data-action="ignoreRakutenManualShipping" data-id="${escapeHtml(item.id)}">忽略</button>` : ""}</div></td>
-    </tr>`;
-  }).join("") || '<tr><td colspan="8" class="muted">当前没有需要回传单号的任务。</td></tr>';
-}
-
-async function loadRakutenManualAutomationActions(kind = state.rakutenManualAutomationKind) {
-  const requestedKind = kind === "mail" ? "mail" : "shipping";
-  state.rakutenManualAutomationLoading = true;
-  state.rakutenManualAutomationSelected = new Set();
-  renderRakutenManualAutomation();
-  try {
-    const mailQuery = requestedKind === "mail" ? {
-      connectionId: String($("rakutenManualMailConnectionFilter")?.value || ""),
-      orderId: String($("rakutenManualMailOrderFilter")?.value || "").trim(),
-      fulfillmentType: String($("rakutenManualMailFulfillmentFilter")?.value || ""),
-      status: String($("rakutenManualMailStatusFilter")?.value || ""),
-      page: state.rakutenManualMailPage,
-      pageSize: state.rakutenManualMailPageSize,
-    } : {};
-    const result = await request("/rakuten-rms-api/automation/manual-actions/preview", {
-      method: "POST",
-      body: JSON.stringify({ kind: requestedKind, ...mailQuery }),
-    }) || {};
-    if (state.rakutenManualAutomationKind !== requestedKind) return;
-    state.rakutenManualAutomationItems = Array.isArray(result.items) ? result.items : [];
-    if (requestedKind === "mail") {
-      state.rakutenManualMailPage = Number(result.page || 1);
-      state.rakutenManualMailTotalOrders = Number(result.totalOrders || 0);
-      state.rakutenManualMailTotalPages = Number(result.totalPages || 0);
-    }
-    setTextById(
-      "rakutenManualAutomationMeta",
-      `整理时间：${result.generatedAt ? formatDate(result.generatedAt) : "-"}。定时自动执行当前为暂停状态；只有人工确认后才会${requestedKind === "shipping" ? "回传单号" : "发送邮件"}。`,
-    );
-  } finally {
-    if (state.rakutenManualAutomationKind === requestedKind) {
-      state.rakutenManualAutomationLoading = false;
-      renderRakutenManualAutomation();
+async function executeRakutenCenterSelection(button) {
+  const selected = [];
+  for (const order of rakutenWorkflowResult.items || []) {
+    for (const step of order.steps || []) {
+      const key = `${order.connectionId}:${order.orderId}:${step.event}`;
+      if (!rakutenCenterSelected.has(key) || !step.executable || step.requiresManualReview) continue;
+      selected.push({ kind: step.kind, id: step.id, ...(step.kind === "mail" ? { templateVersion: step.templateVersion } : {}) });
     }
   }
+  if (!selected.length) return;
+  const shipping = selected.filter((item) => item.kind === "shipping").length;
+  const mail = selected.length - shipping;
+  if (!await openActionConfirmModal(`确认回传 ${shipping} 项单号并发送 ${mail} 封邮件？需要单独确认正文的邮件不会包含在本次批量操作中。`, "确认批量执行", "确认执行")) return;
+  const result = await withBusyButton(button, "执行中...", () => request("/rakuten-rms-api/automation/manual-actions/execute", {
+    method: "POST", body: JSON.stringify({ items: selected }),
+  }));
+  const runs = result?.results || [];
+  const failed = runs.reduce((count, run) => count + Number(run.shipping?.failed || 0) + Number(run.mail?.failed || 0), 0);
+  showToast(failed ? `批量处理完成，${failed} 项失败，请核对结果` : "批量处理完成", failed > 0);
+  rakutenCenterSelected.clear();
+  updateRakutenCenterSelection();
+  await refreshRakutenProcessingCenter();
 }
 
-async function openRakutenManualAutomationWorklist(kind, button) {
-  const requestedKind = kind === "mail" ? "mail" : "shipping";
-  state.rakutenManualAutomationKind = requestedKind;
-  const isShipping = state.rakutenManualAutomationKind === "shipping";
-  if (!isShipping) {
-    state.rakutenManualMailPage = 1;
-    const select = $("rakutenManualMailConnectionFilter");
-    if (select) {
-      const selected = select.value;
-      select.innerHTML = '<option value="">全部店铺</option>' + state.rakutenRmsConnections
-        .filter((connection) => connection?.status === 1 && connection?.mailNotificationsEnabled === true)
-        .map((connection) => `<option value="${escapeHtml(connection.id)}">${escapeHtml(connection?.shop?.name || "-")}</option>`)
-        .join("");
-      select.value = selected;
-    }
+async function loadRakutenOrderWorkflows() {
+  const requestId = ++rakutenCenterRequestId;
+  const view = ["manual", "processing"].includes(rakutenCenterView) ? rakutenCenterView : "all";
+  const params = new URLSearchParams({ page: String(rakutenWorkflowPage), pageSize: "30", view });
+  if ($("rakutenWorkflowShop")?.value) params.set("connectionId", $("rakutenWorkflowShop").value);
+  if ($("rakutenWorkflowOrder")?.value.trim()) params.set("orderId", $("rakutenWorkflowOrder").value.trim());
+  const result = await request(`/rakuten-rms-api/automation/order-workflows?${params}`) || { items: [], total: 0, pageSize: 30 };
+  if (requestId !== rakutenCenterRequestId) return;
+  rakutenWorkflowResult = result;
+  const selectable = new Set((result.items || []).flatMap((order) => (order.steps || [])
+    .filter((step) => step.executable && !step.requiresManualReview)
+    .map((step) => `${order.connectionId}:${order.orderId}:${step.event}`)));
+  for (const key of rakutenCenterSelected) if (!selectable.has(key)) rakutenCenterSelected.delete(key);
+  updateRakutenCenterSelection();
+  setTextById("rakutenWorkflowMeta", "订单导入、物流查询、单号回传和邮件发送分别按下方开关运行，特殊事项交由人工确认。");
+  renderRakutenCenterWorkflows(result, view);
+}
+
+function syncRakutenCenterScope() {
+  rakutenImportIssuesPage = 1;
+  const connectionId = $("rakutenWorkflowShop")?.value || "";
+  state.rakutenMailScopedConnectionId = connectionId;
+  state.rakutenShippingScopedConnectionId = connectionId;
+  state.rakutenShippingManagementPage = 1;
+  state.rakutenMailPage = 1;
+  state.rakutenAutomationRunsPage = 1;
+  rakutenCenterSelected.clear();
+  updateRakutenCenterSelection();
+  if ($("rakutenMailConnectionFilter")) $("rakutenMailConnectionFilter").value = connectionId;
+  if ($("rakutenAutomationRunConnectionFilter")) $("rakutenAutomationRunConnectionFilter").value = connectionId;
+  renderRakutenMailConnectionFilter();
+  const connection = state.rakutenRmsConnections.find((item) => String(item.id) === connectionId);
+  setTextById("rakutenShippingShopContext", connection ? `当前店铺：${connection.shop?.name || "-"}` : "全部店铺");
+  setTextById("rakutenShippingManagementTitle", "单号回传记录");
+  const settingsConnections = connection ? [connection] : state.rakutenRmsConnections;
+  $("rakutenCenterConnectionActions").innerHTML = settingsConnections.map((item) =>
+    `<button type="button" class="ghost" data-center-shop-settings="${escapeHtml(item.shop?.id || "")}">${escapeHtml(item.shop?.name || "-")} · 连接与发送设置</button>`).join("") || '<span class="muted">请先在店铺管理建立乐天连接。</span>';
+}
+
+async function refreshRakutenProcessingCenter() {
+  const issues = loadRakutenImportIssues().catch((error) => {
+    setTextById("rakutenImportIssuesSummary", `导入待处理记录读取失败：${error.message}`);
+    $("rakutenImportIssuesPanel").classList.remove("hidden");
+  });
+  if (["manual", "processing"].includes(rakutenCenterView)) {
+    await Promise.all([loadRakutenOrderWorkflows(), issues]);
+  } else if (rakutenCenterView === "settings") {
+    await Promise.all([loadRakutenMailTemplates(), loadRakutenAutomationHealth(), issues]);
+  } else {
+    const records = rakutenCenterRecord === "shipping" ? loadRakutenShippingManagementActions()
+      : rakutenCenterRecord === "runs" ? loadRakutenAutomationRuns() : loadRakutenMails();
+    await Promise.all([records, issues]);
   }
-  setTextById("rakutenManualAutomationTitle", isShipping ? "单号回传" : "邮件发送");
-  setTextById(
-    "rakutenManualAutomationDescription",
-    isShipping
-      ? "仅适用于日本时间2026年9月1日起导入WMS的订单。这里只整理当前需要人工确认的单号回传任务；打开清单不会向乐天回传单号。"
-      : "仅适用于日本时间2026年9月1日起导入WMS的订单。这里只显示尚未全部发送完成的订单；新規邮件仅针对API新建订单，认领CSV不会重复生成。打开清单不会向买家发送邮件。",
-  );
-  openModal("rakutenManualAutomationModal");
-  await withBusyButton(button, "整理中...", () => loadRakutenManualAutomationActions(requestedKind));
+}
+
+async function selectRakutenCenterView(view, record = rakutenCenterRecord) {
+  if (!["manual", "processing", "records", "settings"].includes(view)) return;
+  ++rakutenCenterRequestId;
+  rakutenCenterView = view;
+  rakutenCenterSelected.clear();
+  updateRakutenCenterSelection();
+  rakutenCenterRecord = record;
+  rakutenWorkflowPage = 1;
+  $("rakutenWorkflowModal").querySelector(".rakuten-processing-center").dataset.view = view;
+  document.querySelectorAll("[data-center-view]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.centerView === view)));
+  $("rakutenCenterWorkflowContent").classList.toggle("hidden", !["manual", "processing"].includes(view));
+  $("rakutenCenterRecords").classList.toggle("hidden", view !== "records");
+  $("rakutenCenterSettings").classList.toggle("hidden", view !== "settings");
+  $("rakutenWorkflowOrderLabel").classList.toggle("hidden", view === "settings" || view === "records");
+  $("rakutenWorkflowFilter").classList.toggle("hidden", view === "settings" || view === "records");
+  $("rakutenMailManagement").classList.toggle("hidden", view !== "records" || record !== "mail");
+  $("rakutenShippingManagement").classList.toggle("hidden", view !== "records" || record !== "shipping");
+  $("rakutenCenterRunRecords").classList.toggle("hidden", view !== "records" || record !== "runs");
+  document.querySelectorAll("[data-center-record]").forEach((button) => button.classList.toggle("active", button.dataset.centerRecord === record));
+  if (["manual", "processing"].includes(view)) {
+    renderRakutenCenterWorkflows({ items: [], total: 0, pageSize: 30 }, view);
+    $("rakutenWorkflowBody").innerHTML = `<tr><td colspan="${view === "manual" ? 4 : 7}" class="muted">正在读取订单...</td></tr>`;
+    setTextById("rakutenCenterViewDescription", view === "manual" ? "正在整理需要人工处理的订单..." : "正在读取处理进度...");
+  }
+  await refreshRakutenProcessingCenter();
+}
+
+let rakutenScheduleTimer;
+let rakutenScheduleGeneration = 0;
+let rakutenScheduleSaving = false;
+let rakutenImportIssuesPage = 1;
+
+async function loadRakutenImportIssues() {
+  const page = rakutenImportIssuesPage;
+  const connectionId = $("rakutenWorkflowShop")?.value || "";
+  const orderId = $("rakutenWorkflowOrder")?.value.trim() || "";
+  const params = new URLSearchParams({ page: String(page) });
+  if (connectionId) params.set("connectionId", connectionId);
+  if (orderId) params.set("orderId", orderId);
+  const result = await request(`/rakuten-rms-api/automation/import-issues?${params}`);
+  if (page !== rakutenImportIssuesPage || connectionId !== ($("rakutenWorkflowShop")?.value || "") || orderId !== ($("rakutenWorkflowOrder")?.value.trim() || "")) return;
+  const pages = Math.max(1, Math.ceil(result.total / result.pageSize));
+  if (page > pages) { rakutenImportIssuesPage = pages; return loadRakutenImportIssues(); }
+  $("rakutenImportIssuesPanel").classList.toggle("hidden", !result.total);
+  setTextById("rakutenImportIssuesSummary", `导入等待人工处理：${result.total} 个订单`);
+  $("rakutenImportIssuesBody").innerHTML = (result.items || []).map((issue) => `<tr>
+    <td>${escapeHtml(issue.shopName)}</td><td>${escapeHtml(issue.orderId)}</td>
+    <td>${escapeHtml([
+      ...(Array.isArray(issue.comboSkus) && issue.comboSkus.length ? [`组合：${issue.comboSkus.join("、")}`] : []),
+      ...(Array.isArray(issue.missingProductIds) && issue.missingProductIds.length ? [`产品：${issue.missingProductIds.map((id) => id || "（未提供产品ID）").join("、")}`] : []),
+    ].join("；"))}</td>
+    <td>${escapeHtml(issue.reason)}</td></tr>`).join("") || '<tr><td colspan="4">没有待处理的导入订单</td></tr>';
+  setTextById("rakutenImportIssuesPage", `第 ${page} / ${pages} 页`);
+  $("rakutenImportIssuesPrev").disabled = page <= 1;
+  $("rakutenImportIssuesNext").disabled = page >= pages;
+}
+
+function renderRakutenSchedules(result) {
+  const statuses = { running: "正在执行", waiting: "等待下一轮", paused: "已暂停", interrupted: "上次执行中断", stopped: "定时调度未启动" };
+  const outcomes = { success: "完成", partial: "部分完成", failed: "失败", busy: "店铺忙碌", paused: "暂停", interrupted: "中断" };
+  const format = (value) => value ? new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Tokyo", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).format(new Date(value)) : "—";
+  for (const task of result.tasks || []) {
+    const row = document.querySelector(`[data-schedule-row="${task.key}"]`);
+    if (!row) continue;
+    const button = row.querySelector("[data-schedule-toggle]");
+    button.setAttribute("aria-checked", String(task.enabled));
+    button.textContent = task.enabled ? "已开启" : "已关闭";
+    button.classList.toggle("active", task.enabled);
+    button.disabled = rakutenScheduleSaving;
+    row.querySelector("[data-schedule-status]").textContent = `${statuses[task.status] || task.status}${task.status === "running" ? `（${format(task.startedAt)} 开始）` : ""}`;
+    row.querySelector("[data-schedule-next]").textContent = task.enabled ? format(task.nextRunAt) : "已关闭";
+    row.querySelector("[data-schedule-last]").textContent = task.lastStatus
+      ? `${outcomes[task.lastStatus] || task.lastStatus} · ${format(task.finishedAt)}${task.lastMessage ? ` · ${task.lastMessage}` : ""}` : "尚未执行";
+  }
+  setTextById("rakutenScheduleMeta", `状态每5秒刷新 · 更新于 ${format(result.serverTime)}。下一次为计划触发时间，前序任务未完成或上一轮仍在运行时，实际启动可能延后或跳过本轮；邮件开启后也会处理导入后的新订单通知。`);
+}
+
+function startRakutenSchedulePolling() {
+  clearTimeout(rakutenScheduleTimer);
+  const generation = ++rakutenScheduleGeneration;
+  const poll = async () => {
+    if (generation !== rakutenScheduleGeneration || $("rakutenWorkflowModal").classList.contains("hidden")) return;
+    if (!rakutenScheduleSaving) {
+      try {
+        const result = await request("/rakuten-rms-api/automation/schedules");
+        if (generation === rakutenScheduleGeneration && !rakutenScheduleSaving) renderRakutenSchedules(result);
+      } catch (error) {
+        if (generation === rakutenScheduleGeneration) setTextById("rakutenScheduleMeta", `状态读取失败：${error.message}；正在显示的状态可能已过期。`);
+      }
+    }
+    try { await loadRakutenImportIssues(); }
+    catch (error) { setTextById("rakutenImportIssuesSummary", `导入待处理记录读取失败：${error.message}`); $("rakutenImportIssuesPanel").classList.remove("hidden"); }
+    if (generation === rakutenScheduleGeneration) rakutenScheduleTimer = setTimeout(poll, 5000);
+  };
+  void poll();
+}
+
+async function openRakutenProcessingCenter({ connectionId = "", view = "manual", record = "mail" } = {}) {
+  await loadRakutenRmsConnections();
+  const select = $("rakutenWorkflowShop");
+  select.innerHTML = '<option value="">全部店铺</option>' + state.rakutenRmsConnections.map((connection) =>
+    `<option value="${escapeHtml(connection.id)}">${escapeHtml(connection.shop?.name || "-")}</option>`).join("");
+  select.value = connectionId;
+  rakutenCenterView = ["manual", "processing"].includes(view) ? view : "manual";
+  $("rakutenWorkflowOrder").value = "";
+  syncRakutenCenterScope();
+  openModal("rakutenWorkflowModal");
+  startRakutenSchedulePolling();
+  if (["manual", "processing"].includes(view)) await selectRakutenCenterView(view, record);
+  else { await loadRakutenOrderWorkflows(); await selectRakutenCenterView(view, record); }
 }
 
 async function previewRakutenManualMailAction(item, button) {
@@ -7590,9 +7545,9 @@ async function previewRakutenManualMailAction(item, button) {
   }
   if (reviewWarning) {
     const warningByReason = {
-      manual_update: "该订单在API导入后已由人工更新。请核对并按需要修改正文，确认后才会实际发送。",
-      combo_order: "该订单包含组合产品。请核对并按需要修改正文，确认后才会实际发送。",
-      manual_update_and_combo: "该订单在API导入后已由人工更新，并且包含组合产品。请核对并按需要修改正文，确认后才会实际发送。",
+      manual_update: "该订单的商品调整、数量或特殊说明需要人工核对。请确认并按需要修改正文后发送。",
+      combo_order: "该订单的组合商品或收件信息不完整。请核对商品、数量和收件资料，修改正文后发送。",
+      manual_update_and_combo: "该订单包含特殊说明且组合商品信息不完整。请核对并修改正文后发送。",
     };
     reviewWarning.textContent = warningByReason[preview.manualReviewReason]
       || "该订单需要人工确认。请核对并按需要修改正文，确认后才会实际发送。";
@@ -7607,8 +7562,9 @@ async function previewRakutenManualMailAction(item, button) {
 }
 
 async function executeRakutenManualAutomationItems(items, button, options = {}) {
+  const kind = items[0]?.kind;
   const selections = items.filter(
-    (item) => item?.executable === true && item?.kind === state.rakutenManualAutomationKind,
+    (item) => item?.executable === true && item?.kind === kind,
   ).map((item) => ({
     kind: item.kind,
     id: item.id,
@@ -7620,7 +7576,7 @@ async function executeRakutenManualAutomationItems(items, button, options = {}) 
     } : {}),
   }));
   if (!selections.length) return;
-  const isShipping = state.rakutenManualAutomationKind === "shipping";
+  const isShipping = kind === "shipping";
   const shopSummary = !isShipping
     ? Array.from(items.reduce((groups, item) => {
         const shop = String(item?.shopName || "未知店铺");
@@ -7651,7 +7607,8 @@ async function executeRakutenManualAutomationItems(items, button, options = {}) 
     ? `执行完成：回传成功 ${totals.shippingSent}、跳过 ${totals.shippingSkipped}、失败 ${totals.shippingFailed}`
     : `执行完成：邮件成功 ${totals.mailSent}、失败 ${totals.mailFailed}`,
   isShipping ? totals.shippingFailed > 0 : totals.mailFailed > 0);
-  await loadRakutenManualAutomationActions();
+  if (!$("rakutenWorkflowModal")?.classList.contains("hidden")) await refreshRakutenProcessingCenter();
+
 }
 
 function renderRakutenShippingManagement() {
@@ -7679,7 +7636,7 @@ function renderRakutenShippingManagement() {
     $("rakutenShippingManagementNextBtn").disabled = state.rakutenShippingManagementLoading || state.rakutenShippingManagementPage >= totalPages;
   }
   if (state.rakutenShippingManagementLoading) {
-    body.innerHTML = '<tr><td colspan="7" class="muted">正在读取单号回传记录，请稍候...</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="muted">正在读取单号回传记录，请稍候...</td></tr>';
     return;
   }
   body.innerHTML = items.map((item) => {
@@ -7687,6 +7644,7 @@ function renderRakutenShippingManagement() {
     const fulfillmentLabels = { japan: "全日本发", china: "全中国发", mixed: "日中混发" };
     const note = String(item?.lastError || (status === "sent" ? "回传成功" : status === "skipped" ? "已跳过回传" : "")).trim();
     return `<tr>
+      <td>${escapeHtml(displayText(item?.connection?.shop?.name))}</td>
       <td>${escapeHtml(displayText(item?.orderId))}</td>
       <td>${escapeHtml(fulfillmentLabels[item?.fulfillmentType] || displayText(item?.fulfillmentType))}</td>
       <td>${escapeHtml(rakutenShippingStatusLabel(item))}</td>
@@ -7695,21 +7653,20 @@ function renderRakutenShippingManagement() {
       <td>${escapeHtml(item?.updatedAt ? formatDate(item.updatedAt) : "-")}</td>
       <td title="${escapeHtml(note)}">${escapeHtml(note || "-")}</td>
     </tr>`;
-  }).join("") || '<tr><td colspan="7" class="muted">暂无单号回传记录。</td></tr>';
+  }).join("") || '<tr><td colspan="8" class="muted">暂无单号回传记录。</td></tr>';
 }
 
 async function loadRakutenShippingManagementActions({ reset = false } = {}) {
   const connectionId = String(state.rakutenShippingScopedConnectionId || "").trim();
-  if (!connectionId) throw new Error("请先选择要管理的乐天店铺");
   if (reset) state.rakutenShippingManagementPage = 1;
   state.rakutenShippingManagementLoading = true;
   renderRakutenShippingManagement();
   try {
     const params = new URLSearchParams({
-      connectionId,
       page: String(state.rakutenShippingManagementPage),
       pageSize: String(state.rakutenShippingManagementPageSize),
     });
+    if (connectionId) params.set("connectionId", connectionId);
     const orderId = String($("rakutenShippingManagementOrderFilter")?.value || "").trim();
     const status = String($("rakutenShippingManagementStatusFilter")?.value || "").trim();
     if (orderId) params.set("orderId", orderId);
@@ -7856,7 +7813,7 @@ function openRakutenRmsConnectionModal(shopId) {
   $("rakutenRmsConnectionMeta").textContent = connection
     ? `License到期：${connection.licenseExpiresAt ? formatDate(connection.licenseExpiresAt) : "未登记"} / 最后成功：${
         connection.lastSuccessfulSyncAt ? formatDate(connection.lastSuccessfulSyncAt) : "尚未同步"
-      } / 定时同步：${connection.scheduledSyncEnabled ? `已启用（${connection.scheduledSyncTimezone}）` : "服务器未启用"}${connection.lastSyncError ? ` / 错误：${connection.lastSyncError}` : ""}`
+      } / 定时同步：${"请在自动处理中心查看和设置"}${connection.lastSyncError ? ` / 错误：${connection.lastSyncError}` : ""}`
     : "尚未连接。请在乐天 RMS 的 WEB API 服务中启用 searchOrder 和 getOrder 后填写凭证。";
   state.rakutenRmsSyncRuns = [];
   state.rakutenRmsSyncRunsLoading = false;
@@ -10864,7 +10821,7 @@ function renderOrdersTable() {
       (item) => {
         const needsRemarkFix = shouldHighlightRakutenOrderRemark(item);
         const isShipmentRegistered = hasRegisteredShipmentNo(item);
-        const canDeleteRow = canBatchDeleteOrder(item);
+        const canDeleteRow = canBatchDeleteRakutenOrder(item);
         const editButtonClass = needsRemarkFix
           ? isShipmentRegistered
             ? "ghost compact-btn admin-order-edit-only"
@@ -10879,11 +10836,11 @@ function renderOrdersTable() {
       <tr>
         <td><input type="checkbox" data-action="rakutenOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
           state.selectedRakutenOrderIds.has(String(item.id)) ? "checked" : ""
-        } ${canDeleteRow ? "" : 'disabled title="已有运单号，不能批量删除"'} /></td>
+        } ${canDeleteRow ? "" : 'disabled title="订单已删除"'} /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
         <td><button type="button" class="inline-link-btn" data-action="openRakutenOrderDetail" data-id="${escapeHtml(
           item.id,
-        )}">${escapeHtml(displayText(item.orderId))}</button></td>
+        )}">${escapeHtml(displayText(item.orderId))}</button>${item.rmsOrderId && item.rmsOrderId !== item.orderId ? `<small class="muted">乐天原单：${escapeHtml(item.rmsOrderId)}</small>` : ""}</td>
         <td>${escapeHtml(displayText(item.skuCode))}</td>
         <td>${escapeHtml(displayText(item.resolvedProductId || item.skuCode))}</td>
         <td>${escapeHtml(displayText(item.resolvedProductName))}</td>
@@ -11135,6 +11092,10 @@ function canCurrentUserEditOrders() {
 
 function hasRegisteredShipmentNo(item) {
   return String(item?.shipmentNo || "").trim().length > 0;
+}
+
+function canBatchDeleteRakutenOrder(item) {
+  return !item?.deletedAt;
 }
 
 function canBatchDeleteOrder(item) {
@@ -12012,15 +11973,6 @@ async function loadMoreOrdersIfNeeded() {
   } finally {
     state.ordersLoading = false;
   }
-}
-
-async function importOrdersFile(file) {
-  const formData = new FormData();
-  formData.append("file", file);
-  return request("/orders/rakuten/import-csv", {
-    method: "POST",
-    body: formData,
-  });
 }
 
 function renderAmazonOrdersTable() {
@@ -13366,8 +13318,9 @@ function renderYamatoShipmentBatchControls() {
     reprintBtn.textContent = "补打面单";
   }
   if (completeBatchWorkBtn) {
-    completeBatchWorkBtn.disabled = !canScanPrint || isCompleted;
-    completeBatchWorkBtn.textContent = isCompleted ? "5.本批次作业已完成" : "5.确认完成本批次作业";
+    completeBatchWorkBtn.disabled = !currentBatch || currentBatch.status !== "pdf_ready";
+    completeBatchWorkBtn.textContent = state.selectedOverseasPickingBatchDetail?.workCompletedAt
+      ? "5.再次核对本批次出货" : "5.确认本批次作业完成及出货";
   }
   if (scanInput) {
     scanInput.disabled = !canScanPrint && !canReprint;
@@ -14357,37 +14310,6 @@ async function downloadAmazonShipmentConfirmationTxt(days) {
   return link.download;
 }
 
-async function downloadRakutenShipmentConfirmationCsv(days, options = {}) {
-  const response = await fetchAuthorizedResponse("/orders/rakuten/shipment-confirmation-csv", {
-    method: "POST",
-    body: JSON.stringify({ days, purpose: options.purpose || undefined }),
-  });
-  const skippedWithoutCustomsClearanceCount = Number(
-    response.headers.get("x-rakuten-shipment-confirmation-skipped-without-customs-clearance-count") || 0,
-  );
-  const blob = await response.blob();
-  const href = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = href;
-  link.download = resolveDownloadFileName(response, `rakuten_shipment_confirmation_${formatDateForFilename(new Date())}.csv`,
-  );
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(href);
-  return {
-    fileName: link.download,
-    skippedWithoutCustomsClearanceCount,
-  };
-}
-
-async function syncRakutenTrackingStatuses() {
-  return request("/orders/rakuten/sync-tracking-statuses", {
-    method: "POST",
-    body: "{}",
-  });
-}
-
 async function loadRakutenTrackingStatusSummary() {
   const summary = await request("/orders/rakuten/tracking-status-summary");
   renderRakutenTrackingStatusSummary(summary);
@@ -14735,7 +14657,7 @@ function syncSelectedManualOrderIds() {
 }
 
 function syncSelectedRakutenOrderIds() {
-  const selectableIds = new Set(state.orders.filter(canBatchDeleteOrder).map((item) => String(item.id)));
+  const selectableIds = new Set(state.orders.filter(canBatchDeleteRakutenOrder).map((item) => String(item.id)));
   state.selectedRakutenOrderIds = new Set(
     Array.from(state.selectedRakutenOrderIds).filter((id) => selectableIds.has(String(id))),
   );
@@ -14744,7 +14666,7 @@ function syncSelectedRakutenOrderIds() {
 function updateRakutenOrdersSelectAll() {
   const selectAll = $("rakutenOrdersSelectAll");
   if (!selectAll) return;
-  const selectable = state.orders.filter(canBatchDeleteOrder);
+  const selectable = state.orders.filter(canBatchDeleteRakutenOrder);
   if (!selectable.length) {
     selectAll.checked = false;
     selectAll.indeterminate = false;
@@ -14757,11 +14679,12 @@ function updateRakutenOrdersSelectAll() {
 }
 
 function updateRakutenBatchDeleteButtonState() {
-  const button = $("rakutenBatchDeleteBtn");
-  if (!button) return;
   const count = state.selectedRakutenOrderIds.size;
-  button.disabled = count <= 0;
-  button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
+  const button = $("rakutenBatchDeleteBtn");
+  if (button) {
+    button.disabled = count <= 0;
+    button.textContent = count > 0 ? `批量删除（${count}）` : "批量删除";
+  }
   const changeButton = $("rakutenBatchChangeOrderIdBtn");
   if (changeButton) {
     changeButton.disabled = count <= 0;
@@ -15766,32 +15689,7 @@ function bindForms() {
   $("orderSearchMatchesBody")?.addEventListener("click", handleOrderSearchDetailClick);
   $("orderSearchHistoryBody")?.addEventListener("click", handleOrderSearchDetailClick);
 
-  $("importRakutenOrdersForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const submitButton = getSubmitButton(form, event);
-    try {
-      await withBusyButton(submitButton, "导入中...", async () => {
-        const file = $("rakutenOrdersImportFile").files?.[0];
-        if (!file) {
-          throw new Error("请选择乐天订单文件");
-        }
-        const result = await importOrdersFile(file);
-        await loadOrders();
-        await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
-        form.reset();
-        showToast(
-          `乐天订单导入完成，新增 ${result.createdCount} 条，跳过 ${result.skippedCount} 条，来源文件 ${result.sourceFileName}`,
-          false,
-        );
-        closeModal("rakutenOrderImportModal");
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("rakutenBatchDeleteBtn").addEventListener("click", async (event) => {
+  $("rakutenBatchDeleteBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
       await withBusyButton(button, "删除中...", async () => {
@@ -15801,13 +15699,13 @@ function bindForms() {
         if (!ids.length) {
           throw new Error("请先选择要删除的乐天订单");
         }
-        const ok = await openDeleteConfirmModal(`确认批量删除 ${ids.length} 条乐天订单记录？`);
+        const ok = await openDeleteConfirmModal(`确认删除勾选的 ${ids.length} 条产品明细？后台逐单判断：选中该订单全部未删除产品时，按整单删除并停止整单后续处理；只选中部分产品时，保留其他产品继续处理，后续商品邮件需核对正文。判断包含其他页面和筛选外的产品。`);
         if (!ok) return;
         const result = await deleteRakutenOrders(ids);
         state.selectedRakutenOrderIds = new Set();
         await loadOrders();
         await Promise.all([loadOverseasOrderProcessingOrders(), loadChinaOrderProcessingOrders()]);
-        showToast(`已删除 ${Number(result?.deletedCount || 0)} 条乐天订单记录`);
+        showToast(`已删除 ${Number(result?.deletedCount || 0)} 条产品明细；整单删除 ${Number(result?.fullOrderCount || 0)} 单，部分产品删除 ${Number(result?.partialOrderCount || 0)} 单`);
       });
     } catch (error) {
       showToast(error.message, true);
@@ -15823,7 +15721,7 @@ function bindForms() {
       const currentOrderId = Array.from(currentOrderIds)[0];
       $("rakutenBatchCurrentOrderId").value = currentOrderId;
       $("rakutenBatchNewOrderId").value = "";
-      $("rakutenBatchChangeOrderIdSummary").textContent = `将修改所选 ${selectedRows.length} 条订单明细。`;
+      $("rakutenBatchChangeOrderIdSummary").textContent = `将所选 ${selectedRows.length} 条产品分配到新的内部包裹订单号。原乐天订单号保持关联，所有拆分包裹的单号将汇总回传。`;
       openModal("rakutenBatchChangeOrderIdModal");
       requestAnimationFrame(() => $("rakutenBatchNewOrderId")?.focus());
     } catch (error) {
@@ -16159,54 +16057,58 @@ function bindForms() {
     });
   });
 
-  document.querySelectorAll("button[data-action='downloadRakutenShipmentConfirmation']").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      const currentButton = event.currentTarget;
-      try {
-        await withBusyButton(currentButton, "下载中...", async () => {
-          const purpose = String(currentButton.dataset.purpose || "").trim();
-          const isDailyEmailCsv = purpose === "daily-email";
-          const summary = isDailyEmailCsv ? null : await loadRakutenTrackingStatusSummary();
-          const uncheckedCount = Number(summary?.uncheckedTrackingNoCount || 0);
-          if (!isDailyEmailCsv && uncheckedCount > 0) {
-            showToast(`仍有 ${uncheckedCount} 个快递单号未同步，本次下载按当前已同步状态生成`, true);
-          }
-          const result = await downloadRakutenShipmentConfirmationCsv(currentButton.dataset.days || "1", { purpose });
-          const skippedCount = Number(result.skippedWithoutCustomsClearanceCount || 0);
-          showToast(
-            !isDailyEmailCsv && skippedCount > 0
-              ? `已下载 ${result.fileName}，已跳过 ${skippedCount} 条未通関許可订单`
-              : `已下载 ${result.fileName}`,
-          );
-        });
-      } catch (error) {
-        showToast(error.message, true);
-      }
-    });
-  });
+  document.querySelectorAll("[data-schedule-toggle]").forEach((button) => button.addEventListener("click", async () => {
+    if (rakutenScheduleSaving) return;
+    rakutenScheduleSaving = true;
+    ++rakutenScheduleGeneration;
+    clearTimeout(rakutenScheduleTimer);
+    document.querySelectorAll("[data-schedule-toggle]").forEach((item) => { item.disabled = true; });
+    try {
+      const enabled = button.getAttribute("aria-checked") !== "true";
+      const result = await request(`/rakuten-rms-api/automation/schedules/${button.dataset.scheduleToggle}`, {
+        method: "PUT", body: JSON.stringify({ enabled }),
+      });
+      renderRakutenSchedules(result);
+      showToast(enabled ? "定时任务已开启，下一个计划时间启动" : "定时任务已关闭，已经开始的一轮会继续完成");
+    } catch (error) { showToast(error.message, true); }
+    finally {
+      rakutenScheduleSaving = false;
+      document.querySelectorAll("[data-schedule-toggle]").forEach((item) => { item.disabled = false; });
+      startRakutenSchedulePolling();
+    }
+  }));
 
-  document.querySelectorAll("button[data-action='syncRakutenTrackingStatuses']").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      const currentButton = event.currentTarget;
-      try {
-        await withBusyButton(currentButton, "同步中...", async () => {
-          const result = await syncRakutenTrackingStatuses();
-          renderRakutenTrackingStatusSummary(result);
-          await loadOrders();
-          showToast(
-            `已同步本轮快递状态：本轮上限 ${Number(result?.maxPerRun || 0)} 个，候选订单 ${Number(
-              result?.candidateCount || 0,
-            )} 条，快递单号 ${Number(
-              result?.trackingNoCount || 0,
-            )} 个，配達完了 ${Number(result?.deliveredCount || 0)} 个，通関許可 ${Number(
-              result?.customsClearanceCount || 0,
-            )} 个，失败 ${Number(result?.failedCount || 0)} 个，剩余未完成 ${Number(result?.pendingTrackingNoCount || 0)} 个`,
-          );
-        });
-      } catch (error) {
-        showToast(error.message, true);
-      }
+  $("rakutenImportIssuesProducts")?.addEventListener("click", () => {
+    closeModal("rakutenWorkflowModal");
+    $("openMasterProductManagementPanel").click();
+  });
+  $("rakutenImportIssuesConfigure")?.addEventListener("click", async () => {
+    try {
+      closeModal("rakutenWorkflowModal");
+      switchPanel("rakutenComboProductManagement");
+      await loadRakutenComboProducts({ reset: true });
+    } catch (error) { showToast(error.message, true); }
+  });
+  for (const [id, offset] of [["rakutenImportIssuesPrev", -1], ["rakutenImportIssuesNext", 1]]) {
+    $(id)?.addEventListener("click", async () => {
+      rakutenImportIssuesPage = Math.max(1, rakutenImportIssuesPage + offset);
+      try { await loadRakutenImportIssues(); } catch (error) { showToast(error.message, true); }
     });
+  }
+
+  $("rakutenWorkflowCheck")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "检查中...", async () => {
+        const result = await request("/rakuten-rms-api/processing/check", { method: "POST", body: "{}" });
+        await loadOrders();
+        await loadRakutenOrderWorkflows();
+        const labels = { import: "订单导入", tracking: "物流同步", shipping: "单号回传", mail: "邮件发送" };
+        const statuses = { success: "完成", partial: "部分完成", failed: "失败", paused: "暂停", busy: "正在执行其他任务" };
+        const stages = Object.entries(result?.stages || {}).filter(([key]) => key !== "automation");
+        const issues = stages.some(([, stage]) => ["partial", "failed", "busy"].includes(stage.status));
+        showToast(stages.map(([key, stage]) => `${labels[key]}：${statuses[stage.status]}${stage.errors?.length ? `（${stage.errors.join("；")}）` : ""}`).join("；"), issues);
+      });
+    } catch (error) { showToast(error.message, true); }
   });
 
   $("amazonOrdersSelectAll").addEventListener("change", (event) => {
@@ -16225,7 +16127,7 @@ function bindForms() {
 
   $("rakutenOrdersSelectAll").addEventListener("change", (event) => {
     const checked = Boolean(event.target.checked);
-    const selectableIds = state.orders.filter(canBatchDeleteOrder).map((item) => String(item.id));
+    const selectableIds = state.orders.filter(canBatchDeleteRakutenOrder).map((item) => String(item.id));
     state.selectedRakutenOrderIds = checked ? new Set(selectableIds) : new Set();
     renderOrdersTable();
   });
@@ -17593,10 +17495,11 @@ function bindForms() {
   $("overseasCompleteBatchWorkBtn")?.addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
+      if (!await openActionConfirmModal("确认本批次日本侧包裹已实际出货？系统会检查全部面单打印完成且没有待完成的打印或补打任务。确认后，符合条件的乐天日本发订单将按自动化设置回传单号并发送日本発邮件。", "确认实际出货", "确认作业完成及出货")) return;
       await withBusyButton(button, "检查中...", async () => {
         await withGlobalLoading("正在检查本批次面单打印状态，请稍候...", confirmOverseasBatchWorkComplete);
         await openActionConfirmModal(
-          "检查完成，当前批次所有面单均已打印，本批次作业已完成。",
+          "检查完成，已记录本批次作业完成及实际出货确认。",
           "本批次作业完成",
           "确认",
           { showCancel: false },
@@ -17692,10 +17595,6 @@ function bindForms() {
     switchPanel("orderProcessing");
   });
 
-  $("openRakutenOrderImportModal").addEventListener("click", () => {
-    openModal("rakutenOrderImportModal");
-  });
-
   $("openRakutenApiImportModal")?.addEventListener("click", async (event) => {
     try {
       await withBusyButton(event.currentTarget, "读取中...", () => openRakutenApiImportModal());
@@ -17704,145 +17603,100 @@ function bindForms() {
     }
   });
 
-  $("openRakutenManualShippingModal")?.addEventListener("click", async (event) => {
-    try {
-      await openRakutenManualAutomationWorklist("shipping", event.currentTarget);
-    } catch (error) {
-      showToast(error.message, true);
-    }
+  $("openRakutenWorkflowModal")?.addEventListener("click", async (event) => {
+    try { await withBusyButton(event.currentTarget, "读取中...", () => openRakutenProcessingCenter()); } catch (error) { showToast(error.message, true); }
   });
-
-  $("openRakutenManualMailModal")?.addEventListener("click", async (event) => {
-    try {
-      await openRakutenManualAutomationWorklist("mail", event.currentTarget);
-    } catch (error) {
-      showToast(error.message, true);
-    }
+  document.querySelectorAll("[data-center-view]").forEach((button) => button.addEventListener("click", async () => {
+    try { await selectRakutenCenterView(button.dataset.centerView); } catch (error) { showToast(error.message, true); }
+  }));
+  document.querySelectorAll("[data-center-record]").forEach((button) => button.addEventListener("click", async () => {
+    try { await selectRakutenCenterView("records", button.dataset.centerRecord); } catch (error) { showToast(error.message, true); }
+  }));
+  $("rakutenWorkflowShop")?.addEventListener("change", async () => {
+    syncRakutenCenterScope();
+    rakutenWorkflowPage = 1;
+    try { await refreshRakutenProcessingCenter(); } catch (error) { showToast(error.message, true); }
   });
-
-  $("refreshRakutenManualAutomationBtn")?.addEventListener("click", async (event) => {
-    try {
-      await withBusyButton(
-        event.currentTarget,
-        "整理中...",
-        () => loadRakutenManualAutomationActions(state.rakutenManualAutomationKind),
-      );
-    } catch (error) {
-      showToast(error.message, true);
-    }
+  $("rakutenCenterConnectionActions")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-center-shop-settings]");
+    if (button) openRakutenRmsConnectionModal(button.dataset.centerShopSettings);
   });
-
-  $("rakutenManualAutomationSelectAll")?.addEventListener("change", (event) => {
-    const selected = event.currentTarget.checked;
-    state.rakutenManualAutomationSelected = new Set(
-      selected
-        ? state.rakutenManualAutomationItems
-            .filter((item) => item?.kind === state.rakutenManualAutomationKind)
-            .filter((item) => item?.executable === true)
-            .map(rakutenManualAutomationKey)
-        : [],
-    );
-    renderRakutenManualAutomation();
-  });
-
-  $("rakutenManualAutomationBody")?.addEventListener("change", (event) => {
-    const checkbox = event.target.closest("input[data-action='selectRakutenManualAutomation']");
+  $("rakutenWorkflowBody")?.addEventListener("change", (event) => {
+    const checkbox = event.target.closest("input[data-center-select]");
     if (!checkbox) return;
-    const key = String(checkbox.dataset.key || "");
-    if (checkbox.checked) state.rakutenManualAutomationSelected.add(key);
-    else state.rakutenManualAutomationSelected.delete(key);
-    renderRakutenManualAutomation();
+    if (checkbox.checked) rakutenCenterSelected.add(checkbox.dataset.centerSelect);
+    else rakutenCenterSelected.delete(checkbox.dataset.centerSelect);
+    updateRakutenCenterSelection();
   });
-
-  $("rakutenManualAutomationBody")?.addEventListener("click", async (event) => {
+  $("rakutenCenterExecuteSelected")?.addEventListener("click", async (event) => {
+    try { await executeRakutenCenterSelection(event.currentTarget); } catch (error) { showToast(error.message, true); }
+  });
+  $("rakutenWorkflowModal")?.addEventListener("click", async (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) return;
-    const action = String(button.dataset.action || "");
-    const mailId = String(button.dataset.id || "");
-    try {
-      if (action === "ignoreRakutenManualShipping") {
-        const confirmed = await openActionConfirmModal(
-          "确认忽略这个单号回传任务吗？请仅在已经人工回传单号，或确认无需由系统回传时执行。忽略后任务会从当前清单移除，并保留在回传记录中。",
-          "确认忽略单号回传",
-          "确认忽略",
-        );
-        if (!confirmed) return;
-        await withBusyButton(button, "处理中...", () => request(
-          `/rakuten-rms-api/automation/manual-actions/shipping/${encodeURIComponent(mailId)}/ignore`,
-          { method: "POST", body: "{}" },
-        ));
-        showToast("单号回传任务已忽略");
-        await loadRakutenManualAutomationActions("shipping");
-        return;
-      }
-      if (action === "viewRakutenManualMail") {
-        await openRakutenMailDetail(mailId);
-        return;
-      }
-      if (action === "retryRakutenManualMail" || action === "markRakutenManualMailSent") {
-        const label = action === "retryRakutenManualMail" ? "确认将该邮件恢复为待发送吗？" : "确认该邮件已经发送成功吗？";
-        if (!await openActionConfirmModal(label, "确认处理", "确认")) return;
-        const endpoint = action === "retryRakutenManualMail" ? "retry" : "mark-sent";
-        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(mailId)}/${endpoint}`, { method: "POST" }));
-        await loadRakutenManualAutomationActions("mail");
-        return;
-      }
-      if (action === "ignoreRakutenManualMail") {
-        const confirmed = await openActionConfirmModal(
-          "确认忽略这封待发送邮件吗？忽略后不会发送本邮件，并允许继续执行该订单的下一封邮件。",
-          "确认忽略邮件",
-          "确认忽略",
-        );
-        if (!confirmed) return;
-        await withBusyButton(button, "处理中...", () => request(
-          `/rakuten-rms-api/mails/${encodeURIComponent(mailId)}/ignore`,
-          { method: "POST" },
-        ));
-        showToast("邮件已忽略，后续邮件阶段可以继续处理");
-        await loadRakutenManualAutomationActions("mail");
-        return;
-      }
-    } catch (error) {
-      showToast(error.message, true);
-      return;
+    if (button.dataset.action === "closeRakutenWorkflow") { closeModal("rakutenWorkflowModal"); return; }
+    let order, step;
+    for (const candidate of rakutenWorkflowResult.items || []) {
+      const found = candidate.steps.find((item) => `${candidate.connectionId}:${candidate.orderId}:${item.event}` === button.dataset.key);
+      if (found) { order = candidate; step = found; break; }
     }
-    if (action !== "executeRakutenManualAutomation") return;
-    const item = state.rakutenManualAutomationItems.find(
-      (candidate) => candidate?.kind === state.rakutenManualAutomationKind &&
-        rakutenManualAutomationKey(candidate) === String(button.dataset.key || ""),
-    );
-    if (!item) return;
+    if (!step) return;
     try {
-      if (item.kind === "mail") await previewRakutenManualMailAction(item, button);
-      else await executeRakutenManualAutomationItems([item], button);
-    } catch (error) {
-      showToast(error.message, true);
-    }
+      const action = button.dataset.action;
+      if (action === "workflowCreateMail" || action === "workflowSkipMail") {
+        const create = action === "workflowCreateMail";
+        if (!await openActionConfirmModal(create ? `确认补建${step.label}邮件任务？请先核实发送记录，确认外部尚未发送或明确需要重发；符合条件后程序会发送。` : `确认无需发送${step.label}邮件，并允许后续流程继续？`, "确认处理", "确认")) return;
+        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/automation/order-workflows/${encodeURIComponent(order.connectionId)}/${encodeURIComponent(order.orderId)}/missing-mail`, {
+          method: "POST", body: JSON.stringify({ event: step.event, mode: create ? "create" : "ignore" }),
+        }));
+        await loadRakutenOrderWorkflows();
+        return;
+      }
+      if (!step.id) return;
+      if (action === "workflowIgnoreShipping") {
+        if (!await openActionConfirmModal("确认已由外部回传或无需系统回传，忽略此任务？这不会认定相关邮件已发送。", "确认忽略回传", "确认忽略")) return;
+        await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/automation/manual-actions/shipping/${encodeURIComponent(step.id)}/ignore`, { method: "POST", body: "{}" }));
+        await refreshRakutenProcessingCenter();
+        return;
+      }
+      if (action === "workflowView") { await openRakutenMailDetail(step.id); return; }
+      if (action === "workflowExecute") {
+        const item = { ...step, executable: true, connectionId: order.connectionId, orderId: order.orderId, shopName: order.shopName };
+        if (step.kind === "mail") await previewRakutenManualMailAction(item, button);
+        else { await executeRakutenManualAutomationItems([item], button); await loadRakutenOrderWorkflows(); }
+        return;
+      }
+      const label = action === "workflowIgnore" ? "忽略此邮件，不发送并允许后续阶段继续？"
+        : action === "workflowMarkSent" ? "已核实外部邮件发送情况，确认已发送或无需重发？"
+        : step.kind === "mail" && step.status === "uncertain" ? "请先核实邮件服务器和人工发送记录。只有确认此邮件尚未发送，才能重发；无法确认时请保持待确认。已核实未发送并确认重发？"
+        : "确认重试此任务？店铺如已暂停，仍需在店铺设置中单独恢复。";
+      if (!await openActionConfirmModal(label, "确认处理", "确认")) return;
+      const endpoint = action === "workflowIgnore" ? "ignore" : action === "workflowMarkSent" ? "mark-sent" : "retry";
+      if (step.kind === "mail") await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/mails/${encodeURIComponent(step.id)}/${endpoint}`, { method: "POST" }));
+      else await withBusyButton(button, "处理中...", () => request(`/rakuten-rms-api/connections/${encodeURIComponent(order.connectionId)}/automation/retry`, { method: "POST", body: JSON.stringify({ kind: "shipping", id: step.id }) }));
+      await loadRakutenOrderWorkflows();
+    } catch (error) { showToast(error.message, true); }
   });
-
-  $("applyRakutenManualMailFiltersBtn")?.addEventListener("click", async () => {
-    state.rakutenManualMailPage = 1;
-    try { await loadRakutenManualAutomationActions("mail"); } catch (error) { showToast(error.message, true); }
+  $("rakutenWorkflowPrepare")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "整理中...", async () => {
+        await request("/rakuten-rms-api/automation/tasks/prepare", {
+          method: "POST", body: JSON.stringify({ connectionId: $("rakutenWorkflowShop")?.value || undefined }),
+        });
+        await loadRakutenOrderWorkflows();
+      });
+      showToast("待处理任务已整理，未回传单号或发送邮件");
+    } catch (error) { showToast(error.message, true); }
   });
-
-  $("resetRakutenManualMailFiltersBtn")?.addEventListener("click", async () => {
-    ["rakutenManualMailConnectionFilter", "rakutenManualMailOrderFilter", "rakutenManualMailFulfillmentFilter", "rakutenManualMailStatusFilter"]
-      .forEach((id) => { const control = $(id); if (control) control.value = ""; });
-    state.rakutenManualMailPage = 1;
-    try { await loadRakutenManualAutomationActions("mail"); } catch (error) { showToast(error.message, true); }
-  });
-
-  $("prevRakutenManualMailPageBtn")?.addEventListener("click", async () => {
-    if (state.rakutenManualMailPage <= 1) return;
-    state.rakutenManualMailPage -= 1;
-    try { await loadRakutenManualAutomationActions("mail"); } catch (error) { showToast(error.message, true); }
-  });
-
-  $("nextRakutenManualMailPageBtn")?.addEventListener("click", async () => {
-    if (state.rakutenManualMailPage >= state.rakutenManualMailTotalPages) return;
-    state.rakutenManualMailPage += 1;
-    try { await loadRakutenManualAutomationActions("mail"); } catch (error) { showToast(error.message, true); }
-  });
+  for (const id of ["rakutenWorkflowFilter", "rakutenWorkflowRefresh", "rakutenWorkflowPrev", "rakutenWorkflowNext"]) {
+    $(id)?.addEventListener("click", async (event) => {
+      if (id !== "rakutenWorkflowRefresh") { rakutenCenterSelected.clear(); updateRakutenCenterSelection(); }
+      if (id === "rakutenWorkflowFilter") rakutenWorkflowPage = 1;
+      if (id === "rakutenWorkflowPrev") rakutenWorkflowPage = Math.max(1, rakutenWorkflowPage - 1);
+      if (id === "rakutenWorkflowNext") rakutenWorkflowPage += 1;
+      try { await withBusyButton(event.currentTarget, "读取中...", refreshRakutenProcessingCenter); } catch (error) { showToast(error.message, true); }
+    });
+  }
 
   $("confirmRakutenManualMailSendBtn")?.addEventListener("click", async (event) => {
     const item = state.rakutenManualMailPreviewItem;
@@ -17858,18 +17712,6 @@ function bindForms() {
       await executeRakutenManualAutomationItems([executionItem], event.currentTarget, { skipConfirm: true });
       state.rakutenManualMailPreviewItem = null;
       closeModal("rakutenManualMailPreviewModal");
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("executeSelectedRakutenManualAutomationBtn")?.addEventListener("click", async (event) => {
-    const items = state.rakutenManualAutomationItems.filter(
-      (item) => item?.kind === state.rakutenManualAutomationKind &&
-        state.rakutenManualAutomationSelected.has(rakutenManualAutomationKey(item)),
-    );
-    try {
-      await executeRakutenManualAutomationItems(items, event.currentTarget);
     } catch (error) {
       showToast(error.message, true);
     }
@@ -17964,7 +17806,7 @@ function bindForms() {
     const previewToken = String(state.rakutenApiImportPreview?.previewToken || "").trim();
     if (!connectionId || !previewToken) return;
     const confirmed = await openActionConfirmModal(
-      `将按照当前预览把 ${connection?.shop?.name || "该店铺"} 的乐天订单正式写入系统。确定继续吗？`,
+      `将按照当前预览把 ${connection?.shop?.name || "该店铺"} 的乐天订单正式写入系统；自动发送已启用时，符合条件的新規邮件会在导入后立即发送。确定继续吗？`,
       "确认乐天 API 导入",
       "确认同步",
     );
@@ -17980,19 +17822,11 @@ function bindForms() {
       closeModal("rakutenApiImportModal");
       await Promise.all([loadOrders(), loadRakutenRmsConnections()]);
       showToast(
-        `乐天 API 导入完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，无业务变化 ${formatOverviewNumber(result?.unchanged)}，跳过 ${formatOverviewNumber(result?.skipped)}`,
+        `乐天 API 导入完成：取得 ${formatOverviewNumber(result?.fetched)}，新增 ${formatOverviewNumber(result?.created)}，更新 ${formatOverviewNumber(result?.updated)}，无业务变化 ${formatOverviewNumber(result?.unchanged)}，跳过 ${formatOverviewNumber(result?.skipped)}${result?.catalogMissingOrderCount ? `；${result.catalogMissingOrderCount} 个订单缺少商品配置，请到自动处理中心处理` : ""}${result?.newOrderMail ? `；新規已发送 ${formatOverviewNumber(result.newOrderMail.sent || 0)} 封，未发送任务请查看处理中心` : ""}`,
       );
     } catch (error) {
       showToast(error.message, true);
     }
-  });
-
-  $("closeRakutenOrderImportModal").addEventListener("click", () => {
-    closeModal("rakutenOrderImportModal");
-  });
-
-  $("cancelRakutenOrderImportModal").addEventListener("click", () => {
-    closeModal("rakutenOrderImportModal");
   });
 
   $("closeRakutenBatchChangeOrderIdModal")?.addEventListener("click", () => {
@@ -18873,7 +18707,6 @@ function bindDelegates() {
   }
   $("backToRakutenShopManagementBtn")?.addEventListener("click", async () => {
     try {
-      captureRakutenMailViewState();
       state.shopManagePlatform = "rakuten";
       state.shopEditingIds = new Set();
       await Promise.all([
@@ -18915,7 +18748,6 @@ function bindDelegates() {
         return;
       }
       if (button.dataset.action === "openRakutenHealthConnection") {
-        captureRakutenMailViewState();
         openRakutenRmsConnectionModal(String(button.dataset.shopId || ""));
         return;
       }
@@ -19433,7 +19265,7 @@ function bindDelegates() {
         openAmazonSpApiConnectionModal(id);
       } else if (action === "rakutenRmsApi") {
         openRakutenRmsConnectionModal(id);
-      } else if (action === "manageRakutenMail") {
+      } else if (action === "manageRakutenCenter" || action === "manageRakutenMail") {
         await openRakutenMailManagementForShop(id);
       } else if (action === "manageRakutenShipping") {
         await openRakutenShippingManagementForShop(id);
@@ -21090,11 +20922,6 @@ function bindDelegates() {
     const rakutenApiImportClose = event.target.closest("button[data-action='closeRakutenApiImportModal']");
     if (rakutenApiImportClose) {
       closeModal("rakutenApiImportModal");
-      return;
-    }
-    const rakutenManualAutomationClose = event.target.closest("button[data-action='closeRakutenManualAutomationModal']");
-    if (rakutenManualAutomationClose) {
-      closeModal("rakutenManualAutomationModal");
       return;
     }
     const rakutenManualMailPreviewClose = event.target.closest("button[data-action='closeRakutenManualMailPreviewModal']");

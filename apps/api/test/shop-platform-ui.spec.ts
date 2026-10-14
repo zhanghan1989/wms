@@ -81,8 +81,9 @@ describe('dynamic shop platform UI', () => {
     state.shopManagePlatform = 'rakuten';
     context.renderShopsTable();
     expect(elements.shopsBody.innerHTML).toContain('data-action="rakutenRmsApi"');
-    expect(elements.shopsBody.innerHTML).toContain('data-action="manageRakutenMail"');
-    expect(elements.shopsBody.innerHTML).toContain('data-action="manageRakutenShipping"');
+    expect(elements.shopsBody.innerHTML).toContain('data-action="manageRakutenCenter"');
+    expect(elements.shopsBody.innerHTML).not.toContain('data-action="manageRakutenMail"');
+    expect(elements.shopsBody.innerHTML).not.toContain('data-action="manageRakutenShipping"');
   });
 
   it('filters manual order shops by platform and removes a previous platform selection', () => {

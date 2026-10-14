@@ -2858,7 +2858,7 @@ async function getOverviewDashboardByProduct(
       },
     }),
     service.prisma.rakutenOrderRecord.findMany({
-      where: rakutenShipmentOrderFilter,
+      where: { ...(rakutenShipmentOrderFilter), deletedAt: null },
       orderBy: { shipmentNoRegisteredAt: 'desc' },
       select: {
         id: true,

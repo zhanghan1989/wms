@@ -435,6 +435,7 @@ model RakutenRmsConnection {
   shop                     Shop                         @relation(fields: [shopId], references: [id], onDelete: Cascade)
   syncRuns                 RakutenRmsSyncRun[]
   syncPreviews             RakutenRmsSyncPreview[]
+  importIssues             RakutenOrderImportIssue[]
   orderRecords             RakutenOrderRecord[]
   orderMails               RakutenOrderMail[]
   shippingReports          RakutenOrderShippingReport[]
@@ -444,6 +445,37 @@ model RakutenRmsConnection {
   @@index([status])
   @@index([automationLockedAt], map: "idx_rakuten_connection_automation_lock")
   @@map("rakuten_rms_connections")
+}
+
+model RakutenOrderImportIssue {
+  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId BigInt   @map("connection_id") @db.UnsignedBigInt
+  orderId      String   @map("order_id") @db.VarChar(64)
+  comboSkus    Json     @map("combo_skus")
+  missingProductIds Json? @map("missing_product_ids")
+  reason       String   @db.Text
+  resolvedAt   DateTime? @map("resolved_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  connection   RakutenRmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, orderId], map: "uq_rakuten_import_issue_order")
+  @@index([resolvedAt, connectionId], map: "idx_rakuten_import_issue_pending")
+  @@map("rakuten_order_import_issues")
+}
+
+model RakutenScheduleControl {
+  key           String    @id @db.VarChar(32)
+  enabled       Boolean
+  runToken      String?   @map("run_token") @db.VarChar(64)
+  heartbeatAt   DateTime? @map("heartbeat_at")
+  startedAt     DateTime? @map("started_at")
+  finishedAt    DateTime? @map("finished_at")
+  lastStatus    String?   @map("last_status") @db.VarChar(32)
+  lastMessage   String?   @map("last_message") @db.Text
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@map("rakuten_schedule_controls")
 }
 
 model RakutenAutomationRun {
@@ -1122,6 +1154,10 @@ model RakutenOrderRecord {
   id                             BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   rmsConnectionId                BigInt?               @map("rms_connection_id") @db.UnsignedBigInt
   rmsItemKey                     String?               @map("rms_item_key") @db.VarChar(191)
+  deletedAt                      DateTime?             @map("deleted_at")
+  deletedBy                      BigInt?               @map("deleted_by") @db.UnsignedBigInt
+  warehouseShippedAt             DateTime?             @map("warehouse_shipped_at")
+  warehouseShippedBy             BigInt?               @map("warehouse_shipped_by") @db.UnsignedBigInt
   sourceKind                     String                @default("csv") @map("source_kind") @db.VarChar(16)
   rmsLastSyncedAt                DateTime?             @map("rms_last_synced_at")
   rmsManualOverrideAt            DateTime?             @map("rms_manual_override_at")
@@ -1135,6 +1171,7 @@ model RakutenOrderRecord {
   rmsManualActionResolvedBy      String?               @map("rms_manual_action_resolved_by") @db.VarChar(64)
   rowHash                        String                @unique @map("row_hash") @db.Char(40)
   orderId                        String?               @map("order_id") @db.VarChar(64)
+  rmsOrderId                     String?               @map("rms_order_id") @db.VarChar(64)
   itemDetailStatus               String?               @map("item_detail_status") @db.VarChar(64)
   skuCode                        String?               @map("sku_code") @db.VarChar(128)
   isComboOrder                   Boolean               @default(false) @map("is_combo_order")
@@ -1187,6 +1224,8 @@ model RakutenOrderRecord {
   @@index([rmsConnectionId, orderImportedDate], map: "idx_rakuten_orders_dashboard_scope")
   @@index([rmsManualOverrideAt], map: "idx_rakuten_rms_manual_override")
   @@index([rmsManualActionDetectedAt, rmsManualActionResolvedAt], map: "idx_rakuten_rms_manual_action")
+  @@index([deletedAt, orderId], map: "idx_rakuten_order_deleted")
+  @@index([rmsConnectionId, rmsOrderId], map: "idx_rakuten_original_order")
   @@index([orderId])
   @@index([mallOrderNo])
   @@index([skuCode])
@@ -1392,6 +1431,8 @@ model OverseasPickingBatch {
   confirmedBy BigInt?                    @map("confirmed_by") @db.UnsignedBigInt
   confirmedAt DateTime?                  @map("confirmed_at")
   remark      String?                    @db.VarChar(255)
+  workCompletedAt DateTime?                  @map("work_completed_at")
+  workCompletedBy BigInt?                    @map("work_completed_by") @db.UnsignedBigInt
   createdAt   DateTime                   @default(now()) @map("created_at")
   updatedAt   DateTime                   @updatedAt @map("updated_at")
   items       OverseasPickingBatchItem[]

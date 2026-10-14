@@ -2716,10 +2716,6 @@ td {
   margin-top: 24px;
 }
 
-.modal-card.rakuten-manual-automation-card {
-  width: min(1380px, 100%);
-}
-
 .rakuten-manual-automation-table-wrap {
   max-height: 58vh;
 }
@@ -2728,20 +2724,6 @@ td {
   min-width: 1120px;
 }
 
-.rakuten-manual-mail-filters {
-  display: grid;
-  grid-template-columns: 1fr 1.2fr 1fr 1fr auto auto;
-  gap: 10px;
-  align-items: end;
-  margin: 10px 0 14px;
-}
-
-.rakuten-manual-mail-filters label {
-  display: grid;
-  gap: 5px;
-  font-size: 12px;
-  color: var(--muted);
-}
 
 .rakuten-manual-mail-pager {
   display: flex;
@@ -2780,11 +2762,6 @@ td {
   font-weight: 800;
 }
 
-.rakuten-manual-automation-table-wrap tr.is-disabled td {
-  background: #f7f8f7;
-  color: var(--muted);
-}
-
 .rakuten-manual-mail-stage {
   display: grid;
   min-width: 178px;
@@ -2792,33 +2769,7 @@ td {
   align-content: start;
 }
 
-.rakuten-manual-mail-status {
-  display: inline-flex;
-  width: fit-content;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: #eef2ef;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
 
-.rakuten-manual-mail-status.status-pending,
-.rakuten-manual-mail-status.status-failed {
-  background: #fff2dc;
-  color: #8a5800;
-}
-
-.rakuten-manual-mail-status.status-sent {
-  background: #e8f7f0;
-  color: #08734e;
-}
-
-.rakuten-manual-mail-status.status-uncertain,
-.rakuten-manual-mail-status.status-dead_letter {
-  background: #fde9e9;
-  color: #a52d2d;
-}
 
 .rakuten-manual-mail-stage small {
   display: block;
@@ -2845,17 +2796,7 @@ td {
   margin: 0;
 }
 
-@media (max-width: 900px) {
-  .rakuten-manual-mail-filters {
-    grid-template-columns: 1fr 1fr;
-  }
-}
 
-.rakuten-manual-order-selection {
-  white-space: nowrap;
-  color: var(--muted);
-  font-size: 12px;
-}
 
 .rakuten-shipping-management-table-wrap table {
   min-width: 1120px;
@@ -4423,3 +4364,56 @@ button.danger-solid {
   color: #b42318;
   font-weight: 700;
 }
+
+/* Rakuten: one processing center, secondary tools disclosed on demand. */
+.rakuten-entry-menu { position: relative; }
+.rakuten-entry-menu > summary { cursor: pointer; padding: 8px 12px; border: 1px solid var(--line); border-radius: 7px; font-size: 13px; list-style: none; }
+.rakuten-entry-menu > summary::-webkit-details-marker { display: none; }
+.rakuten-entry-menu > summary::after { content: " ▾"; }
+.rakuten-entry-menu-content { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 200px; display: grid; gap: 8px; padding: 12px; background: #fff; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px #0002; }
+.modal-card.rakuten-processing-center { width: min(1440px, 100%); max-height: 94vh; overflow-y: auto; }
+.rakuten-center-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin: 14px 0; }
+.rakuten-center-toolbar label, .rakuten-center-tools label { display: grid; gap: 5px; font-size: 12px; color: var(--muted); }
+.rakuten-center-toolbar label { min-width: 190px; }
+.rakuten-center-toolbar .rakuten-entry-menu { margin-left: auto; }
+.rakuten-center-tools { left: auto; right: 0; width: 280px; }
+.rakuten-center-status { padding: 10px 12px; background: #f1f7f3; border-radius: 8px; font-size: 13px; }
+.rakuten-center-tabs, .rakuten-center-record-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.rakuten-center-tabs button, .rakuten-center-record-tabs button { background: white; color: var(--muted); border: 1px solid var(--line); }
+.rakuten-center-tabs button[aria-selected="true"], .rakuten-center-record-tabs button.active { background: var(--accent); color: white; }
+.rakuten-center-record-panel .panel-head h2 { font-size: 16px; }
+.rakuten-processing-center[data-view="manual"] .rakuten-manual-automation-table-wrap table { min-width: 720px; }
+.rakuten-processing-center .rakuten-manual-mail-stage { padding: 8px 0; }
+@media (max-width: 700px) {
+  .rakuten-center-toolbar label { min-width: 0; flex: 1 1 140px; }
+  .rakuten-center-toolbar .rakuten-entry-menu { margin-left: 0; }
+  .rakuten-center-tabs button { flex: 1 1 42%; }
+  .rakuten-center-tools { left: 0; right: auto; width: min(280px, 80vw); }
+}
+
+.rakuten-center-order-details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.rakuten-center-order-details > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.rakuten-processing-center > .modal-head > button { flex: 0 0 auto; white-space: nowrap; }
+@media (max-width: 900px) {
+  .rakuten-processing-center[data-view="manual"] .rakuten-manual-automation-table-wrap table { min-width: 0; width: 100%; }
+  .rakuten-processing-center[data-view="manual"] .rakuten-manual-automation-table-wrap thead { display: none; }
+  .rakuten-processing-center[data-view="manual"] .rakuten-manual-automation-table-wrap tbody { display: block; }
+  .rakuten-processing-center[data-view="manual"] .rakuten-manual-automation-table-wrap tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid var(--line); padding: 8px 0; }
+  .rakuten-processing-center[data-view="manual"] .rakuten-manual-automation-table-wrap td { border: 0; max-width: none; overflow-wrap: anywhere; }
+  .rakuten-processing-center[data-view="manual"] .rakuten-manual-automation-table-wrap td:nth-child(3) { grid-column: 1 / -1; }
+  .rakuten-processing-center[data-view="manual"] .rakuten-manual-automation-table-wrap td:nth-child(4) { display: none; }
+}
+
+.rakuten-schedules { padding: 12px; border: 1px solid #dde5df; border-radius: 8px; margin-bottom: 14px; }
+.rakuten-schedules table { width: 100%; font-size: 13px; }
+.rakuten-schedules [role="switch"][aria-checked="true"] { color: #fff; background: #28744b; border-color: #28744b; }
+.rakuten-schedules td:last-child { max-width: 360px; overflow-wrap: anywhere; }
+
+.rakuten-schedules .table-scroll { overflow-x: auto; }
+.rakuten-schedules table { min-width: 720px; }
+
+.rakuten-import-issues { padding: 12px; border: 1px solid #e5c983; background: #fffaf0; border-radius: 8px; margin-bottom: 14px; }
+.rakuten-import-issues > summary { cursor: pointer; font-weight: 600; }
+.rakuten-import-issues .table-scroll { overflow-x: auto; }
+.rakuten-import-issues table { width: 100%; min-width: 640px; font-size: 13px; }
+.rakuten-import-issues td { overflow-wrap: anywhere; }

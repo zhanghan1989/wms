@@ -1,6 +1,5 @@
 import { OrdersService } from '../src/orders/orders.service';
 import * as XLSX from 'xlsx';
-import * as iconv from 'iconv-lite';
 
 describe('OrdersService', () => {
   it('ignores historical picking batches in the new creation gate', async () => {
@@ -70,184 +69,6 @@ describe('OrdersService', () => {
     });
   });
 
-  it("includes China shipment detail labels in the Rakuten daily email CSV without applying the customs gate", async () => {
-    const importedAt = new Date();
-    const rows = [
-      {
-        id: 1n,
-        orderId: "MIXED-ORDER",
-        dispatchMode: "overseas",
-        shipmentNo: null,
-        shipmentCompany: null,
-        shipmentNoRegisteredAt: null,
-        csvImportedAt: importedAt,
-        rawPayload: {},
-        rmsManualActionDetectedAt: null,
-        rmsManualActionResolvedAt: null,
-      },
-      {
-        id: 2n,
-        orderId: "MIXED-ORDER",
-        dispatchMode: "china_pending",
-        shipmentNo: null,
-        shipmentCompany: null,
-        shipmentNoRegisteredAt: null,
-        csvImportedAt: importedAt,
-        rawPayload: {},
-        rmsManualActionDetectedAt: null,
-        rmsManualActionResolvedAt: null,
-      },
-    ];
-    const service = new OrdersService({
-      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
-    } as any);
-    jest.spyOn(service as any, "loadRakutenShipmentReturnContext").mockResolvedValue({
-      chinaDispatchOrderRecordIdsByOrderId: new Map([["MIXED-ORDER", new Set(["2"])]]),
-      blockedOrderIds: new Set(["MIXED-ORDER"]),
-    });
-
-    const file = await service.buildRakutenShipmentConfirmationCsv({ days: 1, purpose: "daily-email" });
-    const csv = iconv.decode(file.content, "cp932");
-
-    expect(file.rowCount).toBe(2);
-    expect(csv).toContain('"MIXED-ORDER","","中国発あり"');
-    expect(csv).toContain('"MIXED-ORDER","","中国発"');
-  });
-
-  it("blocks every line of a mixed Rakuten order until all China shipments clear customs", async () => {
-    const registeredAt = new Date("2026-08-18T01:00:00.000Z");
-    const rows = [
-      {
-        id: 1n,
-        orderId: "MIXED-ORDER",
-        dispatchMode: "overseas",
-        shipmentNo: "JP-TRACKING",
-        shipmentCompany: "Yamato",
-        shipmentNoRegisteredAt: registeredAt,
-        csvImportedAt: registeredAt,
-        rawPayload: {},
-      },
-      {
-        id: 2n,
-        orderId: "MIXED-ORDER",
-        dispatchMode: "china_pending",
-        shipmentNo: "CN-TRACKING",
-        shipmentCompany: "Xiya",
-        shipmentNoRegisteredAt: registeredAt,
-        csvImportedAt: registeredAt,
-        rawPayload: {},
-      },
-      {
-        id: 3n,
-        orderId: "JAPAN-ONLY",
-        dispatchMode: "overseas",
-        shipmentNo: "JP-ONLY-TRACKING",
-        shipmentCompany: "Yamato",
-        shipmentNoRegisteredAt: registeredAt,
-        csvImportedAt: registeredAt,
-        rawPayload: {},
-      },
-    ];
-    const prisma = {
-      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
-    };
-    const service = new OrdersService(prisma as any);
-    jest.spyOn(service as any, "loadRakutenShipmentReturnContext").mockResolvedValue({
-      chinaDispatchOrderRecordIdsByOrderId: new Map([["MIXED-ORDER", new Set(["2"])]]),
-      blockedOrderIds: new Set(["MIXED-ORDER"]),
-    });
-
-    const file = await service.buildRakutenShipmentConfirmationCsv({ days: "all" });
-
-    expect(file.rowCount).toBe(1);
-    expect(file.skippedWithoutCustomsClearanceCount).toBe(2);
-  });
-
-  it("derives the Rakuten shipment return gate from every product in the order", async () => {
-    const baseTracking = {
-      shipmentNo: "TRACKING",
-      trackingStatusLabel: null,
-      trackingIsDelivered: false,
-      trackingStatusOccurredAt: null,
-      trackingCheckedAt: null,
-      trackingError: null,
-      xiyaExportedAt: null,
-      shipmentCompany: null,
-    };
-    const relatedRows = [
-      {
-        ...baseTracking,
-        id: 1n,
-        orderId: "MIXED-ORDER",
-        dispatchMode: "overseas",
-        fulfillmentMode: "overseas_warehouse",
-        trackingHasCustomsClearance: false,
-      },
-      {
-        ...baseTracking,
-        id: 2n,
-        orderId: "MIXED-ORDER",
-        dispatchMode: "china_pending",
-        fulfillmentMode: "xiya_api",
-        trackingHasCustomsClearance: false,
-      },
-      {
-        ...baseTracking,
-        id: 3n,
-        orderId: "CLEARED-CHINA-ORDER",
-        dispatchMode: "china_pending",
-        fulfillmentMode: "xiya_api",
-        trackingHasCustomsClearance: true,
-      },
-    ];
-    const prisma = {
-      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(relatedRows) },
-    };
-    const service = new OrdersService(prisma as any);
-    jest.spyOn(service as any, "enrichOrderRows").mockResolvedValue(relatedRows);
-    jest.spyOn(service as any, "loadActiveOverseasPickingBatchRefs").mockResolvedValue(new Set());
-
-    const context = await (service as any).loadRakutenShipmentReturnContext([
-      { orderId: "MIXED-ORDER" },
-      { orderId: "CLEARED-CHINA-ORDER" },
-    ]);
-
-    expect(context.blockedOrderIds).toEqual(new Set(["MIXED-ORDER"]));
-    expect(context.chinaDispatchOrderRecordIdsByOrderId.get("MIXED-ORDER")).toEqual(new Set(["2"]));
-    expect(context.chinaDispatchOrderRecordIdsByOrderId.get("CLEARED-CHINA-ORDER")).toEqual(new Set(["3"]));
-  });
-
-  it("blocks shipment return for the whole Rakuten order while Japan must notify China", async () => {
-    const relatedRows = [
-      {
-        id: 1n,
-        orderId: "MANUAL-ACTION-ORDER",
-        dispatchMode: "overseas",
-        fulfillmentMode: "overseas_warehouse",
-        rmsManualActionDetectedAt: new Date("2026-08-18T01:00:00.000Z"),
-        rmsManualActionResolvedAt: null,
-      },
-      {
-        id: 2n,
-        orderId: "MANUAL-ACTION-ORDER",
-        dispatchMode: "china_no_stock",
-        fulfillmentMode: "xiya_api",
-        rmsManualActionDetectedAt: null,
-        rmsManualActionResolvedAt: null,
-        trackingHasCustomsClearance: true,
-      },
-    ];
-    const service = new OrdersService({
-      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(relatedRows) },
-    } as any);
-    jest.spyOn(service as any, "enrichOrderRows").mockResolvedValue(relatedRows);
-    jest.spyOn(service as any, "loadActiveOverseasPickingBatchRefs").mockResolvedValue(new Set());
-
-    const context = await (service as any).loadRakutenShipmentReturnContext([{ orderId: "MANUAL-ACTION-ORDER" }]);
-
-    expect(context.blockedOrderIds).toContain("MANUAL-ACTION-ORDER");
-  });
-
   it("resolves every pending Japan-to-China reminder for the same Rakuten order", async () => {
     const updateMany = jest.fn().mockResolvedValue({ count: 2 });
     const service = new OrdersService({
@@ -267,6 +88,7 @@ describe('OrdersService', () => {
     expect(result).toMatchObject({ orderId: "ORDER-1", resolvedCount: 2 });
     expect(updateMany).toHaveBeenCalledWith({
       where: {
+        deletedAt: null,
         orderId: "ORDER-1",
         rmsManualActionDetectedAt: { not: null },
         rmsManualActionResolvedAt: null,
@@ -292,104 +114,10 @@ describe('OrdersService', () => {
     );
 
     expect(updateMany).toHaveBeenCalledWith({
-      where: { orderId: "ORDER-1", id: { not: 7n } },
+      where: { deletedAt: null, orderId: "ORDER-1", id: { not: 7n } },
       data: {
         rmsManualOverrideAt: manualOverrideAt,
         rmsManualOverrideBy: "jp-operator",
-      },
-    });
-  });
-
-  it("creates a permanent RMS item exclusion before deleting one Rakuten product row", async () => {
-    const selected = {
-      id: 1n,
-      orderId: "ORDER-1",
-      rmsConnectionId: 7n,
-      rmsItemKey: "ORDER-1|ITEM-1",
-      skuCode: "SKU-1",
-      shopName: "乐天店",
-      shipmentNo: null,
-    };
-    const remaining = {
-      id: 2n,
-      orderId: "ORDER-1",
-      rmsConnectionId: 7n,
-      rmsItemKey: "ORDER-1|ITEM-2",
-      skuCode: "SKU-2",
-      shopName: "乐天店",
-      shipmentNo: null,
-    };
-    const exclusionCreate = jest.fn().mockResolvedValue({ id: 9n });
-    const tx = {
-      rakutenOrderSyncExclusion: { create: exclusionCreate },
-      rakutenOrderRecord: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
-    };
-    const prisma = {
-      rakutenOrderRecord: {
-        findMany: jest
-          .fn()
-          .mockResolvedValueOnce([{ id: 1n, orderId: "ORDER-1", shipmentNo: null }])
-          .mockResolvedValueOnce([selected])
-          .mockResolvedValueOnce([selected, remaining]),
-      },
-      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
-      $transaction: jest.fn(async (callback) => callback(tx)),
-    };
-    const service = new OrdersService(prisma as any);
-
-    await expect(service.deleteRakutenBatch({ ids: ["1"] }, 5n)).resolves.toEqual({ deletedCount: 1 });
-    expect(exclusionCreate).toHaveBeenCalledWith({
-      data: {
-        rmsConnectionId: 7n,
-        shopName: "乐天店",
-        orderId: "ORDER-1",
-        rmsItemKey: "ORDER-1|ITEM-1",
-        skuCode: null,
-        reason: "user_delete",
-        createdBy: 5n,
-      },
-    });
-    expect(tx.rakutenOrderRecord.deleteMany).toHaveBeenCalledWith({ where: { id: { in: [1n] } } });
-  });
-
-  it("creates an order-level exclusion when every Rakuten product row is deleted", async () => {
-    const row = {
-      id: 1n,
-      orderId: "ORDER-ALL",
-      shopName: "乐天店",
-      rmsConnectionId: 7n,
-      rmsItemKey: "ORDER-ALL|ITEM-1",
-      skuCode: "SKU-1",
-      shipmentNo: null,
-    };
-    const exclusionCreate = jest.fn().mockResolvedValue({ id: 10n });
-    const tx = {
-      rakutenOrderSyncExclusion: { create: exclusionCreate },
-      rakutenOrderRecord: { deleteMany: jest.fn().mockResolvedValue({ count: 1 }) },
-    };
-    const service = new OrdersService({
-      rakutenOrderRecord: {
-        findMany: jest
-          .fn()
-          .mockResolvedValueOnce([{ id: 1n, orderId: "ORDER-ALL", shipmentNo: null }])
-          .mockResolvedValueOnce([row])
-          .mockResolvedValueOnce([row]),
-      },
-      overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
-      $transaction: jest.fn(async (callback) => callback(tx)),
-    } as any);
-
-    await service.deleteRakutenBatch({ ids: ["1"] }, 5n);
-
-    expect(exclusionCreate).toHaveBeenCalledWith({
-      data: {
-        rmsConnectionId: 7n,
-        shopName: "乐天店",
-        orderId: "ORDER-ALL",
-        rmsItemKey: null,
-        skuCode: null,
-        reason: "user_delete",
-        createdBy: 5n,
       },
     });
   });
@@ -406,7 +134,7 @@ describe('OrdersService', () => {
         findFirst: jest.fn().mockResolvedValue(null),
       },
       overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
-      $transaction: jest.fn(async (callback) => callback({ rakutenOrderRecord: { update } })),
+      $transaction: jest.fn(async (callback) => callback({ $queryRaw: jest.fn().mockResolvedValue([]), rakutenOrderRecord: { update, findMany: jest.fn().mockResolvedValue(rows) }, overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) } })),
     };
     const service = new OrdersService(prisma as any);
 
@@ -416,7 +144,7 @@ describe('OrdersService', () => {
     expect(update).toHaveBeenCalledTimes(2);
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 1n },
+        where: { deletedAt: null, id: 1n },
         data: expect.objectContaining({ orderId: "ORDER-NEW", rmsManualOverrideBy: "operator" }),
       }),
     );
@@ -970,7 +698,7 @@ describe('OrdersService', () => {
     Object.assign(prisma, { $queryRaw: jest.fn(), printJob: { count: jest.fn().mockResolvedValue(0) }, yamatoShipmentBatchPage: { findMany: jest.fn(async () => (await prisma.yamatoShipmentBatch.findFirst()).pages) }, $transaction: jest.fn(async (work) => work(prisma)) });
     const service = new OrdersService(prisma as any);
 
-    await expect(service.completeOverseasPickingBatchWork('42')).rejects.toThrow('还有 1 张面单未打印');
+    await expect(service.completeOverseasPickingBatchWork('42', 9n)).rejects.toThrow('还有 1 张面单未打印');
     expect(prisma.overseasPickingBatch.update).not.toHaveBeenCalled();
   });
 
@@ -1140,6 +868,8 @@ describe('OrdersService', () => {
 
   it('persists completed status after every Yamato label has printed', async () => {
     const prisma = {
+      overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
+      rakutenOrderRecord: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
       overseasPickingBatch: {
         findUnique: jest.fn().mockResolvedValue({ id: 42n, batchNo: 'PK-42', status: 'yamato_exported' }),
         update: jest.fn().mockResolvedValue({}),
@@ -1156,14 +886,14 @@ describe('OrdersService', () => {
     Object.assign(prisma, { $queryRaw: jest.fn(), printJob: { count: jest.fn().mockResolvedValue(0) }, yamatoShipmentBatchPage: { findMany: jest.fn(async () => (await prisma.yamatoShipmentBatch.findFirst()).pages) }, $transaction: jest.fn(async (work) => work(prisma)) });
     const service = new OrdersService(prisma as any);
 
-    await expect(service.completeOverseasPickingBatchWork('42')).resolves.toEqual({
+    await expect(service.completeOverseasPickingBatchWork('42', 9n)).resolves.toEqual({
       id: '42',
       batchNo: 'PK-42',
       status: 'completed',
     });
     expect(prisma.overseasPickingBatch.update).toHaveBeenCalledWith({
       where: { id: 42n },
-      data: { status: 'completed' },
+      data: { status: 'completed', workCompletedAt: expect.any(Date), workCompletedBy: 9n },
     });
   });
 

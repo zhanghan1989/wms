@@ -6,5 +6,6 @@ import { ThirdPartyApiKeyGuard } from './third-party-api-key.guard';
 @Module({
   controllers: [OrdersController],
   providers: [OrdersService, ThirdPartyApiKeyGuard],
+  exports: [OrdersService],
 })
 export class OrdersModule {}

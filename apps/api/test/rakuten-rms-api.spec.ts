@@ -27,11 +27,9 @@ describe("Rakuten RMS API integration", () => {
       RakutenRmsApiController.prototype.syncConnection,
       RakutenRmsApiController.prototype.ignorePreviewConflicts,
       RakutenRmsApiController.prototype.rollbackSyncRun,
-      RakutenRmsApiController.prototype.syncAllConnections,
       RakutenRmsApiController.prototype.listSyncRuns,
-      RakutenRmsApiController.prototype.runAutomation,
       RakutenRmsApiController.prototype.getAutomationSummary,
-      RakutenRmsApiController.prototype.previewManualAutomationActions,
+      RakutenRmsApiController.prototype.prepareOrderTasks,
       RakutenRmsApiController.prototype.executeManualAutomationActions,
     ];
 
@@ -321,7 +319,7 @@ describe("Rakuten RMS API integration", () => {
       ]),
     } as unknown as RakutenRmsApiClient;
     const service = new RakutenRmsApiService(
-      {} as PrismaService,
+      { rakutenOrderImportIssue: { findMany: jest.fn().mockResolvedValue([]) }, rakutenOrderSyncExclusion: { findMany: jest.fn().mockResolvedValue([]) } } as unknown as PrismaService,
       client,
       {} as RakutenRmsApiCryptoService,
     );
@@ -332,7 +330,7 @@ describe("Rakuten RMS API integration", () => {
     const mapOrders = jest.spyOn(service as any, "mapOrders").mockResolvedValue([]);
 
     const result = await (service as any).fetchSyncItems(
-      { id: 7n, licenseExpiresAt: null, lastOrdersSyncedAt: null },
+      { id: 7n, shop: { name: "shop" }, licenseExpiresAt: null, lastOrdersSyncedAt: null },
       14,
     );
 
@@ -341,7 +339,7 @@ describe("Rakuten RMS API integration", () => {
       "license-key",
       expect.objectContaining({ dateType: 3, orderProgressList: [300] }),
     );
-    expect(mapOrders).toHaveBeenCalledWith([{ orderNumber: "pending-order", orderProgress: 300 }]);
+    expect(mapOrders).toHaveBeenCalledWith([{ orderNumber: "pending-order", orderProgress: 300 }], [], []);
     expect(result).toMatchObject({
       searchedOrderCount: 2,
       reconciledOrderCount: 0,
@@ -355,7 +353,7 @@ describe("Rakuten RMS API integration", () => {
       getOrders: jest.fn().mockResolvedValue([]),
     } as unknown as RakutenRmsApiClient;
     const service = new RakutenRmsApiService(
-      {} as PrismaService,
+      { rakutenOrderImportIssue: { findMany: jest.fn().mockResolvedValue([]) }, rakutenOrderSyncExclusion: { findMany: jest.fn().mockResolvedValue([]) } } as unknown as PrismaService,
       client,
       {} as RakutenRmsApiCryptoService,
     );
@@ -483,7 +481,7 @@ describe("Rakuten RMS API integration", () => {
     );
 
     expect(findMany).toHaveBeenCalledWith({
-      where: { orderId: "421951-1" },
+      where: { deletedAt: null, OR: [{ rmsOrderId: "421951-1" }, { rmsOrderId: null, orderId: "421951-1" }] },
       orderBy: { id: "asc" },
     });
     expect(plan.action).toBe("claim");
@@ -880,6 +878,7 @@ describe("Rakuten RMS API integration", () => {
     };
     jest.spyOn(service as any, "loadConnection").mockResolvedValue(connection);
     const fetchSpy = jest.spyOn(service as any, "fetchSyncItems").mockResolvedValue({
+      importIssues: [], resolvedIssueOrderIds: [],
       mappedItems: [],
       searchedOrderCount: 0,
       reconciledOrderCount: 0,
@@ -911,6 +910,7 @@ describe("Rakuten RMS API integration", () => {
       shop: { id: 3n, name: "乐天店" },
     });
     jest.spyOn(service as any, "fetchSyncItems").mockResolvedValue({
+      importIssues: [], resolvedIssueOrderIds: [],
       mappedItems: [
         {
           orderId: "421951-older",
@@ -976,6 +976,7 @@ describe("Rakuten RMS API integration", () => {
     ];
     jest.spyOn(service as any, "loadConnection").mockResolvedValue(connection);
     jest.spyOn(service as any, "fetchSyncItems").mockResolvedValue({
+      importIssues: [], resolvedIssueOrderIds: [],
       mappedItems,
       searchedOrderCount: 116,
       reconciledOrderCount: 0,
@@ -1051,7 +1052,7 @@ describe("Rakuten RMS API integration", () => {
     const result = (await service.rollbackSyncRun("11")) as any;
 
     expect(tx.rakutenOrderRecord.delete).toHaveBeenCalledWith({
-      where: { id: 21n },
+      where: { deletedAt: null, id: 21n },
     });
     expect(result.restoredCount).toBe(1);
     expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
@@ -1063,6 +1064,7 @@ describe("Rakuten RMS API integration", () => {
   it.each([1, 220])("writes %i confirmed items and their rollback snapshot in one transaction", async (itemCount) => {
     const startedAt = new Date("2026-08-18T01:00:00.000Z");
     const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
       rakutenRmsSyncRun: { update: jest.fn().mockResolvedValue({}) },
       rakutenRmsConnection: { update: jest.fn().mockResolvedValue({}) },
     };
@@ -1136,6 +1138,7 @@ describe("Rakuten RMS API integration", () => {
 
   it("keeps a Japanese house number such as 8-1 as text when mapping an order", async () => {
     const prisma = {
+      masterProduct: { findMany: jest.fn(async ({ where }: any) => where.productId.in.map((productId: string) => ({ productId }))) },
       rakutenComboProduct: { findMany: jest.fn().mockResolvedValue([]) },
     } as unknown as PrismaService;
     const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
@@ -1192,6 +1195,7 @@ describe("Rakuten RMS API integration", () => {
 
   it("expands a combo when Rakuten returns its zh- identifier in manageNumber", async () => {
     const prisma = {
+      masterProduct: { findMany: jest.fn(async ({ where }: any) => where.productId.in.map((productId: string) => ({ productId }))) },
       rakutenComboProduct: {
         findMany: jest.fn().mockResolvedValue([{ comboName: "zh-combo-1", items: [
           { productId: "9259", product: { productId: "9259", productName: "组合明细A" } },
@@ -1239,6 +1243,7 @@ describe("Rakuten RMS API integration", () => {
       updatedAt: new Date("2026-08-24T00:00:00.000Z"),
     }));
     const prisma = {
+      masterProduct: { findMany: jest.fn(async ({ where }: any) => where.productId.in.map((productId: string) => ({ productId }))) },
       rakutenComboProduct: {
         findMany: jest.fn().mockResolvedValue([{
           comboName: "zh-combo-1",

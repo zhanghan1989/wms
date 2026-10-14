@@ -8,8 +8,11 @@ import { IgnoreRakutenRmsConflictsDto } from './dto/ignore-rakuten-rms-conflicts
 import { PreviewRakutenRmsSyncDto } from './dto/preview-rakuten-rms-sync.dto';
 import { SyncRakutenRmsConnectionDto } from './dto/sync-rakuten-rms-connection.dto';
 import { UpdateRakutenRmsConnectionDto } from './dto/update-rakuten-rms-connection.dto';
+import { RakutenOrderSchedulerService } from './rakuten-order-scheduler.service';
 import { RakutenRmsApiService } from './rakuten-rms-api.service';
 import { RakutenRmsAutomationService } from './rakuten-rms-automation.service';
+import { RakutenScheduleControlService } from './rakuten-schedule-control.service';
+import { UpdateRakutenScheduleDto } from './dto/update-rakuten-schedule.dto';
 
 @Controller('rakuten-rms-api')
 @UseGuards(JwtAuthGuard)
@@ -17,7 +20,27 @@ export class RakutenRmsApiController {
   constructor(
     private readonly service: RakutenRmsApiService,
     private readonly automation: RakutenRmsAutomationService,
+    private readonly scheduler: RakutenOrderSchedulerService,
+    private readonly schedules: RakutenScheduleControlService,
   ) {}
+
+  @Get('automation/schedules')
+  async scheduleStatus(): Promise<unknown> { return this.schedules.status(); }
+
+  @Get('automation/import-issues')
+  async importIssues(@Query('connectionId') connectionId?: string, @Query('orderId') orderId?: string, @Query('page') page?: string): Promise<unknown> {
+    return this.service.listImportIssues({ connectionId, orderId, page });
+  }
+
+  @Put('automation/schedules/:key')
+  async updateSchedule(@Param('key') key: string, @Body() payload: UpdateRakutenScheduleDto): Promise<unknown> {
+    return this.schedules.update(key, payload.enabled);
+  }
+
+  @Post('processing/check')
+  async checkOrderProcessing(): Promise<unknown> {
+    return this.scheduler.runNow();
+  }
 
   @Get('connections')
   async listConnections(): Promise<unknown[]> {
@@ -93,22 +116,12 @@ export class RakutenRmsApiController {
     return this.service.rollbackSyncRun(id);
   }
 
-  @Post('sync-all')
-  async syncAllConnections(): Promise<unknown> {
-    return this.service.syncAllConnections();
-  }
-
   @Get('sync-runs')
   async listSyncRuns(
     @Query('connectionId') connectionId?: string,
     @Query('limit') limit?: string,
   ): Promise<unknown[]> {
     return this.service.listSyncRuns(connectionId, limit);
-  }
-
-  @Post('connections/:id/automation/run')
-  async runAutomation(@Param('id') id: string): Promise<unknown> {
-    return this.automation.runConnection(id);
   }
 
   @Post('connections/:id/smtp/test')
@@ -159,6 +172,27 @@ export class RakutenRmsApiController {
     return this.automation.listAutomationRuns({ connectionId, status, page, pageSize });
   }
 
+  @Post('automation/order-workflows/:connectionId/:orderId/missing-mail')
+  async resolveMissingOrderMail(
+    @Param('connectionId') connectionId: string,
+    @Param('orderId') orderId: string,
+    @Body() payload: { mode?: string; event?: string },
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    return this.automation.resolveMissingOrderMail(connectionId, orderId, String(payload?.event ?? ''), String(payload?.mode ?? ''), user.id);
+  }
+
+  @Get('automation/order-workflows')
+  async listOrderWorkflows(
+    @Query('connectionId') connectionId?: string,
+    @Query('orderId') orderId?: string,
+    @Query('view') view?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ): Promise<unknown> {
+    return this.automation.listOrderWorkflows({ connectionId, orderId, view, page, pageSize });
+  }
+
   @Get('automation/shipping-reports')
   async listShippingReports(
     @Query('connectionId') connectionId?: string,
@@ -170,19 +204,9 @@ export class RakutenRmsApiController {
     return this.automation.listShippingReports({ connectionId, status, orderId, page, pageSize });
   }
 
-  @Post('automation/manual-actions/preview')
-  async previewManualAutomationActions(
-    @Body() payload: {
-      kind?: string;
-      connectionId?: string;
-      orderId?: string;
-      fulfillmentType?: string;
-      status?: string;
-      page?: number;
-      pageSize?: number;
-    },
-  ): Promise<unknown> {
-    return this.automation.prepareManualActions(payload ?? {});
+  @Post('automation/tasks/prepare')
+  async prepareOrderTasks(@Body() payload: { connectionId?: string }): Promise<unknown> {
+    return this.automation.prepareOrderTasks(payload?.connectionId);
   }
 
   @Post('automation/manual-actions/execute')

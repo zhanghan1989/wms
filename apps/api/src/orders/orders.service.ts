@@ -1,3 +1,4 @@
+import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
 import { stockTransaction, lockStockProducts } from '../inventory/stock-transaction';
 import { availableStock } from '../inventory/stock-availability';
 import { execFile } from 'child_process';
@@ -18,6 +19,7 @@ import {
   PrintJobStatus,
   Prisma,
   RakutenOrderRecord,
+  RakutenAutomationStatus,
   YamatoShipmentBatch,
   YamatoShipmentBatchPage,
 } from '@prisma/client';
@@ -27,8 +29,7 @@ import { PDFDocument } from 'pdf-lib';
 import { join, resolve } from 'path';
 import { promisify } from 'util';
 import * as XLSX from 'xlsx';
-import { normalizeRakutenDeliveryTimeSlot } from '../common/rakuten-delivery-time-slot';
-import { parseRakutenOrderDate } from '../common/rakuten-order-date';
+import { rakutenDeliveryCompanyCode } from '../common/rakuten-delivery-company';
 import { APP_TIMEZONE, getZonedDateParts, parseId } from '../common/utils';
 import { calculateProductStockAvailability } from '../master-products/master-product-bom-stock';
 import { PrismaService } from '../prisma/prisma.service';
@@ -68,112 +69,13 @@ const ORDER_CSV_COLUMNS = [
   { header: '商品名１', key: 'productNameExtra' },
 ] as const;
 
+// Retain these source keys for delivery preferences on historical orders.
 const RAKUTEN_ORDER_HEADERS = {
-  skuCode: 'SKU管理番号',
-  productName: '商品名',
-  skuInfo: 'SKU情報',
-  unitPrice: '単価',
-  orderQuantity: '個数',
-  orderId: '注文番号',
-  orderCreatedAt: '注文日時',
-  orderConfirmedAt: '注文確定日時',
-  deliveryMethod: '配送方法',
-  deliveryClass: '配送区分',
-  shippingPostalCode1: '送付先郵便番号1',
-  shippingPostalCode2: '送付先郵便番号2',
-  shippingPrefecture: '送付先住所都道府県',
-  shippingCity: '送付先住所郡市区',
-  shippingAddress: '送付先住所それ以降の住所',
-  shippingLastName: '送付先姓',
-  shippingFirstName: '送付先名',
-  shippingPhone1: '送付先電話番号1',
-  shippingPhone2: '送付先電話番号2',
-  shippingPhone3: '送付先電話番号3',
   deliveryTimeSlot: 'お届け時間帯',
   deliveryDateRaw: 'お届け日指定',
-  orderRemark: 'コメント',
 } as const;
 
-const RAKUTEN_ORDER_COLUMNS = [
-  { header: RAKUTEN_ORDER_HEADERS.skuCode, key: 'skuCode' },
-  { header: RAKUTEN_ORDER_HEADERS.productName, key: 'productName' },
-  { header: RAKUTEN_ORDER_HEADERS.skuInfo, key: 'skuInfo' },
-  { header: RAKUTEN_ORDER_HEADERS.unitPrice, key: 'unitPrice' },
-  { header: RAKUTEN_ORDER_HEADERS.orderQuantity, key: 'orderQuantityRaw' },
-  { header: RAKUTEN_ORDER_HEADERS.orderId, key: 'orderId' },
-  { header: RAKUTEN_ORDER_HEADERS.orderCreatedAt, key: 'orderCreatedAtRaw' },
-  { header: RAKUTEN_ORDER_HEADERS.orderConfirmedAt, key: 'orderConfirmedAtRaw',
-  },
-  { header: RAKUTEN_ORDER_HEADERS.deliveryMethod, key: 'deliveryMethod' },
-  { header: RAKUTEN_ORDER_HEADERS.deliveryClass, key: 'deliveryClass' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPostalCode1, key: 'shippingPostalCode1',
-  },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPostalCode2, key: 'shippingPostalCode2',
-  },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPrefecture, key: 'shippingPrefecture',
-  },
-  { header: RAKUTEN_ORDER_HEADERS.shippingCity, key: 'shippingCity' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingAddress, key: 'shippingAddress' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingLastName, key: 'shippingLastName' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingFirstName, key: 'shippingFirstName' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPhone1, key: 'shippingPhone1' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPhone2, key: 'shippingPhone2' },
-  { header: RAKUTEN_ORDER_HEADERS.shippingPhone3, key: 'shippingPhone3' },
-  { header: RAKUTEN_ORDER_HEADERS.deliveryTimeSlot, key: 'deliveryTimeSlot' },
-  { header: RAKUTEN_ORDER_HEADERS.deliveryDateRaw, key: 'deliveryDateRaw' },
-  { header: RAKUTEN_ORDER_HEADERS.orderRemark, key: 'orderRemark' },
-] as const;
-
 void ORDER_CSV_COLUMNS;
-
-type OrderCsvColumn = (typeof RAKUTEN_ORDER_COLUMNS)[number];
-type OrderCsvHeader = OrderCsvColumn['header'];
-
-interface ParsedOrderCsvRow {
-  rowHash: string;
-  orderId: string | null;
-  itemDetailStatus: string | null;
-  skuCode: string | null;
-  isComboOrder: boolean;
-  comboOrderSku: string | null;
-  setComponentSkuCode: string | null;
-  orderQuantity: number | null;
-  productName: string | null;
-  mallName: string | null;
-  shopName: string | null;
-  mallOrderNo: string | null;
-  orderStatusText: string | null;
-  orderImportedAtRaw: string | null;
-  orderRemark: string | null;
-  shippingName: string | null;
-  shippingPostalCode: string | null;
-  shippingPrefecture: string | null;
-  shippingCity: string | null;
-  shippingAddress: string | null;
-  shippingPhone: string | null;
-  shipmentCompany: string | null;
-  shipmentNo: string | null;
-  shipmentNoRegisteredAt: Date | null;
-  sendStatus: OrderSendStatus;
-  deliveryMethod: string | null;
-  deliveryDateRaw: string | null;
-  deliveryTimeSlot: string | null;
-  shipmentRequestNo: string | null;
-  productNameExtra: string | null;
-  rawPayload: Record<OrderCsvHeader, string | null>;
-}
-
-interface OrderImportResult {
-  sourceFileName: string;
-  sourceFilePath: string;
-  csvImportedAt: string;
-  totalRows: number;
-  uniqueRows: number;
-  createdCount: number;
-  skippedCount: number;
-  duplicateInFileCount: number;
-  existingDuplicateCount: number;
-}
 
 type OrderFulfillmentMode = 'overseas_warehouse' | 'xiya_api';
 
@@ -322,13 +224,6 @@ interface AmazonShipmentConfirmationFileResult {
   content: Buffer;
   rowCount: number;
   fileCount?: number;
-}
-
-interface RakutenShipmentConfirmationFileResult {
-  fileName: string;
-  content: Buffer;
-  rowCount: number;
-  skippedWithoutCustomsClearanceCount: number;
 }
 
 interface ManualOrderXyjgFields {
@@ -604,6 +499,7 @@ interface OverseasPickingBatchSummary {
   totalQty: number;
   createdAt: string;
   confirmedAt: string | null;
+  workCompletedAt: string | null;
   yamatoShipmentBatchId: string | null;
   yamatoShipmentBatchStatus: string | null;
   yamatoPrintedPageCount: number;
@@ -970,7 +866,6 @@ const UOF_TRACKING_SYNC_MAX_PER_RUN =
   Number.isInteger(UOF_TRACKING_SYNC_MAX_PER_RUN_RAW) && UOF_TRACKING_SYNC_MAX_PER_RUN_RAW > 0
     ? Math.min(UOF_TRACKING_SYNC_MAX_PER_RUN_RAW, 5000)
     : 500;
-const RAKUTEN_TRACKING_STATUS_SYNC_CRON = '0 0 5 * * *';
 const RAKUTEN_TRACKING_SYNC_LOCK_ID = 'rakuten-tracking-status-sync';
 const RAKUTEN_TRACKING_SYNC_LOCK_STALE_MS = 10 * 60 * 1000;
 const RAKUTEN_TRACKING_SYNC_LOCK_HEARTBEAT_MS = 60 * 1000;
@@ -1065,11 +960,6 @@ const YAMATO_COLUMNS = {
 const AMAZON_TXT_ENCODING_CANDIDATES = ['shift_jis', 'utf8', 'utf16le'] as const;
 type AmazonTxtEncodingCandidate = (typeof AMAZON_TXT_ENCODING_CANDIDATES)[number];
 
-// Rakuten RMS exports CSV in Shift_JIS, while files that have been opened and
-// saved by spreadsheet software are commonly UTF-8.  Pick the decoding whose
-// header row actually matches the Rakuten export schema.
-const RAKUTEN_CSV_ENCODING_CANDIDATES = ['shift_jis', 'utf8'] as const;
-
 let pdfJsModulePromise: Promise<{
   getDocument: (source: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<unknown>;
   };
@@ -1145,6 +1035,7 @@ export class OrdersService {
         totalQty: Number(row.totalQty ?? 0),
         createdAt: row.createdAt.toISOString(),
         confirmedAt: row.confirmedAt ? row.confirmedAt.toISOString() : null,
+        workCompletedAt: row.workCompletedAt?.toISOString() ?? null,
         yamatoShipmentBatchId: yamatoBatch ? yamatoBatch.id.toString() : null,
         yamatoShipmentBatchStatus: yamatoBatch?.status ?? null,
         yamatoPrintedPageCount: printedPageCount,
@@ -1162,19 +1053,22 @@ export class OrdersService {
     return { canCreate: !unfinished, unfinishedBatchNo: unfinished?.batchNo ?? null };
   }
 
-  async completeOverseasPickingBatchWork(batchIdRaw: string): Promise<{
+  async completeOverseasPickingBatchWork(batchIdRaw: string, userId: bigint): Promise<{
     id: string;
     batchNo: string;
     status: string;
   }> {
     const batchId = parseId(batchIdRaw, 'batchId');
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM overseas_picking_batches WHERE id = ${batchId} FOR UPDATE`);
       const batch = await tx.overseasPickingBatch.findUnique({
         where: { id: batchId },
         select: {
           id: true,
           batchNo: true,
           status: true,
+          workCompletedAt: true,
+          workCompletedBy: true,
         },
       });
       if (!batch) {
@@ -1220,14 +1114,38 @@ export class OrdersService {
         );
       }
 
-      if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.COMPLETED) {
-        if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED) {
-          throw new BadRequestException(`当前批次状态为 ${batch.status}，不能确认完成作业`);
+      if (batch.status !== OVERSEAS_PICKING_BATCH_STATUS.COMPLETED && batch.status !== OVERSEAS_PICKING_BATCH_STATUS.YAMATO_EXPORTED) {
+        throw new BadRequestException(`当前批次状态为 ${batch.status}，不能确认完成作业`);
+      }
+      const completedAt = batch.workCompletedAt ?? new Date();
+      const completedBy = batch.workCompletedBy ?? userId;
+      const items = await tx.overseasPickingBatchItem.findMany({ where: {
+        batchId, source: 'rakuten', dispatchMode: { notIn: ['china_pending', 'china_no_stock'] }, actualQty: { gt: 0 },
+      }, select: { sourceRecordId: true, requestedQty: true, actualQty: true, shipmentTrackingNo: true } });
+      for (const item of items) {
+        const current = await tx.rakutenOrderRecord.findUnique({ where: { id: item.sourceRecordId, deletedAt: null },
+          select: { shipmentNo: true, shipmentCompany: true, warehouseShippedAt: true, orderQuantity: true, dispatchMode: true } });
+        if (!current || this.isChinaDispatchMode(current.dispatchMode)) continue;
+        if (Number(item.actualQty) < Number(item.requestedQty) || !String(item.shipmentTrackingNo ?? '').trim()) {
+          throw new ConflictException('日本侧实拣数量或批次单号不完整，不能确认本批次出货');
         }
-        await tx.overseasPickingBatch.update({
-          where: { id: batch.id },
-          data: { status: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED },
-        });
+        if (current.shipmentNo !== item.shipmentTrackingNo || Number(current.orderQuantity) > Number(item.actualQty)
+          || rakutenDeliveryCompanyCode(current.shipmentCompany) !== '1001') {
+          throw new ConflictException('订单单号或数量与批次出货资料不一致，请修正后再确认作业完成');
+        }
+        const confirmed = await tx.rakutenOrderRecord.updateMany({ where: { id: item.sourceRecordId, deletedAt: null,
+          OR: [{ dispatchMode: null }, { dispatchMode: { notIn: ['china_pending', 'china_no_stock'] } }],
+          shipmentNo: item.shipmentTrackingNo, shipmentCompany: current.shipmentCompany, orderQuantity: current.orderQuantity,
+          warehouseShippedAt: null,
+        }, data: { warehouseShippedAt: completedAt, warehouseShippedBy: completedBy } });
+        if (!current.warehouseShippedAt && confirmed.count !== 1) {
+          throw new ConflictException('订单出货资料在确认期间发生变化，请刷新后重新核对');
+        }
+      }
+      if (!batch.workCompletedAt) {
+        await tx.overseasPickingBatch.update({ where: { id: batch.id }, data: {
+          status: OVERSEAS_PICKING_BATCH_STATUS.COMPLETED, workCompletedAt: completedAt, workCompletedBy: completedBy,
+        } });
       }
 
       return {
@@ -1292,7 +1210,7 @@ export class OrdersService {
     const [rakutenSourceRows, amazonSourceRows, manualSourceRows] = await Promise.all([
       rakutenSourceIds.length
         ? this.prisma.rakutenOrderRecord.findMany({
-            where: {
+            where: { deletedAt: null,
               id: {
                 in: rakutenSourceIds,
               },
@@ -1557,6 +1475,7 @@ export class OrdersService {
       totalQty: Number(batch.totalQty ?? 0),
       createdAt: batch.createdAt.toISOString(),
       confirmedAt: batch.confirmedAt ? batch.confirmedAt.toISOString() : null,
+      workCompletedAt: batch.workCompletedAt?.toISOString() ?? null,
       remark: batch.remark ?? null,
       yamatoShipmentBatchId: yamatoBatch ? yamatoBatch.id.toString() : null,
       yamatoShipmentBatchStatus: yamatoBatch?.status ?? null,
@@ -1890,7 +1809,7 @@ export class OrdersService {
     const batchDeleted = await this.prisma.$transaction(async (tx) => {
       if (rakutenIds.length) {
         await tx.rakutenOrderRecord.updateMany({
-          where: {
+          where: { deletedAt: null,
             id: {
               in: rakutenIds,
             },
@@ -2095,7 +2014,7 @@ export class OrdersService {
     const batchDeleted = await this.prisma.$transaction(async (tx) => {
       if (item.source === 'rakuten') {
         await tx.rakutenOrderRecord.update({
-          where: { id: item.sourceRecordId },
+          where: { deletedAt: null, id: item.sourceRecordId },
           data: {
             dispatchMode: OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
           },
@@ -2427,7 +2346,7 @@ export class OrdersService {
           : null;
       if (item.source === 'rakuten' && resetDispatchMode) {
         await tx.rakutenOrderRecord.update({
-          where: { id: item.sourceRecordId },
+          where: { deletedAt: null, id: item.sourceRecordId },
           data: {
             dispatchMode: resetDispatchMode,
           },
@@ -2902,7 +2821,7 @@ export class OrdersService {
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;
     const parsedOffset = Number(offsetParam);
     const offset = Number.isInteger(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
-    const rows = await this.prisma.rakutenOrderRecord.findMany({
+    const rows = await this.prisma.rakutenOrderRecord.findMany({ where: { deletedAt: null },
       orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
       take: limit,
       skip: offset,
@@ -2938,7 +2857,7 @@ export class OrdersService {
   }> {
     const id = parseId(idRaw, "id");
     const row = await this.prisma.rakutenOrderRecord.findUnique({
-      where: { id },
+      where: { deletedAt: null, id },
     });
     if (!row) throw new NotFoundException("乐天订单不存在");
     if (!row.rmsManualActionDetectedAt || row.rmsManualActionResolvedAt) {
@@ -2947,7 +2866,7 @@ export class OrdersService {
     const orderId = String(row.orderId ?? "").trim();
     const resolvedAt = new Date();
     const result = await this.prisma.rakutenOrderRecord.updateMany({
-      where: {
+      where: { deletedAt: null,
         ...(orderId ? { orderId } : { id }),
         rmsManualActionDetectedAt: { not: null },
         rmsManualActionResolvedAt: null,
@@ -2999,7 +2918,7 @@ export class OrdersService {
     ] = await Promise.all([
       rakutenExactIds.length
         ? this.prisma.rakutenOrderRecord.findMany({
-            where: { id: { in: rakutenExactIds } },
+            where: { deletedAt: null, id: { in: rakutenExactIds } },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
           })
         : Promise.resolve([] as RakutenOrderRecord[]),
@@ -3075,7 +2994,7 @@ export class OrdersService {
     const id = parseId(idRaw, 'id');
 
     if (source === 'rakuten') {
-      const row = await this.prisma.rakutenOrderRecord.findUnique({ where: { id },
+      const row = await this.prisma.rakutenOrderRecord.findUnique({ where: { deletedAt: null, id },
       });
       if (!row) {
         throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
@@ -3176,7 +3095,7 @@ export class OrdersService {
     const normalizedLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
     const [rakutenRows, amazonRows, manualRows] = await Promise.all([
       this.prisma.rakutenOrderRecord.findMany({
-        where: { shippingName: { contains: keyword } },
+        where: { deletedAt: null, shippingName: { contains: keyword } },
         select: { shippingName: true },
         orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
         take: normalizedLimit,
@@ -3270,7 +3189,7 @@ export class OrdersService {
       manualPhoneIds] = await Promise.all([
       names.length
         ? this.prisma.rakutenOrderRecord.findMany({
-            where: { OR: names.map((name) => ({ shippingName: { contains: name } })),
+            where: { deletedAt: null, OR: names.map((name) => ({ shippingName: { contains: name } })),
               },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
             take: limit,
@@ -3302,7 +3221,7 @@ export class OrdersService {
     const [rakutenPhoneRows, amazonPhoneRows, manualPhoneRows] = await Promise.all([
       rakutenPhoneIds.length
         ? this.prisma.rakutenOrderRecord.findMany({
-            where: { id: { in: rakutenPhoneIds } },
+            where: { deletedAt: null, id: { in: rakutenPhoneIds } },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
           })
         : Promise.resolve([] as RakutenOrderRecord[]),
@@ -3538,7 +3457,7 @@ export class OrdersService {
     operatorUsername = "unknown",
   ): Promise<OrderListItem> {
     const id = parseId(idRaw, 'id');
-    const current = await this.prisma.rakutenOrderRecord.findUnique({ where: { id },
+    const current = await this.prisma.rakutenOrderRecord.findUnique({ where: { deletedAt: null, id },
     });
     if (!current) {
       throw new NotFoundException(`乐天订单不存在: ${idRaw}`);
@@ -3549,11 +3468,22 @@ export class OrdersService {
       const manualOverrideAt = new Date();
       await this.prisma.$transaction(async (tx) => {
         await tx.rakutenOrderRecord.update({
-        where: { id },
+        where: { deletedAt: null, id },
         data: {
           shipmentCompany,
           shipmentNo,
-          shipmentNoRegisteredAt: shipmentNo ? manualOverrideAt : null,
+          shipmentNoRegisteredAt: this.resolveEditedShipmentRegisteredAt(current.shipmentNo, current.shipmentNoRegisteredAt, shipmentNo),
+          ...(shipmentNo !== current.shipmentNo || shipmentCompany !== current.shipmentCompany ? {
+            warehouseShippedAt: null,
+            warehouseShippedBy: null,
+            trackingStatusLabel: null,
+            trackingHasCustomsClearance: false,
+            trackingIsDelivered: false,
+            trackingCustomsClearanceDate: null,
+            trackingStatusOccurredAt: null,
+            trackingCheckedAt: null,
+            trackingError: null,
+          } : {}),
           sendStatus: this.resolveSendStatus(shipmentNo),
             rmsManualOverrideAt: manualOverrideAt,
             rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
@@ -3567,7 +3497,7 @@ export class OrdersService {
           operatorUsername,
         );
       });
-      const updated = await this.prisma.rakutenOrderRecord.findUniqueOrThrow({ where: { id } });
+      const updated = await this.prisma.rakutenOrderRecord.findUniqueOrThrow({ where: { deletedAt: null, id } });
       const [enriched] = await this.enrichOrderRows([updated]);
       return enriched;
     }
@@ -3605,9 +3535,11 @@ export class OrdersService {
     const manualOverrideAt = new Date();
     await this.prisma.$transaction(async (tx) => {
       await tx.rakutenOrderRecord.update({
-      where: { id },
+      where: { deletedAt: null, id },
       data: {
         orderId,
+        rmsOrderId: current.rmsConnectionId || (current.rawPayload as Prisma.JsonObject | null)?._wmsOriginalOrderId
+          ? originalRakutenOrderId(current) : orderId,
         skuCode,
         orderQuantity,
         productName,
@@ -3683,7 +3615,7 @@ export class OrdersService {
       );
     });
 
-    const updated = await this.prisma.rakutenOrderRecord.findUniqueOrThrow({ where: { id } });
+    const updated = await this.prisma.rakutenOrderRecord.findUniqueOrThrow({ where: { deletedAt: null, id } });
     const [enriched] = await this.enrichOrderRows([updated]);
     return enriched;
   }
@@ -3706,7 +3638,7 @@ export class OrdersService {
     const orderId = String(originalOrderId ?? "").trim();
     if (!orderId) return;
     await tx.rakutenOrderRecord.updateMany({
-      where: { orderId, id: { not: editedId } },
+      where: { deletedAt: null, orderId, id: { not: editedId } },
       data: {
         rmsManualOverrideAt: manualOverrideAt,
         rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
@@ -4478,7 +4410,7 @@ export class OrdersService {
         rakutenExhausted
           ? Promise.resolve([] as RakutenOrderRecord[])
           : this.prisma.rakutenOrderRecord.findMany({
-              where: includeAll
+              where: { ...(includeAll
                 ? {
                     OR: [
                       { dispatchMode: null },
@@ -4493,7 +4425,7 @@ export class OrdersService {
                       { dispatchMode: '' },
                       { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
                     ],
-                  },
+                  }), deletedAt: null },
               orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
               skip: rakutenSkip,
               take: batchSize,
@@ -4721,7 +4653,7 @@ export class OrdersService {
 
     if (source === 'rakuten') {
       const row = await this.prisma.rakutenOrderRecord.findFirst({
-        where: {
+        where: { deletedAt: null,
           id,
           sendStatus: OrderSendStatus.unsent,
           OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }],
@@ -4744,7 +4676,7 @@ export class OrdersService {
         throw new BadRequestException('当前订单已不在海外仓待处理范围内，无法切中国发');
       }
       await this.prisma.rakutenOrderRecord.update({
-        where: { id },
+        where: { deletedAt: null, id },
         data: {
           dispatchMode: OVERSEAS_DISPATCH_MODE.CHINA_PENDING,
         },
@@ -4893,7 +4825,7 @@ export class OrdersService {
         rakutenExhausted
           ? Promise.resolve([] as RakutenOrderRecord[])
           : this.prisma.rakutenOrderRecord.findMany({
-              where: {
+              where: { deletedAt: null,
                 ...this.buildChinaOrderShipmentNoFilter(scope),
               },
               orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
@@ -5399,202 +5331,97 @@ export class OrdersService {
     return Buffer.from(`${lines.join('\r\n')}\r\n`, 'utf8');
   }
 
-  async buildRakutenShipmentConfirmationCsv(payload: {
-    days?: string | number;
-    purpose?: string | null;
-  }): Promise<RakutenShipmentConfirmationFileResult> {
-    const scope = this.normalizeShipmentConfirmationScope(payload?.days, '订单');
-    const purpose = String(payload?.purpose ?? '').trim();
-    const isDailyEmailCsv = purpose === 'daily-email';
-    const importedAtStart = scope.days === 'all' ? null : this.getImportDateRangeStart(scope.days);
-    const dailyImportedAtStart = isDailyEmailCsv ? this.getImportDateRangeStart(1) : null;
-    const dailyImportedAtEnd = dailyImportedAtStart ? new Date(dailyImportedAtStart.getTime() + 24 * 60 * 60 * 1000) : null;
-
-    const rows = await this.prisma.rakutenOrderRecord.findMany({
-      where: {
-        ...(isDailyEmailCsv
-          ? {
-              csvImportedAt: dailyImportedAtStart
-                ? {
-                    gte: dailyImportedAtStart,
-                    ...(dailyImportedAtEnd ? { lt: dailyImportedAtEnd } : {}),
-                  }
-                : undefined,
-            }
-          : {
-              shipmentNo: { not: null },
-              shipmentNoRegisteredAt: { not: null },
-              ...(importedAtStart ? { csvImportedAt: { gte: importedAtStart } } : {}),
-            }),
-      },
-      orderBy: [{ csvImportedAt: 'desc' }, { shipmentNoRegisteredAt: 'asc' }, { id: 'asc' }],
-    });
-    if (!rows.length) {
-      throw new BadRequestException(
-        isDailyEmailCsv ? '当日没有可下载的已导入乐天订单' : `${scope.label}没有可下载的已登记发货单号乐天订单`,
-      );
-    }
-
-    const shipmentReturnContext = await this.loadRakutenShipmentReturnContext(rows);
-    const downloadableRows = rows.filter(
-          (row) => {
-      if (row.rmsManualActionDetectedAt && !row.rmsManualActionResolvedAt) return false;
-      if (isDailyEmailCsv) return true;
-      const orderId = String(row.orderId ?? "").trim();
-      return !orderId || !shipmentReturnContext.blockedOrderIds.has(orderId);
-    });
-    if (!downloadableRows.length) {
-      throw new BadRequestException(
-        `${scope.label}没有可下载的乐天订单：订单可能正在等待日本操作人员人工通知中国，或同一订单的中国发快递尚未取得「${UOF_TRACKING_CUSTOMS_CLEARANCE_TEXT}」`,
-      );
-    }
-
-    const invalidRows = downloadableRows
-      .map((row) => {
-        const missingFields = [
-          String(row.orderId ?? '').trim() ? null : '注文番号',
-          isDailyEmailCsv || row.shipmentNoRegisteredAt ? null : '発送日',
-          isDailyEmailCsv || String(row.shipmentNo ?? '').trim() ? null : 'お荷物伝票番号',
-        ].filter((item): item is string => Boolean(item));
-        return missingFields.length ? `${row.orderId ?? row.id.toString()} 缺少 ${missingFields.join('、')}` : null;
-      })
-      .filter((item): item is string => Boolean(item));
-    if (invalidRows.length) {
-      throw new BadRequestException(`无法生成乐天回传单号CSV：${invalidRows.join('；')}`);
-    }
-
-    const chinaDispatchOrderRecordIdsByOrderId = shipmentReturnContext.chinaDispatchOrderRecordIdsByOrderId;
-    const headers = ['注文番号', '送付先ID', '発送明細ID', 'お荷物伝票番号', '配送会社', '発送日'];
-    const lines = [
-      headers.map((value) => this.escapeCsvCell(value)).join(','),
-      ...downloadableRows.map((row) =>
-        [
-          row.orderId,
-          this.resolveRakutenShippingDestinationId(row),
-          this.resolveRakutenShippingDetailId(row, chinaDispatchOrderRecordIdsByOrderId),
-          this.normalizeAmazonTrackingNumber(row.shipmentNo),
-          String(row.shipmentNo ?? '').trim() ? this.resolveRakutenShipmentCarrierCode(row) : '',
-          row.shipmentNoRegisteredAt ? this.formatRakutenShipmentConfirmationDate(row.shipmentNoRegisteredAt) : '',
-        ]
-          .map((value) => this.escapeCsvCell(value))
-          .join(','),
-      ),
-    ];
-
-    return {
-      fileName: `${this.formatYamatoFileNameStamp()}_${
-        isDailyEmailCsv ? '当日发送邮件用' : scope.fileLabel
-      }_ShippingCompletion.csv`,
-      content: iconv.encode(`${lines.join('\r\n')}\r\n`, 'cp932'),
-      rowCount: downloadableRows.length,
-      skippedWithoutCustomsClearanceCount: rows.length - downloadableRows.length,
-    };
-  }
-
-  async deleteRakutenBatch(payload: {
-    ids?: Array<string | number> },
-    createdBy?: bigint,
-  ): Promise<{ deletedCount: number }> {
-    const rawIds = Array.isArray(payload?.ids) ? payload.ids : [];
-    const ids = Array.from(
-      new Set(
-        rawIds
-          .map((id, index) => {
-            const text = String(id ?? '').trim();
-            return text ? parseId(text, `ids[${index}]`) : null;
-          })
-          .filter((id): id is bigint => id !== null),
-      ),
-    );
-
-    if (!ids.length) {
-      throw new BadRequestException('请至少选择一条乐天订单记录');
-    }
-
-    await this.assertOrderRecordsHaveNoShipmentNo('rakuten', ids);
-    await this.assertOrderRecordsNotInOverseasPickingBatch('rakuten', ids);
-
-    const selectedRows = await this.prisma.rakutenOrderRecord.findMany({
-      where: { id: { in: ids } },
-    });
-    const orderIds = Array.from(new Set(selectedRows.map((row) => String(row.orderId ?? "").trim()).filter(Boolean)));
-    const selectedOrderGroups = new Map<string, { orderId: string; shopName: string }>();
-    for (const row of selectedRows) {
-      const orderId = String(row.orderId ?? "").trim();
-      if (!orderId) continue;
-      const shopName = String(row.shopName ?? "").trim();
-      selectedOrderGroups.set(`${shopName}\u0000${orderId}`, { orderId, shopName });
-    }
-    const allRows = orderIds.length
-      ? await this.prisma.rakutenOrderRecord.findMany({ where: { orderId: { in: orderIds } } })
-      : [];
-    const selectedIdSet = new Set(selectedRows.map((row) => row.id.toString()));
-    const exclusionMap = new Map<
-      string,
-      {
-        rmsConnectionId: bigint | null;
-        shopName: string | null;
-        orderId: string;
-        rmsItemKey: string | null;
-        skuCode: string | null;
-      }
-    >();
-
-    for (const { orderId, shopName } of selectedOrderGroups.values()) {
-      const orderRows = allRows.filter(
-        (row) => String(row.orderId ?? "").trim() === orderId && String(row.shopName ?? "").trim() === shopName,
-      );
-      const selectedOrderRows = orderRows.filter((row) => selectedIdSet.has(row.id.toString()));
-      if (!selectedOrderRows.length) continue;
-      if (selectedOrderRows.length === orderRows.length) {
-        const scopes = new Set(selectedOrderRows.map((row) => row.rmsConnectionId?.toString() ?? "global"));
-        for (const scope of scopes) {
-          const rmsConnectionId = scope === "global" ? null : BigInt(scope);
-          exclusionMap.set(`${shopName}|${scope}|${orderId}|order`, {
-            rmsConnectionId,
-            shopName: shopName || null,
-            orderId,
-            rmsItemKey: null,
-            skuCode: null,
-          });
-        }
-        continue;
-      }
-      for (const row of selectedOrderRows) {
-        const rmsItemKey = String(row.rmsItemKey ?? "").trim() || null;
-        const skuCode = rmsItemKey
-          ? null
-          : String(row.skuCode ?? "")
-              .trim()
-              .toLowerCase() || null;
-        if (!rmsItemKey && !skuCode) continue;
-        const scope = row.rmsConnectionId?.toString() ?? "global";
-        exclusionMap.set(`${shopName}|${scope}|${orderId}|${rmsItemKey ?? `sku:${skuCode}`}`, {
-          rmsConnectionId: row.rmsConnectionId,
-          shopName: String(row.shopName ?? "").trim() || null,
-          orderId,
-          rmsItemKey,
-          skuCode,
-        });
-      }
-    }
-
+  async deleteRakutenBatch(payload: { ids?: Array<string | number> }, createdBy?: bigint): Promise<{ deletedCount: number; fullOrderCount: number; partialOrderCount: number }> {
+    const ids = Array.from(new Set((Array.isArray(payload?.ids) ? payload.ids : [])
+      .map((value, index) => parseId(String(value ?? '').trim(), `ids[${index}]`))));
+    if (!ids.length) throw new BadRequestException('请至少选择一条乐天订单记录');
+    const selected = await this.prisma.rakutenOrderRecord.findMany({ where: { id: { in: ids }, deletedAt: null } });
+    if (!selected.length) return { deletedCount: 0, fullOrderCount: 0, partialOrderCount: 0 };
+    // API order identity is stable across shop renames; CSV orders retain shop isolation.
+    const groups = Array.from(new Map(selected.filter((row) => row.orderId).map((row) => [
+      row.rmsConnectionId ? `${row.rmsConnectionId}|${originalRakutenOrderId(row)}` : `csv|${row.shopName ?? ''}|${originalRakutenOrderId(row)}`,
+      { orderId: originalRakutenOrderId(row), rmsConnectionId: row.rmsConnectionId, shopName: row.shopName },
+    ])).values());
+    const scope = { deletedAt: null, OR: [ ...groups.map((group) => group.rmsConnectionId
+      ? { rmsConnectionId: group.rmsConnectionId, ...rakutenOrderIdentityWhere(group.orderId) }
+      : { rmsConnectionId: null, shopName: group.shopName, ...rakutenOrderIdentityWhere(group.orderId) }), { id: { in: selected.filter((row) => !row.orderId).map((row) => row.id) } } ] };
     return this.prisma.$transaction(async (tx) => {
-      for (const exclusion of exclusionMap.values()) {
-        await tx.rakutenOrderSyncExclusion.create({
-          data: {
-            ...exclusion,
-            reason: "user_delete",
-            createdBy: createdBy ?? null,
-          },
-        });
+      const token = randomUUID();
+      const connectionIds = Array.from(new Set(selected.flatMap((row) => row.rmsConnectionId ? [row.rmsConnectionId] : []))).sort((a, b) => a < b ? -1 : 1);
+      for (const connectionId of connectionIds) {
+        // Same lock used by outbound processing. Reject cancellation during an
+        // in-flight external operation; never claim that an accepted email was undone.
+        const lock = await tx.rakutenRmsConnection.updateMany({ where: { id: connectionId, OR: [
+          { automationLockToken: null }, { automationLockedAt: null },
+          { automationLockedAt: { lt: new Date(Date.now() - 30 * 60_000) } },
+        ] }, data: { automationLockToken: token, automationLockedAt: new Date() } });
+        if (lock.count !== 1) throw new ConflictException('店铺当前正在执行单号回传或邮件发送，请待本轮结束后再确认删除');
       }
-      const result = await tx.rakutenOrderRecord.deleteMany({
-      where: { id: { in: ids } },
-    });
-
-    return { deletedCount: result.count };
-  });
+      const allRows = await tx.rakutenOrderRecord.findMany({ where: scope });
+      if (selected.some((row) => !allRows.some((current) => current.id === row.id))) {
+        throw new ConflictException('选中产品已被删除或所属订单发生变化，请刷新后重试');
+      }
+      const rows = allRows.filter((row) => ids.includes(row.id));
+      const rowIds = rows.map((row) => row.id);
+      const picking = await tx.overseasPickingBatchItem.findFirst({ where: {
+        source: 'rakuten', sourceRecordId: { in: rowIds },
+      }, select: { id: true } });
+      if (picking) throw new BadRequestException('订单已关联拣货批次，请先由仓库处理后再确认删除');
+      const deletedAt = new Date();
+      let fullOrderCount = 0;
+      let partialOrderCount = 0;
+      for (const group of groups) {
+        const inGroup = (row: RakutenOrderRecord) => originalRakutenOrderId(row) === group.orderId &&
+          row.rmsConnectionId === group.rmsConnectionId && (group.rmsConnectionId !== null || row.shopName === group.shopName);
+        const remaining = allRows.filter((row) => inGroup(row) && !rowIds.includes(row.id));
+        if (!remaining.length) {
+          fullOrderCount += 1;
+          await tx.rakutenOrderSyncExclusion.create({ data: { ...group, rmsItemKey: null, skuCode: null,
+            reason: 'user_delete', createdBy: createdBy ?? null } });
+        }
+        if (remaining.length) {
+          partialOrderCount += 1;
+          for (const row of rows.filter(inGroup)) {
+            const skuCode = String(row.skuCode ?? '').trim().toLowerCase() || null;
+            if (!row.rmsItemKey && !skuCode) throw new BadRequestException('产品缺少商品标识，无法安全记录产品删除范围');
+            await tx.rakutenOrderSyncExclusion.create({ data: {
+              rmsConnectionId: row.rmsConnectionId, shopName: row.shopName, orderId: group.orderId,
+              rmsItemKey: row.rmsItemKey, skuCode: row.rmsItemKey ? null : skuCode,
+              reason: 'user_delete', createdBy: createdBy ?? null,
+            } });
+          }
+          // Deleted products change the purchased content and original RMS totals.
+          // Keep other products active, but require reviewed product-mail bodies.
+          for (const row of remaining) {
+            const updated = await tx.rakutenOrderRecord.updateMany({ where: { id: row.id, deletedAt: null, updatedAt: row.updatedAt }, data: {
+              rawPayload: this.mergeRawPayload(row.rawPayload, { _wmsDeletedItemsAt: deletedAt.toISOString() }),
+            } });
+            if (updated.count !== 1) throw new ConflictException('剩余商品在删除期间发生变化，请刷新后重试');
+          }
+          continue;
+        }
+        if (!group.rmsConnectionId) continue;
+        const jobScope = { connectionId: group.rmsConnectionId, orderId: group.orderId,
+          status: { in: [RakutenAutomationStatus.pending, RakutenAutomationStatus.failed, RakutenAutomationStatus.dead_letter] } };
+        const note = '全部产品已勾选删除，整单后续处理已终止';
+        await tx.rakutenOrderMail.updateMany({ where: jobScope, data: {
+          status: 'cancelled', nextAttemptAt: null, failureCategory: 'order_deleted',
+          resolutionNote: note, resolvedAt: deletedAt, resolvedBy: createdBy ?? null, lastError: note,
+        } });
+        // Preserve completed and uncertain records as evidence.
+        await tx.rakutenOrderShippingReport.updateMany({ where: jobScope, data: {
+          status: 'skipped', nextAttemptAt: null, failureCategory: 'order_deleted', lastError: note,
+        } });
+      }
+      const result = await tx.rakutenOrderRecord.updateMany({ where: { id: { in: rowIds }, deletedAt: null },
+        data: { deletedAt, deletedBy: createdBy ?? null } });
+      if (result.count !== rowIds.length) throw new ConflictException('产品在删除期间发生变化，请刷新后重试');
+      for (const connectionId of connectionIds) {
+        await tx.rakutenRmsConnection.updateMany({ where: { id: connectionId, automationLockToken: token },
+          data: { automationLockToken: null, automationLockedAt: null } });
+      }
+      return { deletedCount: result.count, fullOrderCount, partialOrderCount };
+    }, { maxWait: 10000, timeout: 30000 });
   }
 
   async changeRakutenOrderIdBatch(
@@ -5612,7 +5439,7 @@ export class OrdersService {
     const newOrderId = this.normalizeEditableText(payload?.newOrderId, '新订单号', 64);
     if (!newOrderId) throw new BadRequestException('请输入新订单号');
 
-    const rows = await this.prisma.rakutenOrderRecord.findMany({ where: { id: { in: ids } } });
+    const rows = await this.prisma.rakutenOrderRecord.findMany({ where: { deletedAt: null, id: { in: ids } } });
     if (rows.length !== ids.length) throw new NotFoundException('部分乐天订单记录不存在，请刷新列表后重试');
     const previousOrderIds = new Set(rows.map((row) => String(row.orderId ?? '').trim()));
     if (previousOrderIds.size !== 1 || previousOrderIds.has('')) {
@@ -5629,22 +5456,54 @@ export class OrdersService {
     }
     await this.assertOrderRecordsNotInOverseasPickingBatch('rakuten', ids);
     const conflicting = await this.prisma.rakutenOrderRecord.findFirst({
-      where: { orderId: newOrderId, id: { notIn: ids } },
+      where: { deletedAt: null, orderId: newOrderId, id: { notIn: ids } },
       select: { id: true },
     });
     if (conflicting) throw new ConflictException(`乐天订单 ${newOrderId} 已存在，不能使用相同订单号`);
 
+    const originalOrderIds = new Set(rows.map(originalRakutenOrderId));
+    if (originalOrderIds.size !== 1 || new Set(rows.map((row) => row.rmsConnectionId ?? `csv:${row.shopName}`)).size !== 1) {
+      throw new BadRequestException('只能拆分同一店铺的同一乐天原订单');
+    }
+    const originalOrderId = [...originalOrderIds][0];
     const manualOverrideAt = new Date();
     const operator = this.normalizeRakutenManualOperator(operatorUsername);
     await this.prisma.$transaction(async (tx) => {
-      for (const row of rows) {
+      const token = randomUUID();
+      const connectionIds = [...new Set(rows.flatMap((row) => row.rmsConnectionId ? [row.rmsConnectionId] : []))];
+      for (const connectionId of connectionIds) {
+        const locked = await tx.rakutenRmsConnection.updateMany({ where: { id: connectionId, OR: [
+          { automationLockToken: null }, { automationLockedAt: null },
+          { automationLockedAt: { lt: new Date(Date.now() - 30 * 60_000) } },
+        ] }, data: { automationLockToken: token, automationLockedAt: new Date() } });
+        if (locked.count !== 1) throw new ConflictException('店铺正在执行回传或邮件，暂不能拆分包裹');
+      }
+      // Lock the target index range, including an absent number. RepeatableRead
+      // keeps concurrent CSV/cross-shop splits from both claiming the same number.
+      const targetRows = await tx.$queryRaw<Array<{ id: bigint }>>(Prisma.sql`
+        SELECT id FROM rakuten_order_records
+        WHERE deleted_at IS NULL AND order_id = ${newOrderId} AND id NOT IN (${Prisma.join(ids)})
+        FOR UPDATE
+      `);
+      if (targetRows.length) throw new ConflictException(`乐天订单 ${newOrderId} 已存在，不能使用相同订单号`);
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM rakuten_order_records WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`);
+      const currentRows = await tx.rakutenOrderRecord.findMany({ where: { id: { in: ids }, deletedAt: null } });
+      if (currentRows.length !== ids.length || currentRows.some((row) => row.orderId !== previousOrderId ||
+        originalRakutenOrderId(row) !== originalOrderId || String(row.shipmentNo ?? '').trim())) {
+        throw new ConflictException('选中产品在拆分期间发生变化，请刷新后重试');
+      }
+      const picking = await tx.overseasPickingBatchItem.findFirst({ where: { source: 'rakuten', sourceRecordId: { in: ids } } });
+      if (picking) throw new ConflictException('产品已关联拣货批次，请先由仓库处理后再拆分');
+      for (const row of currentRows) {
         await tx.rakutenOrderRecord.update({
-          where: { id: row.id },
+          where: { deletedAt: null, id: row.id },
           data: {
             orderId: newOrderId,
+            rmsOrderId: originalOrderId,
             rmsManualOverrideAt: manualOverrideAt,
             rmsManualOverrideBy: operator,
             rawPayload: this.mergeRawPayload(row.rawPayload, {
+              _wmsOriginalOrderId: originalOrderId,
               _wmsManualOverrideFields: 'orderId',
               _wmsManualOverrideUpdatedAt: manualOverrideAt.toISOString(),
               注文番号: newOrderId,
@@ -5653,6 +5512,16 @@ export class OrdersService {
           },
         });
       }
+      for (const connectionId of connectionIds) {
+        await tx.rakutenRmsConnection.updateMany({ where: { id: connectionId, automationLockToken: token },
+          data: { automationLockToken: null, automationLockedAt: null } });
+      }
+    }, { maxWait: 10000, timeout: 30000, isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }).catch((error: unknown) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2034'
+        || error.code === 'P2010' && ['1205', '1213'].includes(String(error.meta?.code)))) {
+        throw new ConflictException('拆包操作发生并发冲突，请刷新后重新确认包裹订单号');
+      }
+      throw error;
     });
     return { updatedCount: rows.length, previousOrderId, newOrderId };
   }
@@ -5812,7 +5681,7 @@ export class OrdersService {
     const [rakutenRows, amazonRows, manualRows] = await Promise.all([
       rakutenIds.length
         ? this.prisma.rakutenOrderRecord.findMany({
-            where: { id: { in: rakutenIds } },
+            where: { deletedAt: null, id: { in: rakutenIds } },
             orderBy: [{ csvImportedAt: 'desc' }, { id: 'desc' }],
           })
         : Promise.resolve([] as RakutenOrderRecord[]),
@@ -6482,7 +6351,7 @@ export class OrdersService {
     ] = await Promise.all([
       rakutenIds.length
         ? this.prisma.rakutenOrderRecord.findMany({
-            where: { id: { in: rakutenIds } },
+            where: { deletedAt: null, id: { in: rakutenIds } },
           })
         : Promise.resolve([] as RakutenOrderRecord[]),
       amazonIds.length
@@ -6962,7 +6831,7 @@ export class OrdersService {
       .map((item) => item.sourceRecordId);
     const rakutenResult = rakutenIds.length
       ? await tx.rakutenOrderRecord.updateMany({
-          where: { id: { in: rakutenIds }, orderId },
+          where: { deletedAt: null, id: { in: rakutenIds }, orderId },
           data: {
             shipmentCompany: 'Yamato',
             shipmentNo: trackingNo,
@@ -8315,11 +8184,6 @@ export class OrdersService {
     return `${parts.year}-${parts.month}-${parts.day}`;
   }
 
-  private formatRakutenShipmentConfirmationDate(date: Date): string {
-    const parts = getZonedDateParts(date, APP_TIMEZONE);
-    return `${parts.year}${parts.month}${parts.day}`;
-  }
-
   private formatYamatoFileNameStamp(date: Date = new Date()): string {
     const parts = getZonedDateParts(date, APP_TIMEZONE);
     return `${parts.year}${parts.month}${parts.day}_${parts.hour}${parts.minute}${parts.second}`;
@@ -8341,113 +8205,6 @@ export class OrdersService {
 
   private escapeTsvCell(value: string | number | null | undefined): string {
     return String(value ?? '').replace(/[\t\r\n]+/g, ' ').trim();
-  }
-
-  private escapeCsvCell(value: string | number | null | undefined): string {
-    const normalized = String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
-    return `"${normalized.replace(/"/g, '""')}"`;
-  }
-
-  private resolveRakutenShippingDestinationId(row: RakutenOrderRecord): string {
-    return (
-      this.getJsonField(row.rawPayload, '送付先ID') ??
-      this.getJsonField(row.rawPayload, '送付先Id') ??
-      this.getJsonField(row.rawPayload, '送付先id') ??
-      row.shipmentRequestNo ??
-      ''
-    );
-  }
-
-  private resolveRakutenShippingDetailId(
-    row: RakutenOrderRecord,
-    chinaDispatchOrderRecordIdsByOrderId: Map<string, Set<string>>,
-  ): string {
-    const orderId = String(row.orderId ?? '').trim();
-    if (!orderId) {
-      return '';
-    }
-    const chinaRecordIds = chinaDispatchOrderRecordIdsByOrderId.get(orderId);
-    if (!chinaRecordIds?.size) {
-      return '';
-    }
-    if (chinaRecordIds.has(row.id.toString())) {
-      return '中国発';
-    }
-    return '中国発あり';
-  }
-
-  private resolveRakutenShipmentCarrierCode(row: RakutenOrderRecord): string {
-    return String(row.shipmentCompany ?? '').trim().toUpperCase() === 'XIYA-SAGAWA' ? '1002' : '1001';
-  }
-
-  private async loadRakutenShipmentReturnContext(
-    rows: RakutenOrderRecord[]): Promise<{
-    chinaDispatchOrderRecordIdsByOrderId: Map<string, Set<string>>;
-    blockedOrderIds: Set<string>;
-  }> {
-    const orderIds = Array.from(
-      new Set(
-        rows
-          .map((row) => String(row.orderId ?? '').trim())
-          .filter((orderId) => orderId.length > 0)),
-    );
-    if (!orderIds.length) {
-      return {
-        chinaDispatchOrderRecordIdsByOrderId: new Map(),
-        blockedOrderIds: new Set(),
-      };
-    }
-
-    const relatedRows = await this.prisma.rakutenOrderRecord.findMany({
-      where: {
-        orderId: { in: orderIds },
-      },
-      orderBy: [{ id: 'asc' }],
-    });
-    const enrichedRows = await this.enrichOrderRows(relatedRows);
-    const activePickedRefs = await this.loadActiveOverseasPickingBatchRefs(
-      enrichedRows.map((row) => ({
-        source: 'rakuten' as const,
-        sourceRecordId: row.id,
-      })),
-    );
-    const chinaDispatchOrderRecordIdsByOrderId = new Map<string, Set<string>>();
-    const blockedOrderIds = new Set<string>();
-    for (const row of enrichedRows) {
-      if (row.rmsManualActionDetectedAt && !row.rmsManualActionResolvedAt) {
-        const pendingOrderId = String(row.orderId ?? "").trim();
-        if (pendingOrderId) blockedOrderIds.add(pendingOrderId);
-      }
-      if (!this.isRakutenChinaDispatchRow(row, activePickedRefs)) {
-        continue;
-      }
-      const orderId = String(row.orderId ?? '').trim();
-      if (!orderId) {
-        continue;
-      }
-      const ids = chinaDispatchOrderRecordIdsByOrderId.get(orderId) ?? new Set<string>();
-      ids.add(row.id.toString());
-      chinaDispatchOrderRecordIdsByOrderId.set(orderId, ids);
-      if (!this.resolveRakutenTrackingClearanceStatusFromRow(row).hasCustomsClearance) {
-        blockedOrderIds.add(orderId);
-      }
-    }
-    return { chinaDispatchOrderRecordIdsByOrderId, blockedOrderIds };
-  }
-
-  private isRakutenChinaDispatchRow(row: OrderListItem, activePickedRefs: Set<string>): boolean {
-    const dispatchMode = String(row.dispatchMode ?? '').trim();
-    if (this.isChinaDispatchMode(dispatchMode)) {
-      return true;
-    }
-    if (row.xiyaExportedAt) {
-      return true;
-    }
-    const shipmentCompany = String(row.shipmentCompany ?? '').trim();
-    if (shipmentCompany === 'Xiya' || shipmentCompany === 'SAGAWA' || shipmentCompany === 'YAMATO') {
-      return true;
-    }
-    return row.fulfillmentMode === 'xiya_api' && !activePickedRefs.has(`rakuten:${row.id.toString()}`);
   }
 
   private normalizeShipmentConfirmationScope(daysRaw: string | number | null | undefined, noun: string,
@@ -8484,13 +8241,6 @@ export class OrdersService {
     return `PK-${parts.year}${parts.month}${parts.day}-${parts.hour}${parts.minute}${parts.second}-${randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`;
   }
 
-  async importUploadedCsv(
-    fileBuffer: Buffer,
-    originalName?: string): Promise<OrderImportResult> {
-    const sourceFileName = String(originalName ?? '').trim() || 'rakuten-orders.csv';
-    return this.importCsvBuffer(fileBuffer, sourceFileName, `uploaded:${sourceFileName}`);
-  }
-
   async importAmazonTxt(
     fileBuffer: Buffer,
     originalName?: string): Promise<AmazonOrderImportResult> {
@@ -8505,7 +8255,7 @@ export class OrdersService {
   }> {
     const [rakutenRows, amazonRows, manualRows] = await Promise.all([
       this.prisma.rakutenOrderRecord.findMany({
-        where: {
+        where: { deletedAt: null,
           sendStatus: OrderSendStatus.unsent,
           OR: [{ shipmentNo: null }, { shipmentNo: '' }],
         },
@@ -8614,7 +8364,7 @@ export class OrdersService {
     const [rakutenRows, amazonRows, manualRows] = await Promise.all([
       rakutenIds.length
         ? this.prisma.rakutenOrderRecord.findMany({
-            where: {
+            where: { deletedAt: null,
               id: { in: rakutenIds },
               sendStatus: OrderSendStatus.unsent,
               xiyaExportedAt: null,
@@ -8684,7 +8434,7 @@ export class OrdersService {
     const [rakutenResult, amazonResult, manualResult] = await this.prisma.$transaction(async (tx) => {
       const rakutenResult = eligibleRakutenIds.length
         ? await tx.rakutenOrderRecord.updateMany({
-            where: {
+            where: { deletedAt: null,
               id: { in: eligibleRakutenIds },
               xiyaExportedAt: null,
             },
@@ -8812,9 +8562,14 @@ export class OrdersService {
     const heartbeat = this.startRakutenTrackingSyncLockHeartbeat(lockToken);
     try {
       const rows = await this.prisma.rakutenOrderRecord.findMany({
-        where: {
+        where: { deletedAt: null,
           shipmentNo: { not: null, notIn: [''] },
-          trackingIsDelivered: false,
+          OR: [
+            { trackingIsDelivered: false },
+            { trackingHasCustomsClearance: false },
+            { trackingCustomsClearanceDate: null },
+            { trackingError: { not: null } },
+          ],
           ...this.buildRakutenChinaDispatchWhere(),
         },
         orderBy: [
@@ -8851,21 +8606,22 @@ export class OrdersService {
   }> {
     const [latestRow, pendingCountRows, uncheckedCountRows] = await Promise.all([
       this.prisma.rakutenOrderRecord.findFirst({
-        where: { trackingCheckedAt: { not: null } },
+        where: { deletedAt: null, trackingCheckedAt: { not: null } },
         orderBy: { trackingCheckedAt: 'desc' },
         select: { trackingCheckedAt: true },
       }),
       this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         SELECT COUNT(DISTINCT shipment_no) AS count
         FROM rakuten_order_records
-        WHERE shipment_no IS NOT NULL AND shipment_no <> ''
-          AND tracking_is_delivered = 0
+        WHERE deleted_at IS NULL AND shipment_no IS NOT NULL AND shipment_no <> ''
+          AND (tracking_is_delivered = 0 OR tracking_has_customs_clearance = 0
+            OR tracking_customs_clearance_date IS NULL OR tracking_error IS NOT NULL)
           AND dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
       `),
       this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         SELECT COUNT(DISTINCT shipment_no) AS count
         FROM rakuten_order_records
-        WHERE shipment_no IS NOT NULL AND shipment_no <> ''
+        WHERE deleted_at IS NULL AND shipment_no IS NOT NULL AND shipment_no <> ''
           AND tracking_checked_at IS NULL
           AND dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
       `),
@@ -8875,22 +8631,6 @@ export class OrdersService {
       pendingTrackingNoCount: Number(pendingCountRows[0]?.count ?? 0),
       uncheckedTrackingNoCount: Number(uncheckedCountRows[0]?.count ?? 0),
     };
-  }
-
-  @Cron(RAKUTEN_TRACKING_STATUS_SYNC_CRON, {
-    name: 'daily-rakuten-tracking-status-sync',
-    timeZone: APP_TIMEZONE,
-  })
-  async runScheduledRakutenTrackingStatusSync(): Promise<void> {
-    try {
-      const result = await this.syncRakutenTrackingStatuses();
-      this.logger.log(
-        `daily Rakuten tracking status sync completed: candidates=${result.candidateCount}, trackingNos=${result.trackingNoCount}, delivered=${result.deliveredCount}, customsClearance=${result.customsClearanceCount}, failed=${result.failedCount}`,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`daily Rakuten tracking status sync failed: ${message}`);
-    }
   }
 
   private async syncManualOrderIdsToXyjgBestEffort(ids: Array<bigint | number | string>): Promise<void> {
@@ -9103,7 +8843,7 @@ export class OrdersService {
 
     const trackingNumbersToFetch = Array.from(rowsByTrackingNo.entries())
       .filter(([trackingNo, row]) => {
-        if (!row.trackingCustomsClearanceDate) return true;
+        if (row.trackingError || !row.trackingHasCustomsClearance || !row.trackingCustomsClearanceDate) return true;
         if (this.isDeliveredRakutenTrackingStatus(this.resolveRakutenTrackingClearanceStatusFromRow(row))) {
           return false;
         }
@@ -9198,7 +8938,7 @@ export class OrdersService {
     status: RakutenTrackingClearanceStatus,
   ): Promise<void> {
     await this.prisma.rakutenOrderRecord.updateMany({
-      where: {
+      where: { deletedAt: null,
         shipmentNo: trackingNo,
         ...this.buildRakutenChinaDispatchWhere(),
       },
@@ -9498,7 +9238,7 @@ export class OrdersService {
     const rows =
       source === 'rakuten'
         ? await this.prisma.rakutenOrderRecord.findMany({
-            where: {
+            where: { deletedAt: null,
               orderId: { in: orderIds },
               sendStatus: OrderSendStatus.unsent,
               OR: [{ shipmentNo: null }, { shipmentNo: '' }],
@@ -9560,7 +9300,7 @@ export class OrdersService {
       const updateResult =
         source === 'rakuten'
           ? await this.prisma.rakutenOrderRecord.updateMany({
-              where: {
+              where: { deletedAt: null,
                 id: { in: ids },
                 sendStatus: OrderSendStatus.unsent,
                 OR: [{ shipmentNo: null }, { shipmentNo: '' }],
@@ -9952,435 +9692,6 @@ export class OrdersService {
     return orderIds;
   }
 
-  private async importCsvBuffer(
-    fileBuffer: Buffer,
-    sourceFileName: string,
-    sourceFilePath: string,
-  ): Promise<OrderImportResult> {
-    const parsedRows = await this.expandRakutenComboRows(this.parseCsv(fileBuffer));
-    const uniqueRowsMap = new Map<string, ParsedOrderCsvRow>();
-    for (const row of parsedRows) {
-      const existing = uniqueRowsMap.get(row.rowHash);
-      if (!existing) {
-        uniqueRowsMap.set(row.rowHash, row);
-        continue;
-      }
-
-      // Rakuten may export the same item on multiple lines (one line per unit).
-      // Do not discard those lines as duplicates: preserve the line identity while
-      // accumulating the purchased quantity.
-      const quantity = (existing.orderQuantity ?? 0) + (row.orderQuantity ?? 0);
-      const mergedRawPayload = {
-        ...existing.rawPayload,
-        [RAKUTEN_ORDER_HEADERS.orderQuantity]: String(quantity),
-      };
-      const mergedRowWithoutHash = {
-        ...existing,
-        orderQuantity: quantity || existing.orderQuantity,
-        rawPayload: mergedRawPayload,
-      };
-      const mergedRowHash = this.buildRowHash(mergedRowWithoutHash);
-      // Keep the source hash as the lookup key so a third (or later) identical
-      // line is accumulated into the same logical item as well.
-      uniqueRowsMap.set(row.rowHash, { ...mergedRowWithoutHash, rowHash: mergedRowHash });
-    }
-
-    const uniqueRows = Array.from(uniqueRowsMap.values());
-    const importOrderIds = Array.from(
-      new Set(
-        uniqueRows
-          .map((row) => String(row.orderId ?? '').trim())
-          .filter((orderId) => orderId.length > 0)),
-    );
-    const existingOrderIds = new Set<string>();
-    if (importOrderIds.length) {
-      const existingRows = await this.prisma.rakutenOrderRecord.findMany({
-        where: {
-          orderId: {
-            in: importOrderIds,
-          },
-        },
-        select: {
-          orderId: true,
-        },
-      });
-      for (const row of existingRows) {
-        const orderId = String(row.orderId ?? '').trim();
-        if (orderId) {
-          existingOrderIds.add(orderId);
-        }
-      }
-    }
-    const rowsToCreate = uniqueRows.filter((row) => {
-      const orderId = String(row.orderId ?? '').trim();
-      return !orderId || !existingOrderIds.has(orderId);
-    });
-    const productIds = Array.from(
-      new Set(
-        rowsToCreate
-          .map((row) => String(row.skuCode ?? row.setComponentSkuCode ?? '').trim())
-          .filter((productId) => productId.length > 0),
-      ),
-    );
-    const availabilityByProductId = await this.loadProductStockAvailability(productIds);
-    const importedAt = new Date();
-    const createManyInput: Prisma.RakutenOrderRecordCreateManyInput[] = rowsToCreate.map((row) => ({
-      rowHash: row.rowHash,
-      orderId: row.orderId,
-      itemDetailStatus: row.itemDetailStatus,
-      skuCode: row.skuCode,
-      isComboOrder: Boolean(row.isComboOrder),
-      comboOrderSku: row.comboOrderSku,
-      setComponentSkuCode: row.setComponentSkuCode,
-      orderQuantity: row.orderQuantity,
-      productName: row.productName,
-      mallName: row.mallName,
-      shopName: row.shopName,
-      mallOrderNo: row.mallOrderNo,
-      orderStatusText: row.orderStatusText,
-      orderImportedAtRaw: row.orderImportedAtRaw,
-      orderImportedDate: parseRakutenOrderDate(row.orderImportedAtRaw),
-      orderRemark: row.orderRemark,
-      shippingName: row.shippingName,
-      shippingPostalCode: row.shippingPostalCode,
-      shippingPrefecture: row.shippingPrefecture,
-      shippingCity: row.shippingCity,
-      shippingAddress: row.shippingAddress,
-      shippingPhone: row.shippingPhone,
-      shipmentCompany: row.shipmentCompany,
-      shipmentNo: row.shipmentNo,
-      shipmentNoRegisteredAt: row.shipmentNoRegisteredAt,
-      dispatchMode: (() => {
-        const productId = String(row.skuCode ?? row.setComponentSkuCode ?? '').trim();
-        const fulfillableStock = productId
-          ? (availabilityByProductId.get(productId)?.fulfillableStock ?? 0)
-          : 0;
-        const requestedQty = Math.max(1, Number(row.orderQuantity ?? 1));
-        return fulfillableStock >= requestedQty
-          ? OVERSEAS_DISPATCH_MODE.OVERSEAS
-          : OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK;
-      })(),
-      sendStatus: row.sendStatus,
-      deliveryMethod: row.deliveryMethod,
-      deliveryDateRaw: row.deliveryDateRaw,
-      deliveryTimeSlot: row.deliveryTimeSlot,
-      shipmentRequestNo: row.shipmentRequestNo,
-      productNameExtra: row.productNameExtra,
-      sourceFileName,
-      sourceFilePath,
-      rawPayload: row.rawPayload,
-      csvImportedAt: importedAt,
-    }));
-
-    const result = createManyInput.length
-      ? await this.prisma.rakutenOrderRecord.createMany({
-          data: createManyInput,
-          skipDuplicates: true,
-        })
-      : { count: 0 };
-
-    const duplicateInFileCount = parsedRows.length - uniqueRows.length;
-    const existingOrderDuplicateCount = uniqueRows.length - rowsToCreate.length;
-    const existingRowDuplicateCount = rowsToCreate.length - result.count;
-    const existingDuplicateCount = existingOrderDuplicateCount + existingRowDuplicateCount;
-
-    return {
-      sourceFileName,
-      sourceFilePath,
-      csvImportedAt: importedAt.toISOString(),
-      totalRows: parsedRows.length,
-      uniqueRows: uniqueRows.length,
-      createdCount: result.count,
-      skippedCount: parsedRows.length - result.count,
-      duplicateInFileCount,
-      existingDuplicateCount,
-    };
-  }
-
-  private async expandRakutenComboRows(rows: ParsedOrderCsvRow[]): Promise<ParsedOrderCsvRow[]> {
-    if (!rows.length) {
-      return rows;
-    }
-
-    const comboSkuCodes = Array.from(
-      new Set(
-        rows
-          .map((row) => String(row.skuCode ?? '').trim())
-          .filter((skuCode) => /^zh-/i.test(skuCode))),
-    );
-    if (!comboSkuCodes.length) {
-      return rows;
-    }
-
-    const comboProducts = await this.prisma.rakutenComboProduct.findMany({
-      where: {
-        comboName: {
-          in: comboSkuCodes,
-        },
-      },
-      include: {
-        items: {
-          orderBy: { position: 'asc' },
-          include: {
-            product: {
-              select: {
-                productId: true,
-                productName: true,
-              },
-            },
-          },
-        },
-      },
-    });
-    const comboBySku = new Map(
-      comboProducts.map((combo) => [String(combo.comboName ?? '').trim(), combo] as const));
-
-    const missingComboSkuCodes = comboSkuCodes.filter((skuCode) => !comboBySku.has(skuCode));
-    if (missingComboSkuCodes.length) {
-      throw new BadRequestException(
-        `以下乐天组合SKU未配置组合产品：${missingComboSkuCodes.join('、')}`);
-    }
-
-    const expandedRows: ParsedOrderCsvRow[] = [];
-    rows.forEach((row) => {
-      const skuCode = String(row.skuCode ?? '').trim();
-      if (!/^zh-/i.test(skuCode)) {
-        expandedRows.push(row);
-        return;
-      }
-
-      const combo = comboBySku.get(skuCode);
-      if (!combo || !Array.isArray(combo.items) || combo.items.length <= 0) {
-        throw new BadRequestException(`乐天组合SKU ${skuCode} 未配置组合明细`);
-      }
-
-      combo.items.forEach((item) => {
-        const componentProductId = String(item.productId ?? '').trim();
-        if (!componentProductId) {
-          throw new BadRequestException(`乐天组合SKU ${skuCode} 存在空产品ID明细`);
-        }
-        const componentProductName =
-          String(item.product?.productName ?? '').trim() ||
-          String(row.productName ?? '').trim() ||
-          null;
-        const expandedRowWithoutHash: Omit<ParsedOrderCsvRow, 'rowHash'> = {
-          ...row,
-          isComboOrder: true,
-          comboOrderSku: skuCode,
-          skuCode: componentProductId,
-          setComponentSkuCode: skuCode,
-          productName: componentProductName,
-          rawPayload: this.buildExpandedRakutenComboRawPayload(row.rawPayload, {
-            componentProductId,
-            componentProductName,
-          }),
-        };
-        expandedRows.push({
-          ...expandedRowWithoutHash,
-          rowHash: this.buildRowHash(expandedRowWithoutHash),
-        });
-      });
-    });
-
-    return expandedRows;
-  }
-
-  private parseCsv(fileBuffer: Buffer): ParsedOrderCsvRow[] {
-    const workbook = this.readRakutenCsvWorkbook(fileBuffer);
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) {
-      throw new BadRequestException('订单CSV没有可读取的工作表');
-    }
-
-    const firstSheet = workbook.Sheets[firstSheetName];
-    const rows = this.extractSheetRows(firstSheet);
-    if (rows.length <= 1) {
-      throw new BadRequestException('订单CSV没有可导入的数据');
-    }
-
-    const headerRow = rows[0].map((cell) => String(cell ?? '').trim());
-    const headerIndexMap = new Map<string, number>();
-    headerRow.forEach((header, index) => {
-      if (header) {
-        headerIndexMap.set(header, index);
-      }
-    });
-
-    const missingHeaders = RAKUTEN_ORDER_COLUMNS.map((column) => column.header).filter(
-      (header) => !headerIndexMap.has(header),
-    );
-    if (missingHeaders.length) {
-      throw new BadRequestException(`订单CSV缺少列：${missingHeaders.join('、')}`);
-    }
-
-    const parsedRows: ParsedOrderCsvRow[] = [];
-    for (let rowIndex = 1; rowIndex < rows.length; rowIndex += 1) {
-      const sourceRow = rows[rowIndex] ?? [];
-      const rawPayload = {} as Record<OrderCsvHeader, string | null>;
-      for (const column of RAKUTEN_ORDER_COLUMNS) {
-        const cellIndex = headerIndexMap.get(column.header);
-        rawPayload[column.header] =
-          cellIndex === undefined ? null : this.normalizeCellValue(sourceRow[cellIndex]);
-      }
-      rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot] = normalizeRakutenDeliveryTimeSlot(
-        rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot],
-      );
-
-      const hasAnyValue = Object.values(rawPayload).some((value) => Boolean(value));
-      if (!hasAnyValue) {
-        continue;
-      }
-
-      const shippingName = this.combineNonEmptyParts([
-        rawPayload[RAKUTEN_ORDER_HEADERS.shippingLastName],
-        rawPayload[RAKUTEN_ORDER_HEADERS.shippingFirstName],
-      ]);
-      const shippingPostalCode = this.combineNonEmptyParts(
-        [
-          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPostalCode1],
-          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPostalCode2]],
-        '-',
-      );
-      const shippingPhone = this.combineNonEmptyParts(
-        [
-          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPhone1],
-          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPhone2],
-          rawPayload[RAKUTEN_ORDER_HEADERS.shippingPhone3],
-        ],
-        '-',
-      );
-
-      const parsedRowWithoutHash = {
-        orderId: rawPayload[RAKUTEN_ORDER_HEADERS.orderId],
-        itemDetailStatus: rawPayload[RAKUTEN_ORDER_HEADERS.deliveryClass],
-        skuCode: rawPayload[RAKUTEN_ORDER_HEADERS.skuCode],
-        isComboOrder: false,
-        comboOrderSku: null,
-        setComponentSkuCode: null,
-        orderQuantity: this.parseQuantity(rawPayload[RAKUTEN_ORDER_HEADERS.orderQuantity]),
-        productName: rawPayload[RAKUTEN_ORDER_HEADERS.productName],
-        mallName: 'Rakuten',
-        shopName: null,
-        mallOrderNo: rawPayload[RAKUTEN_ORDER_HEADERS.orderId],
-        orderStatusText: rawPayload[RAKUTEN_ORDER_HEADERS.orderConfirmedAt],
-        orderImportedAtRaw: rawPayload[RAKUTEN_ORDER_HEADERS.orderCreatedAt],
-        orderRemark: rawPayload[RAKUTEN_ORDER_HEADERS.orderRemark],
-        shippingName,
-        shippingPostalCode,
-        shippingPrefecture: rawPayload[RAKUTEN_ORDER_HEADERS.shippingPrefecture],
-        shippingCity: rawPayload[RAKUTEN_ORDER_HEADERS.shippingCity],
-        shippingAddress: rawPayload[RAKUTEN_ORDER_HEADERS.shippingAddress],
-        shippingPhone,
-        shipmentCompany: null,
-        shipmentNo: null,
-        shipmentNoRegisteredAt: null,
-        sendStatus: this.resolveSendStatus(null),
-        deliveryMethod: rawPayload[RAKUTEN_ORDER_HEADERS.deliveryMethod],
-        deliveryDateRaw: rawPayload[RAKUTEN_ORDER_HEADERS.deliveryDateRaw],
-        deliveryTimeSlot: rawPayload[RAKUTEN_ORDER_HEADERS.deliveryTimeSlot],
-        shipmentRequestNo: null,
-        productNameExtra: rawPayload[RAKUTEN_ORDER_HEADERS.skuInfo],
-        rawPayload,
-      };
-
-      parsedRows.push({
-        ...parsedRowWithoutHash,
-        rowHash: this.buildRowHash(parsedRowWithoutHash),
-      });
-    }
-
-    if (!parsedRows.length) {
-      throw new BadRequestException('订单CSV没有可导入的数据');
-    }
-
-    return parsedRows;
-  }
-
-  private readRakutenCsvWorkbook(fileBuffer: Buffer): XLSX.WorkBook {
-    const evaluated = RAKUTEN_CSV_ENCODING_CANDIDATES.map((encoding, index) => {
-      const content = this.decodeTextBuffer(fileBuffer, encoding).replace(/^\uFEFF/, '');
-      const workbook = XLSX.read(content, {
-        type: 'string',
-        dense: true,
-        raw: true,
-        cellText: true,
-      });
-      return {
-        workbook,
-        score: this.scoreRakutenCsvHeaders(workbook) - index,
-      };
-    }).sort((left, right) => right.score - left.score);
-
-    return evaluated[0]?.workbook ?? XLSX.read(fileBuffer, { type: 'buffer', dense: true });
-  }
-
-  private scoreRakutenCsvHeaders(workbook: XLSX.WorkBook): number {
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) return -1_000;
-
-    const headerSet = new Set(
-      (this.extractSheetRows(workbook.Sheets[firstSheetName])[0] ?? [])
-        .map((cell) => String(cell ?? '').replace(/^\uFEFF/, '').trim()),
-    );
-    return RAKUTEN_ORDER_COLUMNS.filter((column) => headerSet.has(column.header)).length;
-  }
-
-  private extractSheetRows(sheet: XLSX.WorkSheet): Array<Array<string | number | boolean | null>> {
-    const sheetRange = sheet['!ref'];
-    if (!sheetRange) {
-      return [];
-    }
-
-    const range = XLSX.utils.decode_range(sheetRange);
-    const rows: Array<Array<string | number | boolean | null>> = [];
-    // SheetJS 0.20 stores dense worksheet cells in `!data`; older versions
-    // expose the worksheet itself as an array.  Support both layouts.
-    const denseSheet = Array.isArray(sheet)
-      ? (sheet as unknown as Array<Array<XLSX.CellObject | undefined>>)
-      : (sheet as unknown as { '!data'?: Array<Array<XLSX.CellObject | undefined>> })['!data'];
-
-    for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
-      const row: Array<string | number | boolean | null> = [];
-      for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
-        const cell = Array.isArray(denseSheet)
-          ? denseSheet[rowIndex]?.[columnIndex]
-          : (sheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })] as XLSX.CellObject | undefined);
-        row.push(this.extractSheetCellValue(cell));
-      }
-      rows.push(row);
-    }
-
-    return rows;
-  }
-
-  private extractSheetCellValue(cell: XLSX.CellObject | undefined): string | number | boolean | null {
-    if (!cell) {
-      return null;
-    }
-
-    const formattedValue = typeof cell.w === 'string' ? cell.w.replace(/\uFEFF/g, '').replace(/\r?\n/g, ' ').trim() : '';
-    if (formattedValue) {
-      return formattedValue;
-    }
-
-    const rawValue = cell.v;
-    if (rawValue === null || rawValue === undefined || rawValue === '') {
-      return null;
-    }
-
-    if (rawValue instanceof Date) {
-      const year = rawValue.getFullYear();
-      const month = String(rawValue.getMonth() + 1).padStart(2, '0');
-      const day = String(rawValue.getDate()).padStart(2, '0');
-      const hours = String(rawValue.getHours()).padStart(2, '0');
-      const minutes = String(rawValue.getMinutes()).padStart(2, '0');
-      const seconds = String(rawValue.getSeconds()).padStart(2, '0');
-      return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-    }
-
-    return rawValue;
-  }
-
   private async importAmazonTxtBuffer(
     fileBuffer: Buffer,
     sourceFileName: string,
@@ -10755,13 +10066,6 @@ export class OrdersService {
       return false;
     }
     return null;
-  }
-
-  private combineNonEmptyParts(parts: Array<string | null>, separator = ''): string | null {
-    const normalized = parts
-      .map((value) => String(value ?? '').trim())
-      .filter((value) => value.length > 0);
-    return normalized.length ? normalized.join(separator) : null;
   }
 
   private normalizeEditableText(
@@ -11189,23 +10493,6 @@ export class OrdersService {
 
   private resolveSendStatus(shipmentNo: string | null): OrderSendStatus {
     return shipmentNo && shipmentNo.trim() ? OrderSendStatus.sent : OrderSendStatus.unsent;
-  }
-
-  private buildExpandedRakutenComboRawPayload(
-    rawPayload: Record<OrderCsvHeader, string | null>,
-    payload: { componentProductId: string; componentProductName: string | null;
-    },
-  ): Record<OrderCsvHeader, string | null> {
-    return {
-      ...rawPayload,
-      [RAKUTEN_ORDER_HEADERS.skuCode]: payload.componentProductId,
-      [RAKUTEN_ORDER_HEADERS.productName]: payload.componentProductName,
-    };
-  }
-
-  private buildRowHash(row: Omit<ParsedOrderCsvRow, 'rowHash'>): string {
-    const hashBase = RAKUTEN_ORDER_COLUMNS.map((column) => row.rawPayload[column.header] ?? '').join('\u001f');
-    return createHash('sha1').update(hashBase).digest('hex');
   }
 
   private buildAmazonRowHash(row: Omit<ParsedAmazonOrderRow, 'rowHash'>): string {

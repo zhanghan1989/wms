@@ -112,10 +112,10 @@ describe('Yamato printing optimization regressions', () => {
       printJob: { count: jest.fn().mockResolvedValue(1) } };
     const transaction = jest.fn(async (work, _options) => work(tx));
     const service = new OrdersService({ $transaction: transaction } as any);
-    await expect(service.completeOverseasPickingBatchWork('4')).rejects.toThrow('补打任务');
+    await expect(service.completeOverseasPickingBatchWork('4', 9n)).rejects.toThrow('补打任务');
     expect(tx.overseasPickingBatch.update).not.toHaveBeenCalled();
     expect(transaction.mock.calls[0][1]).toEqual({ isolationLevel: 'ReadCommitted' });
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
   });
 
   it('preserves a second identical barcode entered while the first print is still pending', async () => {
