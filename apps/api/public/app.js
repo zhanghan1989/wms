@@ -7602,6 +7602,8 @@ function startRakutenSchedulePolling() {
 }
 
 async function openRakutenProcessingCenter({ connectionId = "", view = "manual", record = "mail" } = {}) {
+  $("rakutenTrackingFailuresPanel").classList.add("hidden");
+  $("rakutenTrackingFailuresPanel").open = false;
   rakutenTrackingFailuresPage = 1;
   rakutenTrackingFailuresView = "failed";
   rakutenTrackingFailuresQuery = "";
@@ -17731,6 +17733,7 @@ function bindForms() {
   });
 
   $("rakutenTrackingFailuresOpen")?.addEventListener("click", async () => {
+    $("rakutenTrackingFailuresPanel").classList.remove("hidden");
     $("rakutenTrackingFailuresPanel").open = true;
     $("rakutenTrackingFailuresPanel").scrollIntoView({ block: "nearest" });
     await loadRakutenTrackingFailures();
