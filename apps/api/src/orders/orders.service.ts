@@ -904,7 +904,8 @@ const XYJG_PUSH_MODE = {
   CHINA_SHIP: 'china_ship',
   LOGISTICS_ORDER: 'logistics_order',
 } as const;
-const XIYA_LOGISTICS_STORE_SOURCE: Record<string, ThirdPartyExportSource> = {
+// Existing Xiya names can differ from the configured WMS names, especially for Rakuten.
+const XIYA_LEGACY_LOGISTICS_STORE_SOURCE: Record<string, ThirdPartyExportSource> = {
   DGAZ乐天日本: 'rakuten',
   DGAZ亚马逊日本站: 'amazon',
   ArcDiary亚马逊日本站: 'amazon',
@@ -8572,8 +8573,10 @@ export class OrdersService {
 
     this.xiyaTrackingSyncRunning = true;
     try {
-      const fetchedRows = await this.fetchXiyaLogisticsRows();
-      const candidates = this.normalizeXiyaTrackingCandidates(fetchedRows);
+      // Read once per run so the request and response use the same current shop snapshot.
+      const storeSources = await this.loadXiyaLogisticsStoreSources();
+      const fetchedRows = await this.fetchXiyaLogisticsRows(storeSources);
+      const candidates = this.normalizeXiyaTrackingCandidates(fetchedRows, storeSources);
       const deduplicatedCandidates = this.deduplicateXiyaTrackingCandidates(candidates);
       const [rakutenResult, amazonResult, manualResult] = await Promise.all([
         this.applyXiyaTrackingCandidates(
@@ -9197,10 +9200,38 @@ export class OrdersService {
     return { apiUrl, appToken, appKey };
   }
 
-  private async fetchXiyaLogisticsRows(): Promise<XiyaLogisticsRow[]> {
+  private async loadXiyaLogisticsStoreSources(): Promise<Map<string, ThirdPartyExportSource>> {
+    const shops = await this.prisma.shop.findMany({
+      select: { name: true, platform: true, status: true },
+      orderBy: { id: 'asc' },
+    });
+    const storeSources = new Map<string, ThirdPartyExportSource>();
+    for (const shop of shops) {
+      const storeName = shop.name.trim();
+      if (!storeName || shop.status !== 1) continue;
+      const source: ThirdPartyExportSource =
+        shop.platform === 'rakuten' ? 'rakuten' : shop.platform === 'amazon' ? 'amazon' : 'manual';
+      storeSources.set(storeName, source);
+    }
+
+    const activeSources = new Set(storeSources.values());
+    const configuredNames = new Set(shops.map((shop) => shop.name.trim()));
+    for (const [storeName, source] of Object.entries(XIYA_LEGACY_LOGISTICS_STORE_SOURCE)) {
+      if (activeSources.has(source) && !configuredNames.has(storeName)) {
+        storeSources.set(storeName, source);
+      }
+    }
+    return storeSources;
+  }
+
+  private async fetchXiyaLogisticsRows(
+    storeSources: ReadonlyMap<string, ThirdPartyExportSource>,
+  ): Promise<XiyaLogisticsRow[]> {
+    // An omitted/empty storeName makes Xiya query its default shop, so skip when none are enabled.
+    if (!storeSources.size) return [];
     const url = new URL(XIYA_LOGISTICS_EXPORT_URL);
     url.searchParams.set('company_name', XIYA_COMPANY_NAME);
-    url.searchParams.set('storeName', Object.keys(XIYA_LOGISTICS_STORE_SOURCE).join(','));
+    url.searchParams.set('storeName', Array.from(storeSources.keys()).join(','));
     url.searchParams.set('days', String(XIYA_LOGISTICS_SYNC_DAYS));
 
     let payload: unknown;
@@ -9239,11 +9270,14 @@ export class OrdersService {
     return (data as Record<string, unknown>).rows as XiyaLogisticsRow[];
   }
 
-  private normalizeXiyaTrackingCandidates(rows: XiyaLogisticsRow[]): XiyaTrackingCandidate[] {
+  private normalizeXiyaTrackingCandidates(
+    rows: XiyaLogisticsRow[],
+    storeSources: ReadonlyMap<string, ThirdPartyExportSource>,
+  ): XiyaTrackingCandidate[] {
     return rows
       .map((row) => {
         const storeName = String(row?.store_name ?? '').trim();
-        const source = XIYA_LOGISTICS_STORE_SOURCE[storeName];
+        const source = storeSources.get(storeName);
         const orderId = String(row?.sales_order_id ?? '').trim();
         const trackingNo = String(row?.logistics_order_id || row?.tracking_number || '').trim();
         if (!source || !orderId || !trackingNo) {
