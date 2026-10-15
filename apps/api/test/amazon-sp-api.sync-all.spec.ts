@@ -176,4 +176,58 @@ describe('Amazon all-store synchronization', () => {
     await service.syncAllConnections();
     await expect(service.syncAllConnections()).rejects.toThrow('订单拉取操作过于频繁');
   });
+
+  it('keeps three stores sequential, rejects overlap and builds one snapshot after all finish', async () => {
+    const prisma = {
+      amazonSpApiConnection: {
+        findMany: jest.fn().mockResolvedValue([1n, 2n, 3n].map((id) => ({ id, shop: { name: `Shop ${id}` } }))),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    } as unknown as PrismaService;
+    const service = new AmazonSpApiService(prisma, {} as AmazonSpApiClient, {} as AmazonSpApiCryptoService);
+    const result = { status: 'success', fetchedCount: 1, createdCount: 0, updatedCount: 0, errors: [] };
+    let release!: (value: unknown) => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const pending = new Promise((resolve) => { release = resolve; });
+    const runSync = jest.spyOn(service as any, 'runSync').mockResolvedValue(result)
+      .mockImplementationOnce(() => { entered(); return pending; });
+    const snapshot = jest.spyOn(service as any, 'materializeDashboardSnapshotIfComplete').mockResolvedValue(undefined);
+
+    const running = service.syncAllConnections(true, 'scheduled');
+    await started;
+    try {
+      expect(runSync).toHaveBeenCalledTimes(1);
+      expect(snapshot).not.toHaveBeenCalled();
+      await expect(service.syncAllConnections(true, 'scheduled')).rejects.toThrow('正在运行');
+    } finally {
+      release(result);
+    }
+    const summary = await running;
+
+    expect(runSync.mock.calls.map(([connection]) => (connection as { id: bigint }).id)).toEqual([1n, 2n, 3n]);
+    expect(summary).toMatchObject({ completedCount: 3, fetchedCount: 3, failedCount: 0 });
+    expect(snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('continues the other stores after a failure and preserves the last snapshot', async () => {
+    const prisma = {
+      amazonSpApiConnection: {
+        findMany: jest.fn().mockResolvedValue([1n, 2n, 3n].map((id) => ({ id, shop: { name: `Shop ${id}` } }))),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
+    } as unknown as PrismaService;
+    const service = new AmazonSpApiService(prisma, {} as AmazonSpApiClient, {} as AmazonSpApiCryptoService);
+    const runSync = jest.spyOn(service as any, 'runSync')
+      .mockRejectedValueOnce(new Error('store unavailable'))
+      .mockResolvedValue({ status: 'success', fetchedCount: 1, createdCount: 0, updatedCount: 0, errors: [] });
+    const snapshot = jest.spyOn(service as any, 'materializeDashboardSnapshotIfComplete').mockResolvedValue(undefined);
+
+    expect(await service.syncAllConnections(true, 'scheduled')).toMatchObject({ completedCount: 3, failedCount: 1 });
+    expect(runSync).toHaveBeenCalledTimes(3);
+    expect(snapshot).not.toHaveBeenCalled();
+    // The running flag must also be released on failure/partial completion.
+    await service.syncAllConnections(true, 'scheduled');
+    expect(snapshot).toHaveBeenCalledTimes(1);
+  });
 });

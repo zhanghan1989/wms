@@ -104,7 +104,8 @@ describe('Amazon SP-API FBM order isolation', () => {
     const client = {
       forEachInventorySummaryPage: jest.fn(async (_options, onPage) => {
         await onPage([
-          { sellerSku: 'SKU-OLD', totalQuantity: 5, inventoryDetails: { fulfillableQuantity: 4 } },
+          { sellerSku: 'SKU-OLD', totalQuantity: 5, inventoryDetails: { fulfillableQuantity: 4 },
+            toJSON: () => { throw new Error('unchanged inventory payload must not be serialized'); } },
           { sellerSku: 'SKU-NEW', totalQuantity: 3, inventoryDetails: { fulfillableQuantity: 3 } },
         ]);
       }),

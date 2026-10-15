@@ -160,6 +160,19 @@ describe('Amazon SP-API integration primitives', () => {
     expect((client as any).retryAfterMilliseconds('Mon, 31 Aug 2026 00:00:03 GMT')).toBe(3000);
   });
 
+  it('backs off throttled requests without Retry-After and keeps the retry count bounded', async () => {
+    const client = new AmazonSpApiClient();
+    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+    const delay = jest.spyOn(client as any, 'delay').mockResolvedValue(undefined);
+    const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(async () =>
+      new Response(JSON.stringify({ errors: [{ message: 'throttled' }] }), { status: 429 }));
+
+    await expect(client.testConnection('token', 'FE')).rejects.toThrow('HTTP 429');
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(delay.mock.calls).toEqual([[1000], [2000]]);
+  });
+
   it('includes the Amazon request id in terminal API errors', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       errors: [{ message: 'forbidden' }],

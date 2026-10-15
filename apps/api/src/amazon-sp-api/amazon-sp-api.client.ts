@@ -28,6 +28,7 @@ export class AmazonSpApiClient {
   }> {
     const { clientId, clientSecret } = this.getLwaCredentials();
     const response = await fetch('https://api.amazon.com/auth/o2/token', {
+      signal: AbortSignal.timeout(this.requestTimeoutMs()),
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
       body: new URLSearchParams({
@@ -55,6 +56,7 @@ export class AmazonSpApiClient {
     const { clientId, clientSecret } = this.getLwaCredentials();
 
     const response = await fetch('https://api.amazon.com/auth/o2/token', {
+      signal: AbortSignal.timeout(this.requestTimeoutMs()),
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
       body: new URLSearchParams({
@@ -254,7 +256,8 @@ export class AmazonSpApiClient {
 
   private async waitBeforeRetry(response: Response, attempt: number): Promise<void> {
     const retryAfterMs = this.retryAfterMilliseconds(response.headers.get('retry-after'));
-    const fallbackMs = this.withJitter(Math.min(250 * 2 ** (attempt - 1), 1000));
+    const baseMs = response.status === 429 ? 1000 : 250;
+    const fallbackMs = this.withJitter(Math.min(baseMs * 2 ** (attempt - 1), MAX_RETRY_DELAY_MS));
     await this.delay(retryAfterMs ?? fallbackMs);
   }
 

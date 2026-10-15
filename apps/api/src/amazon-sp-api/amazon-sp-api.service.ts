@@ -13,6 +13,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'crypto';
+import { setImmediate as yieldToEventLoop } from 'timers/promises';
 import * as XLSX from 'xlsx';
 import { parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
@@ -25,7 +26,7 @@ import { StartAmazonOAuthDto } from './dto/start-amazon-oauth.dto';
 import { SyncAmazonConnectionDto } from './dto/sync-amazon-connection.dto';
 import { UpdateAmazonConnectionDto } from './dto/update-amazon-connection.dto';
 
-const AMAZON_SYNC_CRON = process.env.AMAZON_SP_API_SYNC_CRON || '0 0 11 * * *';
+const AMAZON_SYNC_CRON = process.env.AMAZON_SP_API_SYNC_CRON || '0 0 16 * * *';
 const AMAZON_SYNC_TIMEZONE = process.env.AMAZON_SP_API_SYNC_TIMEZONE || 'Asia/Shanghai';
 const AMAZON_SCHEDULED_SYNC_ENABLED =
   String(process.env.AMAZON_SP_API_SCHEDULED_SYNC_ENABLED ?? 'false').toLowerCase() === 'true';
@@ -34,6 +35,8 @@ const ORDER_SYNC_OVERLAP_MS = 6 * 60 * 60 * 1000;
 const SYNC_LOCK_STALE_MS = 30 * 60 * 1000;
 const SYNC_LOCK_HEARTBEAT_MS = 5 * 60 * 1000;
 const MANUAL_SYNC_COOLDOWN_MS = 60 * 1000;
+const SNAPSHOT_BATCH_SIZE = 200;
+const SNAPSHOT_TRANSACTION_TIMEOUT_MS = 60_000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_AUTHORIZATION_TTL_MS = 365 * 24 * 60 * 60 * 1000;
 const AMAZON_CALLBACK_PATH_PREFIX = '/apps/authorize/confirm/';
@@ -124,6 +127,7 @@ export class AmazonSpApiService {
   private readonly queuedConnections = new Set<string>();
   private readonly lastManualSyncQueuedAt = new Map<string, number>();
   private allConnectionsSyncQueued = false;
+  private allConnectionsSyncRunning = false;
   private syncQueueTail: Promise<void> = Promise.resolve();
   private queuedSyncTaskCount = 0;
   private lastAllSyncStartedAt = 0;
@@ -386,11 +390,34 @@ export class AmazonSpApiService {
     bypassCooldown = false,
     trigger: AmazonSyncTrigger = 'manual',
   ): Promise<AmazonAllConnectionsSyncResult> {
+    if (this.allConnectionsSyncRunning) {
+      throw new ConflictException('全部Amazon店铺同步任务正在运行');
+    }
     const now = Date.now();
     if (!bypassCooldown && now - this.lastAllSyncStartedAt < 60_000) {
       throw new ConflictException('订单拉取操作过于频繁，请在60秒后重试');
     }
     this.lastAllSyncStartedAt = now;
+    this.allConnectionsSyncRunning = true;
+    this.logSyncResources('all-start', { trigger });
+    try {
+      const result = await this.runAllConnectionsSync(trigger);
+      this.logSyncResources('all-complete', {
+        trigger, elapsedMs: Date.now() - now,
+        completed: result.completedCount, skipped: result.skippedCount,
+        partial: result.partialCount, failed: result.failedCount,
+      });
+      return result;
+    } catch (error) {
+      this.logger.error(`Amazon all-store sync failed: ${this.errorMessage(error)}`);
+      this.logSyncResources('all-failed', { trigger, elapsedMs: Date.now() - now });
+      throw error;
+    } finally {
+      this.allConnectionsSyncRunning = false;
+    }
+  }
+
+  private async runAllConnectionsSync(trigger: AmazonSyncTrigger): Promise<AmazonAllConnectionsSyncResult> {
     const connections = await this.prisma.amazonSpApiConnection.findMany({
       where: { status: 1 },
       include: { shop: { select: { name: true } } },
@@ -450,6 +477,8 @@ export class AmazonSpApiService {
       }
       this.runningConnections.add(connectionId);
       const heartbeat = this.startConnectionLockHeartbeat(connection.id, lockToken);
+      const startedAt = Date.now();
+      this.logSyncResources('store-start', { connectionId });
       try {
         const result = await this.runSync(
           connection,
@@ -480,7 +509,12 @@ export class AmazonSpApiService {
           conflictCount: result.conflictCount ?? 0,
           errors: result.errors,
         });
+        this.logSyncResources('store-complete', {
+          connectionId, status: result.status, elapsedMs: Date.now() - startedAt,
+          fetched: result.fetchedCount, unchanged: result.unchangedCount ?? 0,
+        });
       } catch (error) {
+        this.logSyncResources('store-failed', { connectionId, elapsedMs: Date.now() - startedAt });
         summary.completedCount += 1;
         summary.failedCount += 1;
         summary.results.push({
@@ -503,7 +537,11 @@ export class AmazonSpApiService {
       }
     }
     if (trigger === 'scheduled') {
-      await this.materializeDashboardSnapshotIfComplete();
+      if (!summary.skippedCount && !summary.partialCount && !summary.failedCount) {
+        await this.materializeDashboardSnapshotIfComplete();
+      } else {
+        this.logger.warn('Amazon dashboard snapshot skipped: not all stores completed successfully in this run');
+      }
     }
     return summary;
   }
@@ -939,44 +977,76 @@ export class AmazonSpApiService {
   }
 
   private async materializeDashboardSnapshotIfComplete(): Promise<void> {
+    const startedAt = Date.now();
+    this.logSyncResources('snapshot-start');
+    try {
+      const created = await this.buildDashboardSnapshot();
+      this.logSyncResources(created ? 'snapshot-complete' : 'snapshot-skipped', {
+        elapsedMs: Date.now() - startedAt,
+      });
+    } catch (error) {
+      this.logSyncResources('snapshot-failed', { elapsedMs: Date.now() - startedAt });
+      this.logger.error(`Amazon dashboard snapshot failed: ${this.errorMessage(error)}`);
+      throw error;
+    }
+  }
+
+  private async readSnapshotPages<T extends { id: bigint }>(
+    readPage: (afterId?: bigint) => Promise<T[]>,
+    consume: (row: T) => void,
+  ): Promise<number> {
+    let afterId: bigint | undefined;
+    let count = 0;
+    while (true) {
+      const page = await readPage(afterId);
+      for (const row of page) consume(row);
+      count += page.length;
+      if (page.length < SNAPSHOT_BATCH_SIZE) return count;
+      afterId = page[page.length - 1].id;
+      await yieldToEventLoop();
+    }
+  }
+
+  private logSyncResources(stage: string, details: Record<string, unknown> = {}): void {
+    const memory = process.memoryUsage();
+    this.logger.log(`Amazon sync ${JSON.stringify({
+      stage, ...details, rssMiB: Math.round(memory.rss / 1024 / 1024),
+      heapUsedMiB: Math.round(memory.heapUsed / 1024 / 1024),
+    })}`);
+  }
+
+  private async buildDashboardSnapshot(): Promise<boolean> {
     const activeConnections = await this.prisma.amazonSpApiConnection.findMany({
       where: { status: 1 },
       include: { shop: { select: { name: true } } },
       orderBy: { id: 'asc' },
     });
-    if (!activeConnections.length) return;
+    if (!activeConnections.length) return false;
     const staleBefore = new Date(Date.now() - 6 * 60 * 60 * 1000);
     if (activeConnections.some((row) => row.lastSyncError || !row.lastSuccessfulSyncAt || row.lastSuccessfulSyncAt < staleBefore)) {
-      return;
+      return false;
     }
 
     const now = new Date();
     const periodStart = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
     const connectionIds = activeConnections.map((row) => row.id);
-    const [orders, inventories, skus] = await Promise.all([
-      this.prisma.amazonFbaOrderItem.findMany({
-        where: {
-          connectionId: { in: connectionIds },
-          purchaseDate: { gte: periodStart },
-          orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
-        },
-        include: { connection: { include: { shop: { select: { name: true } } } } },
-      }),
-      this.prisma.amazonFbaInventoryItem.findMany({
-        where: { connectionId: { in: connectionIds } },
-        include: { connection: { include: { shop: { select: { name: true } } } } },
-      }),
-      this.prisma.sku.findMany({
-        where: { status: 1, productId: { not: null } },
-        select: { shop: true, sku: true, productId: true },
-      }),
-    ]);
-
+    const shopByConnection = new Map(activeConnections.map((row) => [row.id, row.shop.name]));
+    const activeShops = new Set(activeConnections.map((row) => row.shop.name.trim()));
     const productByShopSku = new Map<string, string>();
-    for (const sku of skus) {
-      const productId = String(sku.productId ?? '').trim();
-      if (productId) productByShopSku.set(this.shopSkuKey(sku.shop, sku.sku), productId);
-    }
+    const skuCount = await this.readSnapshotPages(
+      (afterId) => this.prisma.sku.findMany({
+        where: { status: 1, productId: { not: null }, ...(afterId ? { id: { gt: afterId } } : {}) },
+        orderBy: { id: 'asc' }, take: SNAPSHOT_BATCH_SIZE,
+        select: { id: true, shop: true, sku: true, productId: true },
+      }),
+      (sku) => {
+        const productId = String(sku.productId ?? '').trim();
+        if (productId && activeShops.has(String(sku.shop ?? '').trim())) {
+          productByShopSku.set(this.shopSkuKey(sku.shop, sku.sku), productId);
+        }
+      },
+    );
+    this.logSyncResources('snapshot-skus', { rows: skuCount, mappings: productByShopSku.size });
     type SnapshotRow = {
       sellerSku: string;
       asin: string | null;
@@ -1026,56 +1096,80 @@ export class AmazonSpApiService {
       return row;
     };
 
-    for (const order of orders) {
-      const row = resolveGroup(
-        order.connectionId,
-        order.connection.shop.name,
-        order.sellerSku,
-        order.asin,
-        order.productName,
-      );
-      if (!row) continue;
-      row.orderedQty += Math.max(0, order.quantityShipped);
-      row.orderItemQty += 1;
-      row.salesAmount += Number(order.itemAmount ?? 0);
-    }
-    for (const inventory of inventories) {
-      const row = resolveGroup(
-        inventory.connectionId,
-        inventory.connection.shop.name,
-        inventory.sellerSku,
-        inventory.asin,
-        inventory.productName,
-      );
-      if (!row) continue;
-      row.fbaAvailableQty += inventory.fulfillableQty;
-      row.fbaInboundQty += inventory.inboundWorkingQty + inventory.inboundShippedQty + inventory.inboundReceivingQty;
-      row.fbaReservedQty += inventory.reservedQty;
-      row.fbaUnfulfillableQty += inventory.unfulfillableQty;
-    }
+    const orderCount = await this.readSnapshotPages(
+      (afterId) => this.prisma.amazonFbaOrderItem.findMany({
+        where: {
+          connectionId: { in: connectionIds }, purchaseDate: { gte: periodStart },
+          orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
+          ...(afterId ? { id: { gt: afterId } } : {}),
+        },
+        orderBy: { id: 'asc' }, take: SNAPSHOT_BATCH_SIZE,
+        select: {
+          id: true, connectionId: true, sellerSku: true, asin: true, productName: true,
+          quantityShipped: true, itemAmount: true,
+        },
+      }),
+      (order) => {
+        const row = resolveGroup(order.connectionId, shopByConnection.get(order.connectionId)!,
+          order.sellerSku, order.asin, order.productName);
+        if (!row) return;
+        row.orderedQty += Math.max(0, order.quantityShipped);
+        row.orderItemQty += 1;
+        row.salesAmount += Number(order.itemAmount ?? 0);
+      },
+    );
+    this.logSyncResources('snapshot-orders', { rows: orderCount, groups: grouped.size });
+    const inventoryCount = await this.readSnapshotPages(
+      (afterId) => this.prisma.amazonFbaInventoryItem.findMany({
+        where: { connectionId: { in: connectionIds }, ...(afterId ? { id: { gt: afterId } } : {}) },
+        orderBy: { id: 'asc' }, take: SNAPSHOT_BATCH_SIZE,
+        select: {
+          id: true, connectionId: true, sellerSku: true, asin: true, productName: true,
+          fulfillableQty: true, inboundWorkingQty: true, inboundShippedQty: true,
+          inboundReceivingQty: true, reservedQty: true, unfulfillableQty: true,
+        },
+      }),
+      (inventory) => {
+        const row = resolveGroup(inventory.connectionId, shopByConnection.get(inventory.connectionId)!,
+          inventory.sellerSku, inventory.asin, inventory.productName);
+        if (!row) return;
+        row.fbaAvailableQty += inventory.fulfillableQty;
+        row.fbaInboundQty += inventory.inboundWorkingQty + inventory.inboundShippedQty + inventory.inboundReceivingQty;
+        row.fbaReservedQty += inventory.reservedQty;
+        row.fbaUnfulfillableQty += inventory.unfulfillableQty;
+      },
+    );
+    this.logSyncResources('snapshot-inventory', { rows: inventoryCount, groups: grouped.size });
 
-    const rows = Array.from(grouped.values());
-    const fbaRows = rows.filter((row) => row.channel === 'fba');
-    const unmatchedRows = rows.filter((row) => row.channel === 'unmatched');
-    const fbaOrderedQty = fbaRows.reduce((sum, row) => sum + row.orderedQty, 0);
-    const fbaAvailableQty = fbaRows.reduce((sum, row) => sum + row.fbaAvailableQty, 0);
-    const fbaInboundQty = fbaRows.reduce((sum, row) => sum + row.fbaInboundQty, 0);
-    const fbaReservedQty = fbaRows.reduce((sum, row) => sum + row.fbaReservedQty, 0);
-    const fbaUnfulfillableQty = fbaRows.reduce((sum, row) => sum + row.fbaUnfulfillableQty, 0);
+    let fbaRows = 0;
+    let fbaOrderedQty = 0;
+    let fbaAvailableQty = 0;
+    let fbaInboundQty = 0;
+    let fbaReservedQty = 0;
+    let fbaUnfulfillableQty = 0;
+    for (const row of grouped.values()) {
+      if (row.channel !== 'fba') continue;
+      fbaRows += 1;
+      fbaOrderedQty += row.orderedQty;
+      fbaAvailableQty += row.fbaAvailableQty;
+      fbaInboundQty += row.fbaInboundQty;
+      fbaReservedQty += row.fbaReservedQty;
+      fbaUnfulfillableQty += row.fbaUnfulfillableQty;
+    }
     await this.prisma.$transaction(async (tx) => {
-      await tx.fbaSalesSnapshot.create({
+      const snapshot = await tx.fbaSalesSnapshot.create({
         data: {
           fileName: 'Amazon SP-API 自动同步',
           inventoryFileName: 'Amazon SP-API FBA Inventory API',
           inventorySnapshotDate: now,
-          inventoryRows: inventories.length,
+          inventoryRows: inventoryCount,
           periodDays: 90,
           periodStart,
           periodEnd: now,
-          totalRows: rows.length,
-          fbaRows: fbaRows.length,
+          totalRows: grouped.size,
+          fbaRows,
           fbmRows: 0,
-          unmatchedRows: unmatchedRows.length,
+          unmatchedRows: grouped.size - fbaRows,
           ambiguousRows: 0,
           fbaOrderedQty,
           fbaAvailableQty,
@@ -1083,9 +1177,19 @@ export class AmazonSpApiService {
           fbaReservedQty,
           fbaUnfulfillableQty,
           importedBy: BigInt(0),
-          items: { create: rows },
         },
+        select: { id: true },
       });
+      // Keep the header, all detail batches and retention cleanup in one transaction.
+      let batch: Prisma.FbaSalesSnapshotItemCreateManyInput[] = [];
+      for (const row of grouped.values()) {
+        batch.push({ ...row, snapshotId: snapshot.id });
+        if (batch.length === SNAPSHOT_BATCH_SIZE) {
+          await tx.fbaSalesSnapshotItem.createMany({ data: batch });
+          batch = [];
+        }
+      }
+      if (batch.length) await tx.fbaSalesSnapshotItem.createMany({ data: batch });
       const expired = await tx.fbaSalesSnapshot.findMany({
         where: { fileName: { startsWith: 'Amazon SP-API' } },
         orderBy: { id: 'desc' },
@@ -1095,7 +1199,9 @@ export class AmazonSpApiService {
       if (expired.length) {
         await tx.fbaSalesSnapshot.deleteMany({ where: { id: { in: expired.map((row) => row.id) } } });
       }
-    });
+    }, { timeout: SNAPSHOT_TRANSACTION_TIMEOUT_MS });
+    this.logSyncResources('snapshot-written', { rows: grouped.size });
+    return true;
   }
 
   private async runSync(
@@ -1568,7 +1674,6 @@ export class AmazonSpApiService {
               unfulfillableQty: this.nonNegativeInt(inventory?.unfulfillableQuantity?.totalUnfulfillableQuantity),
               totalQty: this.nonNegativeInt(row.totalQuantity),
               snapshotAt,
-              rawPayload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue,
             };
             const existing = existingBySku.get(sellerSku);
             const unchanged = existing
@@ -1587,10 +1692,11 @@ export class AmazonSpApiService {
               return [];
             }
             counters[existing ? 'updated' : 'created'] += 1;
+            const data = { ...values, rawPayload: JSON.parse(JSON.stringify(row)) as Prisma.InputJsonValue };
             return [this.prisma.amazonFbaInventoryItem.upsert({
               where: { connectionId_marketplaceId_sellerSku: key },
-              create: { ...key, ...values },
-              update: values,
+              create: { ...key, ...data },
+              update: data,
             })];
           });
           if (operations.length) await this.prisma.$transaction(operations);
