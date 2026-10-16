@@ -7531,6 +7531,206 @@ async function selectRakutenCenterView(view, record = rakutenCenterRecord) {
   await refreshRakutenProcessingCenter();
 }
 
+let rakutenInventoryCatalogTimer;
+let rakutenInventoryCatalogPage = 1;
+let rakutenInventoryCatalogIssues = false;
+let rakutenInventoryCatalogRequest = 0;
+
+function renderRakutenInventoryCatalog(data) {
+  if (!data) return;
+  const names = { matched: "自动匹配", manual: "手动匹配", unmatched: "未匹配", ambiguous: "多个产品", conflict: "对应关系变化", invalid: "手动产品已失效" };
+  const rows = data.rows || [];
+  $("rakutenInventoryCatalogBody")._rows = rows;
+  $("rakutenInventoryCatalogBody").innerHTML = rows.map((row) => `<tr>
+    <td>${escapeHtml(row.title)}</td><td>${escapeHtml(row.manageNumber)}</td><td>${escapeHtml(row.variantId)}</td>
+    <td>${escapeHtml(row.merchantDefinedSkuId || "—")}</td><td>${escapeHtml(row.productId || "—")}</td>
+    <td>${escapeHtml(row.exclusion || names[row.matchStatus] || row.matchStatus)}${row.mapping && !row.mapping.enabled ? " · 已停用" : ""}${!row.productId && row.candidates?.length ? `<br>候选：${escapeHtml(row.candidates.join("、"))}` : ""}</td>
+    <td><button type="button" class="tiny-btn ghost" data-catalog-fix="${escapeHtml(row.id)}">${row.productId ? "修正" : "人工匹配"}</button></td></tr>`).join("") || '<tr><td colspan="7">此范围暂无SKU。请先读取乐天清单。</td></tr>';
+  const pages = Math.max(1, Math.ceil(data.total / data.pageSize));
+  setTextById("rakutenInventoryCatalogPage", `第 ${data.page} / ${pages} 页 · 共 ${data.total} 个SKU`);
+  $("rakutenInventoryCatalogPrev").disabled = data.page <= 1;
+  $("rakutenInventoryCatalogNext").disabled = data.page >= pages;
+  const counts = data.counts || {};
+  const summary = `已匹配 ${(counts.matched || 0) + (counts.manual || 0)}，需人工处理 ${(counts.unmatched || 0) + (counts.ambiguous || 0) + (counts.conflict || 0) + (counts.invalid || 0)}`;
+  const job = data.job;
+  const busy = job && ["queued", "running"].includes(job.status);
+  setTextById("rakutenInventoryCatalogMeta", `${data.refreshedAt ? `上次完整读取 ${formatRakutenOrderDateTime(data.refreshedAt)} · ${summary}${data.fresh ? "" : " · 清单已过期，请刷新"}` : "尚无完整商品清单"}${busy ? ` · 正在后台读取：${job.productCount || 0} 个商品、${job.skuCount || 0} 个SKU` : ""}${data.error ? ` · 读取失败：${data.error}` : ""}`);
+  clearTimeout(rakutenInventoryCatalogTimer);
+  if (busy) {
+    const connectionId = $("rakutenInventoryShop").value;
+    rakutenInventoryCatalogTimer = setTimeout(async () => {
+      if ($("rakutenWorkflowModal").classList.contains("hidden") || connectionId !== $("rakutenInventoryShop").value) return;
+      try {
+        const result = await loadRakutenInventoryCatalog();
+        if (result?.job?.id === job.id && !["queued", "running"].includes(result.job.status)) {
+          await loadRakutenInventory();
+          showToast(result.job.status === "success" ? "乐天清单读取完成，唯一匹配的SKU已建立映射" : "清单读取失败，原同步范围保留", result.job.status !== "success");
+        }
+      } catch (error) { setTextById("rakutenInventoryCatalogMeta", `读取进度失败：${error.message}，可点击刷新重新查看。`); }
+    }, 3000);
+  }
+}
+
+async function loadRakutenInventoryCatalog() {
+  const connectionId = $("rakutenInventoryShop").value;
+  const requestId = ++rakutenInventoryCatalogRequest;
+  const generation = rakutenInventoryGeneration;
+  const params = new URLSearchParams({ page: String(rakutenInventoryCatalogPage), issuesOnly: String(rakutenInventoryCatalogIssues) });
+  const data = await request(rakutenInventoryUrl(connectionId, `/catalog?${params}`));
+  if (generation !== rakutenInventoryGeneration || requestId !== rakutenInventoryCatalogRequest || connectionId !== $("rakutenInventoryShop").value) return;
+  renderRakutenInventoryCatalog(data);
+  return data;
+}
+
+let rakutenInventoryIssuesPage = 1;
+let rakutenInventoryIssuesRequest = 0;
+let rakutenInventoryPreviewFilter = "all";
+let rakutenInventoryJobTimer;
+let rakutenInventoryJobId = null;
+let rakutenInventoryPreviewPage = 1;
+let rakutenInventoryJobRequest = 0;
+let rakutenInventoryPreview = null;
+let rakutenInventoryGeneration = 0;
+let rakutenInventorySaving = false;
+let rakutenInventoryLoading = false;
+
+function invalidateRakutenInventoryPreview() {
+  clearTimeout(rakutenInventoryJobTimer);
+  ++rakutenInventoryJobRequest;
+  rakutenInventoryJobId = null;
+  rakutenInventoryPreviewPage = 1;
+  rakutenInventoryPreviewFilter = "all";
+  $("rakutenInventoryPreviewFilter").value = "all";
+  rakutenInventoryPreview = null;
+  setTextById("rakutenInventoryPreviewPage", "");
+  $("rakutenInventoryPreviewPrev").disabled = true;
+  $("rakutenInventoryPreviewNext").disabled = true;
+  $("rakutenInventoryExecute").disabled = true;
+  $("rakutenInventoryPreviewBody").innerHTML = "";
+  setTextById("rakutenInventoryPreviewMeta", "尚未预览。预览10分钟内有效，确认时会再次核对库存与配送设置。");
+}
+function rakutenInventoryUrl(connectionId, suffix = "") {
+  if (!connectionId) throw new Error("请选择乐天店铺");
+  return `/rakuten-rms-api/connections/${encodeURIComponent(connectionId)}/inventory${suffix}`;
+}
+async function loadRakutenInventory() {
+  const connectionId = $("rakutenInventoryShop").value;
+  const generation = ++rakutenInventoryGeneration;
+  invalidateRakutenInventoryPreview();
+  clearTimeout(rakutenInventoryCatalogTimer);
+  ++rakutenInventoryIssuesRequest; rakutenInventoryIssuesPage = 1;
+  $("rakutenInventoryIssuesPanel").classList?.add("hidden");
+  setTextById("rakutenInventoryCheckMeta", "检测仅验证读取，不修改乐天库存。");
+  ++rakutenInventoryCatalogRequest;
+  rakutenInventoryCatalogPage = 1; rakutenInventoryCatalogIssues = false;
+  $("rakutenInventoryCatalogFilter").value = "all";
+  $("rakutenInventoryCatalogBody").innerHTML = "";
+  for (const id of ["rakutenInventoryMappingBody", "rakutenInventoryRunsBody"]) $(id).innerHTML = "";
+  $("rakutenInventoryMappingBody")._mappings = [];
+  $("rakutenInventoryEnabled").checked = false;
+  if (!connectionId) { rakutenInventoryLoading = false; setTextById("rakutenInventoryMeta", "请选择店铺。"); return; }
+  setTextById("rakutenInventoryMeta", "正在读取库存配置...");
+  setTextById("rakutenInventoryCatalogMeta", "正在读取此店铺的商品清单状态...");
+  rakutenInventoryLoading = true;
+  let data;
+  try { data = await request(rakutenInventoryUrl(connectionId)); }
+  finally { if (generation === rakutenInventoryGeneration) rakutenInventoryLoading = false; }
+  if (generation !== rakutenInventoryGeneration || connectionId !== $("rakutenInventoryShop").value) return;
+  $("rakutenInventoryEnabled").checked = data.enabled;
+  renderRakutenInventoryCatalog(data.catalog);
+  const mappings = data.mappings || [];
+  $("rakutenInventoryMappingBody").innerHTML = mappings.map((row) => `<tr>
+    <td>${escapeHtml(row.productId)}</td><td>${escapeHtml(row.manageNumber)}</td><td>${escapeHtml(row.variantId)}</td>
+    <td>${escapeHtml(row.safetyStock)}</td><td>${row.enabled ? "启用" : "停用"}</td>
+    <td><button type="button" class="tiny-btn ghost" data-inventory-edit="${escapeHtml(row.id)}">编辑</button> ${row.enabled ? `<button type="button" class="tiny-btn ghost" data-inventory-disable="${escapeHtml(row.id)}">停用</button>` : ""}</td></tr>`).join("") || '<tr><td colspan="6">尚未配置映射</td></tr>';
+  $("rakutenInventoryMappingBody")._mappings = mappings;
+  renderRakutenInventoryRuns(data.runs || []);
+  setTextById("rakutenInventoryAlert", data.pauseReason ? `自动同步已暂停：${data.pauseReason}。检查后请先预览并手动同步验证。` : "");
+  if (data.resumableJobId) await loadRakutenInventoryJob(data.resumableJobId, connectionId);
+  void loadRakutenInventoryIssues().catch((error) => {
+    if (generation === rakutenInventoryGeneration && connectionId === $("rakutenInventoryShop").value) setTextById("rakutenInventoryIssuesMeta", `待处理列表读取失败：${error.message}`);
+  });
+  if (generation !== rakutenInventoryGeneration || connectionId !== $("rakutenInventoryShop").value) return;
+  setTextById("rakutenInventoryMeta", `共 ${data.mappingCount ?? mappings.length} 个映射，此处显示前 ${mappings.length} 个；此店铺自动同步${data.enabled ? "已开启" : "已关闭"}。只上传在售清单内、已匹配且启用的SKU。最近完整核对：${data.lastFullSyncedAt ? formatRakutenOrderDateTime(data.lastFullSyncedAt) : "尚未完成"}。`);
+}
+async function loadRakutenInventoryIssues() {
+  const connectionId = $("rakutenInventoryShop").value;
+  const generation = rakutenInventoryGeneration;
+  const requestId = ++rakutenInventoryIssuesRequest;
+  const page = rakutenInventoryIssuesPage;
+  const data = await request(rakutenInventoryUrl(connectionId, `/issues?page=${page}`));
+  if (!data || generation !== rakutenInventoryGeneration || requestId !== rakutenInventoryIssuesRequest || connectionId !== $("rakutenInventoryShop").value) return;
+  $("rakutenInventoryIssuesPanel").classList?.toggle("hidden", !data.total);
+  setTextById("rakutenInventoryIssuesMeta", `待处理 ${data.total || 0} 个SKU；这些SKU不会上传，正常SKU继续检查。修复后下轮重新校验。`);
+  $("rakutenInventoryIssuesBody")._rows = data.rows || [];
+  $("rakutenInventoryIssuesBody").innerHTML = (data.rows || []).map((row) => `<tr><td>${escapeHtml(row.productId)}</td><td>${escapeHtml(row.manageNumber)}</td><td>${escapeHtml(row.variantId)}</td><td>${escapeHtml(row.reason)}</td><td><button type="button" class="tiny-btn ghost" data-inventory-issue="${escapeHtml(row.mappingId)}">修正映射</button></td></tr>`).join("");
+  const pages = Math.max(1, Math.ceil((data.total || 0) / data.pageSize));
+  setTextById("rakutenInventoryIssuesPage", `第 ${page} / ${pages} 页`);
+  $("rakutenInventoryIssuesPrev").disabled = page <= 1;
+  $("rakutenInventoryIssuesNext").disabled = page >= pages;
+}
+
+async function loadRakutenInventoryJob(jobId, connectionId, page = 1) {
+  clearTimeout(rakutenInventoryJobTimer);
+  const generation = rakutenInventoryGeneration;
+  const requestId = ++rakutenInventoryJobRequest;
+  rakutenInventoryJobId = jobId;
+  const job = await request(rakutenInventoryUrl(connectionId, `/jobs/${encodeURIComponent(jobId)}?page=${page}&filter=${encodeURIComponent(rakutenInventoryPreviewFilter)}`));
+  if (generation !== rakutenInventoryGeneration || requestId !== rakutenInventoryJobRequest || jobId !== rakutenInventoryJobId || connectionId !== $("rakutenInventoryShop").value) return;
+  rakutenInventoryPreviewPage = job.page;
+  const busy = ["planning", "checking", "running"].includes(job.status);
+  rakutenInventoryPreview = job.status === "preview" ? { ...job, connectionId } : null;
+  $("rakutenInventoryExecute").disabled = busy || !rakutenInventoryPreview || !job.changedCount || new Date(job.expiresAt) <= new Date();
+  $("rakutenInventoryPreviewBody").innerHTML = (job.rows || []).map((row) => `<tr><td>${escapeHtml(row.productId)}</td><td>${escapeHtml(row.manageNumber)}</td><td>${escapeHtml(row.variantId)}</td><td>${escapeHtml(row.currentQuantity)}</td><td>${escapeHtml(row.stock?.finishedStock ?? "—")}</td><td>${escapeHtml(row.stock?.assemblableStock ?? "—")}</td><td>${escapeHtml(row.stock?.pendingReserved ?? "—")}</td><td>${escapeHtml(row.safetyStock)}</td><td>${escapeHtml(row.quantity)}</td></tr>`).join("");
+  const pages = Math.max(1, Math.ceil((job.filteredTotal ?? job.total) / job.pageSize));
+  setTextById("rakutenInventoryPreviewPage", `第 ${job.page} / ${pages} 页 · 筛选结果 ${job.filteredTotal ?? job.total} / ${job.total} 个SKU`);
+  $("rakutenInventoryPreviewPrev").disabled = busy || job.status !== "preview" || job.page <= 1;
+  $("rakutenInventoryPreviewNext").disabled = busy || job.status !== "preview" || job.page >= pages;
+  setTextById("rakutenInventoryPreviewMeta", job.status === "preview"
+    ? `共 ${job.total} 个SKU，${job.changedCount} 个需要更新，其中 ${job.zeroedCount || 0} 个将从有库存改为0；请核对归零项。隔离异常 ${job.result?.issues?.length || 0} 个。配送设置保留。预览有效至 ${formatRakutenOrderDateTime(job.expiresAt)}。`
+    : job.message || (busy ? "正在后台处理，关闭页面后会继续" : "任务已结束"));
+  if (job.status === "preview" && Array.isArray(job.result?.issues)) {
+    void loadRakutenInventoryIssues().catch((error) => {
+      if (generation === rakutenInventoryGeneration && connectionId === $("rakutenInventoryShop").value) {
+        $("rakutenInventoryIssuesPanel").classList?.remove("hidden");
+        setTextById("rakutenInventoryIssuesMeta", `待处理列表读取失败：${error.message}，请刷新重试。`);
+      }
+    });
+  }
+  if (busy) rakutenInventoryJobTimer = setTimeout(async () => {
+    if ($("rakutenWorkflowModal").classList.contains("hidden")) return;
+    try { await loadRakutenInventoryJob(jobId, connectionId, page); }
+    catch (error) { setTextById("rakutenInventoryPreviewMeta", `进度读取失败：${error.message}。点击刷新可恢复查看。`); }
+  }, 2500);
+  else if (job.status !== "preview") {
+    showToast(job.message || "库存任务已结束", job.status !== "success");
+    // Refresh switches and history without restarting an older preview.
+    const data = await request(rakutenInventoryUrl(connectionId));
+    if (generation === rakutenInventoryGeneration && requestId === rakutenInventoryJobRequest && connectionId === $("rakutenInventoryShop").value) {
+      $("rakutenInventoryEnabled").checked = data.enabled;
+      setTextById("rakutenInventoryAlert", data.pauseReason ? `自动同步已暂停：${data.pauseReason}。检查后请先预览并手动同步验证。` : "");
+      renderRakutenInventoryRuns(data.runs || []);
+      await loadRakutenInventoryIssues();
+    }
+  }
+}
+function renderRakutenInventoryRuns(runs) {
+  const statuses = { preview: "待确认预览", planning: "正在计算", checking: "正在复核", running: "正在同步", success: "完成", partial: "部分完成，需检查", failed: "失败，需检查", interrupted: "执行中断，需检查", expired: "已过期，明细已清理" };
+  $("rakutenInventoryRunsBody").innerHTML = runs.map((row) => `<tr><td>${escapeHtml(formatRakutenOrderDateTime(row.startedAt))}</td><td>${row.trigger === "scheduled" ? "定时" : "手动"}</td><td>${escapeHtml(statuses[row.status] || row.status)}</td><td>${escapeHtml(row.message || "—")}</td></tr>`).join("") || '<tr><td colspan="4">尚无同步记录</td></tr>';
+}
+async function rakutenInventoryAction(button, action) {
+  if (rakutenInventorySaving || rakutenInventoryLoading) return;
+  rakutenInventorySaving = true;
+  const connectionId = $("rakutenInventoryShop").value;
+  $("rakutenInventoryShop").disabled = true;
+  try { await withBusyButton(button, "处理中...", () => action(connectionId)); }
+  catch (error) { showToast(error.message, true); setTextById("rakutenInventoryMeta", error.message); }
+  finally {
+    rakutenInventorySaving = false; $("rakutenInventoryShop").disabled = false;
+    $("rakutenInventoryExecute").disabled = !rakutenInventoryPreview || !rakutenInventoryPreview.changedCount || new Date(rakutenInventoryPreview.expiresAt) <= new Date();
+  }
+}
+
 let rakutenScheduleTimer;
 let rakutenScheduleGeneration = 0;
 let rakutenScheduleSaving = false;
@@ -7562,6 +7762,7 @@ async function loadRakutenImportIssues() {
 }
 
 function renderRakutenSchedules(result) {
+  setTextById("rakutenInventoryGlobalAlert", (result.inventoryAlerts || []).map((row) => `${row.shopName}：${row.reason}`).join("；"));
   const statuses = { running: "正在执行", waiting: "等待下一轮", paused: "已暂停", interrupted: "上次执行中断", stopped: "定时调度未启动" };
   const outcomes = { success: "完成", partial: "部分完成", failed: "失败", busy: "店铺忙碌", paused: "暂停", interrupted: "中断" };
   const format = (value) => value ? new Intl.DateTimeFormat("zh-CN", {
@@ -7580,7 +7781,7 @@ function renderRakutenSchedules(result) {
     row.querySelector("[data-schedule-last]").textContent = task.lastStatus
       ? `${outcomes[task.lastStatus] || task.lastStatus} · ${format(task.finishedAt)}${task.lastMessage ? ` · ${task.lastMessage}` : ""}` : "尚未执行";
   }
-  setTextById("rakutenScheduleMeta", `状态每5秒刷新 · 更新于 ${format(result.serverTime)}。下一次为计划触发时间，前序任务未完成或上一轮仍在运行时，实际启动可能延后或跳过本轮；邮件开启后也会处理导入后的新订单通知。`);
+  setTextById("rakutenScheduleMeta", `状态每5秒刷新 · 更新于 ${format(result.serverTime)}。库存按每小时30分独立启动，其余任务每20分钟启动。下一次为计划时间，任务忙碌或订单未及时导入时可能跳过本轮；邮件开启后也会处理导入后的新订单通知。`);
 }
 
 function startRakutenSchedulePolling() {
@@ -7619,6 +7820,17 @@ async function openRakutenProcessingCenter({ connectionId = "", view = "manual",
   select.innerHTML = '<option value="">全部店铺</option>' + state.rakutenRmsConnections.map((connection) =>
     `<option value="${escapeHtml(connection.id)}">${escapeHtml(connection.shop?.name || "-")}</option>`).join("");
   select.value = connectionId;
+  $("rakutenInventoryShop").innerHTML = '<option value="">请选择店铺</option>' + state.rakutenRmsConnections.map((connection) =>
+    `<option value="${escapeHtml(connection.id)}">${escapeHtml(connection.shop?.name || "-")}</option>`).join("");
+  $("rakutenInventoryShop").value = connectionId;
+  clearTimeout(rakutenInventoryCatalogTimer);
+  ++rakutenInventoryCatalogRequest;
+  $("rakutenInventoryCatalogBody").innerHTML = "";
+  $("rakutenInventoryManualPanel").open = false;
+  ++rakutenInventoryGeneration;
+  invalidateRakutenInventoryPreview();
+  $("rakutenInventoryPanel").open = false;
+  for (const id of ["rakutenInventoryMappingBody", "rakutenInventoryRunsBody"]) $(id).innerHTML = "";
   rakutenCenterView = ["manual", "processing"].includes(view) ? view : "manual";
   $("rakutenWorkflowOrder").value = "";
   syncRakutenCenterScope();
@@ -16191,6 +16403,129 @@ function bindForms() {
     });
   });
 
+  $("rakutenInventoryCheck").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, async (connectionId) => {
+    const result = await request(rakutenInventoryUrl(connectionId, "/check"), { method: "POST", body: "{}" });
+    const labels = { passed: "通过", failed: "失败", unverified: "未验证" };
+    setTextById("rakutenInventoryCheckMeta", (result.steps || []).map((row) => `${row.api}：${labels[row.status] || row.status}，${row.message}`).join("；"));
+  }));
+  $("rakutenInventoryPreviewFilter").addEventListener("change", async () => {
+    rakutenInventoryPreviewFilter = $("rakutenInventoryPreviewFilter").value;
+    if (!rakutenInventoryJobId) return;
+    try { await loadRakutenInventoryJob(rakutenInventoryJobId, $("rakutenInventoryShop").value, 1); }
+    catch (error) { showToast(error.message, true); }
+  });
+  for (const [id, delta] of [["rakutenInventoryIssuesPrev", -1], ["rakutenInventoryIssuesNext", 1]]) $(id).addEventListener("click", async () => {
+    rakutenInventoryIssuesPage = Math.max(1, rakutenInventoryIssuesPage + delta);
+    try { await loadRakutenInventoryIssues(); } catch (error) { showToast(error.message, true); }
+  });
+  $("rakutenInventoryIssuesBody").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-inventory-issue]");
+    if (!button || rakutenInventorySaving) return;
+    const row = ($("rakutenInventoryIssuesBody")._rows || []).find((item) => item.mappingId === button.dataset.inventoryIssue);
+    if (!row) return;
+    $("rakutenInventoryManualPanel").open = true;
+    $("rakutenInventoryProduct").value = row.productId; $("rakutenInventoryManage").value = row.manageNumber;
+    $("rakutenInventoryVariant").value = row.variantId; $("rakutenInventorySafety").value = row.safetyStock;
+    $("rakutenInventoryMappingEnabled").checked = row.enabled;
+    $("rakutenInventoryProduct").focus();
+  });
+  $("rakutenInventoryCatalogRefresh").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, async (connectionId) => {
+    invalidateRakutenInventoryPreview();
+    await request(rakutenInventoryUrl(connectionId, "/catalog/refresh"), { method: "POST", body: "{}" });
+    const result = await loadRakutenInventoryCatalog();
+    if (result?.job && !["queued", "running"].includes(result.job.status)) await loadRakutenInventory();
+    showToast("已开始后台读取乐天清单，不会写入乐天库存");
+  }));
+  $("rakutenInventoryCatalogFilter").addEventListener("change", async () => {
+    rakutenInventoryCatalogIssues = $("rakutenInventoryCatalogFilter").value === "issues";
+    rakutenInventoryCatalogPage = 1;
+    try { await loadRakutenInventoryCatalog(); } catch (error) { showToast(error.message, true); }
+  });
+  for (const [id, delta] of [["rakutenInventoryCatalogPrev", -1], ["rakutenInventoryCatalogNext", 1]]) {
+    $(id).addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, async () => {
+      rakutenInventoryCatalogPage = Math.max(1, rakutenInventoryCatalogPage + delta);
+      await loadRakutenInventoryCatalog();
+    }));
+  }
+  $("rakutenInventoryCatalogBody").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-catalog-fix]");
+    if (!button || rakutenInventorySaving) return;
+    const row = ($("rakutenInventoryCatalogBody")._rows || []).find((item) => item.id === button.dataset.catalogFix);
+    if (!row) return;
+    $("rakutenInventoryManualPanel").open = true;
+    $("rakutenInventoryProduct").value = row.productId || "";
+    $("rakutenInventoryManage").value = row.manageNumber;
+    $("rakutenInventoryVariant").value = row.variantId;
+    const mapping = row.mapping || ($("rakutenInventoryMappingBody")._mappings || []).find((item) => item.manageNumber === row.manageNumber && item.variantId === row.variantId);
+    $("rakutenInventorySafety").value = mapping?.safetyStock ?? 0;
+    $("rakutenInventoryMappingEnabled").checked = mapping?.enabled ?? true;
+    $("rakutenInventoryProduct").focus();
+  });
+
+  $("rakutenInventoryOpen").addEventListener("click", async () => {
+    $("rakutenInventoryPanel").open = true;
+    $("rakutenInventoryPanel").scrollIntoView({ block: "nearest" });
+    try { await loadRakutenInventory(); } catch (error) { showToast(error.message, true); }
+  });
+  $("rakutenInventoryShop").addEventListener("change", async () => {
+    $("rakutenInventoryMappingForm").reset();
+    try { await loadRakutenInventory(); } catch (error) { showToast(error.message, true); }
+  });
+  $("rakutenInventoryRefresh").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, () => loadRakutenInventory()));
+  $("rakutenInventorySaveEnabled").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, async (connectionId) => {
+    await request(rakutenInventoryUrl(connectionId, "/enabled"), { method: "PUT", body: JSON.stringify({ enabled: $("rakutenInventoryEnabled").checked }) });
+    await loadRakutenInventory(); showToast("店铺库存同步开关已保存");
+  }));
+  $("rakutenInventoryMappingForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    return rakutenInventoryAction(getSubmitButton(event.currentTarget, event), async (connectionId) => {
+      invalidateRakutenInventoryPreview();
+      await request(rakutenInventoryUrl(connectionId, "/mappings"), { method: "PUT", body: JSON.stringify({
+        productId: $("rakutenInventoryProduct").value.trim(), manageNumber: $("rakutenInventoryManage").value.trim(),
+        variantId: $("rakutenInventoryVariant").value.trim(), safetyStock: Number($("rakutenInventorySafety").value),
+        enabled: $("rakutenInventoryMappingEnabled").checked,
+      }) });
+      $("rakutenInventoryMappingForm").reset(); await loadRakutenInventory(); showToast("商品与SKU验证通过，映射已保存");
+    });
+  });
+  $("rakutenInventoryMappingBody").addEventListener("click", (event) => {
+    const edit = event.target.closest("[data-inventory-edit]");
+    if (edit) {
+      $("rakutenInventoryManualPanel").open = true;
+      const row = ($("rakutenInventoryMappingBody")._mappings || []).find((item) => String(item.id) === edit.dataset.inventoryEdit);
+      if (!row) return;
+      $("rakutenInventoryProduct").value = row.productId; $("rakutenInventoryManage").value = row.manageNumber;
+      $("rakutenInventoryVariant").value = row.variantId; $("rakutenInventorySafety").value = row.safetyStock;
+      $("rakutenInventoryMappingEnabled").checked = row.enabled;
+      return;
+    }
+    const button = event.target.closest("[data-inventory-disable]");
+    if (button) return rakutenInventoryAction(button, async (connectionId) => {
+      invalidateRakutenInventoryPreview();
+      await request(rakutenInventoryUrl(connectionId, `/mappings/${encodeURIComponent(button.dataset.inventoryDisable)}/disable`), { method: "POST", body: "{}" });
+      await loadRakutenInventory(); showToast("映射已停用，乐天现有库存保留");
+    });
+  });
+  for (const [id, offset] of [["rakutenInventoryPreviewPrev", -1], ["rakutenInventoryPreviewNext", 1]]) {
+    $(id).addEventListener("click", async () => {
+      if (!rakutenInventoryJobId) return;
+      try { await loadRakutenInventoryJob(rakutenInventoryJobId, $("rakutenInventoryShop").value, Math.max(1, rakutenInventoryPreviewPage + offset)); }
+      catch (error) { showToast(error.message, true); }
+    });
+  }
+  $("rakutenInventoryPreview").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, async (connectionId) => {
+    invalidateRakutenInventoryPreview();
+    const job = await request(rakutenInventoryUrl(connectionId, "/preview"), { method: "POST", body: "{}" });
+    await loadRakutenInventoryJob(job.jobId, connectionId);
+  }));
+  $("rakutenInventoryExecute").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, async (connectionId) => {
+    const preview = rakutenInventoryPreview;
+    if (!preview || preview.connectionId !== connectionId || new Date(preview.expiresAt) <= new Date()) throw new Error("请重新预览库存");
+    invalidateRakutenInventoryPreview();
+    const job = await request(rakutenInventoryUrl(connectionId, "/execute"), { method: "POST", body: JSON.stringify({ previewId: preview.previewId }) });
+    await loadRakutenInventoryJob(job.jobId, connectionId);
+  }));
+
   document.querySelectorAll("[data-schedule-toggle]").forEach((button) => button.addEventListener("click", async () => {
     if (rakutenScheduleSaving) return;
     rakutenScheduleSaving = true;
@@ -16236,7 +16571,7 @@ function bindForms() {
         const result = await request("/rakuten-rms-api/processing/check", { method: "POST", body: "{}" });
         await loadOrders();
         await loadRakutenOrderWorkflows();
-        const labels = { import: "订单导入", tracking: "物流同步", shipping: "单号回传", mail: "邮件发送" };
+        const labels = { import: "订单导入", tracking: "物流同步", shipping: "单号回传", mail: "邮件发送", inventory: "库存同步" };
         const statuses = { success: "完成", partial: "部分完成", failed: "失败", paused: "暂停", busy: "正在执行其他任务" };
         const stages = Object.entries(result?.stages || {}).filter(([key]) => key !== "automation");
         const issues = stages.some(([, stage]) => ["partial", "failed", "busy"].includes(stage.status));

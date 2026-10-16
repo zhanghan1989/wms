@@ -1,9 +1,10 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { randomUUID } from 'crypto';
+import { RAKUTEN_INVENTORY_JOB_NAME } from './rakuten-inventory.types';
 import { PrismaService } from '../prisma/prisma.service';
 
-export const RAKUTEN_SCHEDULE_KEYS = ['import', 'tracking', 'shipping', 'mail'] as const;
+export const RAKUTEN_SCHEDULE_KEYS = ['import', 'tracking', 'shipping', 'mail', 'inventory'] as const;
 export type RakutenScheduleKey = typeof RAKUTEN_SCHEDULE_KEYS[number];
 export type ScheduleOutcome = { status: 'success' | 'partial' | 'failed' | 'paused' | 'busy'; errors: string[] };
 const STALE_MS = 30 * 60_000;
@@ -14,6 +15,7 @@ export class RakutenScheduleControlService {
   constructor(private readonly prisma: PrismaService, private readonly registry: SchedulerRegistry) {}
 
   private defaultEnabled(key: RakutenScheduleKey): boolean {
+    if (key === 'inventory') return false;
     if (key === 'tracking') return true;
     if (key === 'import') return String(process.env.RAKUTEN_RMS_API_SCHEDULED_SYNC_ENABLED ?? 'false').toLowerCase() === 'true'
       && String(process.env.RAKUTEN_RMS_API_SCHEDULED_SYNC_PAUSED ?? 'true').toLowerCase() === 'false';
@@ -38,13 +40,19 @@ export class RakutenScheduleControlService {
   }
 
   async status() {
-    const rows = await Promise.all(RAKUTEN_SCHEDULE_KEYS.map((key) => this.ensure(key)));
-    const job = this.registry.getCronJobs().get('rakuten-order-processing');
-    const next = job?.isActive ? job.nextDate().toJSDate().toISOString() : null;
+    const [rows, alerts] = await Promise.all([
+      Promise.all(RAKUTEN_SCHEDULE_KEYS.map((key) => this.ensure(key))),
+      this.prisma.rakutenRmsConnection.findMany({ where: { inventoryPauseReason: { not: null } },
+        select: { id: true, inventoryPauseReason: true, shop: { select: { name: true } } }, orderBy: { id: 'asc' }, take: 50 }),
+    ]);
+    const jobs = this.registry.getCronJobs();
     const now = Date.now();
     return {
+      inventoryAlerts: alerts.map((row) => ({ connectionId: row.id.toString(), shopName: row.shop.name, reason: row.inventoryPauseReason })),
       timeZone: 'Asia/Tokyo', refreshSeconds: 5, serverTime: new Date(now).toISOString(),
       tasks: rows.map((row) => {
+        const job = jobs.get(row.key === 'inventory' ? RAKUTEN_INVENTORY_JOB_NAME : 'rakuten-order-processing');
+        const next = job?.isActive ? job.nextDate().toJSDate().toISOString() : null;
         const running = Boolean(row.runToken && row.heartbeatAt && row.heartbeatAt.getTime() > now - STALE_MS);
         const interrupted = Boolean(row.runToken && !running);
         return {

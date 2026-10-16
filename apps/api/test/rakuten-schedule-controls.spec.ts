@@ -23,8 +23,9 @@ function fixture() {
   };
   const nextDate = jest.fn(() => ({ toJSDate: () => new Date('2026-10-14T00:20:00Z') }));
   const job = { isActive: true, nextDate };
-  const registry = { getCronJobs: () => new Map([['rakuten-order-processing', job]]) };
-  const prisma = { rakutenScheduleControl: table };
+  const inventoryJob = { isActive: true, nextDate: () => ({ toJSDate: () => new Date('2026-10-14T00:30:00Z') }) };
+  const registry = { getCronJobs: () => new Map([['rakuten-order-processing', job], ['rakuten-inventory-sync', inventoryJob]]) };
+  const prisma = { rakutenScheduleControl: table, rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([]) } };
   const service = new RakutenScheduleControlService(prisma as any, registry as any);
   return { service, rows, table, prisma, registry, job, nextDate };
 }
@@ -34,7 +35,7 @@ describe('persistent Rakuten schedule controls', () => {
   it('preserves enabled tracking by default and returns the actual timer next date only for enabled tasks', async () => {
     const f = fixture();
     const initial = await f.service.status();
-    expect(initial.tasks).toHaveLength(4);
+    expect(initial.tasks).toHaveLength(5);
     expect(initial.tasks.filter((row) => row.key !== 'tracking').every((row) => !row.enabled && row.status === 'paused' && row.nextRunAt === null)).toBe(true);
     expect(initial.tasks.find((row) => row.key === 'tracking')).toMatchObject({ enabled: true, status: 'waiting', nextRunAt: '2026-10-14T00:20:00.000Z' });
     const changed = await f.service.update('shipping', true);
@@ -43,6 +44,11 @@ describe('persistent Rakuten schedule controls', () => {
     f.job.isActive = false;
     expect((await f.service.status()).tasks.every((row) => row.nextRunAt === null)).toBe(true);
     expect((await f.service.status()).tasks.find((row) => row.key === 'shipping')?.status).toBe('stopped');
+  });
+  it('reports the actual independent hourly inventory next date, not the twenty-minute import time', async () => {
+    const f = fixture(); const status = await f.service.update('inventory', true);
+    expect(status.tasks.find((row) => row.key === 'inventory')).toMatchObject({ enabled: true, nextRunAt: '2026-10-14T00:30:00.000Z' });
+    expect(status.tasks.find((row) => row.key === 'tracking')).toMatchObject({ nextRunAt: '2026-10-14T00:20:00.000Z' });
   });
   it('keeps independently saved choices when the service restarts', async () => {
     const f = fixture();
@@ -85,6 +91,10 @@ describe('persistent Rakuten schedule controls', () => {
     expect((await f.service.status()).tasks.find((row) => row.key === 'mail')).toMatchObject({ status: 'interrupted', lastStatus: 'interrupted' });
     await f.service.execute('mail', async () => 'recovered', success);
     expect(f.rows.get('mail')).toMatchObject({ runToken: null, lastStatus: 'success' });
+  });
+  it('shows paused inventory shops in the automation center even when the inventory switch is off', async () => {
+    const f = fixture(); f.prisma.rakutenRmsConnection.findMany.mockResolvedValue([{ id: 7n, shop: { name: '店铺A' }, inventoryPauseReason: '大量归零' }] as any);
+    expect((await f.service.status()).inventoryAlerts).toEqual([{ connectionId: '7', shopName: '店铺A', reason: '大量归零' }]);
   });
   it('rejects unknown tasks and non-boolean switch values', async () => {
     const f = fixture();

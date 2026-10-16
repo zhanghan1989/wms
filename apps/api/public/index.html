@@ -2192,18 +2192,96 @@
       </div><button type="button" class="ghost" data-action="closeRakutenWorkflow">关闭</button></div>
       <p id="rakutenWorkflowMeta" class="rakuten-center-status" aria-live="polite">正在读取...</p>
       <section class="rakuten-schedules" aria-label="定时任务控制">
-        <p class="muted">以下开关适用于全部店铺。每20分钟检查一次，店铺自身的同步和发送设置仍需开启。关闭后不再定时启动，正在执行的一轮会继续完成。</p>
+        <p class="muted">以下开关适用于全部店铺。订单、物流、回传和邮件每20分钟检查；库存每小时30分独立检查（日本时间）。店铺自身的设置仍需开启。关闭后不再定时启动，正在执行的一轮会继续完成。</p>
         <div class="table-scroll"><table>
           <thead><tr><th>定时任务</th><th>定时开关</th><th>运行状态</th><th>下一次计划启动（日本时间）</th><th>上次结果</th></tr></thead>
           <tbody>
             <tr data-schedule-row="import"><td>订单导入</td><td><button type="button" class="ghost" data-schedule-toggle="import" role="switch" aria-checked="false" aria-label="订单定时导入" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
             <tr data-schedule-row="tracking"><td>物流自动查询<br><button id="rakutenTrackingFailuresOpen" type="button" class="tiny-btn ghost">查看失败单号</button></td><td><button type="button" class="ghost" data-schedule-toggle="tracking" role="switch" aria-checked="false" aria-label="物流自动查询" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
             <tr data-schedule-row="shipping"><td>快递单号回传</td><td><button type="button" class="ghost" data-schedule-toggle="shipping" role="switch" aria-checked="false" aria-label="快递单号定时回传" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
+            <tr data-schedule-row="inventory"><td>库存自动同步<br><small>每小时30分 · 日本时间</small><br><button id="rakutenInventoryOpen" type="button" class="tiny-btn ghost">映射、预览与记录</button></td><td><button type="button" class="ghost" data-schedule-toggle="inventory" role="switch" aria-checked="false" aria-label="库存自动同步" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
             <tr data-schedule-row="mail"><td>邮件发送</td><td><button type="button" class="ghost" data-schedule-toggle="mail" role="switch" aria-checked="false" aria-label="邮件定时发送" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
           </tbody>
         </table></div>
+        <p id="rakutenInventoryGlobalAlert" class="inventory-alert" role="alert"></p>
         <p id="rakutenScheduleMeta" class="muted" aria-live="polite">正在读取定时状态...</p>
       </section>
+      <details id="rakutenInventoryPanel" class="rakuten-import-issues">
+        <summary>乐天库存同步 · 每小时30分</summary>
+        <p class="muted">每小时30分独立检查，开启上方库存开关并启用对应店铺后生效。订单仍每20分钟导入，店铺需有最近25分钟内完整导入的订单。普通产品使用可用库存，肩带使用可用成品＋可组装数；扣除FBA、拣货及尚未分配批次的待发货占用。本体和配件不单独同步，0库存也会同步。</p>
+        <p class="muted">每个SKU独立使用全量可用库存，共用材料和多店之间不分配库存，仍有超卖风险。安全库存从每个SKU的结果中扣减。需要库存API 2.1及商品API items.search、items.get、items.bulk.get权限；配送设置随库存保留。</p>
+        <h4>1. 同步设置</h4>
+        <p class="muted">每小时批量比对库存，只校验和更新有差异的SKU；每天首次检查完整校验商品。手动预览始终检查全部在售SKU。数量未变化也会比对乐天实际库存，避免漏掉已扣单后的补库存。</p>
+        <div class="rakuten-center-toolbar">
+          <label>店铺<select id="rakutenInventoryShop"></select></label>
+          <label><input id="rakutenInventoryEnabled" type="checkbox" /> 允许此店铺自动同步库存</label>
+          <button id="rakutenInventorySaveEnabled" type="button" class="ghost">保存店铺开关</button>
+          <button id="rakutenInventoryRefresh" type="button" class="ghost">刷新</button>
+          <button id="rakutenInventoryCheck" type="button" class="ghost">检测连接与权限</button>
+        </div>
+        <p id="rakutenInventoryCheckMeta" class="muted" aria-live="polite">检测仅验证读取，不修改乐天库存。</p>
+        <h4>2. 同步范围与产品对应</h4>
+        <div class="rakuten-center-toolbar">
+          <button id="rakutenInventoryCatalogRefresh" type="button">读取乐天在售SKU并自动匹配</button>
+          <label>清单范围<select id="rakutenInventoryCatalogFilter"><option value="all">全部店铺SKU</option><option value="issues">仅需人工处理</option></select></label>
+        </div>
+        <p id="rakutenInventoryCatalogMeta" class="muted" aria-live="polite">尚未读取乐天商品清单。</p>
+        <p class="muted">以乐天在售清单为范围，包含缺货SKU。优先按系统联携用SKU精确匹配该店铺的WMS SKU；未匹配、重复匹配及关系变化项不上传。仓库/下架、非数量管理及销售时间外商品跳过。清单每天自动刷新，读取失败时保留原清单。乐天搜索索引新增或删除商品可能延迟最多24小时。</p>
+        <div class="table-scroll"><table>
+          <thead><tr><th>乐天商品</th><th>商品管理番号</th><th>SKU管理番号</th><th>系统联携用SKU</th><th>WMS产品ID</th><th>匹配与范围</th><th>操作</th></tr></thead>
+          <tbody id="rakutenInventoryCatalogBody"></tbody>
+        </table></div>
+        <div class="rakuten-center-toolbar">
+          <button id="rakutenInventoryCatalogPrev" type="button" class="ghost" disabled>上一页</button>
+          <span id="rakutenInventoryCatalogPage" class="muted">第1页</span>
+          <button id="rakutenInventoryCatalogNext" type="button" class="ghost" disabled>下一页</button>
+        </div>
+        <details id="rakutenInventoryManualPanel">
+          <summary>手动添加或修正映射（处理例外）</summary>
+          <form id="rakutenInventoryMappingForm" class="form-grid">
+          <label>WMS产品ID<input id="rakutenInventoryProduct" maxlength="128" required /></label>
+          <label>商品管理番号<input id="rakutenInventoryManage" pattern="[a-zA-Z0-9_-]{1,32}" maxlength="32" required /></label>
+          <label>SKU管理番号（区分大小写）<input id="rakutenInventoryVariant" pattern="[a-zA-Z0-9_-]{1,32}" maxlength="32" required /></label>
+          <label>安全库存<input id="rakutenInventorySafety" type="number" min="0" max="99999" value="0" required /></label>
+          <label><input id="rakutenInventoryMappingEnabled" type="checkbox" checked /> 启用此映射</label>
+          <button type="submit">验证并保存映射</button>
+        </form>
+        <p class="muted">填写乐天后台的两个管理番号，不使用商品名称猜测匹配。同一店铺＋商品管理番号＋SKU管理番号再次保存会更新原映射。</p>
+        </details>
+        <p id="rakutenInventoryMeta" class="muted" aria-live="polite">请选择店铺。</p>
+        <details id="rakutenInventoryMappingsPanel"><summary>查看已配置映射</summary>
+        <div class="table-scroll"><table>
+          <thead><tr><th>产品ID</th><th>商品管理番号</th><th>SKU管理番号</th><th>安全库存</th><th>状态</th><th>操作</th></tr></thead>
+          <tbody id="rakutenInventoryMappingBody"></tbody>
+        </table></div>
+        </details>
+        <h4>3. 库存预览与手动同步</h4>
+        <div class="rakuten-center-toolbar">
+          <button id="rakutenInventoryPreview" type="button" class="ghost">预览库存变化</button>
+          <button id="rakutenInventoryExecute" type="button" disabled>确认同步到乐天</button>
+        </div>
+        <p id="rakutenInventoryAlert" class="inventory-alert" role="alert"></p>
+        <section id="rakutenInventoryIssuesPanel" class="hidden">
+          <h4>异常SKU待处理</h4>
+          <p id="rakutenInventoryIssuesMeta" class="muted" aria-live="polite"></p>
+          <div class="table-scroll"><table><thead><tr><th>产品ID</th><th>商品管理番号</th><th>SKU管理番号</th><th>原因</th><th>操作</th></tr></thead><tbody id="rakutenInventoryIssuesBody"></tbody></table></div>
+          <div class="rakuten-center-toolbar"><button id="rakutenInventoryIssuesPrev" type="button" class="tiny-btn ghost" disabled>上一页</button><span id="rakutenInventoryIssuesPage"></span><button id="rakutenInventoryIssuesNext" type="button" class="tiny-btn ghost" disabled>下一页</button></div>
+        </section>
+        <p id="rakutenInventoryPreviewMeta" class="muted" aria-live="polite">尚未预览。预览10分钟内有效，确认时会再次核对库存与配送设置。</p>
+        <label>预览范围<select id="rakutenInventoryPreviewFilter"><option value="all">全部SKU</option><option value="changed">仅看变化</option><option value="zero">仅看将归零</option></select></label>
+        <p class="muted">筛选只影响展示；确认同步仍处理完整预览中的全部变化，异常SKU除外。</p>
+        <p class="muted">可用成品和可组装数已扣除FBA、拣货预占；再减待发货预占影响和安全库存，得到上传数（最低0、最高99999）。肩带共用材料的预占也包含在内。普通产品不计算BOM。</p>
+        <div class="rakuten-center-toolbar"><button id="rakutenInventoryPreviewPrev" type="button" class="tiny-btn ghost" disabled>上一页</button><span id="rakutenInventoryPreviewPage" class="muted"></span><button id="rakutenInventoryPreviewNext" type="button" class="tiny-btn ghost" disabled>下一页</button></div>
+        <div class="table-scroll"><table>
+          <thead><tr><th>产品ID</th><th>商品管理番号</th><th>SKU管理番号</th><th>乐天当前库存</th><th>可用成品</th><th>可组装数</th><th>待发货预占影响</th><th>安全库存</th><th>本次上传库存</th></tr></thead>
+          <tbody id="rakutenInventoryPreviewBody"></tbody>
+        </table></div>
+        <h4>4. 最近20次库存检查与同步记录</h4>
+        <div class="table-scroll"><table>
+          <thead><tr><th>时间</th><th>来源</th><th>结果</th><th>说明</th></tr></thead>
+          <tbody id="rakutenInventoryRunsBody"></tbody>
+        </table></div>
+      </details>
       <details id="rakutenTrackingFailuresPanel" class="rakuten-import-issues hidden">
         <summary id="rakutenTrackingFailuresSummary">物流查询失败与人工忽略</summary>
         <p class="muted">这里显示全部店铺的物流查询异常，包括历史订单。忽略按快递单号生效，停止后续查询并保留原物流状态；不代表已通关或送达，回传和邮件仍需满足各自条件。可在“已忽略”中恢复查询。上方“上次结果”保留当轮记录。</p>

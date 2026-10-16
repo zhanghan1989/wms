@@ -426,6 +426,18 @@ model RakutenRmsConnection {
   mailCircuitReason        String?                      @map("mail_circuit_reason") @db.Text
   licenseExpiresAt         DateTime?                    @map("license_expires_at")
   status                   Int                          @default(1) @db.TinyInt
+  inventorySyncEnabled     Boolean                      @default(false) @map("inventory_sync_enabled")
+  inventoryPauseReason     String?                      @map("inventory_pause_reason") @db.Text
+  inventoryFailureCount    Int                          @default(0) @map("inventory_failure_count")
+  inventoryBaselineCount   Int                          @default(0) @map("inventory_baseline_count")
+  inventoryLastFullSyncedAt DateTime? @map("inventory_last_full_synced_at")
+  inventoryCatalogVersion  String? @map("inventory_catalog_version") @db.VarChar(36)
+  inventoryCatalogRefreshedAt DateTime? @map("inventory_catalog_refreshed_at")
+  inventoryCatalogError    String? @map("inventory_catalog_error") @db.Text
+  inventoryCatalog         RakutenInventoryCatalog[]
+  inventoryCatalogJobs     RakutenInventoryCatalogJob[]
+  inventoryMappings        RakutenInventoryMapping[]
+  inventoryRuns            RakutenInventoryRun[]
   syncOrders               Boolean                      @default(true) @map("sync_orders")
   lastOrdersSyncedAt       DateTime?                    @map("last_orders_synced_at")
   lastSuccessfulSyncAt     DateTime?                    @map("last_successful_sync_at")
@@ -1728,4 +1740,87 @@ model OperationAuditLog {
   @@index([operatorId, createdAt])
   @@index([eventType, createdAt])
   @@map("operation_audit_logs")
+}
+
+model RakutenInventoryMapping {
+  id           BigInt @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId BigInt @map("connection_id") @db.UnsignedBigInt
+  productId    String @map("product_id") @db.VarChar(128)
+  manageNumber String @map("manage_number") @db.VarChar(32)
+  variantId    String @map("variant_id") @db.VarChar(32)
+  safetyStock  Int @default(0) @map("safety_stock")
+  syncIssue String? @map("sync_issue") @db.Text
+  syncIssueAt DateTime? @map("sync_issue_at")
+  lastPublishedQuantity Int? @map("last_published_quantity")
+  lastPublishedAt DateTime? @map("last_published_at")
+  source       String @default("manual") @db.VarChar(16)
+  enabled      Boolean @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  connection   RakutenRmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, manageNumber, variantId], map: "uq_rakuten_inventory_target")
+  @@index([productId])
+  @@map("rakuten_inventory_mappings")
+}
+
+model RakutenInventoryRun {
+  id           String @id @db.VarChar(36)
+  connectionId BigInt @map("connection_id") @db.UnsignedBigInt
+  trigger      String @db.VarChar(16)
+  status       String @db.VarChar(24)
+  actorId      String? @map("actor_id") @db.VarChar(32)
+  plan         Json
+  planPurgedAt DateTime? @map("plan_purged_at")
+  result       Json?
+  message      String? @db.Text
+  expiresAt    DateTime? @map("expires_at")
+  startedAt    DateTime @default(now()) @map("started_at")
+  finishedAt   DateTime? @map("finished_at")
+  connection   RakutenRmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, startedAt])
+  @@index([status, expiresAt])
+  @@index([planPurgedAt, finishedAt])
+  @@map("rakuten_inventory_runs")
+}
+
+model RakutenInventoryCatalog {
+  id           BigInt @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId BigInt @map("connection_id") @db.UnsignedBigInt
+  version      String @db.VarChar(36)
+  manageNumber String @map("manage_number") @db.VarChar(32)
+  variantId    String @map("variant_id") @db.VarChar(32)
+  merchantDefinedSkuId String? @map("merchant_defined_sku_id") @db.VarChar(96)
+  title        String @db.VarChar(255)
+  hidden       Boolean
+  unlimitedStock Boolean @map("unlimited_stock")
+  salesStart   DateTime? @map("sales_start")
+  salesEnd     DateTime? @map("sales_end")
+  productId    String? @map("product_id") @db.VarChar(128)
+  matchStatus  String @map("match_status") @db.VarChar(24)
+  candidates   Json
+  createdAt    DateTime @default(now()) @map("created_at")
+  connection   RakutenRmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, version, manageNumber, variantId], map: "uq_rakuten_catalog_version_sku")
+  @@index([connectionId, version, matchStatus], map: "idx_rakuten_catalog_match")
+  @@map("rakuten_inventory_catalog")
+}
+
+model RakutenInventoryCatalogJob {
+  id           String @id @db.VarChar(36)
+  connectionId BigInt @map("connection_id") @db.UnsignedBigInt
+  status       String @db.VarChar(24)
+  cursorMark   String @map("cursor_mark") @db.Text
+  productCount Int @default(0) @map("product_count")
+  skuCount     Int @default(0) @map("sku_count")
+  error        String? @db.Text
+  startedAt    DateTime @default(now()) @map("started_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  finishedAt   DateTime? @map("finished_at")
+  connection   RakutenRmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([connectionId, startedAt])
+  @@map("rakuten_inventory_catalog_jobs")
 }

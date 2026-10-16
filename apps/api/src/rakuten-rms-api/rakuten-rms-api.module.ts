@@ -1,3 +1,7 @@
+import { RakutenInventorySchedulerService } from './rakuten-inventory-scheduler.service';
+import { RakutenInventoryCatalogService } from './rakuten-inventory-catalog.service';
+import { RakutenInventoryService } from './rakuten-inventory.service';
+import { RakutenInventoryController } from './rakuten-inventory.controller';
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { OrdersModule } from '../orders/orders.module';
@@ -11,8 +15,8 @@ import { RakutenScheduleControlService } from './rakuten-schedule-control.servic
 
 @Module({
   imports: [AuditModule, OrdersModule],
-  controllers: [RakutenRmsApiController],
-  providers: [RakutenRmsApiService, RakutenRmsApiClient, RakutenRmsApiCryptoService, RakutenRmsAutomationService, RakutenOrderSchedulerService, RakutenScheduleControlService],
+  controllers: [RakutenRmsApiController, RakutenInventoryController],
+  providers: [RakutenInventorySchedulerService, RakutenInventoryCatalogService, RakutenInventoryService, RakutenRmsApiService, RakutenRmsApiClient, RakutenRmsApiCryptoService, RakutenRmsAutomationService, RakutenOrderSchedulerService, RakutenScheduleControlService],
   exports: [RakutenRmsApiService],
 })
 export class RakutenRmsApiModule {}

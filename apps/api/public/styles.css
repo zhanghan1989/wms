@@ -4419,3 +4419,13 @@ button.danger-solid {
 .rakuten-import-issues td { overflow-wrap: anywhere; }
 #rakutenTrackingFailuresPanel td small { display: block; }
 #rakutenTrackingFailuresPanel table { min-width: 800px; }
+
+/* Keep inventory mapping, preview and history lists usable for large catalogs. */
+#rakutenInventoryPanel .table-scroll { max-height: 360px; overflow: auto; }
+#rakutenInventoryPanel thead { position: sticky; top: 0; background: #fffaf0; z-index: 1; }
+#rakutenInventoryPanel .form-grid { margin: 12px 0; }
+#rakutenInventoryPanel label:has(> input[type="checkbox"]) { display: inline-flex; align-items: center; gap: 8px; }
+#rakutenInventoryPanel input[type="checkbox"] { width: auto; min-height: 0; margin: 0; flex: 0 0 auto; }
+
+.inventory-alert { padding: 10px 12px; color: #854d0e; background: #fef9c3; border: 1px solid #eab308; border-radius: 8px; }
+.inventory-alert:empty { display: none; }

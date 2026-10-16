@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleDestroy, ServiceUnavailableException } from '@nestjs/common';
 import { Dispatcher, ProxyAgent } from 'undici';
 import {
   RakutenGetOrderResponse,
@@ -7,6 +7,8 @@ import {
   RakutenOrderSearchOptions,
   RakutenSearchOrderResponse,
 } from './rakuten-rms-api.types';
+
+import { InventoryKey, InventoryRecord, InventoryWrite, RakutenCatalogPage, RakutenCatalogVariant } from './rakuten-inventory.types';
 
 const RAKUTEN_API_BASE_URL = 'https://api.rms.rakuten.co.jp/es/2.0/order';
 const SEARCH_PAGE_SIZE = 1000;
@@ -172,6 +174,166 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
       throw new ServiceUnavailableException(`无法连接乐天 RMS API（网络或TLS错误）：${details}`);
     }
     return this.readResponse<T>(lastResponse as Response);
+  }
+
+  private inventoryLastRequestAt = 0;
+
+  async getInventory(serviceSecret: string, licenseKey: string, inventories: InventoryKey[]): Promise<InventoryRecord[]> {
+    if (!inventories.length || inventories.length > 1000) throw new ServiceUnavailableException('库存读取批量必须为1～1000条');
+    const payload = await this.inventoryRequest(serviceSecret, licenseKey, '/es/2.1/inventories/bulk-get', { inventories: inventories.map(({ manageNumber, variantId }) => ({ manageNumber, variantId })) });
+    if (!payload || !Array.isArray(payload.inventories)) throw new ServiceUnavailableException('乐天库存读取返回格式异常');
+    return payload.inventories.map((raw: unknown) => {
+      if (!raw || typeof raw !== 'object') throw new ServiceUnavailableException('乐天库存记录格式异常');
+      const row = raw as Record<string, unknown>;
+      if (typeof row.manageNumber !== 'string' || typeof row.variantId !== 'string' || !Number.isInteger(row.quantity)) {
+        throw new ServiceUnavailableException('乐天库存记录缺少编号或数量');
+      }
+      const record: InventoryRecord = { manageNumber: row.manageNumber, variantId: row.variantId, quantity: row.quantity as number };
+      if (row.operationLeadTime != null) {
+        if (typeof row.operationLeadTime !== 'object' || Array.isArray(row.operationLeadTime)) throw new ServiceUnavailableException('乐天出荷设置格式异常');
+        record.operationLeadTime = {};
+        for (const key of ['normalDeliveryTimeId', 'backOrderDeliveryTimeId'] as const) {
+          const value = (row.operationLeadTime as Record<string, unknown>)[key];
+          if (value == null) continue;
+          if (!Number.isInteger(value) || Number(value) < 0) throw new ServiceUnavailableException('乐天出荷设置ID异常');
+          record.operationLeadTime[key] = Number(value);
+        }
+      }
+      if (row.shipFromIds != null) {
+        if (!Array.isArray(row.shipFromIds) || row.shipFromIds.some((id) => !Number.isInteger(id) || id < 0)) throw new ServiceUnavailableException('乐天配送设置ID异常');
+        record.shipFromIds = row.shipFromIds as number[];
+      }
+      return record;
+    });
+  }
+
+  async upsertInventory(serviceSecret: string, licenseKey: string, inventories: InventoryWrite[]): Promise<void> {
+    if (!inventories.length || inventories.length > 400 || inventories.some((row) => row.mode !== 'ABSOLUTE' || !Number.isInteger(row.quantity) || row.quantity < 0 || row.quantity > 99999)) {
+      throw new ServiceUnavailableException('库存更新数量或批量不合法');
+    }
+    await this.inventoryRequest(serviceSecret, licenseKey, '/es/2.1/inventories/bulk-upsert', { inventories }, true);
+  }
+
+  async getItemVariantIds(serviceSecret: string, licenseKey: string, manageNumber: string): Promise<string[]> {
+    const payload = await this.inventoryRequest(serviceSecret, licenseKey, `/es/2.0/items/manage-numbers/${encodeURIComponent(manageNumber)}`);
+    if (!payload || typeof payload.variants !== 'object' || payload.variants === null || Array.isArray(payload.variants)) {
+      throw new ServiceUnavailableException('商品查询未返回有效SKU，请确认已授权 items.get 并开通商品API');
+    }
+    return Object.keys(payload.variants);
+  }
+
+  async searchCatalogPage(serviceSecret: string, licenseKey: string, cursorMark: string): Promise<RakutenCatalogPage> {
+    const query = new URLSearchParams({ cursorMark, hits: '100', isHiddenItem: 'false', isHiddenVariant: 'false', isInventoryIncluded: 'false' });
+    // No stockout filter: zero-stock SKUs must remain eligible for restocking.
+    const payload = await this.inventoryRequest(serviceSecret, licenseKey, `/es/2.0/items/search?${query}`);
+    if (!payload || !Number.isInteger(payload.numFound) || payload.numFound < 0 || !Array.isArray(payload.results)
+      || payload.results.length > 100 || typeof payload.nextCursorMark !== 'string' || !payload.nextCursorMark) {
+      throw new ServiceUnavailableException('乐天商品清单返回格式或游标异常，未更新同步范围');
+    }
+    return { numFound: payload.numFound, nextCursorMark: payload.nextCursorMark,
+      variants: this.catalogVariants(payload.results.map((result: { item?: unknown }) => result?.item)), itemCount: payload.results.length };
+  }
+
+  /** Official items.bulk.get: 50 products per request, one request per second. */
+  async getItemsVariantIds(serviceSecret: string, licenseKey: string, manageNumbers: string[], allowMissing = false): Promise<Map<string, string[]>> {
+    if (!manageNumbers.length || manageNumbers.length > 50 || new Set(manageNumbers).size !== manageNumbers.length
+      || manageNumbers.some((value) => !/^[a-z0-9_-]{1,32}$/.test(value))) throw new BadRequestException('批量商品查询需指定1至50个不重复的商品管理番号');
+    const payload = await this.inventoryRequest(serviceSecret, licenseKey, '/es/2.0/items/bulk-get', { manageNumbers });
+    if (!payload || !Array.isArray(payload.results) || (allowMissing ? payload.results.length > manageNumbers.length : payload.results.length !== manageNumbers.length)) {
+      throw new ServiceUnavailableException('批量商品查询结果不完整，请确认已授权 items.bulk.get；已停止同步');
+    }
+    const found = new Set<string>();
+    for (const item of payload.results) {
+      if (!item || !manageNumbers.includes(item.manageNumber) || found.has(item.manageNumber)) throw new ServiceUnavailableException('批量商品查询返回未知或重复商品，已停止同步');
+      found.add(item.manageNumber);
+    }
+    const result = new Map(manageNumbers.map((value) => [value, [] as string[]]));
+    const now = Date.now();
+    for (const variant of this.catalogVariants(payload.results)) {
+      if (!variant.hidden && !variant.unlimitedStock && (!variant.salesStart || Date.parse(variant.salesStart) <= now)
+        && (!variant.salesEnd || Date.parse(variant.salesEnd) >= now)) result.get(variant.manageNumber)!.push(variant.variantId);
+    }
+    return result;
+  }
+
+  private catalogVariants(items: unknown[]): RakutenCatalogVariant[] {
+    const variants: RakutenCatalogVariant[] = [];
+    for (const rawItem of items) {
+      const item = rawItem as Record<string, any> | null;
+      if (!item || typeof item !== 'object' || Array.isArray(item) || typeof item.manageNumber !== 'string' || !/^[a-zA-Z0-9_-]{1,32}$/.test(item.manageNumber)) {
+        throw new ServiceUnavailableException('乐天商品清单缺少有效商品管理番号，未更新同步范围');
+      }
+      // The official search API returns only manageNumber for deleted products.
+      if (Object.keys(item).length === 1) continue;
+      if (typeof item.title !== 'string' || typeof item.hideItem !== 'boolean' || typeof item.unlimitedInventoryFlag !== 'boolean'
+        || !item.variants || typeof item.variants !== 'object' || Array.isArray(item.variants) || !Object.keys(item.variants).length) {
+        throw new ServiceUnavailableException('乐天商品状态或SKU列表不完整，未更新同步范围');
+      }
+      const dates = [item.purchasablePeriod?.start ?? null, item.purchasablePeriod?.end ?? null];
+      if (dates.some((value) => value !== null && (typeof value !== 'string' || !Number.isFinite(Date.parse(value))))) {
+        throw new ServiceUnavailableException('乐天商品销售时间格式异常，未更新同步范围');
+      }
+      for (const [variantId, raw] of Object.entries(item.variants)) {
+        const variant = raw as Record<string, unknown> | null;
+        if (!/^[a-zA-Z0-9_-]{1,32}$/.test(variantId) || !variant || typeof variant !== 'object' || Array.isArray(variant)
+          || (variant.hidden != null && typeof variant.hidden !== 'boolean')
+          || (variant.merchantDefinedSkuId != null && typeof variant.merchantDefinedSkuId !== 'string')) {
+          throw new ServiceUnavailableException('乐天SKU管理番号或状态格式异常，未更新同步范围');
+        }
+        variants.push({ manageNumber: item.manageNumber.toLowerCase(), variantId,
+          merchantDefinedSkuId: typeof variant.merchantDefinedSkuId === 'string' ? variant.merchantDefinedSkuId.trim() || null : null,
+          title: item.title, hidden: item.hideItem || variant.hidden === true,
+          unlimitedStock: item.unlimitedInventoryFlag, salesStart: dates[0], salesEnd: dates[1] });
+      }
+    }
+    return variants;
+  }
+
+  private async inventoryRequest(
+    serviceSecret: string, licenseKey: string, path: string,
+    body?: unknown, write = false,
+  ): Promise<Record<string, any> | undefined> {
+    // Writes are never automatically replayed after an ambiguous timeout.
+    const attempts = write ? 1 : 3;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      // ItemAPI items.get permits 5 requests/sec; Inventory writes permit 1/sec.
+      // One serialized caller holds the cross-process inventory lease.
+      const interval = (path.startsWith('/es/2.0/items/manage-numbers/') || path.startsWith('/es/2.0/items/search?') || path === '/es/2.1/inventories/bulk-get') ? 250 : 1100;
+      const wait = Math.max(0, interval - (Date.now() - this.inventoryLastRequestAt));
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      this.inventoryLastRequestAt = Date.now();
+      let response: Response;
+      try {
+        const dispatcher = this.getProxyDispatcher();
+        const options: RequestInit & { dispatcher?: Dispatcher } = {
+          method: body === undefined ? 'GET' : 'POST',
+          headers: { authorization: `ESA ${Buffer.from(`${serviceSecret}:${licenseKey}`).toString('base64')}`, 'content-type': 'application/json', accept: 'application/json' },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          signal: AbortSignal.timeout(20_000), ...(dispatcher ? { dispatcher } : {}),
+        };
+        response = await fetch(`https://api.rms.rakuten.co.jp${path}`, options);
+      } catch {
+        if (attempt + 1 < attempts) continue;
+        throw new ServiceUnavailableException(write ? '乐天库存写入结果未知（网络超时），请重新预览并回读确认，未自动重试' : '无法连接乐天库存API');
+      }
+      if (!write && (response.status === 429 || response.status >= 500) && attempt + 1 < attempts) {
+        await response.text();
+        await new Promise((resolve) => setTimeout(resolve, Math.min(30, Math.max(1, Number(response.headers.get('retry-after')) || attempt + 1)) * 1000));
+        continue;
+      }
+      if (write && response.status === 204) return;
+      let payload: Record<string, any>;
+      try { payload = JSON.parse(await response.text()); }
+      catch { throw new ServiceUnavailableException(`乐天库存API返回格式异常（HTTP ${response.status}）`); }
+      if (!response.ok || !payload || payload.errors?.length) {
+        // Do not persist arbitrary remote response text, which could contain credentials.
+        const codes = Array.isArray(payload?.errors) ? payload.errors.map((e: { code?: unknown }) => String(e.code ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32)).join(',') : '';
+        throw new ServiceUnavailableException(`乐天库存API失败（HTTP ${response.status}${codes ? `，${codes}` : ''}），请检查权限、编号及参数`);
+      }
+      if (write) throw new ServiceUnavailableException('乐天库存写入返回非预期状态，请回读核对');
+      return payload;
+    }
+    throw new ServiceUnavailableException('乐天库存API读取失败');
   }
 
   private getProxyDispatcher(): ProxyAgent | undefined {
