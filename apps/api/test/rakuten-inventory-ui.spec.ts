@@ -8,7 +8,7 @@ function fixture() {
   const get = (id: string) => nodes[id] ??= { textContent: '', innerHTML: '', value: '', disabled: false, checked: false };
   const request = jest.fn();
   const api = runInNewContext(`${source.slice(source.indexOf('let rakutenInventoryCatalogTimer;'), source.indexOf('let rakutenScheduleTimer;'))};
-    ({load: loadRakutenInventory, job: loadRakutenInventoryJob, issues: loadRakutenInventoryIssues, filter: value => {rakutenInventoryPreviewFilter = value;}, renderCatalog: renderRakutenInventoryCatalog, action: rakutenInventoryAction, setPreview: p => {rakutenInventoryPreview = p;}, preview: () => rakutenInventoryPreview})`, {
+    ({parseBulk: parseRakutenInventoryBulk, loadCatalog: loadRakutenInventoryCatalog, load: loadRakutenInventory, job: loadRakutenInventoryJob, issues: loadRakutenInventoryIssues, filter: value => {rakutenInventoryPreviewFilter = value;}, renderCatalog: renderRakutenInventoryCatalog, action: rakutenInventoryAction, setPreview: p => {rakutenInventoryPreview = p;}, preview: () => rakutenInventoryPreview})`, {
     $: get, request, URLSearchParams, setTimeout, clearTimeout, setTextById: (id: string, value: string) => { get(id).textContent = value; },
     escapeHtml: (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!)),
     formatRakutenOrderDateTime: (value: string) => value, withBusyButton: async (_a: any, _b: any, action: any) => action(), showToast: jest.fn(),
@@ -18,6 +18,24 @@ function fixture() {
 }
 
 describe('inventory sync configuration UI', () => {
+  it('parses bounded explicit batch mappings without dropping disabled/safety settings and rejects duplicate targets', () => {
+    const f = fixture();
+    const parsed = f.api.parseBulk('P1\tItem\tSkuA\t8\t0\nP2\titem\tSkuB\t0\t1');
+    expect(parsed.rows).toEqual([
+      { productId: 'P1', manageNumber: 'Item', variantId: 'SkuA', safetyStock: 8, enabled: false },
+      { productId: 'P2', manageNumber: 'item', variantId: 'SkuB', safetyStock: 0, enabled: true },
+    ]);
+    expect(() => f.api.parseBulk('P1\tItem\tSkuA\t0\t1\nP2\titem\tSkuA\t0\t1')).toThrow('SKU重复');
+    expect(() => f.api.parseBulk('P1\titem\tSkuA')).toThrow('格式不正确');
+    expect(() => f.api.parseBulk(Array(101).fill('P\titem\tv\t0\t1').join('\n'))).toThrow('100行');
+  });
+  it('starts with unresolved rows and sends the bounded search to the server', async () => {
+    const f = fixture(); f.get('rakutenInventoryCatalogSearch').value = '117305';
+    f.request.mockResolvedValue({ rows: [], counts: {}, total: 0, page: 1, pageSize: 50 });
+    await f.api.loadCatalog();
+    expect(f.request).toHaveBeenCalledWith(expect.stringContaining('issuesOnly=true&search=117305'));
+  });
+
   it('clears an old preview before reading configuration and ignores late responses from another shop', async () => {
     const f = fixture(); let resolveFirst!: (value: any) => void;
     f.request.mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))

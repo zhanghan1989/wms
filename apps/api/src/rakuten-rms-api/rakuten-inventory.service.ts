@@ -171,8 +171,8 @@ export class RakutenInventoryService {
     return this.locked(async (renew) => {
       const connection = await this.connection(connectionId);
       const productId = payload.productId.trim();
-      const product = await this.prisma.masterProduct.findUnique({ where: { productId }, select: { status: true, productType: true } });
-      if (!product || product.status !== 1 || MATERIAL_TYPES.includes(String(product.productType ?? '').trim())) {
+      const product = await this.prisma.masterProduct.findUnique({ where: { productId }, select: { productId: true, status: true, productType: true } });
+      if (!product || product.productId !== productId || product.status !== 1 || MATERIAL_TYPES.includes(String(product.productType ?? '').trim())) {
         throw new BadRequestException('产品不存在、已停用或属于肩带本体/配件，不能同步');
       }
       const manageNumber = payload.manageNumber.toLowerCase();
@@ -195,10 +195,10 @@ export class RakutenInventoryService {
     });
   }
 
-  async catalogStatus(connectionId: string, pageRaw?: string, issuesOnly = false) {
+  async catalogStatus(connectionId: string, pageRaw?: string, issuesOnly = false, search = '', matchStatus = '') {
     const page = Number(pageRaw ?? 1);
     if (!Number.isSafeInteger(page) || page < 1 || page > 1000000) throw new BadRequestException('清单页码不合法');
-    return this.catalog.summary(await this.connection(connectionId, false), page, issuesOnly);
+    return this.catalog.summary(await this.connection(connectionId, false), page, issuesOnly, search.trim().slice(0, 100), matchStatus);
   }
 
   async refreshCatalog(connectionId: string): Promise<{ jobId: string; status: string }> {

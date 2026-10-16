@@ -21,7 +21,7 @@ function fixture() {
     rakutenRmsConnection: { findUnique: jest.fn().mockResolvedValue(connection), update: jest.fn(), updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([connection]) },
     rakutenScheduleControl: { upsert: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     rakutenInventoryMapping: { findMany: jest.fn().mockResolvedValue([row]), upsert: jest.fn(), updateMany: jest.fn(), count: jest.fn().mockResolvedValue(1) },
-    masterProduct: { findMany: jest.fn().mockResolvedValue([{ productId: 'P', status: 1, productType: '包' }]), findUnique: jest.fn().mockResolvedValue({ status: 1, productType: '包' }) },
+    masterProduct: { findMany: jest.fn().mockResolvedValue([{ productId: 'P', status: 1, productType: '包' }]), findUnique: jest.fn().mockResolvedValue({ productId: 'P', status: 1, productType: '包' }) },
     rakutenInventoryRun: {
       create: jest.fn(async ({ data }) => { const record = { ...data, startedAt: new Date() }; runs.set(data.id, record); return record; }),
       findFirst: jest.fn(async ({ where }) => {

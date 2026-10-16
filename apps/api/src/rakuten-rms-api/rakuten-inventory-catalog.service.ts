@@ -20,9 +20,11 @@ export function catalogExclusion(row: Pick<MatchRow, 'hidden' | 'unlimitedStock'
   return null;
 }
 
-export function catalogCandidates(variant: Pick<RakutenCatalogVariant, 'merchantDefinedSkuId' | 'variantId'>, index: Map<string, Set<string>>): string[] {
+export function catalogCandidates(variant: Pick<RakutenCatalogVariant, 'merchantDefinedSkuId' | 'variantId'>, index: Map<string, Set<string>>, productIds = new Set<string>()): string[] {
   const primary = variant.merchantDefinedSkuId ? index.get(variant.merchantDefinedSkuId) : undefined;
-  return [...(primary?.size ? primary : index.get(variant.variantId) ?? new Set<string>())].sort();
+  const candidates = new Set(primary?.size ? primary : index.get(variant.variantId) ?? []);
+  if (productIds.has(variant.variantId)) candidates.add(variant.variantId);
+  return [...candidates].sort();
 }
 
 @Injectable()
@@ -123,6 +125,15 @@ export class RakutenInventoryCatalogService {
         }
       }
     }
+    // Query only this page's exact product IDs; JS equality protects against
+    // case-insensitive database collations and never strips SKU prefixes.
+    const productsById = new Map<string, { productId: string; status: number; productType: string | null }>();
+    for (const batch of chunks([...new Set(variants.map((row) => row.variantId))])) {
+      const products = await this.prisma.masterProduct.findMany({ where: { productId: { in: batch } },
+        select: { productId: true, status: true, productType: true } });
+      for (const product of products) if (batch.includes(product.productId)) productsById.set(product.productId, product);
+    }
+    const directIds = new Set(productsById.keys());
     const existing = variants.length ? await this.prisma.rakutenInventoryMapping.findMany({ where: {
       connectionId: connection.id, manageNumber: { in: [...new Set(variants.map((row) => row.manageNumber))] },
     } }) : [];
@@ -135,14 +146,18 @@ export class RakutenInventoryCatalogService {
       products.forEach((row) => validManual.add(row.productId));
     }
     return variants.map((variant) => {
-      const candidates = catalogCandidates(variant, index);
+      const candidates = catalogCandidates(variant, index, directIds);
       const mapping = mappings.get(inventoryKey(variant));
       let productId = candidates.length === 1 ? candidates[0] : null;
       let matchStatus = candidates.length === 1 ? 'matched' : candidates.length ? 'ambiguous' : 'unmatched';
+      const direct = productsById.get(variant.variantId);
+      if (productId === variant.variantId && direct && (direct.status !== 1 || MATERIALS.includes(String(direct.productType ?? '').trim()))) {
+        productId = null; matchStatus = 'excluded';
+      }
       if (mapping?.source === 'manual') {
         productId = validManual.has(mapping.productId) ? mapping.productId : null;
         matchStatus = productId ? 'manual' : 'invalid';
-      } else if (mapping && mapping.productId !== productId) {
+      } else if (mapping && matchStatus !== 'excluded' && mapping.productId !== productId) {
         productId = null; matchStatus = 'conflict';
       }
       return { connectionId: connection.id, version, manageNumber: variant.manageNumber, variantId: variant.variantId,
@@ -179,13 +194,23 @@ export class RakutenInventoryCatalogService {
     return eligible;
   }
 
-  async summary(connection: RakutenRmsConnection, page = 1, issuesOnly = false) {
+  async summary(connection: RakutenRmsConnection, page = 1, issuesOnly = false, search = '', matchStatus = '') {
     const job = await this.prisma.rakutenInventoryCatalogJob.findFirst({ where: { connectionId: connection.id }, orderBy: { startedAt: 'desc' } });
     const base = { connectionId: connection.id, version: connection.inventoryCatalogVersion ?? '' };
-    const where = { ...base, ...(issuesOnly ? { matchStatus: { notIn: ['matched', 'manual'] } } : {}) };
+    const now = new Date();
+    const active: Prisma.RakutenInventoryCatalogWhereInput = { ...base, hidden: false, unlimitedStock: false,
+      matchStatus: { not: 'excluded' }, AND: [
+        { OR: [{ salesStart: null }, { salesStart: { lte: now } }] },
+        { OR: [{ salesEnd: null }, { salesEnd: { gte: now } }] },
+      ] };
+    const where: Prisma.RakutenInventoryCatalogWhereInput = { ...(issuesOnly ? active : base),
+      ...(issuesOnly ? { matchStatus: { notIn: ['matched', 'manual', 'excluded'] } } : {}),
+      ...(['unmatched', 'ambiguous', 'conflict', 'invalid'].includes(matchStatus) ? { matchStatus } : {}),
+      ...(search ? { OR: ['variantId', 'manageNumber', 'merchantDefinedSkuId', 'productId', 'title'].map((field) => ({ [field]: { contains: search } })) } : {}) };
+    const excluded = await this.prisma.rakutenInventoryCatalog.count({ where: { ...base, NOT: active } });
     const [total, counts, rows] = await Promise.all([
       this.prisma.rakutenInventoryCatalog.count({ where }),
-      this.prisma.rakutenInventoryCatalog.groupBy({ by: ['matchStatus'], where: base, _count: { _all: true } }),
+      this.prisma.rakutenInventoryCatalog.groupBy({ by: ['matchStatus'], where: active, _count: { _all: true } }),
       this.prisma.rakutenInventoryCatalog.findMany({ where, orderBy: { id: 'asc' }, skip: (page - 1) * 50, take: 50 }),
     ]);
     const mappings = rows.length ? await this.prisma.rakutenInventoryMapping.findMany({ where: { connectionId: connection.id,
@@ -193,7 +218,7 @@ export class RakutenInventoryCatalogService {
       select: { manageNumber: true, variantId: true, safetyStock: true, enabled: true, source: true } }) : [];
     const mappingByKey = new Map(mappings.map((row) => [inventoryKey(row), row]));
     return { refreshedAt: connection.inventoryCatalogRefreshedAt, error: connection.inventoryCatalogError,
-      fresh: this.isFresh(connection), job, total, counts: Object.fromEntries(counts.map((row) => [row.matchStatus, row._count._all])), page, pageSize: 50,
+      fresh: this.isFresh(connection), job, total, excluded, counts: Object.fromEntries(counts.map((row) => [row.matchStatus, row._count._all])), page, pageSize: 50,
       rows: rows.map(({ id, connectionId, ...row }) => ({ ...row, id: id.toString(), connectionId: connectionId.toString(), exclusion: catalogExclusion(row), mapping: mappingByKey.get(inventoryKey(row)) ?? null })) };
   }
 }

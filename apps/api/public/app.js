@@ -7533,12 +7533,30 @@ async function selectRakutenCenterView(view, record = rakutenCenterRecord) {
 
 let rakutenInventoryCatalogTimer;
 let rakutenInventoryCatalogPage = 1;
-let rakutenInventoryCatalogIssues = false;
+let rakutenInventoryCatalogIssues = true;
 let rakutenInventoryCatalogRequest = 0;
+
+function parseRakutenInventoryBulk(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (!lines[0] || lines.length > 100) throw new Error("请粘贴1至100行已确认映射");
+  const keys = new Set();
+  const rows = lines.map((line, index) => {
+    const cells = line.split("\t").map((cell) => cell.trim());
+    if (cells.length !== 5 || !cells[0] || cells[0].length > 128 || !/^[a-zA-Z0-9_-]{1,32}$/.test(cells[1])
+      || !/^[a-zA-Z0-9_-]{1,32}$/.test(cells[2]) || !/^\d{1,5}$/.test(cells[3]) || !/^[01]$/.test(cells[4])) {
+      throw new Error(`第${index + 1}行格式不正确，请检查5列内容（不含表头）`);
+    }
+    const key = JSON.stringify([cells[1].toLowerCase(), cells[2]]);
+    if (keys.has(key)) throw new Error(`第${index + 1}行SKU重复，请先合并`);
+    keys.add(key);
+    return { productId: cells[0], manageNumber: cells[1], variantId: cells[2], safetyStock: Number(cells[3]), enabled: cells[4] === "1" };
+  });
+  return { lines, rows };
+}
 
 function renderRakutenInventoryCatalog(data) {
   if (!data) return;
-  const names = { matched: "自动匹配", manual: "手动匹配", unmatched: "未匹配", ambiguous: "多个产品", conflict: "对应关系变化", invalid: "手动产品已失效" };
+  const names = { matched: "自动匹配", manual: "手动匹配", unmatched: "未匹配", ambiguous: "多个产品（匹配依据冲突）", conflict: "对应关系变化", invalid: "手动产品已失效", excluded: "已排除（本体、配件或停用产品）" };
   const rows = data.rows || [];
   $("rakutenInventoryCatalogBody")._rows = rows;
   $("rakutenInventoryCatalogBody").innerHTML = rows.map((row) => `<tr>
@@ -7551,7 +7569,7 @@ function renderRakutenInventoryCatalog(data) {
   $("rakutenInventoryCatalogPrev").disabled = data.page <= 1;
   $("rakutenInventoryCatalogNext").disabled = data.page >= pages;
   const counts = data.counts || {};
-  const summary = `已匹配 ${(counts.matched || 0) + (counts.manual || 0)}，需人工处理 ${(counts.unmatched || 0) + (counts.ambiguous || 0) + (counts.conflict || 0) + (counts.invalid || 0)}`;
+  const summary = `已排除 ${data.excluded || 0}，已匹配 ${(counts.matched || 0) + (counts.manual || 0)}，需人工处理 ${(counts.unmatched || 0) + (counts.ambiguous || 0) + (counts.conflict || 0) + (counts.invalid || 0)}`;
   const job = data.job;
   const busy = job && ["queued", "running"].includes(job.status);
   setTextById("rakutenInventoryCatalogMeta", `${data.refreshedAt ? `上次完整读取 ${formatRakutenOrderDateTime(data.refreshedAt)} · ${summary}${data.fresh ? "" : " · 清单已过期，请刷新"}` : "尚无完整商品清单"}${busy ? ` · 正在后台读取：${job.productCount || 0} 个商品、${job.skuCount || 0} 个SKU` : ""}${data.error ? ` · 读取失败：${data.error}` : ""}`);
@@ -7575,7 +7593,9 @@ async function loadRakutenInventoryCatalog() {
   const connectionId = $("rakutenInventoryShop").value;
   const requestId = ++rakutenInventoryCatalogRequest;
   const generation = rakutenInventoryGeneration;
-  const params = new URLSearchParams({ page: String(rakutenInventoryCatalogPage), issuesOnly: String(rakutenInventoryCatalogIssues) });
+  const params = new URLSearchParams({ page: String(rakutenInventoryCatalogPage), issuesOnly: String(rakutenInventoryCatalogIssues), search: $("rakutenInventoryCatalogSearch").value.trim() });
+  const filter = $("rakutenInventoryCatalogFilter").value;
+  if (["unmatched", "ambiguous", "conflict", "invalid"].includes(filter)) params.set("matchStatus", filter);
   const data = await request(rakutenInventoryUrl(connectionId, `/catalog?${params}`));
   if (generation !== rakutenInventoryGeneration || requestId !== rakutenInventoryCatalogRequest || connectionId !== $("rakutenInventoryShop").value) return;
   renderRakutenInventoryCatalog(data);
@@ -7622,8 +7642,9 @@ async function loadRakutenInventory() {
   $("rakutenInventoryIssuesPanel").classList?.add("hidden");
   setTextById("rakutenInventoryCheckMeta", "检测仅验证读取，不修改乐天库存。");
   ++rakutenInventoryCatalogRequest;
-  rakutenInventoryCatalogPage = 1; rakutenInventoryCatalogIssues = false;
-  $("rakutenInventoryCatalogFilter").value = "all";
+  rakutenInventoryCatalogPage = 1; rakutenInventoryCatalogIssues = true;
+  $("rakutenInventoryCatalogFilter").value = "issues";
+  $("rakutenInventoryCatalogSearch").value = "";
   $("rakutenInventoryCatalogBody").innerHTML = "";
   for (const id of ["rakutenInventoryMappingBody", "rakutenInventoryRunsBody"]) $(id).innerHTML = "";
   $("rakutenInventoryMappingBody")._mappings = [];
@@ -16436,8 +16457,12 @@ function bindForms() {
     if (result?.job && !["queued", "running"].includes(result.job.status)) await loadRakutenInventory();
     showToast("已开始后台读取乐天清单，不会写入乐天库存");
   }));
+  $("rakutenInventoryCatalogSearchBtn").addEventListener("click", async () => {
+    rakutenInventoryCatalogPage = 1;
+    try { await loadRakutenInventoryCatalog(); } catch (error) { showToast(error.message, true); }
+  });
   $("rakutenInventoryCatalogFilter").addEventListener("change", async () => {
-    rakutenInventoryCatalogIssues = $("rakutenInventoryCatalogFilter").value === "issues";
+    rakutenInventoryCatalogIssues = $("rakutenInventoryCatalogFilter").value !== "all";
     rakutenInventoryCatalogPage = 1;
     try { await loadRakutenInventoryCatalog(); } catch (error) { showToast(error.message, true); }
   });
@@ -16469,12 +16494,32 @@ function bindForms() {
   });
   $("rakutenInventoryShop").addEventListener("change", async () => {
     $("rakutenInventoryMappingForm").reset();
+    $("rakutenInventoryBulkInput").value = "";
+    setTextById("rakutenInventoryBulkResult", "");
     try { await loadRakutenInventory(); } catch (error) { showToast(error.message, true); }
   });
   $("rakutenInventoryRefresh").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, () => loadRakutenInventory()));
   $("rakutenInventorySaveEnabled").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, async (connectionId) => {
     await request(rakutenInventoryUrl(connectionId, "/enabled"), { method: "PUT", body: JSON.stringify({ enabled: $("rakutenInventoryEnabled").checked }) });
     await loadRakutenInventory(); showToast("店铺库存同步开关已保存");
+  }));
+  $("rakutenInventoryBulkSave").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, async (connectionId) => {
+    const { lines, rows } = parseRakutenInventoryBulk($("rakutenInventoryBulkInput").value);
+    invalidateRakutenInventoryPreview();
+    let saved = 0;
+    try {
+      for (const row of rows) {
+        setTextById("rakutenInventoryBulkResult", `正在验证第${saved + 1}行，已保存${saved}/${rows.length}行`);
+        await request(rakutenInventoryUrl(connectionId, "/mappings"), { method: "PUT", body: JSON.stringify(row) });
+        saved++;
+      }
+      $("rakutenInventoryBulkInput").value = "";
+      setTextById("rakutenInventoryBulkResult", `已保存全部${saved}行人工映射，未修改乐天库存`);
+    } catch (error) {
+      $("rakutenInventoryBulkInput").value = lines.slice(saved).join("\n");
+      setTextById("rakutenInventoryBulkResult", `已保存${saved}行；第${saved + 1}行未确认：${error.message}。保留待确认行，重试前可先刷新检查。`);
+    }
+    await loadRakutenInventory();
   }));
   $("rakutenInventoryMappingForm").addEventListener("submit", (event) => {
     event.preventDefault();

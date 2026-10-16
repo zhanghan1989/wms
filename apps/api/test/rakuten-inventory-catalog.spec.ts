@@ -10,6 +10,7 @@ function fixture() {
   const mappings: any[] = [];
   const skus: any[] = [];
   const eligibleProducts = new Set<string>();
+  const products = new Map<string, any>();
   const prisma: any = {
     $transaction: jest.fn((action) => Array.isArray(action) ? Promise.all(action) : action(prisma)),
     rakutenRmsConnection: { update: jest.fn(async ({ data }) => Object.assign(connection, data)) },
@@ -25,7 +26,7 @@ function fixture() {
     },
     sku: { findMany: jest.fn(async ({ where }) => skus.filter((row) => row.shop === where.shop && row.status === 1 && eligibleProducts.has(row.productId)
       && where.OR.some((condition: any) => Object.entries(condition).some(([key, value]: any) => value.in.includes(row[key]))))) },
-    masterProduct: { findMany: jest.fn(async ({ where }) => where.productId.in.filter((id: string) => eligibleProducts.has(id)).map((productId: string) => ({ productId }))) },
+    masterProduct: { findMany: jest.fn(async ({ where }) => where.productId.in.filter((id: string) => eligibleProducts.has(id) || products.has(id)).map((productId: string) => products.get(productId) ?? ({ productId, status: 1, productType: null }))) },
     rakutenInventoryMapping: {
       findMany: jest.fn(async ({ where }) => mappings.filter((row) => row.connectionId === where.connectionId && (!where.manageNumber || where.manageNumber.in.includes(row.manageNumber)))),
       createMany: jest.fn(async ({ data }) => { for (const row of data) if (!mappings.some((old) => old.connectionId === row.connectionId && inventoryKey(old) === inventoryKey(row))) mappings.push(row); return { count: data.length }; }),
@@ -37,7 +38,7 @@ function fixture() {
     eligibleProducts.add(productId); skus.push({ sku, rbSku: null, fbmSku: null, productId, shop, status: 1 });
   };
   const page = (cursor: string, variants: any[], itemCount = variants.length) => ({ nextCursorMark: cursor, variants, itemCount, numFound: itemCount });
-  return { service, prisma, connection, client, jobs, catalogRows, mappings, addSku, eligibleProducts, page };
+  return { service, prisma, connection, client, jobs, catalogRows, mappings, addSku, eligibleProducts, products, page };
 }
 
 describe('shop-first Rakuten catalog matching', () => {
@@ -74,6 +75,41 @@ describe('shop-first Rakuten catalog matching', () => {
     expect(f.prisma.sku.findMany.mock.calls[0][0].where).toMatchObject({ shop: '店铺A', status: 1 });
     expect(f.prisma.rakutenRmsConnection.update).toHaveBeenCalledTimes(1);
     expect(f.connection.inventoryCatalogVersion).not.toBe('old');
+  });
+
+  it('matches exact product IDs without shop SKU records, rejects competing evidence and retains manual choices', async () => {
+    const f = fixture();
+    ['117305', 'P2', 'MANUAL'].forEach((id) => f.eligibleProducts.add(id));
+    f.addSku('merchant', 'OTHER');
+    f.mappings.push({ connectionId: 1n, manageNumber: 'item', variantId: 'P2', productId: 'MANUAL', source: 'manual', enabled: false, safetyStock: 7 });
+    f.client.searchCatalogPage.mockResolvedValueOnce(f.page('*', [variant('117305', null), variant('kellydoll-117305', null),
+      variant('P2', 'merchant'), variant('117305', 'merchant')].map((row, i) => ({ ...row, manageNumber: `item${i === 2 ? '' : i}` }))));
+    await f.service.refresh(f.connection, jest.fn());
+    expect(f.catalogRows[0]).toMatchObject({ productId: '117305', matchStatus: 'matched' });
+    expect(f.catalogRows[1]).toMatchObject({ productId: null, matchStatus: 'unmatched' });
+    expect(f.catalogRows[2]).toMatchObject({ productId: 'MANUAL', matchStatus: 'manual' });
+    expect(f.catalogRows[3]).toMatchObject({ productId: null, matchStatus: 'ambiguous', candidates: ['117305', 'OTHER'] });
+    expect(f.mappings.find((row) => row.variantId === 'P2')).toMatchObject({ enabled: false, safetyStock: 7 });
+    for (const [args] of f.prisma.masterProduct.findMany.mock.calls) expect(args.where.productId.in.length).toBeLessThanOrEqual(500);
+  });
+
+  it('excludes materials and inactive direct products instead of publishing zero stock', async () => {
+    const f = fixture();
+    f.products.set('BODY', { productId: 'BODY', status: 1, productType: '肩带本体' });
+    f.products.set('PART', { productId: 'PART', status: 1, productType: '肩带配件' });
+    f.products.set('OFF', { productId: 'OFF', status: 0, productType: null });
+    f.client.searchCatalogPage.mockResolvedValueOnce(f.page('*', ['BODY', 'PART', 'OFF'].map((id) => variant(id, null))));
+    await f.service.refresh(f.connection, jest.fn());
+    expect(f.catalogRows.every((row) => row.matchStatus === 'excluded' && row.productId === null)).toBe(true);
+    expect(f.mappings).toHaveLength(0);
+  });
+
+  it('does not trust case-insensitive database matches for product IDs', async () => {
+    const f = fixture();
+    f.prisma.masterProduct.findMany.mockResolvedValue([{ productId: 'ABC', status: 1, productType: null }]);
+    f.client.searchCatalogPage.mockResolvedValueOnce(f.page('*', [variant('abc', null)]));
+    await f.service.refresh(f.connection, jest.fn());
+    expect(f.catalogRows[0]).toMatchObject({ matchStatus: 'unmatched', productId: null });
   });
 
   it('keeps the previous complete scope on a mid-pagination failure', async () => {
