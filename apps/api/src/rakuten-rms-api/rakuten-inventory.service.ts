@@ -1,3 +1,4 @@
+import { inventoryCombos, isInventoryCombo, validInventoryCombo } from './rakuten-inventory-combos';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, RakutenRmsConnection } from '@prisma/client';
 import { randomUUID } from 'crypto';
@@ -172,8 +173,11 @@ export class RakutenInventoryService {
       const connection = await this.connection(connectionId);
       const productId = payload.productId.trim();
       const product = await this.prisma.masterProduct.findUnique({ where: { productId }, select: { productId: true, status: true, productType: true } });
-      if (!product || product.productId !== productId || product.status !== 1 || MATERIAL_TYPES.includes(String(product.productType ?? '').trim())) {
-        throw new BadRequestException('产品不存在、已停用或属于肩带本体/配件，不能同步');
+      const combo = isInventoryCombo(productId) ? (await inventoryCombos(this.prisma, [productId])).get(productId) : null;
+      const valid = isInventoryCombo(productId) ? Boolean(combo && validInventoryCombo(combo))
+        : Boolean(product && product.productId === productId && product.status === 1 && !MATERIAL_TYPES.includes(String(product.productType ?? '').trim()));
+      if (!valid) {
+        throw new BadRequestException('产品或组合不存在、明细无效、已停用或属于肩带本体/配件，不能同步');
       }
       const manageNumber = payload.manageNumber.toLowerCase();
       const credentials = this.credentials(connection);
@@ -237,8 +241,14 @@ export class RakutenInventoryService {
   }
 
   private async stockSnapshot(productIds: string[], renew: () => Promise<void>, tx: Prisma.TransactionClient, details?: Map<string, InventoryStockBreakdown>) {
+    const combos = await inventoryCombos(tx, productIds);
+    for (const id of productIds.filter(isInventoryCombo)) {
+      const combo = combos.get(id);
+      if (!combo || !validInventoryCombo(combo)) throw new BadRequestException(`组合 ${id} 不存在或明细无效，请修复组合配置`);
+    }
+    const leafIds = [...new Set(productIds.flatMap((id) => combos.get(id)?.items.map((item) => item.productId) ?? [id]))];
     const pending = await this.orders.inventorySyncPendingDemands(tx);
-    const ids = [...new Set([...productIds, ...pending.map((row) => row.productId)])];
+    const ids = [...new Set([...leafIds, ...pending.map((row) => row.productId)])];
     const products = [] as Array<{
       productId: string; status: number; productType: string | null;
       bomComponents: Array<{ quantity: number; componentProductId: string; componentProduct: { status: number; productType: string | null } }>;
@@ -257,7 +267,7 @@ export class RakutenInventoryService {
     }
     const byId = new Map(products.map((row) => [row.productId, row]));
     if (ids.some((id) => !byId.has(id))) throw new BadRequestException('库存同步涉及不存在的产品，请先修复订单或映射');
-    const targetProducts = productIds.map((id) => byId.get(id)!);
+    const targetProducts = leafIds.map((id) => byId.get(id)!);
     const targetPools = new Set(targetProducts.flatMap((row) => [row.productId, ...row.bomComponents.map((item) => item.componentProductId)]));
     const relevant = new Set(products.filter((row) => targetPools.has(row.productId)
       || row.bomComponents.some((item) => targetPools.has(item.componentProductId))).map((row) => row.productId));
@@ -285,7 +295,7 @@ export class RakutenInventoryService {
         }
       }
     }
-    return new Map(productIds.map((id) => {
+    const quantities = new Map(leafIds.map((id) => {
       const product = byId.get(id)!;
       if (product.status !== 1 || MATERIAL_TYPES.includes(String(product.productType ?? '').trim())) throw new BadRequestException(`产品 ${id} 已停用或属于肩带材料，已停止同步`);
       const availability = calculateProductStockAvailability({
@@ -303,6 +313,53 @@ export class RakutenInventoryService {
       }
       return [id, availability.fulfillableStock];
     }));
+    // Every configured combo component is one unit. Simulate the whole bundle
+    // against one stock pool so two shoulders cannot spend the same material twice.
+    const bundleQuantity = (members: string[], pool: Map<string, number>) => {
+      const availability = (id: string) => {
+        const product = byId.get(id)!;
+        return calculateProductStockAvailability({ productType: product.productType, stockQty: pool.get(id) ?? 0,
+          bomComponents: product.bomComponents.map((item) => ({ quantity: item.quantity,
+            componentProduct: { ...item.componentProduct, stockQty: pool.get(item.componentProductId) ?? 0 } })) }).fulfillableStock;
+      };
+      let low = 0, high = members.reduce((limit, id) => Math.min(limit, availability(id)), 99999);
+      const fits = (count: number) => {
+        const remaining = new Map(pool);
+        const assembly = new Map<string, number>();
+        for (const id of members) {
+          const used = Math.min(count, remaining.get(id) ?? 0);
+          remaining.set(id, (remaining.get(id) ?? 0) - used);
+          assembly.set(id, count - used);
+        }
+        const demand = new Map<string, number>();
+        for (const [id, missing] of assembly) {
+          if (!missing) continue;
+          const product = byId.get(id)!;
+          if (String(product.productType ?? '').trim() !== '肩带' || !product.bomComponents.length) return false;
+          for (const item of product.bomComponents) {
+            if (!Number.isSafeInteger(item.quantity) || item.quantity <= 0 || item.componentProduct.status !== 1) return false;
+            demand.set(item.componentProductId, (demand.get(item.componentProductId) ?? 0) + missing * item.quantity);
+          }
+        }
+        return [...demand].every(([id, amount]) => amount <= (remaining.get(id) ?? 0));
+      };
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (fits(middle)) low = middle; else high = middle - 1;
+      }
+      return low;
+    };
+    for (const [name, combo] of combos) {
+      const members = combo.items.map((item) => item.productId);
+      const quantity = bundleQuantity(members, stock);
+      quantities.set(name, quantity);
+      if (details) {
+        const before = bundleQuantity(members, beforePending);
+        details.set(name, { finishedStock: 0, assemblableStock: before, beforePending: before,
+          pendingReserved: Math.max(0, before - quantity), availableQuantity: quantity });
+      }
+    }
+    return new Map(productIds.map((id) => [id, quantities.get(id)!]));
   }
 
   private assertFreshOrders(connection: RakutenRmsConnection) {

@@ -6,6 +6,8 @@ import { RakutenRmsApiClient } from './rakuten-rms-api.client';
 import { RakutenRmsApiCryptoService } from './rakuten-rms-api-crypto.service';
 import { inventoryKey, RakutenCatalogVariant } from './rakuten-inventory.types';
 
+import { inventoryCombos, isInventoryCombo, validInventoryCombo } from './rakuten-inventory-combos';
+
 const DAY_MS = 24 * 60 * 60_000;
 const MATERIALS = ['肩带本体', '肩带配件'];
 const chunks = <T>(rows: T[], size = 500): T[][] => Array.from({ length: Math.ceil(rows.length / size) }, (_, i) => rows.slice(i * size, (i + 1) * size));
@@ -133,7 +135,13 @@ export class RakutenInventoryCatalogService {
         select: { productId: true, status: true, productType: true } });
       for (const product of products) if (batch.includes(product.productId)) productsById.set(product.productId, product);
     }
-    const directIds = new Set(productsById.keys());
+    const combos = await inventoryCombos(this.prisma, codes);
+    const directIds = new Set([...productsById.keys()].filter((id) => !isInventoryCombo(id)));
+    for (const [name, combo] of combos) if (validInventoryCombo(combo)) {
+      directIds.add(name);
+      const targets = index.get(name) ?? new Set<string>();
+      targets.add(name); index.set(name, targets);
+    }
     const existing = variants.length ? await this.prisma.rakutenInventoryMapping.findMany({ where: {
       connectionId: connection.id, manageNumber: { in: [...new Set(variants.map((row) => row.manageNumber))] },
     } }) : [];
@@ -145,14 +153,23 @@ export class RakutenInventoryCatalogService {
         OR: [{ productType: null }, { productType: { notIn: MATERIALS } }] }, select: { productId: true } });
       products.forEach((row) => validManual.add(row.productId));
     }
+    const manualCombos = await inventoryCombos(this.prisma, manualIds);
+    for (const id of manualIds.filter(isInventoryCombo)) {
+      validManual.delete(id);
+      const combo = manualCombos.get(id);
+      if (combo && validInventoryCombo(combo)) validManual.add(id);
+    }
     return variants.map((variant) => {
       const candidates = catalogCandidates(variant, index, directIds);
       const mapping = mappings.get(inventoryKey(variant));
       let productId = candidates.length === 1 ? candidates[0] : null;
       let matchStatus = candidates.length === 1 ? 'matched' : candidates.length ? 'ambiguous' : 'unmatched';
       const direct = productsById.get(variant.variantId);
-      if (productId === variant.variantId && direct && (direct.status !== 1 || MATERIALS.includes(String(direct.productType ?? '').trim()))) {
+      if (!isInventoryCombo(variant.variantId) && productId === variant.variantId && direct && (direct.status !== 1 || MATERIALS.includes(String(direct.productType ?? '').trim()))) {
         productId = null; matchStatus = 'excluded';
+      }
+      if ([variant.variantId, variant.merchantDefinedSkuId].some((code) => code && isInventoryCombo(code) && (!combos.has(code) || !validInventoryCombo(combos.get(code)!)))) {
+        productId = null; matchStatus = 'unmatched';
       }
       if (mapping?.source === 'manual') {
         productId = validManual.has(mapping.productId) ? mapping.productId : null;

@@ -21,6 +21,7 @@ function fixture() {
     rakutenRmsConnection: { findUnique: jest.fn().mockResolvedValue(connection), update: jest.fn(), updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([connection]) },
     rakutenScheduleControl: { upsert: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     rakutenInventoryMapping: { findMany: jest.fn().mockResolvedValue([row]), upsert: jest.fn(), updateMany: jest.fn(), count: jest.fn().mockResolvedValue(1) },
+    rakutenComboProduct: { findMany: jest.fn().mockResolvedValue([]) },
     masterProduct: { findMany: jest.fn().mockResolvedValue([{ productId: 'P', status: 1, productType: '包' }]), findUnique: jest.fn().mockResolvedValue({ productId: 'P', status: 1, productType: '包' }) },
     rakutenInventoryRun: {
       create: jest.fn(async ({ data }) => { const record = { ...data, startedAt: new Date() }; runs.set(data.id, record); return record; }),
@@ -74,6 +75,36 @@ describe('Rakuten inventory sync', () => {
     expect(f.runs.get(preview.previewId).status).toBe('success');
     await expect(f.service.execute('1', preview.previewId, 2n)).rejects.toBeInstanceOf(ConflictException);
   });
+  it('computes a combo from the bottleneck component after pending reservations', async () => {
+    const f = fixture();
+    f.prisma.rakutenComboProduct.findMany.mockResolvedValue([{ comboName: 'zh-set', items: ['A', 'B'].map((productId) => ({ productId, product: { status: 1, productType: '包' } })) }]);
+    f.prisma.masterProduct.findMany.mockResolvedValue(['A', 'B'].map((productId) => ({ productId, status: 1, productType: '包' })));
+    f.orders.inventorySyncPendingDemands.mockResolvedValue([{ productId: 'B', quantity: 2 }]);
+    available.mockResolvedValue([{ productId: 'A', qty: 10 }, { productId: 'B', qty: 6 }] as any);
+    const details = new Map();
+    const quantities = await (f.service as any).stockQuantities(['zh-set'], jest.fn(), details);
+    expect(quantities.get('zh-set')).toBe(4);
+    expect(details.get('zh-set')).toMatchObject({ beforePending: 6, pendingReserved: 2, availableQuantity: 4 });
+  });
+
+  it('does not count shared shoulder materials twice within the same combo', async () => {
+    const f = fixture();
+    f.prisma.rakutenComboProduct.findMany.mockResolvedValue([{ comboName: 'zh-straps', items: ['S', 'T'].map((productId) => ({ productId, product: { status: 1, productType: '肩带' } })) }]);
+    f.prisma.masterProduct.findMany.mockImplementation(async ({ select }: any) => ['S', 'T'].map((productId) => ({ productId, status: 1, productType: '肩带',
+      ...(select.bomComponents ? { bomComponents: [{ componentProductId: 'BODY', quantity: 1, componentProduct: { status: 1, productType: '肩带本体' } }] } : {}) })));
+    available.mockResolvedValue([{ productId: 'BODY', qty: 10 }] as any);
+    const quantities = await (f.service as any).stockQuantities(['zh-straps'], jest.fn());
+    expect(quantities.get('zh-straps')).toBe(5);
+  });
+
+  it('rejects missing and empty combos and supports manually confirmed combo mappings', async () => {
+    const f = fixture();
+    await expect((f.service as any).stockQuantities(['zh-missing'], jest.fn())).rejects.toThrow('组合配置');
+    f.prisma.rakutenComboProduct.findMany.mockResolvedValue([{ comboName: 'zh-set', items: [{ productId: 'P', product: { status: 1, productType: '包' } }] }]);
+    await f.service.saveMapping('1', { productId: 'zh-set', manageNumber: 'item', variantId: 'SkuA', safetyStock: 2, enabled: true });
+    expect(f.prisma.rakutenInventoryMapping.upsert).toHaveBeenCalledWith(expect.objectContaining({ create: expect.objectContaining({ productId: 'zh-set' }) }));
+  });
+
   it('includes zero quantities and applies safety stock', async () => {
     const f = fixture();
     f.prisma.rakutenInventoryMapping.findMany.mockResolvedValue([{ ...row, safetyStock: 15 }]);

@@ -24,6 +24,7 @@ function fixture() {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
       findMany: jest.fn(async ({ where }) => catalogRows.filter((row) => row.connectionId === where.connectionId && row.version === where.version)),
     },
+    rakutenComboProduct: { findMany: jest.fn().mockResolvedValue([]) },
     sku: { findMany: jest.fn(async ({ where }) => skus.filter((row) => row.shop === where.shop && row.status === 1 && eligibleProducts.has(row.productId)
       && where.OR.some((condition: any) => Object.entries(condition).some(([key, value]: any) => value.in.includes(row[key]))))) },
     masterProduct: { findMany: jest.fn(async ({ where }) => where.productId.in.filter((id: string) => eligibleProducts.has(id) || products.has(id)).map((productId: string) => products.get(productId) ?? ({ productId, status: 1, productType: null }))) },
@@ -110,6 +111,22 @@ describe('shop-first Rakuten catalog matching', () => {
     f.client.searchCatalogPage.mockResolvedValueOnce(f.page('*', [variant('abc', null)]));
     await f.service.refresh(f.connection, jest.fn());
     expect(f.catalogRows[0]).toMatchObject({ matchStatus: 'unmatched', productId: null });
+  });
+
+  it('matches full zh- combo names and preserves ambiguity and invalid-configuration guards', async () => {
+    const f = fixture();
+    const combo = { comboName: 'zh-set', items: [{ productId: 'P', product: { status: 1, productType: '包' } }] };
+    f.prisma.rakutenComboProduct.findMany.mockResolvedValue([combo, { comboName: 'zh-empty', items: [] }]);
+    f.addSku('merchant', 'OTHER');
+    f.client.searchCatalogPage.mockResolvedValueOnce(f.page('*', [variant('zh-set', null), variant('ZH-set', null),
+      variant('zh-empty', null), variant('zh-set', 'merchant')].map((row, i) => ({ ...row, manageNumber: `item${i}` }))));
+    await f.service.refresh(f.connection, jest.fn());
+    expect(f.catalogRows[0]).toMatchObject({ matchStatus: 'matched', productId: 'zh-set' });
+    expect(f.catalogRows[1]).toMatchObject({ matchStatus: 'unmatched', productId: null });
+    expect(f.catalogRows[2]).toMatchObject({ matchStatus: 'unmatched', productId: null });
+    expect(f.catalogRows[3]).toMatchObject({ matchStatus: 'ambiguous', productId: null });
+    expect(f.mappings).toHaveLength(1);
+    expect((await f.service.scope(f.connection, f.mappings)).map((row) => row.productId)).toEqual(['zh-set']);
   });
 
   it('keeps the previous complete scope on a mid-pagination failure', async () => {

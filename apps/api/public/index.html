@@ -2228,7 +2228,7 @@
           <button id="rakutenInventoryCatalogSearchBtn" type="button" class="ghost">搜索</button>
         </div>
         <p id="rakutenInventoryCatalogMeta" class="muted" aria-live="polite">尚未读取乐天商品清单。</p>
-        <p class="muted">以乐天在售清单为范围，包含缺货SKU。按SKU管理番号精确匹配WMS产品ID，并以该店铺的系统联携用SKU补充匹配；两者冲突需人工确认，保留人工映射，不截取编号或模糊匹配；未匹配、重复匹配及关系变化项不上传。仓库/下架、非数量管理及销售时间外商品跳过。清单每天自动刷新，读取失败时保留原清单。乐天搜索索引新增或删除商品可能延迟最多24小时。</p>
+        <p class="muted">以乐天在售清单为范围，包含缺货SKU。按SKU管理番号精确匹配WMS产品ID，并以该店铺的系统联携用SKU补充匹配；zh-组合编号精确对应系统组合名称，按明细可售套数同步；两者冲突需人工确认，保留人工映射，不截取编号或模糊匹配；未匹配、重复匹配及关系变化项不上传。仓库/下架、非数量管理及销售时间外商品跳过。清单每天自动刷新，读取失败时保留原清单。乐天搜索索引新增或删除商品可能延迟最多24小时。</p>
         <div class="table-scroll"><table>
           <thead><tr><th>乐天商品</th><th>商品管理番号</th><th>SKU管理番号</th><th>系统联携用SKU</th><th>WMS产品ID</th><th>匹配与范围</th><th>操作</th></tr></thead>
           <tbody id="rakutenInventoryCatalogBody"></tbody>
@@ -2241,7 +2241,7 @@
         <details id="rakutenInventoryManualPanel">
           <summary>手动添加或修正映射（处理例外）</summary>
           <form id="rakutenInventoryMappingForm" class="form-grid">
-          <label>WMS产品ID<input id="rakutenInventoryProduct" maxlength="128" required /></label>
+          <label>WMS产品ID或组合编号<input id="rakutenInventoryProduct" maxlength="128" required /></label>
           <label>商品管理番号<input id="rakutenInventoryManage" pattern="[a-zA-Z0-9_-]{1,32}" maxlength="32" required /></label>
           <label>SKU管理番号（区分大小写）<input id="rakutenInventoryVariant" pattern="[a-zA-Z0-9_-]{1,32}" maxlength="32" required /></label>
           <label>安全库存<input id="rakutenInventorySafety" type="number" min="0" max="99999" value="0" required /></label>
@@ -2251,7 +2251,7 @@
         <p class="muted">填写乐天后台的两个管理番号，不使用商品名称猜测匹配。同一店铺＋商品管理番号＋SKU管理番号再次保存会更新原映射。</p>
         </details>
         <details id="rakutenInventoryBulkPanel"><summary>批量确认例外映射（从表格粘贴）</summary>
-          <p class="muted">每行5列，用制表符分隔：产品ID、商品管理番号、SKU管理番号、安全库存、启用（1或0）。不含表头，每次最多100行。逐条验证并保存为人工映射；同一SKU会覆盖原映射和设置。失败时停止，已保存的行保留。此操作不写入乐天库存。</p>
+          <p class="muted">每行5列，用制表符分隔：产品ID或完整zh-组合编号、商品管理番号、SKU管理番号、安全库存、启用（1或0）。不含表头，每次最多100行。逐条验证并保存为人工映射；同一SKU会覆盖原映射和设置。失败时停止，已保存的行保留。此操作不写入乐天库存。</p>
           <label>已人工确认的映射<textarea id="rakutenInventoryBulkInput" rows="6" maxlength="30000"></textarea></label>
           <button id="rakutenInventoryBulkSave" type="button" class="ghost">验证并保存批量映射</button>
           <p id="rakutenInventoryBulkResult" class="muted" aria-live="polite"></p>
