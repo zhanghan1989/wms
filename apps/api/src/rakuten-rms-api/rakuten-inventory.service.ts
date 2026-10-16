@@ -199,10 +199,12 @@ export class RakutenInventoryService {
     });
   }
 
-  async catalogStatus(connectionId: string, pageRaw?: string, issuesOnly = false, search = '', matchStatus = '') {
+  async catalogStatus(connectionId: string, pageRaw?: string, issuesOnly = false, search = '', matchStatus = '', pageSizeRaw = '50') {
     const page = Number(pageRaw ?? 1);
     if (!Number.isSafeInteger(page) || page < 1 || page > 1000000) throw new BadRequestException('清单页码不合法');
-    return this.catalog.summary(await this.connection(connectionId, false), page, issuesOnly, search.trim().slice(0, 100), matchStatus);
+    const pageSize = Number(pageSizeRaw);
+    if (![50, 500].includes(pageSize)) throw new BadRequestException('清单每页数量不合法');
+    return this.catalog.summary(await this.connection(connectionId, false), page, issuesOnly, search.trim().slice(0, 100), matchStatus, pageSize);
   }
 
   async refreshCatalog(connectionId: string): Promise<{ jobId: string; status: string }> {

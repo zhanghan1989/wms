@@ -211,7 +211,7 @@ export class RakutenInventoryCatalogService {
     return eligible;
   }
 
-  async summary(connection: RakutenRmsConnection, page = 1, issuesOnly = false, search = '', matchStatus = '') {
+  async summary(connection: RakutenRmsConnection, page = 1, issuesOnly = false, search = '', matchStatus = '', pageSize = 50) {
     const job = await this.prisma.rakutenInventoryCatalogJob.findFirst({ where: { connectionId: connection.id }, orderBy: { startedAt: 'desc' } });
     const base = { connectionId: connection.id, version: connection.inventoryCatalogVersion ?? '' };
     const now = new Date();
@@ -228,14 +228,14 @@ export class RakutenInventoryCatalogService {
     const [total, counts, rows] = await Promise.all([
       this.prisma.rakutenInventoryCatalog.count({ where }),
       this.prisma.rakutenInventoryCatalog.groupBy({ by: ['matchStatus'], where: active, _count: { _all: true } }),
-      this.prisma.rakutenInventoryCatalog.findMany({ where, orderBy: { id: 'asc' }, skip: (page - 1) * 50, take: 50 }),
+      this.prisma.rakutenInventoryCatalog.findMany({ where, orderBy: { id: 'asc' }, skip: (page - 1) * pageSize, take: pageSize }),
     ]);
     const mappings = rows.length ? await this.prisma.rakutenInventoryMapping.findMany({ where: { connectionId: connection.id,
       OR: rows.map((row) => ({ manageNumber: row.manageNumber, variantId: row.variantId })) },
       select: { manageNumber: true, variantId: true, safetyStock: true, enabled: true, source: true } }) : [];
     const mappingByKey = new Map(mappings.map((row) => [inventoryKey(row), row]));
-    return { refreshedAt: connection.inventoryCatalogRefreshedAt, error: connection.inventoryCatalogError,
-      fresh: this.isFresh(connection), job, total, excluded, counts: Object.fromEntries(counts.map((row) => [row.matchStatus, row._count._all])), page, pageSize: 50,
+    return { version: connection.inventoryCatalogVersion, refreshedAt: connection.inventoryCatalogRefreshedAt, error: connection.inventoryCatalogError,
+      fresh: this.isFresh(connection), job, total, excluded, counts: Object.fromEntries(counts.map((row) => [row.matchStatus, row._count._all])), page, pageSize,
       rows: rows.map(({ id, connectionId, ...row }) => ({ ...row, id: id.toString(), connectionId: connectionId.toString(), exclusion: catalogExclusion(row), mapping: mappingByKey.get(inventoryKey(row)) ?? null })) };
   }
 }

@@ -7,14 +7,15 @@ function fixture() {
   const nodes: Record<string, any> = {};
   const get = (id: string) => nodes[id] ??= { textContent: '', innerHTML: '', value: '', disabled: false, checked: false };
   const request = jest.fn();
+  const download = jest.fn();
   const api = runInNewContext(`${source.slice(source.indexOf('let rakutenInventoryCatalogTimer;'), source.indexOf('let rakutenScheduleTimer;'))};
-    ({parseBulk: parseRakutenInventoryBulk, loadCatalog: loadRakutenInventoryCatalog, load: loadRakutenInventory, job: loadRakutenInventoryJob, issues: loadRakutenInventoryIssues, filter: value => {rakutenInventoryPreviewFilter = value;}, renderCatalog: renderRakutenInventoryCatalog, action: rakutenInventoryAction, setPreview: p => {rakutenInventoryPreview = p;}, preview: () => rakutenInventoryPreview})`, {
-    $: get, request, URLSearchParams, setTimeout, clearTimeout, setTextById: (id: string, value: string) => { get(id).textContent = value; },
+    ({downloadCatalog: downloadRakutenInventoryCatalog, parseBulk: parseRakutenInventoryBulk, loadCatalog: loadRakutenInventoryCatalog, load: loadRakutenInventory, job: loadRakutenInventoryJob, issues: loadRakutenInventoryIssues, filter: value => {rakutenInventoryPreviewFilter = value;}, renderCatalog: renderRakutenInventoryCatalog, action: rakutenInventoryAction, setPreview: p => {rakutenInventoryPreview = p;}, preview: () => rakutenInventoryPreview})`, {
+    $: get, request, triggerCsvDownload: download, URLSearchParams, setTimeout, clearTimeout, setTextById: (id: string, value: string) => { get(id).textContent = value; },
     escapeHtml: (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!)),
     formatRakutenOrderDateTime: (value: string) => value, withBusyButton: async (_a: any, _b: any, action: any) => action(), showToast: jest.fn(),
   });
   get('rakutenInventoryShop').value = '1';
-  return { api, get, request };
+  return { api, get, request, download };
 }
 
 describe('inventory sync configuration UI', () => {
@@ -34,6 +35,30 @@ describe('inventory sync configuration UI', () => {
     f.request.mockResolvedValue({ rows: [], counts: {}, total: 0, page: 1, pageSize: 50 });
     await f.api.loadCatalog();
     expect(f.request).toHaveBeenCalledWith(expect.stringContaining('issuesOnly=true&search=117305'));
+  });
+
+  it('downloads all filtered catalog pages, keeps identifiers and neutralizes spreadsheet formulas', async () => {
+    const f = fixture(); f.get('rakutenInventoryCatalogFilter').value = 'unmatched';
+    f.get('rakutenInventoryCatalogSearch').value = 'zh-';
+    const row = { title: '=HYPERLINK("bad")', variantId: '00123', manageNumber: 'item', matchStatus: 'unmatched' };
+    f.request.mockResolvedValueOnce({ version: 'v1', total: 2, rows: [row] })
+      .mockResolvedValueOnce({ version: 'v1', total: 2, rows: [{ ...row, variantId: 'zh-set' }] });
+    await f.api.downloadCatalog('1');
+    expect(f.request.mock.calls[0][0]).toContain('pageSize=500&issuesOnly=true&search=zh-&matchStatus=unmatched&page=1');
+    expect(f.request.mock.calls[1][0]).toContain('page=2');
+    expect(f.download).toHaveBeenCalledTimes(1);
+    const rows = f.download.mock.calls[0][1];
+    expect(rows).toHaveLength(3);
+    expect(rows[1][0]).toBe(`'=HYPERLINK("bad")`);
+    expect(rows[1][2]).toBe('00123');
+    expect(rows[2][2]).toBe('zh-set');
+  });
+  it('does not download a partial catalog when its version changes mid-export', async () => {
+    const f = fixture();
+    f.request.mockResolvedValueOnce({ version: 'v1', total: 2, rows: [{}] })
+      .mockResolvedValueOnce({ version: 'v2', total: 2, rows: [{}] });
+    await expect(f.api.downloadCatalog('1')).rejects.toThrow('已变化');
+    expect(f.download).not.toHaveBeenCalled();
   });
 
   it('clears an old preview before reading configuration and ignores late responses from another shop', async () => {

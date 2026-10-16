@@ -2226,6 +2226,7 @@
           <label>清单范围<select id="rakutenInventoryCatalogFilter"><option value="issues">仅需人工处理</option><option value="all">全部店铺SKU</option><option value="unmatched">未匹配</option><option value="ambiguous">多个匹配依据</option><option value="conflict">对应关系变化</option><option value="invalid">人工映射已失效</option></select></label>
           <label>搜索商品、SKU或产品ID<input id="rakutenInventoryCatalogSearch" type="search" maxlength="100" /></label>
           <button id="rakutenInventoryCatalogSearchBtn" type="button" class="ghost">搜索</button>
+          <button id="rakutenInventoryCatalogDownload" type="button" class="ghost">下载清单</button>
         </div>
         <p id="rakutenInventoryCatalogMeta" class="muted" aria-live="polite">尚未读取乐天商品清单。</p>
         <p class="muted">以乐天在售清单为范围，包含缺货SKU。按SKU管理番号精确匹配WMS产品ID，并以该店铺的系统联携用SKU补充匹配；zh-组合编号精确对应系统组合名称，按明细可售套数同步；两者冲突需人工确认，保留人工映射，不截取编号或模糊匹配；未匹配、重复匹配及关系变化项不上传。仓库/下架、非数量管理及销售时间外商品跳过。清单每天自动刷新，读取失败时保留原清单。乐天搜索索引新增或删除商品可能延迟最多24小时。</p>

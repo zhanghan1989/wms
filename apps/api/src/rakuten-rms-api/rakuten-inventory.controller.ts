@@ -13,7 +13,7 @@ export class RakutenInventoryController {
   @Post('check') check(@Param('connectionId') id: string) { return this.inventory.checkConnection(id); }
   @Get('issues') issues(@Param('connectionId') id: string, @Query('page') page?: string) { return this.inventory.issues(id, page); }
   @Post('catalog/refresh') refreshCatalog(@Param('connectionId') id: string) { return this.inventory.refreshCatalog(id); }
-  @Get('catalog') catalog(@Param('connectionId') id: string, @Query('page') page?: string, @Query('issuesOnly') issuesOnly?: string, @Query('search') search?: string, @Query('matchStatus') matchStatus?: string) { return this.inventory.catalogStatus(id, page, issuesOnly === 'true', search, matchStatus); }
+  @Get('catalog') catalog(@Param('connectionId') id: string, @Query('page') page?: string, @Query('issuesOnly') issuesOnly?: string, @Query('search') search?: string, @Query('matchStatus') matchStatus?: string, @Query('pageSize') pageSize?: string) { return this.inventory.catalogStatus(id, page, issuesOnly === 'true', search, matchStatus, pageSize); }
   @Put('enabled') enabled(@Param('connectionId') id: string, @Body() payload: UpdateRakutenInventoryEnabledDto) { return this.inventory.setEnabled(id, payload.enabled); }
   @Put('mappings') mapping(@Param('connectionId') id: string, @Body() payload: SaveRakutenInventoryMappingDto) { return this.inventory.saveMapping(id, payload); }
   @Post('mappings/:mappingId/disable') disable(@Param('connectionId') id: string, @Param('mappingId') mappingId: string) { return this.inventory.disableMapping(id, mappingId); }

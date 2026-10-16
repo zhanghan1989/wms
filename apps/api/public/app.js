@@ -7602,6 +7602,32 @@ async function loadRakutenInventoryCatalog() {
   return data;
 }
 
+async function downloadRakutenInventoryCatalog(connectionId) {
+  const filter = $("rakutenInventoryCatalogFilter").value;
+  const params = new URLSearchParams({ pageSize: "500", issuesOnly: String(filter !== "all"), search: $("rakutenInventoryCatalogSearch").value.trim() });
+  if (["unmatched", "ambiguous", "conflict", "invalid"].includes(filter)) params.set("matchStatus", filter);
+  const rows = [["乐天商品", "商品管理番号", "SKU管理番号", "系统联携用SKU", "WMS产品ID或组合编号", "匹配状态", "排除原因", "候选产品", "安全库存", "映射启用"]];
+  const names = { matched: "自动匹配", manual: "手动匹配", unmatched: "未匹配", ambiguous: "多个产品（匹配依据冲突）", conflict: "对应关系变化", invalid: "手动产品已失效", excluded: "已排除（本体、配件或停用产品）" };
+  let version, total, downloaded = 0;
+  for (let page = 1; ; page++) {
+    params.set("page", String(page));
+    const data = await request(rakutenInventoryUrl(connectionId, `/catalog?${params}`));
+    if (!data.version) throw new Error("请先完整读取乐天SKU清单");
+    if (page === 1) { version = data.version; total = data.total; }
+    if (data.version !== version || data.total !== total) throw new Error("清单或匹配结果已变化，请重新下载");
+    if (!data.rows?.length && downloaded < total) throw new Error("清单读取不完整，请重新下载");
+    for (const row of data.rows || []) rows.push([row.title, row.manageNumber, row.variantId, row.merchantDefinedSkuId, row.productId,
+      names[row.matchStatus] || row.matchStatus, row.exclusion, (row.candidates || []).join("、"), row.mapping?.safetyStock ?? "", row.mapping ? (row.mapping.enabled ? "是" : "否") : "未配置"]);
+    downloaded += data.rows.length;
+    setTextById("rakutenInventoryCatalogMeta", `正在准备下载 ${downloaded}/${total} 个SKU…`);
+    if (downloaded >= total) break;
+  }
+  // Treat external titles and identifiers as text when opened in spreadsheets.
+  const safeRows = rows.map((row) => row.map((value) => /^[\s]*[=+@-]/.test(String(value ?? "")) ? `'${value}` : value));
+  triggerCsvDownload(`乐天SKU清单_${connectionId}_${filter}_${new Date().toISOString().slice(0, 10)}.csv`, safeRows);
+  setTextById("rakutenInventoryCatalogMeta", `已下载当前条件下全部 ${downloaded} 个SKU`);
+}
+
 let rakutenInventoryIssuesPage = 1;
 let rakutenInventoryIssuesRequest = 0;
 let rakutenInventoryPreviewFilter = "all";
@@ -16457,6 +16483,7 @@ function bindForms() {
     if (result?.job && !["queued", "running"].includes(result.job.status)) await loadRakutenInventory();
     showToast("已开始后台读取乐天清单，不会写入乐天库存");
   }));
+  $("rakutenInventoryCatalogDownload").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, downloadRakutenInventoryCatalog));
   $("rakutenInventoryCatalogSearchBtn").addEventListener("click", async () => {
     rakutenInventoryCatalogPage = 1;
     try { await loadRakutenInventoryCatalog(); } catch (error) { showToast(error.message, true); }
