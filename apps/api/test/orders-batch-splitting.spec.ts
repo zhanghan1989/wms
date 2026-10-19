@@ -59,7 +59,7 @@ describe('overseas picking batch splitting', () => {
   });
   it('accepts assembly-only stock for all sources and deduplicates selected records', async () => {
     const common = { availableStock: 0, assemblableStock: 1, fulfillmentMode: 'overseas_warehouse', resolvedProductId: 'P1', shopName: 'shop' };
-    const rakuten = { ...common, id: 1n, orderId: 'R1', skuCode: 'SKU', orderQuantity: 1,
+    const rakuten = { ...common, id: 1n, orderId: 'R1', skuCode: 'SKU', orderQuantity: 1, orderRemark: '[配送日時指定:]',
       shippingName: '山田', shippingPhone: '090-1234-5678', shippingPostalCode: '123-4567',
       shippingPrefecture: '東京都', shippingCity: '中央区', shippingAddress: '銀座1-2ビル301' };
     const amazon = { ...common, id: 2n, orderId: 'A1', sku: 'SKU', quantityPurchased: 1,

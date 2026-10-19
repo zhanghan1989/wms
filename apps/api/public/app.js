@@ -11198,7 +11198,7 @@ function renderOrdersTable() {
         const editButtonTitle = isShipmentRegistered
           ? "修改发货公司和发货单号"
           : needsRemarkFix
-            ? '订单备注不是 "[配送日時指定:]"，请点击编辑确认'
+            ? '订单备注待确认，请打开编辑并保存后再进入海外仓处理'
             : "编辑订单";
         return `
       <tr>
@@ -11238,7 +11238,11 @@ function renderOrdersTable() {
 }
 
 function shouldHighlightRakutenOrderRemark(item) {
-  return String(item?.orderRemark ?? "").trim() !== "[配送日時指定:]";
+  const remark = String(item?.orderRemark ?? "").trim();
+  if (remark === "[配送日時指定:]") return false;
+  const raw = item?.rawPayload;
+  return !(typeof raw?._wmsRemarkConfirmedAt === "string" && raw._wmsRemarkConfirmedAt &&
+    typeof raw._wmsRemarkConfirmedValue === "string" && raw._wmsRemarkConfirmedValue.trim() === remark);
 }
 
 function formatOrderFulfillmentMode(mode) {
@@ -12846,7 +12850,16 @@ async function loadOverseasOrderProcessingOrders() {
     return;
   }
 
-  const list = await request("/orders/overseas-warehouse");
+  const [list, unconfirmed] = await Promise.all([
+    request("/orders/overseas-warehouse"),
+    request("/orders/overseas-warehouse/unconfirmed-count"),
+  ]);
+  const notice = $("overseasUnconfirmedOrderNotice");
+  if (notice) {
+    const count = Number(unconfirmed?.count || 0);
+    notice.textContent = `乐天备注待确认：${count} 单${count ? "，请到乐天订单中打开编辑并保存，确认后才会进入本列表。" : ""}`;
+    notice.classList.toggle("amazon-state-warning", count > 0);
+  }
   state.overseasOrderProcessingOrders = Array.isArray(list) ? list : [];
   state.overseasOrderProcessingVisibleCount = state.inventoryPageSize;
   renderOverseasOrderProcessingTable();

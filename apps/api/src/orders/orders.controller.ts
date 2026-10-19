@@ -274,6 +274,12 @@ export class OrdersController {
     return this.ordersService.listOverseasWarehouse(limit);
   }
 
+  @Get('overseas-warehouse/unconfirmed-count')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getOverseasUnconfirmedOrderCount(): Promise<{ count: number }> {
+    return this.ordersService.getOverseasUnconfirmedOrderCount();
+  }
+
   @Get('overseas-warehouse/export-excel')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async exportOverseasWarehouseOrders(@Res() res: Response): Promise<void> {

@@ -1,3 +1,4 @@
+import { rakutenOrderRemarkNeedsConfirmation } from '../common/rakuten-order-remark';
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
 import { basketIdOf, productIdWasManuallyEdited } from '../rakuten-rms-api/rakuten-order-workflow';
 import { stockTransaction, lockStockProducts } from '../inventory/stock-transaction';
@@ -3641,6 +3642,8 @@ export class OrdersService {
           rmsManualOverrideAt: manualOverrideAt,
           rmsManualOverrideBy: this.normalizeRakutenManualOperator(operatorUsername),
           rawPayload: this.mergeRawPayload(current.rawPayload, {
+            _wmsRemarkConfirmedValue: orderRemark ?? "",
+            _wmsRemarkConfirmedAt: manualOverrideAt.toISOString(),
             _wmsProductIdEdited: productIdWasManuallyEdited(current) ||
               String(current.skuCode ?? '').trim() !== String(skuCode ?? '').trim(),
             _wmsManualOverrideFields: [
@@ -4529,6 +4532,29 @@ export class OrdersService {
     return [...totals].map(([productId, quantity]) => ({ productId, quantity }));
   }
 
+  async getOverseasUnconfirmedOrderCount(): Promise<{ count: number }> {
+    const orderIds = new Set<string>();
+    let skip = 0;
+    const take = 500;
+    while (true) {
+      const rows = await this.prisma.rakutenOrderRecord.findMany({
+        where: { deletedAt: null, sendStatus: OrderSendStatus.unsent,
+          OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }] },
+        orderBy: { id: 'asc' }, skip, take,
+      });
+      const pending = rows.filter((row) => !String(row.shipmentNo ?? '').trim() && rakutenOrderRemarkNeedsConfirmation(row));
+      const enriched = await this.enrichOrderRows(pending);
+      const active = await this.loadActiveOverseasPickingBatchRefs(pending.map((row) => ({ source: 'rakuten' as const, sourceRecordId: row.id })));
+      for (const row of enriched) {
+        if (row.fulfillmentMode === 'overseas_warehouse' && row.availableStock + row.assemblableStock > 0 &&
+          !active.has(`rakuten:${row.id}`)) orderIds.add(String(row.orderId || row.id));
+      }
+      if (rows.length < take) break;
+      skip += rows.length;
+    }
+    return { count: orderIds.size };
+  }
+
   async listOverseasWarehouse(
     limitParam?: string,
     includeAll = false): Promise<OverseasWarehouseOrderListItem[]> {
@@ -4666,6 +4692,7 @@ export class OrdersService {
           .filter(
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
+              (!rakutenOrderRemarkNeedsConfirmation(row) || (includeAll && Boolean(String(row.shipmentNo ?? "").trim()))) &&
               (includeAll ||
                 (row.availableStock + row.assemblableStock > 0 &&
                   !activePickedRefs.has(`rakuten:${row.id.toString()}`))),
@@ -5841,6 +5868,11 @@ export class OrdersService {
           })
         : Promise.resolve([] as ManualOrderRecordLike[]),
     ]);
+
+    const unconfirmed = rakutenRows.find(rakutenOrderRemarkNeedsConfirmation);
+    if (unconfirmed) {
+      throw new BadRequestException(`乐天订单 ${unconfirmed.orderId ?? unconfirmed.id} 的备注待确认，请先打开编辑并保存后再生成拣货批次`);
+    }
 
     const [enrichedRakutenRows, enrichedAmazonRows, enrichedManualRows] = await Promise.all([
       this.enrichOrderRows(rakutenRows),
