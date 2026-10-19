@@ -101,7 +101,7 @@ export function productIdWasManuallyEdited(row: RakutenOrderRecord): boolean {
   }
   const item = raw?.rmsItem;
   const sku = (item?.SkuModelList ?? item?.skuModelList)?.[0];
-  const originalSku = sku?.variantId || sku?.merchantDefinedSkuId || item?.manageNumber || item?.skuManagementNumber || item?.itemNumber || item?.itemUrl;
+  const originalSku = raw?._wmsImportedProductId || sku?.variantId;
   return Boolean(originalSku) && String(originalSku).trim() !== String(row.skuCode ?? '').trim();
 }
 export function hasMixedDispatchCombo(rows: RakutenOrderRecord[]): boolean {

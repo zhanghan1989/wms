@@ -1186,7 +1186,7 @@ export class RakutenRmsApiService {
         && !excludedOrderIds.has(this.pickText(order, "orderNumber", "OrderNumber")),
     );
     const importIssues: CatalogImportIssue[] = [];
-    const mappedItems = await this.mapOrders(pendingShipmentOrders, importIssues, excludedOrders);
+    const mappedItems = await this.mapOrders(pendingShipmentOrders, importIssues, excludedOrders, connection.shop.name);
     const blockedOrderIds = new Set(importIssues.map((issue) => issue.orderId));
     const inspectedOrderIds = pendingShipmentOrders.filter((order) => {
       const packages = this.pickObjectList(order, 'PackageModelList', 'packageModelList');
@@ -1211,6 +1211,7 @@ export class RakutenRmsApiService {
 
   private async mapOrders(orders: RakutenJsonObject[], importIssues: CatalogImportIssue[] = [],
     exclusions: Array<{ orderId: string; rmsItemKey: string | null; skuCode: string | null }> = [],
+    shopName = '',
   ): Promise<MappedRakutenItem[]> {
     const baseItems = orders.flatMap((order) => this.mapOrder(order));
     const comboSkus = Array.from(
@@ -1265,10 +1266,69 @@ export class RakutenRmsApiService {
       const scoped = exclusionsByOrder.get(exclusion.orderId) ?? [];
       scoped.push(exclusion); exclusionsByOrder.set(exclusion.orderId, scoped);
     }
-    const includedItems = expandedItems.filter((item) => !(exclusionsByOrder.get(item.orderId) ?? []).some((exclusion) =>
+    const isIncluded = (item: MappedRakutenItem) => !(exclusionsByOrder.get(item.orderId) ?? []).some((exclusion) =>
       exclusion.rmsItemKey ? exclusion.rmsItemKey === item.itemKey
-        : exclusion.skuCode ? this.normalizeSku(exclusion.skuCode) === this.normalizeSku(item.skuCode) : true));
-    return this.filterMissingProducts(includedItems, importIssues);
+        : exclusion.skuCode ? this.normalizeSku(exclusion.skuCode) === this.normalizeSku(item.skuCode) : true);
+    const includedItems = expandedItems.filter(isIncluded);
+    const resolvedItems = await this.resolveOrdinarySkuProducts(includedItems, shopName, importIssues);
+    // Legacy CSV exclusions can name the resolved product instead of the purchase SKU.
+    return this.filterMissingProducts(resolvedItems.filter(isIncluded), importIssues);
+  }
+
+  private async resolveOrdinarySkuProducts(
+    items: MappedRakutenItem[], shopName: string, importIssues: CatalogImportIssue[],
+  ): Promise<MappedRakutenItem[]> {
+    const ordinaryItems = items.filter((item) => item.skuCode && !item.isComboOrder && !/^zh-/i.test(item.skuCode));
+    if (!shopName || !ordinaryItems.length) return items;
+    const codes = [...new Set(ordinaryItems.map((item) => item.skuCode!))];
+    const products = await this.prisma.masterProduct.findMany({
+      where: { productId: { in: codes } }, select: { productId: true },
+    });
+    const directIds = new Set(products.map((product) => this.normalizeSku(product.productId)));
+    const fallbackCodes = codes.filter((code) => !directIds.has(this.normalizeSku(code)));
+    if (!fallbackCodes.length) return items;
+    const skus = await this.prisma.sku.findMany({
+      where: { status: 1, shop: shopName, productId: { not: null }, sku: { in: fallbackCodes } },
+      select: { sku: true, productId: true },
+    });
+    const productsBySku = new Map<string, Set<string>>();
+    for (const sku of skus) {
+      const productId = String(sku.productId ?? '').trim();
+      if (!productId) continue;
+      // The system SKU column is case-sensitive; keep distinct purchase SKUs separate.
+      const key = sku.sku;
+      const ids = productsBySku.get(key) ?? new Set<string>();
+      ids.add(productId);
+      productsBySku.set(key, ids);
+    }
+    const ambiguousByOrder = new Map<string, Set<string>>();
+    const rejectedItems = new Set<MappedRakutenItem>();
+    const resolved = items.map((item) => {
+      if (!item.skuCode || item.isComboOrder || /^zh-/i.test(item.skuCode) || directIds.has(this.normalizeSku(item.skuCode))) return item;
+      const ids = productsBySku.get(item.skuCode);
+      if (!ids?.size) return item;
+      if (ids.size > 1) {
+        const codes = ambiguousByOrder.get(item.orderId) ?? new Set<string>();
+        codes.add(item.skuCode);
+        ambiguousByOrder.set(item.orderId, codes);
+        rejectedItems.add(item);
+        return item;
+      }
+      const productId = [...ids][0];
+      return { ...item, skuCode: productId, rawPayload: this.toJson({
+        ...(item.rawPayload as Prisma.JsonObject), _wmsImportedProductId: productId,
+      }) };
+    });
+    for (const [orderId, skus] of ambiguousByOrder) {
+      const reason = `SKU 对应多个产品ID：${[...skus].join('、')}。请修复当前店铺的 SKU 关联后重新导入。`;
+      const previous = importIssues.find((issue) => issue.orderId === orderId);
+      if (previous) {
+        previous.missingProductIds = [...new Set([...(previous.missingProductIds ?? []), ...skus])];
+        previous.reason = `${previous.reason} ${reason}`;
+      } else importIssues.push({ orderId, comboSkus: [], missingProductIds: [...skus], reason,
+        skippedItemCount: items.filter((item) => item.orderId === orderId).length });
+    }
+    return resolved.filter((item) => !rejectedItems.has(item));
   }
 
   private async filterMissingProducts(items: MappedRakutenItem[], importIssues: CatalogImportIssue[]): Promise<MappedRakutenItem[]> {
@@ -1320,13 +1380,8 @@ export class RakutenRmsApiService {
       items.forEach((item, itemIndex) => {
         const itemDetailId = this.pickText(item, "itemDetailId", "ItemDetailId");
         const skuModel = this.pickObjectList(item, "SkuModelList", "skuModelList")[0] ?? {};
-        const skuCandidates = Array.from(new Set([
-          this.pickText(skuModel, "variantId"),
-          this.pickText(skuModel, "merchantDefinedSkuId"),
-          this.pickText(item, "manageNumber", "skuManagementNumber", "itemNumber", "itemUrl"),
-        ].filter(Boolean)));
-        const skuCode = skuCandidates[0] ?? "";
-        const comboLookupSku = skuCandidates.find((candidate) => /^zh-/i.test(candidate)) ?? null;
+        const skuCode = this.pickText(skuModel, "variantId");
+        const comboLookupSku = /^zh-/i.test(skuCode) ? skuCode : null;
         const quantity = Math.max(1, this.pickInt(item, "units", "quantity", "orderQuantity") ?? 1);
         const shippingName = this.combine([
           this.pickText(sender, "familyName", "lastName"),
@@ -1464,13 +1519,14 @@ export class RakutenRmsApiService {
         existing = skuMatches[0];
       } else if (candidates.length > 0) {
         const onlySiblingApiItems =
-          skuMatches.length === 0 &&
           candidates.every(
-            (row) => row.rmsConnectionId === connection.id && row.sourceKind === "rms_api",
+            (row) => row.rmsConnectionId === connection.id && row.sourceKind === "rms_api" &&
+              Boolean(row.rmsItemKey) && row.rmsItemKey !== item.itemKey,
           );
         // The current RMS order can contain multiple distinct items. During a
         // transaction, earlier items have already been inserted and must not
         // make a later item from the same connection look like a CSV conflict.
+        // Different purchase SKUs can also resolve to the same WMS product.
         if (!onlySiblingApiItems) {
           return {
             action: "conflict",

@@ -5,7 +5,7 @@ const rawOrder = (orderId: string, skus: string[], progress = 300) => ({
   orderNumber: orderId, orderProgress: progress, orderDatetime: '2026-10-14T10:00:00+09:00',
   OrdererModel: { emailAddress: 'buyer@example.jp' },
   PackageModelList: [{ basketId: 1, ItemModelList: skus.map((sku, index) => ({
-    itemDetailId: index + 1, manageNumber: sku, itemName: sku, units: 1,
+    itemDetailId: index + 1, manageNumber: sku, SkuModelList: [{ variantId: sku }], itemName: sku, units: 1,
   })) }],
 });
 function matches(row: any, where: any): boolean {
@@ -28,6 +28,7 @@ function fixture(source = [rawOrder('BAD', ['sku-in-bad-order', 'zh-missing']), 
     licenseExpiresAt: null, lastOrdersSyncedAt: null, lastSuccessfulSyncAt: null, lastSyncError: null };
   const issues: any[] = []; const records: any[] = []; const runs: any[] = []; const previews: any[] = []; const combos: any[] = [];
   const products = new Set(['sku-in-bad-order', 'sku-good', 'COMP-A', 'COMP-B']);
+  const skus: any[] = [];
   const apiOrders = [...source]; let searchedIds = source.map((order) => order.orderNumber);
   const issueStore = {
     count: jest.fn(async ({ where }) => issues.filter((issue) => matches(issue, where)).length),
@@ -53,6 +54,8 @@ function fixture(source = [rawOrder('BAD', ['sku-in-bad-order', 'zh-missing']), 
       findMany: jest.fn(async ({ where }) => [...products].filter((id) => where.productId.in.some((value: string) => value.toLowerCase() === id.toLowerCase())).map((productId) => ({ productId }))),
       findUnique: jest.fn(async ({ where }) => products.has(where.productId) ? { productId: where.productId, stockQty: 0, boxInventories: [], bomComponents: [] } : null),
     },
+    sku: { findMany: jest.fn(async ({ where }) => skus.filter((row) => row.status === where.status && row.shop === where.shop && row.productId &&
+      where.sku.in.includes(row.sku))) },
     rakutenComboProduct: { findMany: jest.fn(async () => combos) },
     rakutenOrderSyncExclusion: { findMany: jest.fn().mockResolvedValue([]) },
     overseasPickingBatchItem: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -85,9 +88,179 @@ function fixture(source = [rawOrder('BAD', ['sku-in-bad-order', 'zh-missing']), 
   const configure = (name = 'zh-missing') => { combos.push({ comboName: name, items: [
     { productId: 'COMP-A', product: { productName: '组件A' } }, { productId: 'COMP-B', product: { productName: '组件B' } },
   ] }); };
-  return { service, prisma, client, automation, connection, issues, records, runs, previews, combos, configure, apiOrders, products,
+  return { service, prisma, client, automation, connection, issues, records, runs, previews, combos, configure, apiOrders, products, skus,
     stopNormalSearch: () => { searchedIds = []; } };
 }
+
+describe('Rakuten variantId and primary SKU product matching', () => {
+  it('keeps case-distinct purchase SKUs mapped to their own products within one batch', async () => {
+    const f = fixture([rawOrder('ORDER', ['Purchase-SKU', 'purchase-sku'])]);
+    f.skus.push(
+      { sku: 'Purchase-SKU', productId: 'COMP-A', shop: '店铺', status: 1 },
+      { sku: 'purchase-sku', productId: 'COMP-B', shop: '店铺', status: 1 },
+    );
+    const result = await f.service.syncAllConnections() as any;
+    expect(result.results[0]).toMatchObject({ created: 2, catalogMissingOrderCount: 0 });
+    expect(f.records.map((row) => row.skuCode)).toEqual(['COMP-A', 'COMP-B']);
+    expect(f.records.map((row) => row.rmsItemKey)).toEqual(['ORDER|1', 'ORDER|2']);
+    expect((await f.service.syncAllConnections() as any).results[0].created).toBe(0);
+    expect(f.records).toHaveLength(2);
+  });
+
+  it('does not resolve a purchase SKU through a differently cased system SKU', async () => {
+    const f = fixture([rawOrder('ORDER', ['purchase-sku'])]);
+    f.skus.push({ sku: 'Purchase-SKU', productId: 'COMP-A', shop: '店铺', status: 1 });
+    await f.service.syncAllConnections();
+    expect(f.records).toHaveLength(0);
+    expect(f.issues[0].missingProductIds).toEqual(['purchase-sku']);
+  });
+
+  it('does not reuse another order\'s case-distinct mapping fetched in the same batch', async () => {
+    const f = fixture([rawOrder('MATCHED', ['Purchase-SKU']), rawOrder('UNMATCHED', ['purchase-sku'])]);
+    f.skus.push({ sku: 'Purchase-SKU', productId: 'COMP-A', shop: '店铺', status: 1 });
+    const result = await f.service.syncAllConnections() as any;
+    expect(result.results[0]).toMatchObject({ created: 1, catalogMissingOrderCount: 1 });
+    expect(f.records.map((row) => [row.orderId, row.skuCode])).toEqual([['MATCHED', 'COMP-A']]);
+    expect(f.issues[0]).toMatchObject({ orderId: 'UNMATCHED', missingProductIds: ['purchase-sku'] });
+  });
+
+  it('maps two purchase SKUs to the same product while retaining each original variant and item key', async () => {
+    const f = fixture([rawOrder('ORDER', ['test-117307-01', 'test-117307-02'])]);
+    f.products.add('117307');
+    for (const sku of ['test-117307-01', 'test-117307-02']) f.skus.push({ sku, productId: '117307', shop: '店铺', status: 1 });
+    const result = await f.service.syncAllConnections() as any;
+    expect(result.results[0]).toMatchObject({ created: 2, catalogMissingOrderCount: 0 });
+    expect(f.prisma.sku.findMany).toHaveBeenCalledWith({
+      where: { status: 1, shop: '店铺', productId: { not: null }, sku: { in: ['test-117307-01', 'test-117307-02'] } },
+      select: { sku: true, productId: true },
+    });
+    expect(f.records.map((row) => row.skuCode)).toEqual(['117307', '117307']);
+    expect(f.records.map((row) => row.rmsItemKey)).toEqual(['ORDER|1', 'ORDER|2']);
+    expect(f.records.map((row) => row.rawPayload.rmsItem.SkuModelList[0].variantId)).toEqual(['test-117307-01', 'test-117307-02']);
+    expect(f.records.every((row) => row.rawPayload._wmsImportedProductId === '117307' && !row.isComboOrder)).toBe(true);
+    // Repeat imports keep the existing purchase identity rather than creating duplicate fulfilment items.
+    expect((await f.service.syncAllConnections() as any).results[0].created).toBe(0);
+    expect(f.records).toHaveLength(2);
+  });
+
+  it('gives a direct product ID priority over an identical system SKU', async () => {
+    const f = fixture([rawOrder('ORDER', ['sku-good'])]);
+    f.skus.push({ sku: 'sku-good', productId: 'COMP-A', shop: '店铺', status: 1 });
+    await f.service.syncAllConnections();
+    expect(f.records[0].skuCode).toBe('sku-good');
+    expect(f.prisma.sku.findMany).not.toHaveBeenCalled();
+  });
+
+  it('never resolves a zh- variant through the primary SKU table', async () => {
+    const f = fixture([rawOrder('ORDER', ['zh-unconfigured'])]);
+    f.skus.push({ sku: 'zh-unconfigured', productId: 'COMP-A', shop: '店铺', status: 1 });
+    await f.service.syncAllConnections();
+    expect(f.records).toHaveLength(0);
+    expect(f.issues[0].comboSkus).toEqual(['zh-unconfigured']);
+    expect(f.prisma.sku.findMany).not.toHaveBeenCalled();
+  });
+
+  it('does not substitute a SKU mapping for a missing combo component product', async () => {
+    const f = fixture([rawOrder('ORDER', ['zh-missing'])]); f.configure(); f.products.delete('COMP-B');
+    f.skus.push({ sku: 'COMP-B', productId: 'COMP-A', shop: '店铺', status: 1 });
+    await f.service.syncAllConnections();
+    expect(f.records).toHaveLength(0);
+    expect(f.issues[0].missingProductIds).toEqual(['COMP-B']);
+    expect(f.prisma.sku.findMany).not.toHaveBeenCalled();
+  });
+
+  it.each(['merchantDefinedSkuId', 'manageNumber', 'skuManagementNumber', 'itemNumber', 'itemUrl'])(
+    'does not use %s when variantId is absent', async (field) => {
+      const order = rawOrder('ORDER', ['']);
+      const item: any = order.PackageModelList[0].ItemModelList[0];
+      delete item.SkuModelList[0].variantId;
+      if (field === 'merchantDefinedSkuId') item.SkuModelList[0][field] = 'sku-good';
+      else item[field] = 'sku-good';
+      const f = fixture([order]);
+      await f.service.syncAllConnections();
+      expect(f.records).toHaveLength(0);
+      expect(f.issues[0].missingProductIds).toEqual(['']);
+      expect(f.prisma.sku.findMany).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, '', '   '])('rejects blank variantId %p instead of using a backup field', async (variantId) => {
+    const order = rawOrder('ORDER', ['sku-good']);
+    (order.PackageModelList[0].ItemModelList[0].SkuModelList[0] as any).variantId = variantId;
+    const f = fixture([order]);
+    await f.service.syncAllConnections();
+    expect(f.records).toHaveLength(0);
+    expect(f.issues[0].missingProductIds).toEqual(['']);
+  });
+
+  it('ignores zh- values in removed backup fields when variantId is an ordinary product', async () => {
+    const order = rawOrder('ORDER', ['sku-good']);
+    Object.assign(order.PackageModelList[0].ItemModelList[0], {
+      manageNumber: 'zh-manage', skuManagementNumber: 'zh-management', itemNumber: 'zh-number', itemUrl: 'zh-url',
+      SkuModelList: [{ variantId: 'sku-good', merchantDefinedSkuId: 'zh-merchant' }],
+    });
+    const f = fixture([order]);
+    await f.service.syncAllConnections();
+    expect(f.records[0]).toMatchObject({ skuCode: 'sku-good', isComboOrder: false });
+    expect(f.prisma.rakutenComboProduct.findMany).not.toHaveBeenCalled();
+  });
+
+  it('ignores other shops, disabled mappings and FBM/RB alias columns', async () => {
+    const f = fixture([rawOrder('ORDER', ['purchase-sku'])]);
+    f.skus.push(
+      { sku: 'purchase-sku', productId: 'COMP-A', shop: '其他店铺', status: 1 },
+      { sku: 'purchase-sku', productId: 'COMP-A', shop: '店铺', status: 0 },
+      { sku: 'different-sku', rbSku: 'purchase-sku', fbmSku: 'purchase-sku', productId: 'COMP-A', shop: '店铺', status: 1 },
+    );
+    await f.service.syncAllConnections();
+    expect(f.records).toHaveLength(0);
+    expect(f.issues[0].missingProductIds).toEqual(['purchase-sku']);
+  });
+
+  it('skips the entire order with an ambiguous SKU mapping while importing other orders', async () => {
+    const f = fixture([rawOrder('BAD', ['purchase-sku', 'sku-in-bad-order']), rawOrder('GOOD', ['sku-good'])]);
+    f.skus.push(
+      { sku: 'purchase-sku', productId: 'COMP-A', shop: '店铺', status: 1 },
+      { sku: 'purchase-sku', productId: 'COMP-B', shop: '店铺', status: 1 },
+    );
+    const result = await f.service.syncAllConnections() as any;
+    expect(f.records.map((row) => row.orderId)).toEqual(['GOOD']);
+    expect(f.issues).toHaveLength(1);
+    expect(result.results[0].skipped).toBe(2);
+    expect(f.issues[0]).toMatchObject({ orderId: 'BAD', missingProductIds: ['purchase-sku'] });
+    expect(f.issues[0].reason).toContain('SKU 对应多个产品ID');
+  });
+
+  it('rechecks the resolved product at preview confirmation and skips it if the product was removed', async () => {
+    const f = fixture([rawOrder('ORDER', ['purchase-sku'])]);
+    f.skus.push({ sku: 'purchase-sku', productId: 'COMP-A', shop: '店铺', status: 1 });
+    const preview = await f.service.previewConnection('7') as any;
+    expect(preview.summary.create).toBe(1);
+    f.products.delete('COMP-A');
+    const result = await f.service.syncConnection('7', { previewToken: preview.previewToken }) as any;
+    expect(result).toMatchObject({ created: 0, productMissingOrderCount: 1 });
+    expect(f.issues[0].missingProductIds).toEqual(['COMP-A']);
+  });
+
+  it('retries an unmatched variant after a primary SKU mapping is registered', async () => {
+    const f = fixture([rawOrder('ORDER', ['purchase-sku'])]);
+    await f.service.syncAllConnections(); f.stopNormalSearch();
+    f.skus.push({ sku: 'purchase-sku', productId: 'COMP-A', shop: '店铺', status: 1 });
+    await f.service.syncAllConnections();
+    expect(f.records[0]).toMatchObject({ orderId: 'ORDER', skuCode: 'COMP-A' });
+    expect(f.issues[0].resolvedAt).toBeInstanceOf(Date);
+  });
+
+  it('respects legacy product-ID exclusions after resolving a purchase SKU', async () => {
+    const f = fixture([rawOrder('ORDER', ['purchase-sku', 'sku-good'])]);
+    f.skus.push({ sku: 'purchase-sku', productId: 'COMP-A', shop: '店铺', status: 1 });
+    const exclusion = { orderId: 'ORDER', rmsItemKey: null, skuCode: 'comp-a', rmsConnectionId: 7n, shopName: null, reason: 'user_delete' };
+    f.prisma.rakutenOrderSyncExclusion.findMany.mockImplementation(async ({ where }: any) => matches(exclusion, where) ? [exclusion] : []);
+    await f.service.syncAllConnections();
+    expect(f.records.map((row) => row.skuCode)).toEqual(['sku-good']);
+    expect(f.issues).toHaveLength(0);
+  });
+});
 
 describe('missing Rakuten combo configuration does not stop other orders', () => {
   it('skips an entire order with a missing ordinary product and imports the other order', async () => {

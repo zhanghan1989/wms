@@ -477,6 +477,15 @@ describe('human decisions for missing new-order mail', () => {
 });
 
 describe('modified purchase information', () => {
+  it('does not classify automatic SKU resolution as a manual product change after a later address edit', () => {
+    const imported = { _wmsImportedProductId: 'BOX', rmsPackage: { basketId: 1 },
+      rmsItem: { SkuModelList: [{ variantId: 'purchase-sku' }] } };
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date, shippingAddress: '新住所', rawPayload: imported })])).toBeNull();
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date, skuCode: 'OTHER', rawPayload: imported })])).toBe('manual_update');
+    expect(mailReviewReason([row({ rmsManualOverrideAt: date,
+      rawPayload: { ...imported, _wmsProductIdEdited: true } })])).toBe('manual_update');
+  });
+
   it('reviews legacy product ID changes while automating valid quantity and address edits', () => {
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderQuantity: 3,
       rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { units: 2 } } })])).toBeNull();

@@ -339,7 +339,7 @@ describe("Rakuten RMS API integration", () => {
       "license-key",
       expect.objectContaining({ dateType: 3, orderProgressList: [300] }),
     );
-    expect(mapOrders).toHaveBeenCalledWith([{ orderNumber: "pending-order", orderProgress: 300 }], [], []);
+    expect(mapOrders).toHaveBeenCalledWith([{ orderNumber: "pending-order", orderProgress: 300 }], [], [], "shop");
     expect(result).toMatchObject({
       searchedOrderCount: 2,
       reconciledOrderCount: 0,
@@ -367,6 +367,7 @@ describe("Rakuten RMS API integration", () => {
         id: 7n,
         licenseExpiresAt: null,
         lastOrdersSyncedAt: new Date("2026-08-24T00:00:00.000Z"),
+        shop: { name: "shop" },
       },
       7,
     );
@@ -1193,7 +1194,7 @@ describe("Rakuten RMS API integration", () => {
     expect(rows[0].rawPayload["送付先住所それ以降の住所"]).toBe("8-1");
   });
 
-  it("expands a combo when Rakuten returns its zh- identifier in manageNumber", async () => {
+  it("expands a combo using only the zh- variantId", async () => {
     const prisma = {
       masterProduct: { findMany: jest.fn(async ({ where }: any) => where.productId.in.map((productId: string) => ({ productId }))) },
       rakutenComboProduct: {
@@ -1210,8 +1211,8 @@ describe("Rakuten RMS API integration", () => {
       orderProgress: 300,
       PackageModelList: [{ ItemModelList: [{
         itemDetailId: 99,
-        manageNumber: "zh-combo-1",
-        SkuModelList: [{ variantId: "ordinary-variant", merchantDefinedSkuId: "integration-sku" }],
+        manageNumber: "unused-manage-number",
+        SkuModelList: [{ variantId: "zh-combo-1", merchantDefinedSkuId: "integration-sku" }],
         itemName: "乐天组合产品",
         units: 1,
       }] }],
@@ -1265,8 +1266,8 @@ describe("Rakuten RMS API integration", () => {
       orderProgress: 300,
       PackageModelList: [{ ItemModelList: [{
         itemDetailId: 99,
-        manageNumber: "zh-combo-1",
-        SkuModelList: [{ variantId: "ordinary-variant", merchantDefinedSkuId: "integration-sku" }],
+        manageNumber: "unused-manage-number",
+        SkuModelList: [{ variantId: "zh-combo-1", merchantDefinedSkuId: "integration-sku" }],
         itemName: "乐天组合产品",
         units: 1,
       }] }],

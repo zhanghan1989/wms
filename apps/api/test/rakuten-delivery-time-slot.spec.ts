@@ -37,7 +37,7 @@ describe('Rakuten delivery time slot', () => {
         shippingTerm: '1',
         PackageModelList: [
           {
-            ItemModelList: [{ itemDetailId: 1, manageNumber: 'sku-1', units: 1 }],
+            ItemModelList: [{ itemDetailId: 1, SkuModelList: [{ variantId: 'sku-1' }], units: 1 }],
           },
         ],
       },
