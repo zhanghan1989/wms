@@ -4532,22 +4532,26 @@ export class OrdersService {
     return [...totals].map(([productId, quantity]) => ({ productId, quantity }));
   }
 
-  async getOverseasUnconfirmedOrderCount(): Promise<{ count: number }> {
+  async getOverseasUnconfirmedOrderCount(target: 'overseas' | 'china' = 'overseas'): Promise<{ count: number }> {
     const orderIds = new Set<string>();
     let skip = 0;
     const take = 500;
     while (true) {
       const rows = await this.prisma.rakutenOrderRecord.findMany({
-        where: { deletedAt: null, sendStatus: OrderSendStatus.unsent,
-          OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }] },
+        where: target === 'china'
+          ? { deletedAt: null, ...this.buildChinaOrderShipmentNoFilter('pending') }
+          : { deletedAt: null, sendStatus: OrderSendStatus.unsent,
+            OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS }] },
         orderBy: { id: 'asc' }, skip, take,
       });
       const pending = rows.filter((row) => !String(row.shipmentNo ?? '').trim() && rakutenOrderRemarkNeedsConfirmation(row));
       const enriched = await this.enrichOrderRows(pending);
       const active = await this.loadActiveOverseasPickingBatchRefs(pending.map((row) => ({ source: 'rakuten' as const, sourceRecordId: row.id })));
       for (const row of enriched) {
-        if (row.fulfillmentMode === 'overseas_warehouse' && row.availableStock + row.assemblableStock > 0 &&
-          !active.has(`rakuten:${row.id}`)) orderIds.add(String(row.orderId || row.id));
+        const eligible = target === 'china'
+          ? this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, active)
+          : row.fulfillmentMode === 'overseas_warehouse' && row.availableStock + row.assemblableStock > 0 && !active.has(`rakuten:${row.id}`);
+        if (eligible) orderIds.add(String(row.orderId || row.id));
       }
       if (rows.length < take) break;
       skip += rows.length;
@@ -5056,6 +5060,7 @@ export class OrdersService {
       collected.push(
         ...enrichedRakutenRows
           .filter((row) => {
+            if (!String(row.shipmentNo ?? '').trim() && rakutenOrderRemarkNeedsConfirmation(row)) return false;
             const dispatchMode = String(row.dispatchMode ?? '').trim();
             if (this.isChinaDispatchMode(dispatchMode)) {
               return true;
@@ -8474,7 +8479,7 @@ export class OrdersService {
 
     const targetRows = [
       ...enrichedRakutenRows
-        .filter((row) => this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs,
+        .filter((row) => !rakutenOrderRemarkNeedsConfirmation(row) && this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs,
           ),
         )
         .map((row) => ({
@@ -8592,7 +8597,7 @@ export class OrdersService {
 
     const eligibleRakutenIds = enrichedRakutenRows
       .filter((row) =>
-        this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs),
+        !rakutenOrderRemarkNeedsConfirmation(row) && this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs),
       )
       .map((row) => row.id);
     const eligibleAmazonIds = enrichedAmazonRows

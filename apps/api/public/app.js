@@ -11198,7 +11198,7 @@ function renderOrdersTable() {
         const editButtonTitle = isShipmentRegistered
           ? "修改发货公司和发货单号"
           : needsRemarkFix
-            ? '订单备注待确认，请打开编辑并保存后再进入海外仓处理'
+            ? '订单备注待确认，请打开编辑并保存后再进入订单处理'
             : "编辑订单";
         return `
       <tr>
@@ -12709,10 +12709,17 @@ async function loadChinaOrderProcessingOrders() {
     return;
   }
 
-  const [pendingList, exportedList] = await Promise.all([
+  const [pendingList, unconfirmed, exportedList] = await Promise.all([
     request("/orders/china-orders?scope=pending&limit=1000"),
+    request("/orders/china-orders/unconfirmed-count"),
     request(`/orders/china-orders?scope=exported&limit=${state.inventoryPageSize}&offset=0`),
   ]);
+  const notice = $("chinaUnconfirmedOrderNotice");
+  if (notice) {
+    const count = Number(unconfirmed?.count || 0);
+    notice.textContent = `乐天备注待确认：${count} 单${count ? "，请到乐天订单中打开编辑并保存，确认后才会进入本列表。" : ""}`;
+    notice.classList.toggle("amazon-state-warning", count > 0);
+  }
   state.chinaOrderProcessingPendingOrders = Array.isArray(pendingList) ? pendingList : [];
   state.chinaOrderProcessingExportedOrders = Array.isArray(exportedList) ? exportedList : [];
   state.chinaOrderProcessingExportedOffset = state.chinaOrderProcessingExportedOrders.length;

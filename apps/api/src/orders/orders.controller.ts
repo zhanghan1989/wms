@@ -316,6 +316,12 @@ export class OrdersController {
     return this.ordersService.listChinaOrderProcessing(limit, scope, offset);
   }
 
+  @Get('china-orders/unconfirmed-count')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getChinaUnconfirmedOrderCount(): Promise<{ count: number }> {
+    return this.ordersService.getOverseasUnconfirmedOrderCount('china');
+  }
+
   @Get('china-orders/export-excel')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async exportChinaOrderProcessingOrders(@Res() res: Response): Promise<void> {
