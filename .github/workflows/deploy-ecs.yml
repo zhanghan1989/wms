@@ -115,7 +115,7 @@ jobs:
           username: ${{ secrets.ECS_USER }}
           key: ${{ secrets.ECS_SSH_KEY }}
           command_timeout: 30m
-          # The script uses set -eu; per-line rewriting breaks conditional branches.
+          script_stop: true
           envs: DEPLOY_REF,RUN_MIGRATIONS,RAKUTEN_RMS_API_ENCRYPTION_KEY,RAKUTEN_RMS_API_PROXY_URL,RAKUTEN_RMS_EXIT_NODE_IP
           script: |
             set -eu
