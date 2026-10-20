@@ -82,7 +82,7 @@ export function orderBlockReason(rows: RakutenOrderRecord[], includeBusinessChan
   }
   return null;
 }
-// Product-ID edits and a purchased combo split across Japan/China need review.
+// Product-ID edits and mixed orders containing a zh- product need review.
 export function hasRemovedOrderItems(rows: RakutenOrderRecord[]): boolean {
   return rows.some((row) => Boolean((row.rawPayload as Record<string, unknown> | null)?._wmsDeletedItemsAt));
 }
@@ -105,28 +105,22 @@ export function productIdWasManuallyEdited(row: RakutenOrderRecord): boolean {
   return Boolean(originalSku) && String(originalSku).trim() !== String(row.skuCode ?? '').trim();
 }
 export function hasMixedDispatchCombo(rows: RakutenOrderRecord[]): boolean {
-  const origins = new Map<string, Set<'japan' | 'china'>>();
+  const orders = new Map<string, RakutenOrderRecord[]>();
   for (const row of rows) {
-    if (!row.isComboOrder || row.deletedAt) continue;
-    const raw = row.rawPayload as Record<string, any> | null;
-    const item = raw?.rmsItem;
-    // Components share the original purchased item, even after a WMS split.
-    // Basket and order identity distinguish separate purchases of the same set.
-    const itemId = String(item?.itemDetailId ?? item?.ItemDetailId ?? '').trim();
-    const itemKey = String(row.rmsItemKey ?? '').split('|component:')[0];
-    const key = JSON.stringify([row.rmsConnectionId?.toString() ?? null, originalRakutenOrderId(row),
-      basketIdOf(row), itemId || itemKey || row.comboOrderSku || row.setComponentSkuCode]);
-    const group = origins.get(key) ?? new Set<'japan' | 'china'>();
-    group.add(isChinaRow(row) ? 'china' : 'japan');
-    if (group.size === 2) return true;
-    origins.set(key, group);
+    if (row.deletedAt) continue;
+    const key = JSON.stringify([row.rmsConnectionId?.toString(), originalRakutenOrderId(row)]);
+    const orderRows = orders.get(key) ?? [];
+    orderRows.push(row);
+    orders.set(key, orderRows);
   }
-  return false;
+  return [...orders.values()].some((orderRows) => fulfillmentOf(orderRows) === 'mixed' && orderRows.some((row) =>
+    [row.skuCode, row.comboOrderSku, row.setComponentSkuCode]
+      .some((sku) => /^zh-/i.test(String(sku ?? '').trim()))));
 }
 export type MailReviewReason = 'manual_update' | 'combo_order' | 'manual_update_and_combo';
 export function mailReviewMessage(reason: MailReviewReason | null): string | null {
-  if (reason === 'combo_order') return '同一组合商品的组件分别从日本和中国发货，请拆分邮件中的「種類」并确认正文';
-  if (reason === 'manual_update_and_combo') return '请核对产品ID修改或商品信息异常，并拆分日中混发组合商品在邮件中的「種類」后确认正文';
+  if (reason === 'combo_order') return '订单包含zh-开头商品且为中日混发，请分别核对日本发、中国发部分的「種類」并确认正文';
+  if (reason === 'manual_update_and_combo') return '请核对产品ID修改或商品信息异常，并核对含zh-开头商品的中日混发订单两侧「種類」后确认正文';
   return reason === 'manual_update' ? '请人工核对产品ID修改或商品信息异常后确认正文' : null;
 }
 export function mailReviewReason(rows: RakutenOrderRecord[]): MailReviewReason | null {

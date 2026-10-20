@@ -120,10 +120,31 @@ describe('order-level Rakuten workflow', () => {
     expect(mailReviewReason([row({ rmsManualOverrideAt: date })])).toBeNull();
     expect(mailReviewReason([row({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET' })])).toBeNull();
     expect(mailReviewReason([row({ isComboOrder: true })])).toBeNull();
-    expect(mailReviewReason([row({ isComboOrder: true }),
+    expect(mailReviewReason([row({ isComboOrder: true, comboOrderSku: 'zh-SET' }),
       row({ id: 2n, isComboOrder: true, dispatchMode: 'china_pending' })])).toBe('combo_order');
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark: '納期について個別説明' })])).toBeNull();
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, rawPayload: { _wmsProductIdEdited: true } })])).toBe('manual_update');
+  });
+  it.each(['skuCode', 'comboOrderSku', 'setComponentSkuCode'] as const)(
+    'reviews mixed orders containing zh- in %s even when the other shipment is unrelated', (field) => {
+      for (const dispatchMode of ['japan', 'china_pending', 'china_no_stock']) {
+        const rows = [row({ [field]: ' ZH-SET ', dispatchMode }), row({ id: 2n,
+          dispatchMode: dispatchMode === 'japan' ? 'china_pending' : 'japan',
+          rawPayload: { rmsPackage: { basketId: 2 }, rmsItem: { itemDetailId: 22 } } })];
+        expect(mailReviewReason(rows)).toBe('combo_order');
+        const result = workflow(rows, [mail('new_order'), mail('mixed_partial')]);
+        expect(result.steps.find((step) => step.event === 'new_order')?.requiresManualReview).toBe(false);
+        expect(result.steps.find((step) => step.event === 'mixed_partial')?.requiresManualReview).toBe(true);
+        expect(result.steps.find((step) => step.event === 'mixed_customs')?.requiresManualReview).toBe(true);
+      }
+    });
+  it('does not review single-origin orders, mixed orders without zh-, or removed zh- products', () => {
+    expect(mailReviewReason([row({ comboOrderSku: 'zh-SET' })])).toBeNull();
+    expect(mailReviewReason([row({ comboOrderSku: 'zh-SET', dispatchMode: 'china_pending' })])).toBeNull();
+    expect(mailReviewReason([row({ isComboOrder: true, comboOrderSku: 'SET' }),
+      row({ id: 2n, isComboOrder: true, dispatchMode: 'china_pending' })])).toBeNull();
+    expect(mailReviewReason([row(), row({ id: 2n, dispatchMode: 'china_pending' }),
+      row({ id: 3n, comboOrderSku: 'zh-SET', deletedAt: date })])).toBeNull();
   });
   it.each(['[配送日時指定:]', ' [配送日時指定:]\n[配送日時指定：] '])('does not review an empty RMS delivery heading: %s', (orderRemark) => {
     expect(mailReviewReason([row({ rmsManualOverrideAt: date, orderRemark })])).toBeNull();

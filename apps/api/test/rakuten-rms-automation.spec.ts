@@ -1047,7 +1047,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
   it('reviews product-sensitive mails while keeping the fixed new-order acknowledgement automatic', () => {
     const manuallyUpdatedRows = [makeRow({ rmsManualOverrideAt: new Date('2026-10-02T00:00:00Z'), orderRemark: '交換商品の説明が必要', rawPayload: { rmsPackage: { basketId: 1 }, _wmsProductIdEdited: true } })];
-    const japanCombo = makeRow({ isComboOrder: true, rmsItemKey: 'ORDER|88|component:PART-JP',
+    const japanCombo = makeRow({ isComboOrder: true, comboOrderSku: 'zh-SET', rmsItemKey: 'ORDER|88|component:PART-JP',
       rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 88 } } });
     const comboRows = [japanCombo, makeRow({ ...japanCombo, id: 2n, rmsItemKey: 'ORDER|88|component:PART-CN',
       dispatchMode: 'china_pending' })];
@@ -1114,7 +1114,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
   it.each([RakutenOrderMailEvent.japan_shipped, RakutenOrderMailEvent.mixed_partial, RakutenOrderMailEvent.mixed_customs])
     ('blocks automatic mail and sends the operator-edited body after review: %s', async (event) => {
-    const combo = makeRow({ isComboOrder: true, rmsItemKey: 'ORDER|88|component:PART-JP',
+    const combo = makeRow({ isComboOrder: true, comboOrderSku: 'zh-SET', rmsItemKey: 'ORDER|88|component:PART-JP',
       productNameExtra: '種類:インナーバッグ＋ピロー',
       rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 88, itemName: 'セット商品' } } });
     const rows = event === RakutenOrderMailEvent.japan_shipped

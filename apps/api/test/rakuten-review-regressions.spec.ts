@@ -50,7 +50,7 @@ describe('manual review is specific to actual product ID edits', () => {
   });
   it.each([
     {}, { sourceKind: 'csv', rmsConnectionId: null, rawPayload: {} },
-    { isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET' },
+    { isComboOrder: true, comboOrderSku: 'zh-SET', setComponentSkuCode: 'zh-SET' },
   ])('records real product ID edits for every order source: %j', async (extra) => {
     const { service, saved } = fixture(extra);
     await service.updateRakutenOrder('1', { ...payload, productId: 'OTHER-PART' }, 'reviewer');
@@ -62,7 +62,7 @@ describe('manual review is specific to actual product ID edits', () => {
     expect(mailReviewReason([saved()])).toBe('manual_update');
   });
   it('distinguishes historical combo edits from expanded components and sibling edit markers', () => {
-    const component = order({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET',
+    const component = order({ isComboOrder: true, comboOrderSku: 'zh-SET', setComponentSkuCode: 'zh-SET',
       rmsItemKey: 'ORDER|ITEM|component:PART', rmsManualOverrideAt: date });
     expect(mailReviewReason([component])).toBeNull();
     expect(mailReviewReason([{ ...component, skuCode: 'OTHER' }])).toBe('manual_update');
@@ -115,9 +115,9 @@ describe('review fixes: shipment confirmation and whole-order deletion', () => {
   });
 });
 
-describe('combo review follows the dispatch of the same purchased set', () => {
+describe('combo review follows mixed dispatch across the original order', () => {
   const sender = new RakutenRmsAutomationService({} as any, {} as any, {} as any);
-  const combo = (extra = {}) => order({ isComboOrder: true, comboOrderSku: 'SET', setComponentSkuCode: 'SET',
+  const combo = (extra = {}) => order({ isComboOrder: true, comboOrderSku: 'zh-SET', setComponentSkuCode: 'zh-SET',
     rmsItemKey: 'ORDER|88|component:PART',
     rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 88, itemName: 'セット商品', units: 1 } }, ...extra });
   const china = (extra = {}) => combo({ id: 2n, skuCode: 'PART-CN', rmsItemKey: 'ORDER|88|component:PART-CN',
@@ -132,22 +132,22 @@ describe('combo review follows the dispatch of the same purchased set', () => {
   it.each(['china_pending', 'china_no_stock'])('reviews a complete combo split across Japan and %s', (dispatchMode) => {
     expect(mailReviewReason([combo(), china({ dispatchMode })])).toBe('combo_order');
   });
-  it('automates a Japan combo with an unrelated China product', () => {
-    expect(mailReviewReason([combo(), order({ id: 2n, dispatchMode: 'china_pending' })])).toBeNull();
+  it('reviews a Japan combo with an unrelated China product', () => {
+    expect(mailReviewReason([combo(), order({ id: 2n, dispatchMode: 'china_pending' })])).toBe('combo_order');
   });
-  it('does not merge separate purchases of the same combo SKU', () => {
-    expect(mailReviewReason([combo(), china({ rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 99 } } })])).toBeNull();
-    expect(mailReviewReason([combo(), china({ rawPayload: { rmsPackage: { basketId: 2 }, rmsItem: { itemDetailId: 88 } } })])).toBeNull();
+  it('reviews separate purchases and destinations within the same order', () => {
+    expect(mailReviewReason([combo(), china({ rawPayload: { rmsPackage: { basketId: 1 }, rmsItem: { itemDetailId: 99 } } })])).toBe('combo_order');
+    expect(mailReviewReason([combo(), china({ rawPayload: { rmsPackage: { basketId: 2 }, rmsItem: { itemDetailId: 88 } } })])).toBe('combo_order');
     expect(mailReviewReason([combo(), china({ orderId: 'OTHER-ORDER' })])).toBeNull();
   });
   it('recognizes the same purchase across manually split internal order IDs', () => {
     expect(mailReviewReason([combo({ orderId: 'ORDER-A', rmsOrderId: 'ORDER' }),
       china({ orderId: 'ORDER-B', rmsOrderId: 'ORDER' })])).toBe('combo_order');
   });
-  it('uses the shared import key when the original item ID is missing', () => {
+  it('reviews mixed orders regardless of original item ID or import key', () => {
     const rawPayload = { rmsPackage: { basketId: 1 } };
     expect(mailReviewReason([combo({ rawPayload }), china({ rawPayload })])).toBe('combo_order');
-    expect(mailReviewReason([combo({ rawPayload }), china({ rawPayload, rmsItemKey: 'ORDER|99|component:PART-CN' })])).toBeNull();
+    expect(mailReviewReason([combo({ rawPayload }), china({ rawPayload, rmsItemKey: 'ORDER|99|component:PART-CN' })])).toBe('combo_order');
   });
   it('ignores deleted components for combo dispatch classification', () => {
     expect(mailReviewReason([combo(), china({ deletedAt: date })])).toBeNull();

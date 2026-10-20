@@ -7929,8 +7929,8 @@ async function previewRakutenManualMailAction(item, button) {
   if (reviewWarning) {
     const warningByReason = {
       manual_update: "该订单存在产品ID修改或商品信息异常。请核对并按需要修改正文后发送。",
-      combo_order: "同一组合商品的组件分别从日本和中国发货。请分别调整日本发、中国发部分的「種類」，确认正文后发送。",
-      manual_update_and_combo: "该订单存在产品ID修改或商品信息异常，且同一组合商品的组件分别从日本和中国发货。请核对商品并分别调整两侧的「種類」，确认正文后发送。",
+      combo_order: "订单包含zh-开头商品且为中日混发。请分别调整日本发、中国发部分的「種類」，确认正文后发送。",
+      manual_update_and_combo: "该订单存在产品ID修改或商品信息异常，且包含zh-开头商品并为中日混发。请核对商品并分别调整两侧的「種類」，确认正文后发送。",
     };
     reviewWarning.textContent = warningByReason[preview.manualReviewReason]
       || "该订单需要人工确认。请核对并按需要修改正文，确认后才会实际发送。";
