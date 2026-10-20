@@ -134,7 +134,7 @@ export function buildFactoryMaterialMetrics(input: {
       issues.push({ productId: product.productId, reason: `成品在途${laterFinishedQty}件预计在新备货到仓后到仓，未自动抵扣材料需求，请在下单前核对。` });
     }
     const demands: number[] = [];
-    for (let day = 0; day < leadDays + targetDays; day += 1) {
+    for (let day = 0; day < Math.max(leadDays, targetDays); day += 1) {
       finished += finishedArrivals.get(day) ?? 0;
       const covered = Math.min(finished, daily);
       finished -= covered;
@@ -150,7 +150,7 @@ export function buildFactoryMaterialMetrics(input: {
       metric.finishedStockDeductionQty += finishedDeduction * item.quantity;
       metric.overdueFinishedInTransitQty += overdueFinishedQty * item.quantity;
       metric.dailyDemandQty = metric.dailyDemandQty.map((qty, day) => qty + demands[day] * item.quantity);
-      metric.targetDemandQty += demands.slice(leadDays).reduce((sum, qty) => sum + qty, 0) * item.quantity;
+      metric.targetDemandQty += demands.slice(0, targetDays).reduce((sum, qty) => sum + qty, 0) * item.quantity;
     }
   }
   return { rows: [...result.values()].map((row) => ({ ...row, sourceProductIds: row.sourceProductIds.sort() })), issues };

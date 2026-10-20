@@ -38,13 +38,13 @@ describe('Rakuten store dashboard', () => {
       channelScope: 'rakuten_all_shops', periodDays: 90,
       productionDays: 30, transportDays: 15, productionLogisticsDays: 45,
       targetStockDays: 90, minimumAverageDailySalesExclusive: 0.05,
-      recommendationCount: 1, totalSuggestedFactoryQty: 14,
+      recommendationCount: 1, totalSuggestedFactoryQty: 11,
     });
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
       productId: 'RB-1', unitCount90d: 14, averageDaily90d: 0.156,
       stockQty: 4, inTransitQty: 3, pendingShipmentQty: 1, effectiveStockQty: 3,
       productionLogisticsDemandQty: 7, remainingQtyAtArrival: 0,
-      targetStockQty: 14, suggestedFactoryQty: 14,
+      targetStockQty: 14, suggestedFactoryQty: 11,
     });
   });
 
@@ -141,7 +141,7 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
       averageDaily90d: 0.2, stockQty: 20, inTransitQty: 8, pendingShipmentQty: 18,
       effectiveStockQty: 2, productionLogisticsDemandQty: 9, remainingQtyAtArrival: 0,
-      targetStockQty: 18, suggestedFactoryQty: 18,
+      targetStockQty: 18, suggestedFactoryQty: 16,
     });
   });
 
@@ -164,12 +164,17 @@ describe('Rakuten store dashboard', () => {
       }],
       inTransit: [{ productId: 'RB-1', inTransitQty: qty, expectedArrivalDate: date }],
     }) as any;
+    if (date === '2026-08-21') {
+      expect(dashboard.factoryRecommendations.rows).toHaveLength(0);
+      expect(dashboard.factoryRecommendations.recommendationCount).toBe(0);
+      return;
+    }
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
       effectiveStockQty: 0, remainingQtyAtArrival: remaining,
       shortageQtyBeforeArrival: shortage, expectedStockoutDate: stockoutDate,
-      factoryArrivalDate: '2026-10-05', suggestedFactoryQty: date === '2026-08-20' ? null : 90 - remaining,
+      factoryArrivalDate: '2026-10-05', suggestedFactoryQty: date === '2026-08-20' ? null : (date && date >= '2026-08-21' && date <= '2026-10-05' ? 0 : 90),
     });
-    expect(dashboard.factoryRecommendations.recommendationCount).toBe(date !== '2026-08-20' && remaining < 90 ? 1 : 0);
+    expect(dashboard.factoryRecommendations.recommendationCount).toBe((!date || date === '2026-02-30' || date === '2026-10-06') ? 1 : 0);
   });
 
   it('aggregates multiple arrivals and separately reports unverified and later transit', () => {
@@ -192,7 +197,7 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
       inTransitQty: 55, eligibleInTransitQty: 40, unverifiedInTransitQty: 7,
       laterInTransitQty: 8, remainingQtyAtArrival: 5, shortageQtyBeforeArrival: 0,
-      expectedStockoutDate: null, suggestedFactoryQty: 85,
+      expectedStockoutDate: null, suggestedFactoryQty: 0,
     });
   });
 
@@ -208,7 +213,7 @@ describe('Rakuten store dashboard', () => {
       inTransit: [{ productId: 'RB-1', inTransitQty: 100, expectedArrivalDate: '2026-08-21' }],
     }) as any;
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
-      effectiveStockQty: -90, remainingQtyAtArrival: 0, suggestedFactoryQty: 90,
+      effectiveStockQty: -90, remainingQtyAtArrival: 0, suggestedFactoryQty: 80,
       shortageQtyBeforeArrival: 125, expectedStockoutDate: '2026-08-21',
     });
   });
@@ -312,7 +317,7 @@ describe('Rakuten store dashboard', () => {
     }));
     expect(result.sourceSummary.includesLegacyData).toBe(includesLegacyData);
     expect(result.dashboard.factoryRecommendations.rows.find((row: any) => row.productId === 'BODY')).toMatchObject({
-      inTransitQty: 40, suggestedFactoryQty: 50,
+      inTransitQty: 40, suggestedFactoryQty: 0,
     });
   });
 

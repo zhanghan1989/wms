@@ -206,14 +206,22 @@ export function buildRakutenStoreDashboard(input: {
     }
     const targetStockQtyRaw = row.targetDemandQty;
     const requiresTransitVerification = overdueInTransitQty > 0 || row.overdueFinishedInTransitQty > 0;
-    const suggestedFactoryQty = requiresTransitVerification ? null : averageDaily90d > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE
-      ? Math.max(0, Math.ceil(targetStockQtyRaw - remainingQtyAtArrival - 1e-9))
-      : 0;
+    // Inventory position triggers ordering only below the lead-time demand.
+    // The dated simulation above is for shortage warnings, not an extra 45-day buffer.
+    const planningStockQty = effectiveStockQty + eligibleInTransitQty;
+    const reorderPointQty = productionLogisticsDemandQty;
+    const restockRequired = planningStockQty < reorderPointQty - 1e-9;
+    const suggestedFactoryQty = requiresTransitVerification ? null
+      : averageDaily90d > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE && restockRequired
+        ? Math.max(0, Math.ceil(targetStockQtyRaw - planningStockQty - 1e-9)) : 0;
     const { dailyDemandQty: _dailyDemand, targetDemandQty: _targetDemand, ...displayRow } = row;
     return {
       ...displayRow,
       finishedStockDeductionQty: Math.round(row.finishedStockDeductionQty * 1000) / 1000,
       factoryArrivalDate,
+      planningStockQty: Math.round(planningStockQty * 1000) / 1000,
+      reorderPointQty: Math.round(reorderPointQty * 1000) / 1000,
+      restockRequired,
       eligibleInTransitQty,
       unverifiedInTransitQty,
       overdueInTransitQty,

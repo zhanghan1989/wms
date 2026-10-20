@@ -399,6 +399,7 @@ export class RakutenRmsApiService {
         productionLogisticsDemandQty?: number; remainingQtyAtArrival?: number;
         targetStockQty?: number; suggestedFactoryQty?: number | null;
         overdueInTransitQty?: number; requiresTransitVerification?: boolean;
+        planningStockQty?: number; reorderPointQty?: number;
         eligibleInTransitQty?: number; unverifiedInTransitQty?: number; laterInTransitQty?: number;
         expectedStockoutDate?: string | null; factoryArrivalDate?: string; shortageQtyBeforeArrival?: number;
       }>; issues?: Array<{ productId: string; reason: string }> } } | null;
@@ -427,11 +428,13 @@ export class RakutenRmsApiService {
       "有效库存": Number(row.effectiveStockQty ?? 0),
       "45天预计消耗": Number(row.productionLogisticsDemandQty ?? 0),
       "预计到货剩余": Number(row.remainingQtyAtArrival ?? 0),
+      "备货判断库存（含在途）": Number(row.planningStockQty ?? 0),
+      "补货触发需求（45天）": Number(row.reorderPointQty ?? 0),
       "90天净目标需求": Number(row.targetStockQty ?? 0),
       "建议工厂备货数量": row.requiresTransitVerification ? "到货逾期、需核实" : Number(row.suggestedFactoryQty ?? 0),
     }));
     const worksheet = XLSX.utils.json_to_sheet(data, {
-      header: ["统计范围", "产品ID", "产品名称", "产品类型", "需求来源成品", "成品抵扣需求", "近90天需求", "90天日均需求", "当前日本库存", "国内单号在途数量", "45天内到仓", "待核实在途", "逾期在途", "45天后到仓", "预计缺货日期", "到货前缺口", "新备货到仓日", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "90天净目标需求", "建议工厂备货数量"],
+      header: ["统计范围", "产品ID", "产品名称", "产品类型", "需求来源成品", "成品抵扣需求", "近90天需求", "90天日均需求", "当前日本库存", "国内单号在途数量", "45天内到仓", "待核实在途", "逾期在途", "45天后到仓", "预计缺货日期", "到货前缺口", "新备货到仓日", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "备货判断库存（含在途）", "补货触发需求（45天）", "90天净目标需求", "建议工厂备货数量"],
     });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "乐天工厂备货建议");

@@ -2897,7 +2897,7 @@ function renderRakutenFactoryRecommendations(rows) {
       : '<span class="muted">暂无预计缺货</span>';
     const recommendation = row.requiresTransitVerification
       ? '<span class="amazon-dashboard-chip warning">到货逾期、需核实</span>'
-      : `<strong class="factory-suggested-qty">${number(row.suggestedFactoryQty)} 件</strong>${Number(row.suggestedFactoryQty) === 0 ? '<small class="factory-cell-note">无需追加</small>' : ''}`;
+      : `<strong class="factory-suggested-qty">${number(row.suggestedFactoryQty)} 件</strong>${Number(row.suggestedFactoryQty) === 0 ? '<small class="factory-cell-note">覆盖45天，无需追加</small>' : ''}`;
     return `<tr class="factory-summary-row">
       <td>${renderMasterProductDetailLink(row.productId)}<span class="factory-product-name">${escapeHtml(displayText(row.productName))}</span></td>
       <td>${escapeHtml(displayText(row.productType))}</td>
@@ -2920,6 +2920,8 @@ function renderRakutenFactoryRecommendations(rows) {
           ${field('45天后到仓', number(row.laterInTransitQty))}
         </dl></section>
         <section><h4>备货测算</h4><dl>
+          ${field('备货判断库存（含在途）', number(row.planningStockQty, 3))}
+          ${field('补货触发需求（45天）', number(row.reorderPointQty, 3))}
           ${field('新备货到仓日', escapeHtml(displayText(row.factoryArrivalDate)))}
           ${field('45天预计消耗', number(row.productionLogisticsDemandQty, 3))}${field('预计到货剩余', number(row.remainingQtyAtArrival, 3))}
           ${field('90天净目标需求', number(row.targetStockQty))}
