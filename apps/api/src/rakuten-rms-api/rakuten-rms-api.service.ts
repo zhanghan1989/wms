@@ -179,7 +179,11 @@ export class RakutenRmsApiService {
     })) };
   }
 
-  async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string): Promise<unknown> {
+  async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string, minimumDailySalesRaw?: string): Promise<unknown> {
+    const minimumAverageDailySalesExclusive = minimumDailySalesRaw === undefined ? 0.05 : Number(minimumDailySalesRaw);
+    if (minimumDailySalesRaw?.trim() === "" || !Number.isFinite(minimumAverageDailySalesExclusive) || minimumAverageDailySalesExclusive < 0) {
+      throw new BadRequestException("日均需求门槛须为大于或等于0的数字");
+    }
     const days = [7, 30, 90].includes(Number(daysRaw)) ? Number(daysRaw) : 30;
     const connections = await this.prisma.rakutenRmsConnection.findMany({
       where: { status: 1, syncOrders: true },
@@ -375,6 +379,7 @@ export class RakutenRmsApiService {
         days,
         orders,
         factoryOrders,
+        minimumAverageDailySalesExclusive,
         products,
         inTransit: [...inTransitRows, ...preregisteredTransit].map((row) => ({
           productId: row.productId,
@@ -388,8 +393,9 @@ export class RakutenRmsApiService {
 
   async buildStoreFactoryRecommendationsExcel(
     connectionIdRaw?: string,
+    minimumDailySalesRaw?: string,
   ): Promise<{ fileName: string; content: Buffer }> {
-    const payload = await this.getStoreDashboard(connectionIdRaw, "90") as {
+    const payload = await this.getStoreDashboard(connectionIdRaw, "90", minimumDailySalesRaw) as {
       selectedShop?: { shopName?: string } | null;
       dashboard?: { factoryRecommendations?: { rows?: Array<{
         skuCode?: string; productId?: string; productName?: string | null;

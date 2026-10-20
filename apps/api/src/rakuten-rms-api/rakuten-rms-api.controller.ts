@@ -51,16 +51,18 @@ export class RakutenRmsApiController {
   async getStoreDashboard(
     @Query('connectionId') connectionId?: string,
     @Query('days') days?: string,
+    @Query('minimumDailySales') minimumDailySales?: string,
   ): Promise<unknown> {
-    return this.service.getStoreDashboard(connectionId, days);
+    return this.service.getStoreDashboard(connectionId, days, minimumDailySales);
   }
 
   @Get('store-dashboard/factory-recommendations-excel')
   async downloadStoreFactoryRecommendationsExcel(
     @Res() res: Response,
     @Query('connectionId') connectionId?: string,
+    @Query('minimumDailySales') minimumDailySales?: string,
   ): Promise<void> {
-    const file = await this.service.buildStoreFactoryRecommendationsExcel(connectionId);
+    const file = await this.service.buildStoreFactoryRecommendationsExcel(connectionId, minimumDailySales);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
     res.setHeader('Content-Length', String(file.content.length));

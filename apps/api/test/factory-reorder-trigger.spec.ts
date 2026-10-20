@@ -1,8 +1,9 @@
 import { buildRakutenStoreDashboard } from '../src/rakuten-rms-api/rakuten-store-dashboard';
 
-function recommendations(sales = 25, stock = 0, transit = 20, arrival = '2026-09-05', pending = 0) {
+function recommendations(sales = 25, stock = 0, transit = 20, arrival = '2026-09-05', pending = 0, threshold?: number) {
   return (buildRakutenStoreDashboard({
     now: new Date('2026-08-21T12:00:00Z'), days: 90,
+    minimumAverageDailySalesExclusive: threshold,
     products: [{ productId: '8784', productName: '内胆包', stockQty: stock }],
     orders: [
       { orderId: 'sales', skuCode: '8784', productName: '内胆包', orderQuantity: sales - pending,
@@ -17,6 +18,14 @@ function recommendations(sales = 25, stock = 0, transit = 20, arrival = '2026-09
 }
 
 describe('factory reorder trigger', () => {
+  it('defaults to 0.05 and applies a manually supplied exclusive threshold', () => {
+    expect(recommendations(4, 0, 0).rows).toHaveLength(0);
+    expect(recommendations(4, 0, 0, '2026-09-05', 0, 0.01).totalSuggestedFactoryQty).toBe(4);
+    expect(recommendations(9, 0, 0, '2026-09-05', 0, 0.1).rows).toHaveLength(0);
+    expect(recommendations(9, 0, 0, '2026-09-05', 0, 0).totalSuggestedFactoryQty).toBe(9);
+    expect(recommendations(4, 0, 0, '2026-09-05', 0, -1).minimumAverageDailySalesExclusive).toBe(0.05);
+  });
+
   it('recommends zero for the pictured 25 sales and 20 in transit, while retaining the shortage warning', () => {
     const result = recommendations();
     expect(result.rows[0]).toMatchObject({

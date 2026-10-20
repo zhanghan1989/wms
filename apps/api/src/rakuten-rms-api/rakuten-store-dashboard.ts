@@ -100,10 +100,14 @@ export function buildRakutenStoreDashboard(input: {
   days: number;
   orders: RakutenDashboardOrderRow[];
   factoryOrders?: RakutenDashboardOrderRow[];
+  minimumAverageDailySalesExclusive?: number;
   products: RakutenDashboardProductRow[];
   inTransit?: RakutenDashboardInTransitRow[];
 }): unknown {
   const { now, days, orders, factoryOrders = orders, products, inTransit = [] } = input;
+  const threshold = input.minimumAverageDailySalesExclusive;
+  const minimumAverageDailySalesExclusive = typeof threshold === 'number' && Number.isFinite(threshold) && threshold >= 0
+    ? threshold : FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE;
   const periodMs = days * 24 * 60 * 60 * 1000;
   const periodStart = new Date(now.getTime() - periodMs);
   const previousStart = new Date(periodStart.getTime() - periodMs);
@@ -212,7 +216,7 @@ export function buildRakutenStoreDashboard(input: {
     const reorderPointQty = productionLogisticsDemandQty;
     const restockRequired = planningStockQty < reorderPointQty - 1e-9;
     const suggestedFactoryQty = requiresTransitVerification ? null
-      : averageDaily90d > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE && restockRequired
+      : averageDaily90d > minimumAverageDailySalesExclusive && restockRequired
         ? Math.max(0, Math.ceil(targetStockQtyRaw - planningStockQty - 1e-9)) : 0;
     const { dailyDemandQty: _dailyDemand, targetDemandQty: _targetDemand, ...displayRow } = row;
     return {
@@ -236,7 +240,7 @@ export function buildRakutenStoreDashboard(input: {
       targetStockQty: Math.ceil(targetStockQtyRaw - 1e-9),
       suggestedFactoryQty,
     };
-  }).filter((row) => row.unitCount90d / 90 > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE
+  }).filter((row) => row.unitCount90d / 90 > minimumAverageDailySalesExclusive
     && ((row.suggestedFactoryQty ?? 0) > 0 || row.shortageQtyBeforeArrival > 0 || row.unverifiedInTransitQty > 0 || row.requiresTransitVerification))
     .sort((left, right) => (right.suggestedFactoryQty ?? 0) - (left.suggestedFactoryQty ?? 0)
       || right.unitCount90d - left.unitCount90d
@@ -332,7 +336,7 @@ export function buildRakutenStoreDashboard(input: {
       transportDays: FACTORY_TRANSPORT_DAYS,
       productionLogisticsDays: FACTORY_PRODUCTION_LOGISTICS_DAYS,
       targetStockDays: FACTORY_TARGET_STOCK_DAYS,
-      minimumAverageDailySalesExclusive: FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE,
+      minimumAverageDailySalesExclusive,
       recommendationCount: factoryRows.filter((row) => (row.suggestedFactoryQty ?? 0) > 0).length,
       shortageProductCount: factoryRows.filter((row) => row.shortageQtyBeforeArrival > 0).length,
       unverifiedTransitProductCount: factoryRows.filter((row) => row.unverifiedInTransitQty > 0 || row.requiresTransitVerification).length,

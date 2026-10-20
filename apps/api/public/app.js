@@ -2849,13 +2849,21 @@ function renderRakutenStoreDashboard(payload) {
   hydrateResponsiveTableLabels($("rakutenDashboard"));
 }
 
+function rakutenFactoryMinimumDailySales() {
+  const input = $("rakutenFactoryMinimumDailySales");
+  const raw = String(input?.value ?? "0.05").trim();
+  const value = Number(raw);
+  if (!raw || !Number.isFinite(value) || value < 0) throw new Error("日均需求门槛须为大于或等于0的数字");
+  return String(value);
+}
+
 async function loadRakutenStoreDashboard(options = {}) {
   if (!state.token || state.rakutenStoreDashboardLoading) return;
   state.rakutenStoreDashboardLoading = true;
   const connectionId = String(options.connectionId || $("rakutenStoreDashboardShop")?.value || state.rakutenStoreDashboard?.selectedShop?.connectionId || "").trim();
   const days = String(options.days || $("rakutenStoreDashboardDays")?.value || state.rakutenStoreDashboard?.days || "30").trim();
   try {
-    const query = new URLSearchParams({ days });
+    const query = new URLSearchParams({ days, minimumDailySales: rakutenFactoryMinimumDailySales() });
     if (connectionId) query.set("connectionId", connectionId);
     renderRakutenStoreDashboard(await request(`/rakuten-rms-api/store-dashboard?${query.toString()}`));
   } finally {
@@ -2866,7 +2874,7 @@ async function loadRakutenStoreDashboard(options = {}) {
 async function downloadRakutenStoreFactoryRecommendationsExcel() {
   const connectionId = String(state.rakutenStoreDashboard?.selectedShop?.connectionId || $("rakutenStoreDashboardShop")?.value || "").trim();
   if (!connectionId) throw new Error("请先选择乐天店铺");
-  const endpoint = `/rakuten-rms-api/store-dashboard/factory-recommendations-excel?connectionId=${encodeURIComponent(connectionId)}`;
+  const endpoint = `/rakuten-rms-api/store-dashboard/factory-recommendations-excel?connectionId=${encodeURIComponent(connectionId)}&minimumDailySales=${encodeURIComponent(rakutenFactoryMinimumDailySales())}`;
   const fileName = await downloadAuthorizedFile(endpoint, {}, "乐天工厂备货建议.xlsx");
   showToast(`已下载 ${fileName}`);
 }
@@ -16104,6 +16112,13 @@ function bindForms() {
         "正在加载中，请稍候...",
         () => loadRakutenStoreDashboard({ days: event.currentTarget.value }),
       );
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("applyRakutenFactoryThresholdBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "计算中...", () => loadRakutenStoreDashboard());
     } catch (error) {
       showToast(error.message, true);
     }
