@@ -318,7 +318,7 @@ export class RakutenRmsApiService {
             status: { in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound] },
           },
         },
-        select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true } } },
+        select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true, createdAt: true } } },
       })
       : [];
     const selectedShop = {
@@ -355,6 +355,7 @@ export class RakutenRmsApiService {
         inTransit: inTransitRows.map((row) => ({
           productId: row.productId,
           inTransitQty: Number(row.qty ?? 0),
+          registeredAt: row.order.createdAt,
           expectedArrivalDate: row.order.expectedArrivalDate?.toISOString().slice(0, 10) ?? null,
         })),
       }),
@@ -372,7 +373,8 @@ export class RakutenRmsApiService {
         unitCount90d?: number; averageDaily90d?: number; pendingShipmentQty?: number;
         stockQty?: number; inTransitQty?: number; effectiveStockQty?: number;
         productionLogisticsDemandQty?: number; remainingQtyAtArrival?: number;
-        targetStockQty?: number; suggestedFactoryQty?: number;
+        targetStockQty?: number; suggestedFactoryQty?: number | null;
+        overdueInTransitQty?: number; requiresTransitVerification?: boolean;
         eligibleInTransitQty?: number; unverifiedInTransitQty?: number; laterInTransitQty?: number;
         expectedStockoutDate?: string | null; factoryArrivalDate?: string; shortageQtyBeforeArrival?: number;
       }>; issues?: Array<{ productId: string; reason: string }> } } | null;
@@ -392,6 +394,7 @@ export class RakutenRmsApiService {
       "国内单号在途数量": Number(row.inTransitQty ?? 0),
       "45天内到仓": Number(row.eligibleInTransitQty ?? 0),
       "待核实在途": Number(row.unverifiedInTransitQty ?? 0),
+      "逾期在途": Number(row.overdueInTransitQty ?? 0),
       "45天后到仓": Number(row.laterInTransitQty ?? 0),
       "预计缺货日期": row.expectedStockoutDate ?? "",
       "到货前缺口": Number(row.shortageQtyBeforeArrival ?? 0),
@@ -401,10 +404,10 @@ export class RakutenRmsApiService {
       "45天预计消耗": Number(row.productionLogisticsDemandQty ?? 0),
       "预计到货剩余": Number(row.remainingQtyAtArrival ?? 0),
       "90天净目标需求": Number(row.targetStockQty ?? 0),
-      "建议工厂备货数量": Number(row.suggestedFactoryQty ?? 0),
+      "建议工厂备货数量": row.requiresTransitVerification ? "到货逾期、需核实" : Number(row.suggestedFactoryQty ?? 0),
     }));
     const worksheet = XLSX.utils.json_to_sheet(data, {
-      header: ["统计范围", "产品ID", "产品名称", "产品类型", "需求来源成品", "成品抵扣需求", "近90天需求", "90天日均需求", "当前日本库存", "国内单号在途数量", "45天内到仓", "待核实在途", "45天后到仓", "预计缺货日期", "到货前缺口", "新备货到仓日", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "90天净目标需求", "建议工厂备货数量"],
+      header: ["统计范围", "产品ID", "产品名称", "产品类型", "需求来源成品", "成品抵扣需求", "近90天需求", "90天日均需求", "当前日本库存", "国内单号在途数量", "45天内到仓", "待核实在途", "逾期在途", "45天后到仓", "预计缺货日期", "到货前缺口", "新备货到仓日", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "90天净目标需求", "建议工厂备货数量"],
     });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "乐天工厂备货建议");

@@ -1,3 +1,4 @@
+import { InboundArrivalDates, resolveInboundExpectedArrivalDate } from '../common/inbound-expected-arrival';
 import { buildFactoryMaterialMetrics, FactoryProduct } from './rakuten-factory-materials';
 
 export interface RakutenDashboardOrderRow {
@@ -15,10 +16,9 @@ export interface RakutenDashboardOrderRow {
 
 export type RakutenDashboardProductRow = FactoryProduct;
 
-export interface RakutenDashboardInTransitRow {
+export interface RakutenDashboardInTransitRow extends InboundArrivalDates {
   productId: string;
   inTransitQty: number;
-  expectedArrivalDate?: string | null;
 }
 
 const CANCELLED_STATUSES = new Set(['800', '900']);
@@ -165,13 +165,17 @@ export function buildRakutenStoreDashboard(input: {
     const arrivals = new Map<string, number>();
     let eligibleInTransitQty = 0;
     let unverifiedInTransitQty = 0;
+    let overdueInTransitQty = 0;
     let laterInTransitQty = 0;
     for (const item of inTransitLookup.get(normalize(row.productId)) ?? []) {
-      const date = item.expectedArrivalDate;
+      const date = resolveInboundExpectedArrivalDate(item);
       const qty = nonNegative(item.inTransitQty);
       const parsed = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : null;
-      if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date || date! < todayKey) {
+      if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
         unverifiedInTransitQty += qty;
+      } else if (date! < todayKey) {
+        unverifiedInTransitQty += qty;
+        overdueInTransitQty += qty;
       } else if (date! > factoryArrivalDate) {
         laterInTransitQty += qty;
       } else {
@@ -201,7 +205,8 @@ export function buildRakutenStoreDashboard(input: {
       remainingQtyAtArrival = Math.max(0, remainingQtyAtArrival - demand);
     }
     const targetStockQtyRaw = row.targetDemandQty;
-    const suggestedFactoryQty = averageDaily90d > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE
+    const requiresTransitVerification = overdueInTransitQty > 0 || row.overdueFinishedInTransitQty > 0;
+    const suggestedFactoryQty = requiresTransitVerification ? null : averageDaily90d > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE
       ? Math.max(0, Math.ceil(targetStockQtyRaw - remainingQtyAtArrival - 1e-9))
       : 0;
     const { dailyDemandQty: _dailyDemand, targetDemandQty: _targetDemand, ...displayRow } = row;
@@ -211,6 +216,8 @@ export function buildRakutenStoreDashboard(input: {
       factoryArrivalDate,
       eligibleInTransitQty,
       unverifiedInTransitQty,
+      overdueInTransitQty,
+      requiresTransitVerification,
       laterInTransitQty,
       expectedStockoutDate,
       shortageQtyBeforeArrival: Math.ceil(Math.max(0, shortageQtyBeforeArrival - 1e-9)),
@@ -222,8 +229,8 @@ export function buildRakutenStoreDashboard(input: {
       suggestedFactoryQty,
     };
   }).filter((row) => row.unitCount90d / 90 > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE
-    && (row.suggestedFactoryQty > 0 || row.shortageQtyBeforeArrival > 0 || row.unverifiedInTransitQty > 0))
-    .sort((left, right) => right.suggestedFactoryQty - left.suggestedFactoryQty
+    && ((row.suggestedFactoryQty ?? 0) > 0 || row.shortageQtyBeforeArrival > 0 || row.unverifiedInTransitQty > 0 || row.requiresTransitVerification))
+    .sort((left, right) => (right.suggestedFactoryQty ?? 0) - (left.suggestedFactoryQty ?? 0)
       || right.unitCount90d - left.unitCount90d
       || left.productId.localeCompare(right.productId, 'en', { numeric: true }));
 
@@ -318,10 +325,10 @@ export function buildRakutenStoreDashboard(input: {
       productionLogisticsDays: FACTORY_PRODUCTION_LOGISTICS_DAYS,
       targetStockDays: FACTORY_TARGET_STOCK_DAYS,
       minimumAverageDailySalesExclusive: FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE,
-      recommendationCount: factoryRows.filter((row) => row.suggestedFactoryQty > 0).length,
+      recommendationCount: factoryRows.filter((row) => (row.suggestedFactoryQty ?? 0) > 0).length,
       shortageProductCount: factoryRows.filter((row) => row.shortageQtyBeforeArrival > 0).length,
-      unverifiedTransitProductCount: factoryRows.filter((row) => row.unverifiedInTransitQty > 0).length,
-      totalSuggestedFactoryQty: factoryRows.reduce((sum, row) => sum + row.suggestedFactoryQty, 0),
+      unverifiedTransitProductCount: factoryRows.filter((row) => row.unverifiedInTransitQty > 0 || row.requiresTransitVerification).length,
+      totalSuggestedFactoryQty: factoryRows.reduce((sum, row) => sum + (row.suggestedFactoryQty ?? 0), 0),
       rows: factoryRows,
     },
   };

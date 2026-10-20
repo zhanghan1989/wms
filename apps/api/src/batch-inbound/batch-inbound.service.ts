@@ -1,3 +1,4 @@
+import { resolveInboundExpectedArrivalDate } from '../common/inbound-expected-arrival';
 import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
 import {
   BadRequestException,
@@ -41,6 +42,7 @@ interface BatchInboundOrderSummary {
   domesticOrderNo: string | null;
   seaOrderNo: string | null;
   expectedArrivalDate: string | null;
+  defaultExpectedArrivalDate: string | null;
   createdAt: Date;
   updatedAt: Date;
   creator: {
@@ -1339,6 +1341,7 @@ export class BatchInboundService {
       domesticOrderNo: this.readDomesticOrderNo(order),
       seaOrderNo: this.readSeaOrderNo(order),
       expectedArrivalDate: order.expectedArrivalDate?.toISOString().slice(0, 10) ?? null,
+      defaultExpectedArrivalDate: resolveInboundExpectedArrivalDate({ registeredAt: order.createdAt }),
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       creator: {
@@ -1406,6 +1409,7 @@ export class BatchInboundService {
       domesticOrderNo: this.readDomesticOrderNo(order),
       seaOrderNo: this.readSeaOrderNo(order),
       expectedArrivalDate: order.expectedArrivalDate?.toISOString().slice(0, 10) ?? null,
+      defaultExpectedArrivalDate: resolveInboundExpectedArrivalDate({ registeredAt: order.createdAt }),
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       creator: {

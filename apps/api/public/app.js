@@ -2842,7 +2842,7 @@ function renderRakutenStoreDashboard(payload) {
     (row) => escapeHtml(formatMetricNumber(row.stockQty)),
     (row) => escapeHtml(formatMetricNumber(row.inTransitQty)),
     (row) => escapeHtml(formatMetricNumber(row.eligibleInTransitQty)),
-    (row) => Number(row.unverifiedInTransitQty) > 0 ? `<span class="amazon-dashboard-chip warning">${escapeHtml(formatMetricNumber(row.unverifiedInTransitQty))} 待核实</span>` : '0',
+    (row) => Number(row.unverifiedInTransitQty) > 0 ? `<span class="amazon-dashboard-chip warning">${escapeHtml(formatMetricNumber(row.unverifiedInTransitQty))} ${Number(row.overdueInTransitQty) > 0 ? `含逾期 ${escapeHtml(formatMetricNumber(row.overdueInTransitQty))}` : "待核实"}</span>` : '0',
     (row) => escapeHtml(formatMetricNumber(row.laterInTransitQty)),
     (row) => escapeHtml(formatMetricNumber(row.pendingShipmentQty)),
     (row) => escapeHtml(formatMetricNumber(row.effectiveStockQty)),
@@ -2852,7 +2852,7 @@ function renderRakutenStoreDashboard(payload) {
     (row) => escapeHtml(formatMetricNumber(row.productionLogisticsDemandQty, 3)),
     (row) => escapeHtml(formatMetricNumber(row.remainingQtyAtArrival, 3)),
     (row) => escapeHtml(formatMetricNumber(row.targetStockQty)),
-    (row) => `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
+    (row) => row.requiresTransitVerification ? '<span class="amazon-dashboard-chip warning">到货逾期、需核实</span>' : `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
   ], "乐天渠道当前没有备货或缺货、在途核实提醒");
   renderAmazonMetricCards("rakutenStoreDashboardFulfillment", [
     { label: "待发货订单", value: formatMetricNumber(fulfillment.pendingShipmentOrderCount) },
@@ -10457,7 +10457,7 @@ function renderBatchInboundOrders() {
               placeholder: "请输入海运单号",
             })}
           </td>
-          <td><div class="action-row"><input type="date" aria-label="预计到仓日期" id="batchEta-${escapeHtml(order.id)}" value="${escapeHtml(order.expectedArrivalDate || '')}" ${['confirmed', 'void'].includes(order.status) ? 'disabled' : ''}>
+          <td><div class="action-row"><input type="date" aria-label="预计到仓日期" title="未手动填写时，默认按入库单登记日期加45天计算；清空后恢复默认日期" id="batchEta-${escapeHtml(order.id)}" value="${escapeHtml(order.expectedArrivalDate || order.defaultExpectedArrivalDate || '')}" ${['confirmed', 'void'].includes(order.status) ? 'disabled' : ''}>
             ${['confirmed', 'void'].includes(order.status) ? '' : `<button class="tiny-btn" data-action="batchInboundSaveExpectedArrival" data-order-id="${escapeHtml(order.id)}">保存</button>`}</div></td>
           <td>${escapeHtml(order.confirmedCount ?? 0)} / ${escapeHtml(order.itemCount ?? 0)}</td>
           <td><div class="action-row">${actions.join("")}</div></td>

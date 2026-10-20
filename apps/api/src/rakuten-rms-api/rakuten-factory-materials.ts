@@ -1,3 +1,5 @@
+import { InboundArrivalDates, resolveInboundExpectedArrivalDate } from '../common/inbound-expected-arrival';
+
 export interface FactoryProduct {
   productId: string;
   productName: string | null;
@@ -25,6 +27,7 @@ export interface FactoryMaterialMetric extends FactorySalesMetric {
   productType: string | null;
   sourceProductIds: string[];
   finishedStockDeductionQty: number;
+  overdueFinishedInTransitQty: number;
   dailyDemandQty: number[];
   targetDemandQty: number;
 }
@@ -42,7 +45,7 @@ const qtyOf = (value: number) => Number.isFinite(value) ? Math.max(0, value) : 0
 export function buildFactoryMaterialMetrics(input: {
   sales: FactorySalesMetric[];
   products: FactoryProduct[];
-  inTransit: Array<{ productId: string; inTransitQty: number; expectedArrivalDate?: string | null }>;
+  inTransit: Array<InboundArrivalDates & { productId: string; inTransitQty: number }>;
   todayKey: string;
   leadDays: number;
   targetDays: number;
@@ -67,7 +70,7 @@ export function buildFactoryMaterialMetrics(input: {
         productType: product.productType ?? null, sourceProductIds: [], unitCount90d: 0,
         pendingShipmentQty: 0, stockQty: qtyOf(product.stockQty),
         inTransitQty: (arrivalsByProduct.get(key) ?? []).reduce((sum, row) => sum + qtyOf(row.inTransitQty), 0),
-        finishedStockDeductionQty: 0, dailyDemandQty: Array(leadDays).fill(0), targetDemandQty: 0,
+        finishedStockDeductionQty: 0, overdueFinishedInTransitQty: 0, dailyDemandQty: Array(leadDays).fill(0), targetDemandQty: 0,
       };
       result.set(key, metric);
     }
@@ -106,12 +109,15 @@ export function buildFactoryMaterialMetrics(input: {
     const finishedArrivals = new Map<number, number>();
     let unverifiedFinishedQty = 0;
     let laterFinishedQty = 0;
+    let overdueFinishedQty = 0;
     for (const arrival of arrivalsByProduct.get(keyOf(product.productId)) ?? []) {
-      const date = arrival.expectedArrivalDate ?? '';
+      const date = resolveInboundExpectedArrivalDate(arrival) ?? '';
       const time = /^\d{4}-\d{2}-\d{2}$/.test(date) ? Date.parse(`${date}T00:00:00.000Z`) : NaN;
       const day = (time - Date.parse(`${todayKey}T00:00:00.000Z`)) / 86400000;
-      if (!Number.isFinite(day) || new Date(time).toISOString().slice(0, 10) !== date || day < 0) {
+      if (!Number.isFinite(day) || new Date(time).toISOString().slice(0, 10) !== date) {
         unverifiedFinishedQty += qtyOf(arrival.inTransitQty);
+      } else if (day < 0) {
+        overdueFinishedQty += qtyOf(arrival.inTransitQty);
       } else if (day <= leadDays) {
         finishedArrivals.set(day, (finishedArrivals.get(day) ?? 0) + qtyOf(arrival.inTransitQty));
       } else {
@@ -120,6 +126,9 @@ export function buildFactoryMaterialMetrics(input: {
     }
     if (unverifiedFinishedQty > 0) {
       issues.push({ productId: product.productId, reason: `成品在途${unverifiedFinishedQty}件到仓日期待核实，未抵扣材料需求。` });
+    }
+    if (overdueFinishedQty > 0) {
+      issues.push({ productId: product.productId, reason: `成品在途${overdueFinishedQty}件到货逾期、需核实，相关材料暂不自动建议重复订货。` });
     }
     if (laterFinishedQty > 0) {
       issues.push({ productId: product.productId, reason: `成品在途${laterFinishedQty}件预计在新备货到仓后到仓，未自动抵扣材料需求，请在下单前核对。` });
@@ -139,6 +148,7 @@ export function buildFactoryMaterialMetrics(input: {
       metric.unitCount90d += sale.unitCount90d * item.quantity;
       metric.pendingShipmentQty += pendingMaterials * item.quantity;
       metric.finishedStockDeductionQty += finishedDeduction * item.quantity;
+      metric.overdueFinishedInTransitQty += overdueFinishedQty * item.quantity;
       metric.dailyDemandQty = metric.dailyDemandQty.map((qty, day) => qty + demands[day] * item.quantity);
       metric.targetDemandQty += demands.slice(leadDays).reduce((sum, qty) => sum + qty, 0) * item.quantity;
     }

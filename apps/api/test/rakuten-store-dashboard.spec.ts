@@ -167,9 +167,9 @@ describe('Rakuten store dashboard', () => {
     expect(dashboard.factoryRecommendations.rows[0]).toMatchObject({
       effectiveStockQty: 0, remainingQtyAtArrival: remaining,
       shortageQtyBeforeArrival: shortage, expectedStockoutDate: stockoutDate,
-      factoryArrivalDate: '2026-10-05', suggestedFactoryQty: 90 - remaining,
+      factoryArrivalDate: '2026-10-05', suggestedFactoryQty: date === '2026-08-20' ? null : 90 - remaining,
     });
-    expect(dashboard.factoryRecommendations.recommendationCount).toBe(remaining < 90 ? 1 : 0);
+    expect(dashboard.factoryRecommendations.recommendationCount).toBe(date !== '2026-08-20' && remaining < 90 ? 1 : 0);
   });
 
   it('aggregates multiple arrivals and separately reports unverified and later transit', () => {
@@ -302,9 +302,27 @@ describe('Rakuten store dashboard', () => {
           status: { in: ['waiting_upload', 'waiting_inbound'] },
         },
       }),
-      select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true } } },
+      select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true, createdAt: true } } },
     }));
     expect(result.sourceSummary.includesLegacyData).toBe(includesLegacyData);
+  });
+
+  it('exports an overdue verification notice instead of a numeric order quantity', async () => {
+    const service = new RakutenRmsApiService(
+      {} as PrismaService, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService,
+    );
+    jest.spyOn(service, 'getStoreDashboard').mockResolvedValue({
+      selectedShop: { shopName: '乐天-1号店' },
+      dashboard: { factoryRecommendations: { rows: [{
+        productId: '8699', overdueInTransitQty: 60, unverifiedInTransitQty: 60,
+        requiresTransitVerification: true, suggestedFactoryQty: null,
+      }] } },
+    });
+    const file = await service.buildStoreFactoryRecommendationsExcel('7');
+    const workbook = XLSX.read(file.content, { type: 'buffer' });
+    expect(XLSX.utils.sheet_to_json(workbook.Sheets['乐天工厂备货建议'])[0]).toMatchObject({
+      '逾期在途': 60, '建议工厂备货数量': '到货逾期、需核实',
+    });
   });
 
   it('exports factory recommendations as Excel', async () => {

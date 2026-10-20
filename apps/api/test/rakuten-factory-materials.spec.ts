@@ -101,6 +101,25 @@ describe('Rakuten factory material recommendations', () => {
     expect(result.recommendationCount).toBe(0);
   });
 
+  it('uses registration plus 45 days for finished straps as well as materials', () => {
+    const result = dashboard([strap('STRAP-A', hookA, 0)], [90], { inTransit: [
+      { productId: 'STRAP-A', inTransitQty: 90, registeredAt: '2026-08-21' },
+    ] });
+    expect(byId(result, 'HOOK-A')).toBeUndefined();
+    expect(result.recommendationCount).toBe(0);
+  });
+
+  it('holds affected material recommendations when finished transit is overdue', () => {
+    const result = dashboard([strap('STRAP-A', hookA, 0)], [90], { inTransit: [
+      { productId: 'STRAP-A', inTransitQty: 90, registeredAt: '2026-07-06' },
+    ] });
+    expect(byId(result, 'HOOK-A')).toMatchObject({
+      suggestedFactoryQty: null, requiresTransitVerification: true, overdueFinishedInTransitQty: 180,
+    });
+    expect(result.issues[0].reason).toContain('到货逾期');
+    expect(result.totalSuggestedFactoryQty).toBe(0);
+  });
+
   it.each(['missing', 'disabled', 'bad-quantity', 'two-bodies'])(
     'reports invalid %s BOM configuration instead of recommending finished straps', (kind) => {
       const parent = strap('STRAP-A', hookA, 0);
