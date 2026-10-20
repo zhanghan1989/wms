@@ -647,7 +647,7 @@
           </article>
           <article class="card amazon-store-factory-card">
             <div class="card-head">
-              <div><h3>工厂备货建议</h3><p class="muted">汇总全部乐天店铺，按备货产品汇总后的90天日均需求须大于0.05件。肩带按组成用量拆成本体、配件，共用材料合并计算；每款成品库存优先覆盖自己的待发货和未来需求，45天内有明确到仓日期的成品在途从到仓日起抵扣未来需求，剩余需求再换算为材料，避免重复备货。当前可用库存＝日本库存−待发货占用；按日扣减预计销量，并在预计到仓日加入在途数量，推算45天后新备货到仓时的剩余库存。建议工厂备货＝max(0，90天净目标需求−到仓预计剩余)，向上取整。在途仅统计已上传国内单号且尚未入库的明细；未手动填写到仓日期时，默认按该批入库单登记日期加45天计算，不随登录或刷新顺延；已填写的日期优先使用。日期已过仍未入库的货物标记为逾期，不当作现货，建议订货量显示“到货逾期、需核实”，核实前暂不生成确定订货量；45天后到仓的在途单独展示，供下单前核对。预计到仓日期可在批量入库单列表维护。缺货量为到货前无法满足的预计需求，不作为欠单累积。</p></div>
+              <div><h3>工厂备货建议</h3><p class="muted">工厂预登记批次从登记起计入在途，无需国内单号或箱号；普通批次仍按已填国内单号统计。汇总全部乐天店铺，按备货产品汇总后的90天日均需求须大于0.05件。肩带按组成用量拆成本体、配件，共用材料合并计算；每款成品库存优先覆盖自己的待发货和未来需求，45天内有明确到仓日期的成品在途从到仓日起抵扣未来需求，剩余需求再换算为材料，避免重复备货。当前可用库存＝日本库存−待发货占用；按日扣减预计销量，并在预计到仓日加入在途数量，推算45天后新备货到仓时的剩余库存。建议工厂备货＝max(0，90天净目标需求−到仓预计剩余)，向上取整。普通批次在途仅统计已上传国内单号且尚未入库的明细；未手动填写到仓日期时，默认按该批入库单登记日期加45天计算，不随登录或刷新顺延；已填写的日期优先使用。日期已过仍未入库的货物标记为逾期，不当作现货，建议订货量显示“到货逾期、需核实”，核实前暂不生成确定订货量；45天后到仓的在途单独展示，供下单前核对。预计到仓日期可在批量入库单列表维护。缺货量为到货前无法满足的预计需求，不作为欠单累积。</p></div>
               <button type="button" id="downloadRakutenStoreFactoryExcelBtn" class="compact-btn">Excel下载</button>
             </div>
             <ul class="stats overview-inline-stats">
@@ -1596,6 +1596,18 @@
           <button id="refreshBatchInbound" class="ghost">刷新</button>
         </div>
 
+        <article class="card">
+          <h3>工厂在途预登记（无需箱号）</h3>
+          <p class="muted">确认已向工厂下单后，导入产品ID、数量即可参与备货计算，默认登记日期＋45天到仓，不增加日本仓库存。装箱后在下方选择原批次，上传完整装箱表补齐箱号；未装箱和已装箱只计算一份在途，已入库部分自动退出。</p>
+          <form id="preregisterBatchInboundForm" class="form-grid">
+            <label>新建或更新原批次<select id="preregisterBatchOrderId"><option value="">新建预登记批次</option></select></label>
+            <label>新建批次号<input id="preregisterBatchNo" maxlength="48" placeholder="例如 PO-20261020-01，更新时可留空" /></label>
+            <label>完整产品数量表<input id="preregisterBatchFile" type="file" accept=".xlsx,.xls,.csv" required /></label>
+            <button type="submit">预览并登记</button>
+            <button type="button" id="downloadPreregisterTemplateBtn" class="ghost">下载无箱号模板</button>
+          </form>
+        </article>
+
         <div class="batch-inbound-layout">
           <article class="card">
             <h3>第一步：输入批号并采集箱号</h3>
@@ -1652,6 +1664,7 @@
                 <input id="batchInboundFile" type="file" accept=".xlsx,.xls,.csv" required />
               </label>
               <button type="submit">上传并校验箱号</button>
+              <p class="muted">预登记批次请上传完整装箱表（含已入库行）；可分批补箱号，未装箱数量保留在途。数量变化请先在上方更新原批次，不要新建重复批次。</p>
               <button id="downloadBatchInboundTemplateBtn" class="ghost" type="button">下载模板</button>
             </form>
           </article>

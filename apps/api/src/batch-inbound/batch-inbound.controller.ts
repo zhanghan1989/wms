@@ -1,3 +1,4 @@
+import { PreregisterBatchInboundDto } from './dto/preregister-batch-inbound.dto';
 import {
   BadRequestException,
   Body,
@@ -56,6 +57,56 @@ export class BatchInboundController {
   @Get('orders/:id')
   async detail(@Param('id') id: string): Promise<unknown> {
     return this.batchInboundService.detail(id);
+  }
+
+  @Get('preregister-template')
+  async planTemplate(@Res() res: Response): Promise<void> {
+    const file = this.batchInboundService.getPlanTemplate();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
+  @Post('orders/plan-preview')
+  @UseInterceptors(FileInterceptor('file'))
+  async previewPlan(@UploadedFile() file: { buffer?: Buffer }, @Body('orderId') id?: string): Promise<unknown> {
+    if (!file?.buffer) throw new BadRequestException('请上传预登记文件');
+    return this.batchInboundService.previewPlan(file.buffer, id);
+  }
+
+  @Post('orders/preregister')
+  @UseInterceptors(FileInterceptor('file'))
+  async preregister(
+    @Body() payload: PreregisterBatchInboundDto,
+    @UploadedFile() file: { buffer?: Buffer },
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    if (!file?.buffer) throw new BadRequestException('请上传产品ID和数量文件');
+    return this.batchInboundService.preregister(payload.batchNo, file.buffer, user.id, req.requestId);
+  }
+
+  @Post('orders/:id/plan')
+  @UseInterceptors(FileInterceptor('file'))
+  async updatePlan(
+    @Param('id') id: string,
+    @Body('expectedUpdatedAt') expectedUpdatedAt: string,
+    @UploadedFile() file: { buffer?: Buffer },
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    if (!file?.buffer) throw new BadRequestException('请上传更新后的完整预登记文件');
+    return this.batchInboundService.preregister('', file.buffer, user.id, req.requestId, id, expectedUpdatedAt);
+  }
+
+  @Post('orders/:id/cancel-plan')
+  async cancelPlan(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.batchInboundService.cancelPlan(id, user.id, req.requestId);
   }
 
   @Post('orders/collect')

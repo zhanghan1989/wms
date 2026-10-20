@@ -245,7 +245,7 @@ describe('Rakuten store dashboard', () => {
     const inTransitFindMany = jest.fn().mockResolvedValue([]);
     const factoryOrderFindMany = jest.fn().mockResolvedValue([{
       rmsConnectionId: 8n, orderId: 'factory-order-1', skuCode: 'RB-1', productName: '产品',
-      orderQuantity: 1, orderStatusText: '300', orderImportedDate: new Date('2026-08-20'),
+      orderQuantity: 90, orderStatusText: '300', orderImportedDate: new Date(Date.now() - 86400000),
       dispatchMode: 'overseas', shipmentNo: 'TRACK-2', trackingIsDelivered: false,
     }]);
     const prisma = {
@@ -263,6 +263,11 @@ describe('Rakuten store dashboard', () => {
       rakutenOrderRecord: { findMany: factoryOrderFindMany },
       masterProduct: { findMany: productFindMany },
       batchInboundItem: { findMany: inTransitFindMany },
+      batchInboundOrder: { findMany: jest.fn().mockResolvedValue([{
+        expectedArrivalDate: null, createdAt: new Date(),
+        plannedItems: [{ productId: 'BODY', qty: 60 }],
+        items: [{ productId: 'BODY', qty: 20 }],
+      }]) },
       rakutenRmsSyncRun: { findFirst: jest.fn().mockResolvedValue(null) },
     } as unknown as PrismaService;
     const service = new RakutenRmsApiService(
@@ -298,6 +303,7 @@ describe('Rakuten store dashboard', () => {
         productId: { in: ['BODY', 'HOOK', 'RB-1'] },
         status: 'pending',
         order: {
+          isPreRegistered: false,
           domesticOrderNo: { not: '' },
           status: { in: ['waiting_upload', 'waiting_inbound'] },
         },
@@ -305,6 +311,9 @@ describe('Rakuten store dashboard', () => {
       select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true, createdAt: true } } },
     }));
     expect(result.sourceSummary.includesLegacyData).toBe(includesLegacyData);
+    expect(result.dashboard.factoryRecommendations.rows.find((row: any) => row.productId === 'BODY')).toMatchObject({
+      inTransitQty: 40, suggestedFactoryQty: 50,
+    });
   });
 
   it('exports an overdue verification notice instead of a numeric order quantity', async () => {

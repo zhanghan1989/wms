@@ -302,9 +302,22 @@ model BatchInboundOrder {
   createdAt         DateTime                @default(now()) @map("created_at")
   updatedAt         DateTime                @updatedAt @map("updated_at")
   creator           User                    @relation(fields: [createdBy], references: [id])
+  isPreRegistered   Boolean                 @default(false) @map("is_pre_registered")
+  plannedItems      BatchInboundPlannedItem[]
   items             BatchInboundItem[]
 
   @@map("batch_inbound_orders")
+}
+
+model BatchInboundPlannedItem {
+  id        BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
+  orderId   BigInt            @map("order_id") @db.UnsignedBigInt
+  productId String            @map("product_id") @db.VarChar(128)
+  qty       Int
+  order     BatchInboundOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, productId])
+  @@map("batch_inbound_planned_items")
 }
 
 model BatchInboundItem {

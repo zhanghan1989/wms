@@ -1,3 +1,4 @@
+import { summarizeInboundPlan, validateInboundPacking } from './batch-inbound-plan';
 import { resolveInboundExpectedArrivalDate } from '../common/inbound-expected-arrival';
 import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
 import {
@@ -43,6 +44,7 @@ interface BatchInboundOrderSummary {
   seaOrderNo: string | null;
   expectedArrivalDate: string | null;
   defaultExpectedArrivalDate: string | null;
+  isPreRegistered: boolean;
   createdAt: Date;
   updatedAt: Date;
   creator: {
@@ -55,6 +57,7 @@ interface BatchInboundOrderSummary {
 }
 
 interface BatchInboundOrderDetail extends BatchInboundOrderSummary {
+  plannedItems: ReturnType<typeof summarizeInboundPlan>;
   items: Array<{
     id: string;
     boxCode: string;
@@ -129,6 +132,7 @@ export class BatchInboundService {
     const order = await this.prisma.batchInboundOrder.findUnique({
       where: { id: orderId },
       include: {
+        plannedItems: true,
         creator: {
           select: {
             id: true,
@@ -173,8 +177,8 @@ export class BatchInboundService {
       ) {
         throw new UnprocessableEntityException('只能删除刚采集箱号、尚未上传明细的批量入库单');
       }
-      if (this.readSeaOrderNo(order)) {
-        throw new UnprocessableEntityException('已保存海运单号的批量入库单不能删除');
+      if (this.readSeaOrderNo(order) || (order as { isPreRegistered?: boolean }).isPreRegistered) {
+        throw new UnprocessableEntityException('已保存海运单号或已预登记的批量入库单不能删除');
       }
 
       const deleted = await tx.batchInboundOrder.deleteMany({
@@ -211,12 +215,117 @@ export class BatchInboundService {
     return { success: true };
   }
 
+  async previewPlan(buffer: Buffer, idRaw?: string): Promise<unknown> {
+    const quantities = new Map<string, number>();
+    for (const line of this.parseExcelLines(buffer, false)) quantities.set(line.productId, (quantities.get(line.productId) ?? 0) + line.qty);
+    const existing = idRaw ? await this.prisma.batchInboundOrder.findUnique({
+      where: { id: parseId(idRaw, 'batchInboundOrderId') }, include: { plannedItems: true },
+    }) : null;
+    if (idRaw && (!existing || !existing.isPreRegistered)) throw new NotFoundException('预登记批次不存在');
+    const before = new Map((existing?.plannedItems ?? []).map((item) => [item.productId, item.qty]));
+    const ids = [...new Set([...before.keys(), ...quantities.keys()])];
+    return {
+      expectedUpdatedAt: existing?.updatedAt.toISOString() ?? null,
+      changes: ids.map((productId) => ({ productId, beforeQty: before.get(productId) ?? 0, afterQty: quantities.get(productId) ?? 0 })),
+    };
+  }
+
+  getPlanTemplate(): { fileName: string; content: Buffer } {
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([{ '产品ID': '', '数量': '' }]), '预登记');
+    return { fileName: '工厂在途预登记.xlsx', content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) };
+  }
+
+  async cancelPlan(idRaw: string, operatorId: bigint, requestId?: string): Promise<BatchInboundOrderDetail> {
+    const id = parseId(idRaw, 'batchInboundOrderId');
+    return stockTransaction(this.prisma, async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM batch_inbound_orders WHERE id = ${id} FOR UPDATE`);
+      const order = await tx.batchInboundOrder.findUnique({ where: { id } });
+      if (!order) throw new NotFoundException('批量入库单不存在');
+      if (!order.isPreRegistered || order.status === BatchInboundOrderStatus.confirmed) {
+        throw new UnprocessableEntityException('只能取消尚未完成的预登记批次剩余在途');
+      }
+      const saved = await tx.batchInboundOrder.update({
+        where: { id }, data: { status: BatchInboundOrderStatus.void },
+        include: { plannedItems: true, items: true, creator: { select: { id: true, username: true } } },
+      });
+      if (order.status !== BatchInboundOrderStatus.void) await this.auditService.create({
+        db: tx, entityType: 'batch_inbound_order', entityId: id, action: AuditAction.update,
+        eventType: AuditEventType.INBOUND_ORDER_CREATED, beforeData: { status: order.status },
+        afterData: { status: saved.status }, operatorId, requestId, remark: '取消预登记批次剩余在途，已入库库存保留',
+      });
+      return this.toOrderDetail(saved, tx);
+    });
+  }
+
+  async preregister(
+    batchNo: string, buffer: Buffer, operatorId: bigint, requestId?: string, orderIdRaw?: string, expectedUpdatedAt?: string,
+  ): Promise<BatchInboundOrderDetail> {
+    const lines = this.parseExcelLines(buffer, false);
+    const quantities = new Map<string, number>();
+    for (const line of lines) quantities.set(line.productId, (quantities.get(line.productId) ?? 0) + line.qty);
+    if (quantities.size > 2000 || [...quantities.values()].some((qty) => qty > 2147483647)) {
+      throw new BadRequestException('预登记最多2000种产品，单品数量不能超过2147483647');
+    }
+    return stockTransaction(this.prisma, async (tx) => {
+      const orderId = orderIdRaw ? parseId(orderIdRaw, 'batchInboundOrderId') : null;
+      if (orderId) await tx.$queryRaw(Prisma.sql`SELECT id FROM batch_inbound_orders WHERE id = ${orderId} FOR UPDATE`);
+      const existing = orderId ? await tx.batchInboundOrder.findUnique({ where: { id: orderId }, include: { plannedItems: true, items: true } }) : null;
+      if (orderId && !existing) throw new NotFoundException('批量入库单不存在');
+      if (existing && (!expectedUpdatedAt || existing.updatedAt.toISOString() !== expectedUpdatedAt)) throw new UnprocessableEntityException('批次已更新，请重新预览后再保存');
+      if (existing && (!existing.isPreRegistered || existing.status === BatchInboundOrderStatus.confirmed || existing.status === BatchInboundOrderStatus.void)) {
+        throw new UnprocessableEntityException('只能更新尚未完成的预登记批次');
+      }
+      const boxedQuantities = new Map<string, number>();
+      for (const item of existing?.items ?? []) boxedQuantities.set(item.productId, (boxedQuantities.get(item.productId) ?? 0) + item.qty);
+      for (const [productId, total] of boxedQuantities) {
+        if ((quantities.get(productId) ?? 0) < total) throw new UnprocessableEntityException(`产品 ${productId} 预登记数量不能少于已装箱数量 ${total}`);
+      }
+      const products = await tx.masterProduct.findMany({
+        where: { productId: { in: [...quantities.keys()] }, status: 1 }, select: { productId: true },
+      });
+      const ids = new Set(products.map((item) => item.productId));
+      const missing = [...quantities.keys()].filter((id) => !ids.has(id));
+      if (missing.length) throw new UnprocessableEntityException(`产品不存在或未启用：${missing.join('、')}`);
+      const data = [...quantities].map(([productId, qty]) => ({ productId, qty }));
+      let saved;
+      try {
+        saved = existing ? await tx.batchInboundOrder.update({
+          where: { id: existing.id }, data: { plannedItems: { deleteMany: {}, create: data } },
+          include: { plannedItems: true, creator: { select: { id: true, username: true } }, items: true },
+        }) : await tx.batchInboundOrder.create({
+          data: {
+            orderNo: `PRE-${batchNo}`, isPreRegistered: true, status: BatchInboundOrderStatus.waiting_upload,
+            expectedBoxCount: 0, rangeStart: 0, rangeEnd: 0, collectedBoxCodes: [], createdBy: operatorId,
+            plannedItems: { create: data },
+          },
+          include: { plannedItems: true, creator: { select: { id: true, username: true } }, items: true },
+        });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new UnprocessableEntityException('该预登记批次已存在，请选择原批次更新，不能重复新增');
+        }
+        throw error;
+      }
+      await this.auditService.create({
+        db: tx, entityType: 'batch_inbound_order', entityId: saved.id, action: existing ? AuditAction.update : AuditAction.create,
+        eventType: AuditEventType.INBOUND_ORDER_CREATED,
+        beforeData: existing ? { orderNo: existing.orderNo, plannedItems: existing.plannedItems.map((item) => ({ productId: item.productId, qty: item.qty })) } : null,
+        afterData: { orderNo: saved.orderNo, plannedItems: data }, operatorId, requestId,
+        remark: existing ? '更新原批次预登记数量（登记日期保留）' : '无箱号工厂在途预登记',
+      });
+      return this.toOrderDetail(saved, tx);
+    });
+  }
+
   async collect(
     payload: CollectBatchInboundDto,
     operatorId: bigint,
     requestId?: string,
   ): Promise<BatchInboundOrderDetail> {
     return stockTransaction(this.prisma, async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM batch_inbound_orders
+        WHERE status IN ('waiting_upload', 'waiting_inbound') ORDER BY id FOR UPDATE`);
       const normalizedBatchNo = payload.batchNo.trim().replace(/^0+/, '');
       if (!normalizedBatchNo || !/^[1-9]\d*$/.test(normalizedBatchNo)) {
         throw new BadRequestException('批号必须是大于0的数字');
@@ -310,9 +419,12 @@ export class BatchInboundService {
     const mergedLines = this.mergeLines(parsedLines);
 
     return stockTransaction(this.prisma, async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM batch_inbound_orders
+        WHERE status IN ('waiting_upload', 'waiting_inbound') ORDER BY id FOR UPDATE`);
       const order = await tx.batchInboundOrder.findUnique({
         where: { id: orderId },
         include: {
+          plannedItems: true,
           creator: {
             select: {
               id: true,
@@ -351,19 +463,33 @@ export class BatchInboundService {
         );
       }
 
-      const collectedBoxCodes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
       const uploadedBoxCodes = Array.from(new Set(mergedLines.map((line) => line.boxCode))).sort(
         (a, b) => this.boxCodeToNumber(a) - this.boxCodeToNumber(b),
       );
-
-      this.validateUploadedBoxes(collectedBoxCodes, uploadedBoxCodes);
-
+      if (order.isPreRegistered) {
+        validateInboundPacking(order.plannedItems, order.items, mergedLines);
+        const used = await this.getUsedBoxNumbers(tx);
+        const reserved = await this.getReservedBoxNumbers(tx, order.id);
+        const own = new Set(this.parseCollectedBoxCodes(order.collectedBoxCodes, true));
+        for (const code of uploadedBoxCodes) {
+          if (reserved.has(this.boxCodeToNumber(code)) || (!own.has(code) && used.has(this.boxCodeToNumber(code)))) {
+            throw new UnprocessableEntityException(`箱号 ${code} 已被其他入库单或仓库占用`);
+          }
+        }
+      } else {
+        if (order.items.some((item) => item.status === BatchInboundItemStatus.confirmed)) {
+          throw new UnprocessableEntityException('已有入库记录的普通批次不能重新上传');
+        }
+        this.validateUploadedBoxes(this.parseCollectedBoxCodes(order.collectedBoxCodes), uploadedBoxCodes);
+      }
+      const confirmedKeys = new Set(order.items.filter((item) => item.status === BatchInboundItemStatus.confirmed)
+        .map((item) => `${item.boxCode}||${item.productId}`));
       await tx.batchInboundItem.deleteMany({
-        where: { orderId: order.id },
+        where: { orderId: order.id, status: BatchInboundItemStatus.pending },
       });
 
       await tx.batchInboundItem.createMany({
-        data: mergedLines.map((line) => ({
+        data: mergedLines.filter((line) => !confirmedKeys.has(`${line.boxCode}||${line.productId}`)).map((line) => ({
           orderId: order.id,
           boxCode: line.boxCode,
           productId: line.productId,
@@ -380,8 +506,14 @@ export class BatchInboundService {
             ? BatchInboundOrderStatus.waiting_inbound
             : BatchInboundOrderStatus.waiting_upload,
           uploadedFileName: originalName ?? null,
+          ...(order.isPreRegistered ? {
+            collectedBoxCodes: uploadedBoxCodes, expectedBoxCount: uploadedBoxCodes.length,
+            rangeStart: this.boxCodeToNumber(uploadedBoxCodes[0]),
+            rangeEnd: this.boxCodeToNumber(uploadedBoxCodes[uploadedBoxCodes.length - 1]),
+          } : {}),
         },
         include: {
+          plannedItems: true,
           creator: {
             select: {
               id: true,
@@ -435,7 +567,7 @@ export class BatchInboundService {
       }
       const updated = await tx.batchInboundOrder.update({
         where: { id: orderId }, data: { expectedArrivalDate: date },
-        include: { creator: { select: { id: true, username: true } }, items: { orderBy: BATCH_INBOUND_ITEM_ORDER_BY } },
+        include: { plannedItems: true, creator: { select: { id: true, username: true } }, items: { orderBy: BATCH_INBOUND_ITEM_ORDER_BY } },
       });
       await this.auditService.create({
         db: tx, entityType: 'batch_inbound_order', entityId: orderId,
@@ -464,6 +596,7 @@ export class BatchInboundService {
       const order = await tx.batchInboundOrder.findUnique({
         where: { id: orderId },
         include: {
+          plannedItems: true,
           creator: {
             select: {
               id: true,
@@ -496,6 +629,7 @@ export class BatchInboundService {
           status: nextStatus,
         },
         include: {
+          plannedItems: true,
           creator: {
             select: {
               id: true,
@@ -547,6 +681,7 @@ export class BatchInboundService {
       const order = await tx.batchInboundOrder.findUnique({
         where: { id: orderId },
         include: {
+          plannedItems: true,
           creator: {
             select: {
               id: true,
@@ -581,6 +716,7 @@ export class BatchInboundService {
           status: BatchInboundOrderStatus.waiting_inbound,
         },
         include: {
+          plannedItems: true,
           creator: {
             select: {
               id: true,
@@ -833,6 +969,7 @@ export class BatchInboundService {
       select: {
         id: true,
         status: true,
+        isPreRegistered: true,
       },
     });
     if (!order) {
@@ -851,8 +988,14 @@ export class BatchInboundService {
       },
     });
 
+    let hasUnpacked = false;
+    if (order.isPreRegistered) {
+      const plans = await tx.batchInboundPlannedItem.findMany({ where: { orderId } });
+      const items = await tx.batchInboundItem.findMany({ where: { orderId } });
+      hasUnpacked = summarizeInboundPlan(plans, items).some((item) => item.unpackedQty > 0);
+    }
     const nextStatus =
-      totalCount > 0 && pendingCount === 0
+      totalCount > 0 && pendingCount === 0 && !hasUnpacked
         ? BatchInboundOrderStatus.confirmed
         : BatchInboundOrderStatus.waiting_inbound;
 
@@ -1094,8 +1237,8 @@ export class BatchInboundService {
     };
   }
 
-  private parseExcelLines(fileBuffer: Buffer): ParsedInboundLine[] {
-    return parseExcelLinesByOverride.call(this, fileBuffer);
+  private parseExcelLines(fileBuffer: Buffer, requireBox = true): ParsedInboundLine[] {
+    return parseExcelLinesByOverride.call(this, fileBuffer, requireBox);
   }
 
   private mergeLines(lines: ParsedInboundLine[]): ParsedInboundLine[] {
@@ -1156,9 +1299,10 @@ export class BatchInboundService {
     return used;
   }
 
-  private async getReservedBoxNumbers(tx: Tx): Promise<Set<number>> {
+  private async getReservedBoxNumbers(tx: Tx, excludeOrderId?: bigint): Promise<Set<number>> {
     const orders = await tx.batchInboundOrder.findMany({
       where: {
+        ...(excludeOrderId ? { id: { not: excludeOrderId } } : {}),
         status: {
           in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
         },
@@ -1170,7 +1314,7 @@ export class BatchInboundService {
 
     const reserved = new Set<number>();
     orders.forEach((order) => {
-      const boxCodes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
+      const boxCodes = this.parseCollectedBoxCodes(order.collectedBoxCodes, true);
       boxCodes.forEach((code) => {
         const num = this.boxCodeToNumber(code);
         if (num > 0) {
@@ -1235,7 +1379,7 @@ export class BatchInboundService {
     return '';
   }
 
-  private parseCollectedBoxCodes(value: Prisma.JsonValue): string[] {
+  private parseCollectedBoxCodes(value: Prisma.JsonValue, allowEmpty = false): string[] {
     if (!Array.isArray(value)) {
       throw new UnprocessableEntityException('采集箱号数据无效');
     }
@@ -1244,7 +1388,7 @@ export class BatchInboundService {
       .map((item) => this.normalizeBoxCode(String(item ?? '')))
       .filter((item) => Boolean(item));
 
-    if (boxCodes.length === 0) {
+    if (boxCodes.length === 0 && !allowEmpty) {
       throw new UnprocessableEntityException('采集箱号数据无效');
     }
 
@@ -1289,6 +1433,7 @@ export class BatchInboundService {
     const order = await tx.batchInboundOrder.findUnique({
       where: { id: orderId },
       include: {
+        plannedItems: true,
         creator: {
           select: {
             id: true,
@@ -1318,6 +1463,8 @@ export class BatchInboundService {
     uploadedFileName: string | null;
     domesticOrderNo?: string | null;
     seaOrderNo?: string | null;
+    isPreRegistered?: boolean;
+    plannedItems?: Array<{ productId: string; qty: number }>;
     expectedArrivalDate?: Date | null;
     createdAt: Date;
     updatedAt: Date;
@@ -1336,7 +1483,8 @@ export class BatchInboundService {
       expectedBoxCount: order.expectedBoxCount,
       rangeStart: order.rangeStart,
       rangeEnd: order.rangeEnd,
-      collectedBoxCodes: this.parseCollectedBoxCodes(order.collectedBoxCodes),
+      collectedBoxCodes: this.parseCollectedBoxCodes(order.collectedBoxCodes, order.isPreRegistered),
+      isPreRegistered: order.isPreRegistered ?? false,
       uploadedFileName: order.uploadedFileName,
       domesticOrderNo: this.readDomesticOrderNo(order),
       seaOrderNo: this.readSeaOrderNo(order),
@@ -1365,6 +1513,8 @@ export class BatchInboundService {
     uploadedFileName: string | null;
     domesticOrderNo?: string | null;
     seaOrderNo?: string | null;
+    isPreRegistered?: boolean;
+    plannedItems?: Array<{ productId: string; qty: number }>;
     expectedArrivalDate?: Date | null;
     createdAt: Date;
     updatedAt: Date;
@@ -1396,15 +1546,20 @@ export class BatchInboundService {
         })
       : [];
     const productNameById = new Map(products.map((product) => [product.productId, product.productName]));
+    const plannedItems = summarizeInboundPlan(order.plannedItems ?? [], order.items).map((item) => ({
+      ...item, inTransitQty: order.status === BatchInboundOrderStatus.void ? 0 : item.inTransitQty,
+    }));
 
     return {
+      plannedItems,
       id: order.id.toString(),
       orderNo: order.orderNo,
       status: order.status,
       expectedBoxCount: order.expectedBoxCount,
       rangeStart: order.rangeStart,
       rangeEnd: order.rangeEnd,
-      collectedBoxCodes: this.parseCollectedBoxCodes(order.collectedBoxCodes),
+      collectedBoxCodes: this.parseCollectedBoxCodes(order.collectedBoxCodes, order.isPreRegistered),
+      isPreRegistered: order.isPreRegistered ?? false,
       uploadedFileName: order.uploadedFileName,
       domesticOrderNo: this.readDomesticOrderNo(order),
       seaOrderNo: this.readSeaOrderNo(order),
@@ -1477,6 +1632,7 @@ async function getUploadTemplateByOverride(this: BatchInboundService) {
 function parseExcelLinesByOverride(
   this: BatchInboundService,
   fileBuffer: Buffer,
+  requireBox = true,
 ): ParsedInboundLine[] {
   let workbook: XLSX.WorkBook;
   try {
@@ -1511,13 +1667,13 @@ function parseExcelLinesByOverride(
     const qtyRaw = this['pickField'](normalizedRow, ['数量', '总数', 'qty', 'count', 'quantity']);
 
     const boxCode = this['normalizeBoxCode'](rawBoxCode);
-    if (!boxCode || !productId || !qtyRaw) {
-      errors.push(`第${rowNo}行：箱号/产品ID/数量为必填`);
+    if ((requireBox && !boxCode) || !productId || !qtyRaw) {
+      errors.push(`第${rowNo}行：${requireBox ? "箱号/" : ""}产品ID/数量为必填`);
       return;
     }
 
     const qty = Number(qtyRaw);
-    if (!Number.isInteger(qty) || qty <= 0) {
+    if (!Number.isSafeInteger(qty) || qty <= 0 || qty > 2147483647) {
       errors.push(`第${rowNo}行：数量必须是大于 0 的整数`);
       return;
     }

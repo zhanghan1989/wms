@@ -10322,6 +10322,7 @@ async function loadEmptyBoxes() {
 }
 
 function getBatchInboundStatusText(status, order = null) {
+  if (order?.isPreRegistered && status === 'waiting_upload' && !order?.uploadedFileName) return '已下单预登记（待装箱）';
   if (status === "waiting_upload") {
     if (order?.domesticOrderNo && !order?.seaOrderNo) {
       return "已安排生产（待发海运）";
@@ -10380,6 +10381,10 @@ function renderBatchInboundOrderNoEditor({ order, kind, value, placeholder }) {
 }
 
 function formatBatchRange(order) {
+  if (order?.isPreRegistered) {
+    const codes = order.collectedBoxCodes || [];
+    return codes.length ? `${codes.slice(0, 8).join('、')}${codes.length > 8 ? '…' : ''}（${codes.length}箱）` : '未装箱';
+  }
   if (!order?.rangeStart || !order?.rangeEnd || !order?.expectedBoxCount) {
     return "-";
   }
@@ -10387,13 +10392,20 @@ function formatBatchRange(order) {
 }
 
 function renderBatchInboundUploadOptions() {
+  const planSelect = $("preregisterBatchOrderId");
+  if (planSelect) {
+    const previous = planSelect.value;
+    const plans = state.batchInboundOrders.filter((order) => order.isPreRegistered && ['waiting_upload', 'waiting_inbound'].includes(order.status));
+    planSelect.innerHTML = '<option value="">新建预登记批次</option>' + plans.map((order) => `<option value="${escapeHtml(order.id)}">更新 ${escapeHtml(order.orderNo)}</option>`).join('');
+    if (plans.some((order) => String(order.id) === previous)) planSelect.value = previous;
+  }
   const select = $("batchUploadOrderId");
   if (!select) return;
   const prev = select.value || state.selectedBatchInboundOrderId || "";
   const waitingUploadOrders = state.batchInboundOrders.filter(
     (order) =>
-      order.status === "waiting_upload" &&
-      !order.uploadedFileName,
+      (order.isPreRegistered && ['waiting_upload', 'waiting_inbound'].includes(order.status)) ||
+      (order.status === "waiting_upload" && !order.uploadedFileName),
   );
   const options = waitingUploadOrders
     .map(
@@ -10409,7 +10421,7 @@ function renderBatchInboundUploadOptions() {
 }
 
 function canDeleteBatchInboundOrder(order) {
-  return order.status === "waiting_upload" &&
+  return !order.isPreRegistered && order.status === "waiting_upload" &&
     order.uploadedFileName == null &&
     order.itemCount === 0 &&
     !String(order.seaOrderNo || "").trim();
@@ -10431,6 +10443,9 @@ function renderBatchInboundOrders() {
           order.id,
         )}">查看</button>`,
       ];
+      if (order.isPreRegistered && ['waiting_upload', 'waiting_inbound'].includes(order.status)) {
+        actions.push(`<button class="tiny-btn danger" data-action="batchInboundCancelPlan" data-order-id="${escapeHtml(order.id)}">取消剩余在途</button>`);
+      }
       if (canDeleteBatchInboundOrder(order)) {
         actions.push(`<button class="tiny-btn danger" data-action="batchInboundDeleteOrder" data-order-id="${escapeHtml(
           order.id,
@@ -10669,7 +10684,8 @@ function renderBatchInboundDetail(detail) {
       </div>
       <div class="batch-detail-actions">${headerActions}</div>
     </div>
-    ${boxBlocks || '<div class="muted">暂无明细</div>'}
+    ${detail.isPreRegistered ? `<h4>预登记进度（件）</h4><table><thead><tr><th>产品ID</th><th>预登记</th><th>未装箱</th><th>已装箱待入库</th><th>已入库计划数量</th><th>剩余在途</th></tr></thead><tbody>${(detail.plannedItems || []).map((item) => `<tr><td>${renderMasterProductDetailLink(item.productId)}</td><td>${item.qty}</td><td>${item.unpackedQty}</td><td>${item.boxedQty - item.confirmedQty}</td><td>${item.confirmedQty}</td><td>${detail.status === 'void' ? 0 : item.inTransitQty}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${boxBlocks || '<div class="muted">暂无装箱明细</div>'}
   `;
 }
 
@@ -16919,6 +16935,40 @@ function bindForms() {
     }
   });
 
+  $("preregisterBatchInboundForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await withBusyButton(getSubmitButton(event.currentTarget, event), "处理中...", async () => {
+        const file = $("preregisterBatchFile").files[0];
+        const orderId = $("preregisterBatchOrderId").value;
+        const batchNo = $("preregisterBatchNo").value.trim();
+        if (!file) throw new Error("请选择预登记文件");
+        if (!orderId && !/^[A-Za-z0-9_-]{1,48}$/.test(batchNo)) throw new Error("请输入批次号，仅支持字母、数字、下划线和短横线");
+        const previewData = new FormData(); previewData.append('file', file);
+        if (orderId) previewData.append('orderId', orderId);
+        const preview = await request('/batch-inbound/orders/plan-preview', { method: 'POST', body: previewData });
+        const changes = preview.changes.filter((item) => item.beforeQty !== item.afterQty);
+        if (!changes.length) throw new Error("数量没有变化，无需更新");
+        const details = changes.map((item) => `${item.productId}：${item.beforeQty} → ${item.afterQty}`).join('；');
+        const ok = await openActionConfirmModal(`${orderId ? '更新原批次，保留登记日期' : '确认已向工厂下单，将登记在途'}。数量变化：${details}。此操作不增加日本仓库存。`, '确认预登记数量', '确认登记');
+        if (!ok) return;
+        const data = new FormData(); data.append('file', file);
+        if (orderId) data.append('expectedUpdatedAt', preview.expectedUpdatedAt);
+        else data.append('batchNo', batchNo);
+        const result = await request(orderId ? `/batch-inbound/orders/${orderId}/plan` : '/batch-inbound/orders/preregister', { method: 'POST', body: data });
+        state.selectedBatchInboundOrderId = result.id;
+        $("preregisterBatchInboundForm").reset();
+        await loadBatchInboundOrders({ refreshDetail: false });
+        await loadBatchInboundOrderDetail(result.id);
+        showToast('预登记已保存，后续请更新同一批次');
+      });
+    } catch (error) { showToast(error.message, true); }
+  });
+  $("downloadPreregisterTemplateBtn").addEventListener("click", async () => {
+    try { await downloadAuthorizedFile('/batch-inbound/preregister-template', {}, '工厂在途预登记.xlsx'); }
+    catch (error) { showToast(error.message, true); }
+  });
+
   $("collectBatchInboundForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
@@ -19846,6 +19896,13 @@ function bindDelegates() {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
           });
         }
+      } else if (action === "batchInboundCancelPlan") {
+        const ok = await openActionConfirmModal('取消此批次剩余在途后，将不再抵扣备货需求。已入库库存和历史记录保留。', '取消剩余在途', '确认取消');
+        if (!ok) return;
+        await request(`/batch-inbound/orders/${orderId}/cancel-plan`, { method: 'POST' });
+        await loadBatchInboundOrders({ refreshDetail: false });
+        if (state.selectedBatchInboundOrderId === orderId) await loadBatchInboundOrderDetail(orderId, { silent: true });
+        showToast('剩余在途已取消');
       } else if (action === "batchInboundDeleteOrder") {
         const orderNo = button.dataset.orderNo || orderId;
         const ok = await openDeleteConfirmModal(

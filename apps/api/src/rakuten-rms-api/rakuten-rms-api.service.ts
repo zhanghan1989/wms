@@ -314,6 +314,7 @@ export class RakutenRmsApiService {
           productId: { in: planningProductIds },
           status: BatchInboundItemStatus.pending,
           order: {
+            isPreRegistered: false,
             domesticOrderNo: { not: "" },
             status: { in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound] },
           },
@@ -321,6 +322,29 @@ export class RakutenRmsApiService {
         select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true, createdAt: true } } },
       })
       : [];
+    const preregisteredOrders = planningProductIds.length
+      ? await this.prisma.batchInboundOrder.findMany({
+        where: {
+          isPreRegistered: true,
+          status: { in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound] },
+          plannedItems: { some: { productId: { in: planningProductIds } } },
+        },
+        select: {
+          expectedArrivalDate: true, createdAt: true,
+          plannedItems: { where: { productId: { in: planningProductIds } }, select: { productId: true, qty: true } },
+          items: { where: { status: BatchInboundItemStatus.confirmed, productId: { in: planningProductIds } }, select: { productId: true, qty: true } },
+        },
+      }) : [];
+    // Read each batch once: querying each plan with all of its batch's receipts
+    // would duplicate a potentially large receipt list for every product.
+    const preregisteredTransit = preregisteredOrders.flatMap((order) => {
+      const confirmed = new Map<string, number>();
+      for (const item of order.items) confirmed.set(item.productId, (confirmed.get(item.productId) ?? 0) + item.qty);
+      return order.plannedItems.map((item) => ({
+        productId: item.productId, qty: Math.max(0, item.qty - (confirmed.get(item.productId) ?? 0)),
+        order: { expectedArrivalDate: order.expectedArrivalDate, createdAt: order.createdAt },
+      }));
+    });
     const selectedShop = {
       connectionId: selected.id.toString(),
       shopId: selected.shopId.toString(),
@@ -352,7 +376,7 @@ export class RakutenRmsApiService {
         orders,
         factoryOrders,
         products,
-        inTransit: inTransitRows.map((row) => ({
+        inTransit: [...inTransitRows, ...preregisteredTransit].map((row) => ({
           productId: row.productId,
           inTransitQty: Number(row.qty ?? 0),
           registeredAt: row.order.createdAt,
