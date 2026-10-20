@@ -295,6 +295,7 @@ model BatchInboundOrder {
   collectedBoxCodes Json                    @map("collected_box_codes")
   uploadedFileName  String?                 @map("uploaded_file_name") @db.VarChar(255)
   domesticOrderNo   String?                 @map("domestic_order_no") @db.VarChar(128)
+  expectedArrivalDate DateTime?              @map("expected_arrival_date") @db.Date
   seaOrderNo        String?                 @map("sea_order_no") @db.VarChar(128)
   remark            String?                 @db.VarChar(255)
   createdBy         BigInt                  @map("created_by") @db.UnsignedBigInt

@@ -556,6 +556,7 @@
               </div>
               <button type="button" id="downloadAmazonStoreFactoryExcelBtn" class="compact-btn">Excel下载</button>
             </div>
+            <div id="rakutenStoreFactoryIssues" class="muted"></div>
             <ul class="stats overview-inline-stats">
               <li><span>建议备货产品数</span><strong id="amazonStoreFactoryRecommendationCount">-</strong></li>
               <li><span>建议直发FBA总数</span><strong id="amazonStoreFactorySuggestedQty">-</strong></li>
@@ -646,16 +647,18 @@
           </article>
           <article class="card amazon-store-factory-card">
             <div class="card-head">
-              <div><h3>工厂备货建议</h3><p class="muted">汇总全部乐天店铺计算，仅处理90天日均销量大于0.1件的产品。有效库存 = 当前日本库存＋确认在途−待发货占用；预计到货剩余 = max(0，有效库存−90天日均销量×45天生产物流时间)；建议数量 = max(0，90天目标库存−预计到货剩余)。组合商品按组成产品计算；确认在途仅统计已上传国内单号且尚未入库的明细。</p></div>
+              <div><h3>工厂备货建议</h3><p class="muted">汇总全部乐天店铺，按备货产品汇总后的90天日均需求须大于0.05件。肩带按组成用量拆成本体、配件，共用材料合并计算；每款成品库存优先覆盖自己的待发货和未来需求，45天内有明确到仓日期的成品在途从到仓日起抵扣未来需求，剩余需求再换算为材料，避免重复备货。当前可用库存＝日本库存−待发货占用；按日扣减预计销量，并在预计到仓日加入在途数量，推算45天后新备货到仓时的剩余库存。建议工厂备货＝max(0，90天净目标需求−到仓预计剩余)，向上取整。在途仅统计已上传国内单号且尚未入库的明细；未填写日期或日期已过仍未入库的数量须核实，不自动抵扣；45天后到仓的在途单独展示，供下单前核对。预计到仓日期可在批量入库单列表维护。缺货量为到货前无法满足的预计需求，不作为欠单累积。</p></div>
               <button type="button" id="downloadRakutenStoreFactoryExcelBtn" class="compact-btn">Excel下载</button>
             </div>
             <ul class="stats overview-inline-stats">
               <li><span>建议备货产品数</span><strong id="rakutenStoreFactoryRecommendationCount">-</strong></li>
               <li><span>建议工厂备货总数</span><strong id="rakutenStoreFactorySuggestedQty">-</strong></li>
+              <li><span>到货前缺货产品</span><strong id="rakutenStoreFactoryShortageCount">-</strong></li>
+              <li><span>在途待核实产品</span><strong id="rakutenStoreFactoryUnverifiedCount">-</strong></li>
             </ul>
             <div class="master-product-table-wrap amazon-dashboard-table-wrap">
               <table class="amazon-store-dashboard-product-table">
-                <thead><tr><th>乐天SKU</th><th>产品</th><th>近90天销量</th><th>90天日均</th><th>当前日本库存</th><th>确认在途</th><th>待发货占用</th><th>有效库存</th><th>45天预计消耗</th><th>预计到货剩余</th><th>90天目标库存</th><th>建议工厂备货</th></tr></thead>
+                <thead><tr><th>备货产品ID</th><th>产品</th><th>类型</th><th>需求来源成品</th><th>近90天需求</th><th>90天日均需求</th><th>成品抵扣需求</th><th>当前日本库存</th><th>确认在途</th><th>45天内到仓</th><th>待核实在途</th><th>45天后到仓</th><th>待发货占用</th><th>当前可用库存</th><th>预计缺货日期</th><th>到货前缺口</th><th>新备货到仓日</th><th>45天预计消耗</th><th>预计到货剩余</th><th>90天净目标需求</th><th>建议工厂备货</th></tr></thead>
                 <tbody id="rakutenStoreFactoryRecommendationBody"></tbody>
               </table>
             </div>
@@ -1667,6 +1670,7 @@
                   <th>采集箱号范围</th>
                   <th>国内单号</th>
                   <th>海运单号</th>
+                  <th>预计到仓日期</th>
                   <th>明细进度</th>
                   <th>操作</th>
                 </tr>

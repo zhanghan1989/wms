@@ -40,6 +40,7 @@ interface BatchInboundOrderSummary {
   uploadedFileName: string | null;
   domesticOrderNo: string | null;
   seaOrderNo: string | null;
+  expectedArrivalDate: string | null;
   createdAt: Date;
   updatedAt: Date;
   creator: {
@@ -413,6 +414,35 @@ export class BatchInboundService {
       });
 
       return this.toOrderDetail(updatedOrder, tx);
+    });
+  }
+
+  async updateExpectedArrivalDate(
+    orderIdParam: string, dateRaw: string, operatorId: bigint, requestId?: string,
+  ): Promise<BatchInboundOrderDetail> {
+    const orderId = parseId(orderIdParam, 'batchInboundOrderId');
+    const date = dateRaw ? new Date(`${dateRaw}T00:00:00.000Z`) : null;
+    if (date && (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dateRaw)) {
+      throw new BadRequestException('预计到仓日期无效');
+    }
+    return stockTransaction(this.prisma, async (tx) => {
+      const order = await tx.batchInboundOrder.findUnique({ where: { id: orderId } });
+      if (!order) throw new NotFoundException('批量入库单不存在');
+      if (order.status === BatchInboundOrderStatus.confirmed || order.status === BatchInboundOrderStatus.void) {
+        throw new UnprocessableEntityException('已确认或已作废的入库单不能修改预计到仓日期');
+      }
+      const updated = await tx.batchInboundOrder.update({
+        where: { id: orderId }, data: { expectedArrivalDate: date },
+        include: { creator: { select: { id: true, username: true } }, items: { orderBy: BATCH_INBOUND_ITEM_ORDER_BY } },
+      });
+      await this.auditService.create({
+        db: tx, entityType: 'batch_inbound_order', entityId: orderId,
+        action: AuditAction.update, eventType: AuditEventType.INBOUND_ORDER_CREATED,
+        beforeData: { expectedArrivalDate: order.expectedArrivalDate?.toISOString() ?? null },
+        afterData: { expectedArrivalDate: date?.toISOString() ?? null },
+        operatorId, requestId, remark: '修改预计到仓日期',
+      });
+      return this.toOrderDetail(updated, tx);
     });
   }
 
@@ -1286,6 +1316,7 @@ export class BatchInboundService {
     uploadedFileName: string | null;
     domesticOrderNo?: string | null;
     seaOrderNo?: string | null;
+    expectedArrivalDate?: Date | null;
     createdAt: Date;
     updatedAt: Date;
     collectedBoxCodes: Prisma.JsonValue;
@@ -1307,6 +1338,7 @@ export class BatchInboundService {
       uploadedFileName: order.uploadedFileName,
       domesticOrderNo: this.readDomesticOrderNo(order),
       seaOrderNo: this.readSeaOrderNo(order),
+      expectedArrivalDate: order.expectedArrivalDate?.toISOString().slice(0, 10) ?? null,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       creator: {
@@ -1330,6 +1362,7 @@ export class BatchInboundService {
     uploadedFileName: string | null;
     domesticOrderNo?: string | null;
     seaOrderNo?: string | null;
+    expectedArrivalDate?: Date | null;
     createdAt: Date;
     updatedAt: Date;
     collectedBoxCodes: Prisma.JsonValue;
@@ -1372,6 +1405,7 @@ export class BatchInboundService {
       uploadedFileName: order.uploadedFileName,
       domesticOrderNo: this.readDomesticOrderNo(order),
       seaOrderNo: this.readSeaOrderNo(order),
+      expectedArrivalDate: order.expectedArrivalDate?.toISOString().slice(0, 10) ?? null,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       creator: {

@@ -24,6 +24,7 @@ import { CollectBatchInboundDto } from './dto/collect-batch-inbound.dto';
 import { ConfirmBatchInboundDto } from './dto/confirm-batch-inbound.dto';
 import {
   UpdateDomesticOrderNoDto,
+  UpdateExpectedArrivalDateDto,
   UpdateSeaOrderNoDto,
 } from './dto/update-logistics-order-no.dto';
 
@@ -113,6 +114,18 @@ export class BatchInboundController {
       payload.seaOrderNo,
       user.id,
       req.requestId,
+    );
+  }
+
+  @Post('orders/:id/expected-arrival-date')
+  async updateExpectedArrivalDate(
+    @Param('id') id: string,
+    @Body() payload: UpdateExpectedArrivalDateDto,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.batchInboundService.updateExpectedArrivalDate(
+      id, payload.expectedArrivalDate, user.id, req.requestId,
     );
   }
 

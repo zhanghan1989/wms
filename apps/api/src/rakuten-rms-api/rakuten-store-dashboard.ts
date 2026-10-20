@@ -1,3 +1,5 @@
+import { buildFactoryMaterialMetrics, FactoryProduct } from './rakuten-factory-materials';
+
 export interface RakutenDashboardOrderRow {
   orderId: string | null;
   skuCode: string | null;
@@ -11,15 +13,12 @@ export interface RakutenDashboardOrderRow {
   salesAmount: number;
 }
 
-export interface RakutenDashboardProductRow {
-  productId: string;
-  productName: string | null;
-  stockQty: number;
-}
+export type RakutenDashboardProductRow = FactoryProduct;
 
 export interface RakutenDashboardInTransitRow {
   productId: string;
   inTransitQty: number;
+  expectedArrivalDate?: string | null;
 }
 
 const CANCELLED_STATUSES = new Set(['800', '900']);
@@ -28,7 +27,7 @@ const FACTORY_PRODUCTION_DAYS = 30;
 const FACTORY_TRANSPORT_DAYS = 15;
 const FACTORY_PRODUCTION_LOGISTICS_DAYS = FACTORY_PRODUCTION_DAYS + FACTORY_TRANSPORT_DAYS;
 const FACTORY_TARGET_STOCK_DAYS = 90;
-const FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE = 0.1;
+const FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE = 0.05;
 
 function nonNegative(value: unknown): number {
   const parsed = Number(value ?? 0);
@@ -115,9 +114,17 @@ export function buildRakutenStoreDashboard(input: {
   const current = metrics(currentRows);
   const previous = metrics(previousRows);
   const productLookup = new Map(products.map((row) => [normalize(row.productId), row]));
-  const inTransitLookup = new Map(inTransit.map((row) => [
-    normalize(row.productId), nonNegative(row.inTransitQty),
-  ]));
+  const todayKey = tokyoDateKey(now);
+  const todayMs = Date.parse(`${todayKey}T00:00:00.000Z`);
+  const dateAfterDays = (days: number) => new Date(todayMs + days * 86400000).toISOString().slice(0, 10);
+  const factoryArrivalDate = dateAfterDays(FACTORY_PRODUCTION_LOGISTICS_DAYS);
+  const inTransitLookup = new Map<string, RakutenDashboardInTransitRow[]>();
+  for (const row of inTransit) {
+    const key = normalize(row.productId);
+    const rows = inTransitLookup.get(key) ?? [];
+    rows.push(row);
+    inTransitLookup.set(key, rows);
+  }
   const factoryPeriodStart = new Date(now.getTime() - FACTORY_RECOMMENDATION_DAYS * 24 * 60 * 60 * 1000);
   const factoryMetrics = new Map<string, {
     skuCode: string; productId: string; productName: string | null;
@@ -139,32 +146,83 @@ export function buildRakutenStoreDashboard(input: {
       unitCount90d: 0,
       pendingShipmentQty: 0,
       stockQty: nonNegative(product.stockQty),
-      inTransitQty: inTransitLookup.get(key) ?? 0,
+      inTransitQty: (inTransitLookup.get(key) ?? []).reduce((sum, item) => sum + nonNegative(item.inTransitQty), 0),
     };
     const quantity = nonNegative(row.orderQuantity);
     metric.unitCount90d += quantity;
     if (!row.shipmentNo) metric.pendingShipmentQty += quantity;
     factoryMetrics.set(key, metric);
   }
-  const factoryRows = Array.from(factoryMetrics.values()).map((row) => {
+  const materialPlanning = buildFactoryMaterialMetrics({
+    sales: Array.from(factoryMetrics.values()), products, inTransit, todayKey,
+    leadDays: FACTORY_PRODUCTION_LOGISTICS_DAYS, targetDays: FACTORY_TARGET_STOCK_DAYS,
+  });
+  const factoryRows = materialPlanning.rows.map((row) => {
     const averageDaily90d = row.unitCount90d / 90;
-    const effectiveStockQty = row.stockQty + row.inTransitQty - row.pendingShipmentQty;
-    const productionLogisticsDemandQty = averageDaily90d * FACTORY_PRODUCTION_LOGISTICS_DAYS;
-    const remainingQtyAtArrival = Math.max(0, effectiveStockQty - productionLogisticsDemandQty);
-    const targetStockQtyRaw = averageDaily90d * FACTORY_TARGET_STOCK_DAYS;
+    // Confirmed in-transit goods are not available warehouse stock yet.
+    const effectiveStockQty = row.stockQty - row.pendingShipmentQty;
+    const productionLogisticsDemandQty = row.dailyDemandQty.reduce((sum, qty) => sum + qty, 0);
+    const arrivals = new Map<string, number>();
+    let eligibleInTransitQty = 0;
+    let unverifiedInTransitQty = 0;
+    let laterInTransitQty = 0;
+    for (const item of inTransitLookup.get(normalize(row.productId)) ?? []) {
+      const date = item.expectedArrivalDate;
+      const qty = nonNegative(item.inTransitQty);
+      const parsed = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00.000Z`) : null;
+      if (!parsed || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date || date! < todayKey) {
+        unverifiedInTransitQty += qty;
+      } else if (date! > factoryArrivalDate) {
+        laterInTransitQty += qty;
+      } else {
+        eligibleInTransitQty += qty;
+        arrivals.set(date!, (arrivals.get(date!) ?? 0) + qty);
+      }
+    }
+    // Arrivals become usable at the beginning of their Tokyo calendar day.
+    // Unfulfilled forecast sales are recorded as shortages, not future backorders.
+    let remainingQtyAtArrival = Math.max(0, effectiveStockQty);
+    let pendingBacklogQty = Math.max(0, -effectiveStockQty);
+    let shortageQtyBeforeArrival = pendingBacklogQty;
+    let expectedStockoutDate: string | null = effectiveStockQty < 0 ? todayKey : null;
+    for (let day = 0; day <= FACTORY_PRODUCTION_LOGISTICS_DAYS; day += 1) {
+      const date = dateAfterDays(day);
+      const arrivingQty = arrivals.get(date) ?? 0;
+      const reservedForPending = Math.min(pendingBacklogQty, arrivingQty);
+      pendingBacklogQty -= reservedForPending;
+      remainingQtyAtArrival += arrivingQty - reservedForPending;
+      if (day === FACTORY_PRODUCTION_LOGISTICS_DAYS) break;
+      const demand = row.dailyDemandQty[day];
+      const shortage = Math.max(0, demand - remainingQtyAtArrival);
+      if (shortage > 1e-9) {
+        expectedStockoutDate ??= date;
+        shortageQtyBeforeArrival += shortage;
+      }
+      remainingQtyAtArrival = Math.max(0, remainingQtyAtArrival - demand);
+    }
+    const targetStockQtyRaw = row.targetDemandQty;
     const suggestedFactoryQty = averageDaily90d > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE
-      ? Math.max(0, Math.ceil(targetStockQtyRaw - remainingQtyAtArrival))
+      ? Math.max(0, Math.ceil(targetStockQtyRaw - remainingQtyAtArrival - 1e-9))
       : 0;
+    const { dailyDemandQty: _dailyDemand, targetDemandQty: _targetDemand, ...displayRow } = row;
     return {
-      ...row,
+      ...displayRow,
+      finishedStockDeductionQty: Math.round(row.finishedStockDeductionQty * 1000) / 1000,
+      factoryArrivalDate,
+      eligibleInTransitQty,
+      unverifiedInTransitQty,
+      laterInTransitQty,
+      expectedStockoutDate,
+      shortageQtyBeforeArrival: Math.ceil(Math.max(0, shortageQtyBeforeArrival - 1e-9)),
       averageDaily90d: Math.round(averageDaily90d * 1000) / 1000,
       effectiveStockQty,
       productionLogisticsDemandQty: Math.round(productionLogisticsDemandQty * 1000) / 1000,
       remainingQtyAtArrival: Math.round(remainingQtyAtArrival * 1000) / 1000,
-      targetStockQty: Math.ceil(targetStockQtyRaw),
+      targetStockQty: Math.ceil(targetStockQtyRaw - 1e-9),
       suggestedFactoryQty,
     };
-  }).filter((row) => row.suggestedFactoryQty > 0)
+  }).filter((row) => row.unitCount90d / 90 > FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE
+    && (row.suggestedFactoryQty > 0 || row.shortageQtyBeforeArrival > 0 || row.unverifiedInTransitQty > 0))
     .sort((left, right) => right.suggestedFactoryQty - left.suggestedFactoryQty
       || right.unitCount90d - left.unitCount90d
       || left.productId.localeCompare(right.productId, 'en', { numeric: true }));
@@ -251,6 +309,7 @@ export function buildRakutenStoreDashboard(input: {
     },
     factoryRecommendations: {
       channelScope: 'rakuten_all_shops',
+      issues: materialPlanning.issues,
       periodDays: FACTORY_RECOMMENDATION_DAYS,
       periodStart: factoryPeriodStart.toISOString(),
       periodEnd: now.toISOString(),
@@ -259,7 +318,9 @@ export function buildRakutenStoreDashboard(input: {
       productionLogisticsDays: FACTORY_PRODUCTION_LOGISTICS_DAYS,
       targetStockDays: FACTORY_TARGET_STOCK_DAYS,
       minimumAverageDailySalesExclusive: FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE,
-      recommendationCount: factoryRows.length,
+      recommendationCount: factoryRows.filter((row) => row.suggestedFactoryQty > 0).length,
+      shortageProductCount: factoryRows.filter((row) => row.shortageQtyBeforeArrival > 0).length,
+      unverifiedTransitProductCount: factoryRows.filter((row) => row.unverifiedInTransitQty > 0).length,
       totalSuggestedFactoryQty: factoryRows.reduce((sum, row) => sum + row.suggestedFactoryQty, 0),
       rows: factoryRows,
     },

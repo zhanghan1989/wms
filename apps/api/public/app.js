@@ -2825,20 +2825,35 @@ function renderRakutenStoreDashboard(payload) {
   const factoryRows = Array.isArray(factory.rows) ? factory.rows : [];
   setTextById("rakutenStoreFactoryRecommendationCount", formatMetricNumber(factory.recommendationCount));
   setTextById("rakutenStoreFactorySuggestedQty", `${formatMetricNumber(factory.totalSuggestedFactoryQty)} 件`);
+  setTextById("rakutenStoreFactoryShortageCount", formatMetricNumber(factory.shortageProductCount));
+  setTextById("rakutenStoreFactoryUnverifiedCount", formatMetricNumber(factory.unverifiedTransitProductCount));
+  const factoryIssues = $("rakutenStoreFactoryIssues");
+  if (factoryIssues) factoryIssues.innerHTML = (factory.issues || []).map((issue) =>
+    `<p>${renderMasterProductDetailLink(issue.productId)}：${escapeHtml(issue.reason)}</p>`
+  ).join("");
   renderAmazonDashboardTable("rakutenStoreFactoryRecommendationBody", factoryRows, [
-    (row) => `<strong>${escapeHtml(displayText(row.skuCode))}</strong>`,
+    (row) => `<strong>${escapeHtml(displayText(row.productId))}</strong>`,
     (row) => `${renderMasterProductDetailLink(row.productId)}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
+    (row) => escapeHtml(displayText(row.productType)),
+    (row) => (row.sourceProductIds || []).map((id) => renderMasterProductDetailLink(id)).join('、') || '-',
     (row) => escapeHtml(formatMetricNumber(row.unitCount90d)),
     (row) => escapeHtml(formatMetricNumber(row.averageDaily90d, 3)),
+    (row) => escapeHtml(formatMetricNumber(row.finishedStockDeductionQty, 3)),
     (row) => escapeHtml(formatMetricNumber(row.stockQty)),
     (row) => escapeHtml(formatMetricNumber(row.inTransitQty)),
+    (row) => escapeHtml(formatMetricNumber(row.eligibleInTransitQty)),
+    (row) => Number(row.unverifiedInTransitQty) > 0 ? `<span class="amazon-dashboard-chip warning">${escapeHtml(formatMetricNumber(row.unverifiedInTransitQty))} 待核实</span>` : '0',
+    (row) => escapeHtml(formatMetricNumber(row.laterInTransitQty)),
     (row) => escapeHtml(formatMetricNumber(row.pendingShipmentQty)),
     (row) => escapeHtml(formatMetricNumber(row.effectiveStockQty)),
+    (row) => row.expectedStockoutDate ? `<span class="amazon-dashboard-chip warning">${escapeHtml(row.expectedStockoutDate)}</span>` : '-',
+    (row) => escapeHtml(formatMetricNumber(row.shortageQtyBeforeArrival)),
+    (row) => escapeHtml(displayText(row.factoryArrivalDate)),
     (row) => escapeHtml(formatMetricNumber(row.productionLogisticsDemandQty, 3)),
     (row) => escapeHtml(formatMetricNumber(row.remainingQtyAtArrival, 3)),
     (row) => escapeHtml(formatMetricNumber(row.targetStockQty)),
     (row) => `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
-  ], "乐天渠道当前没有需要工厂备货的产品");
+  ], "乐天渠道当前没有备货或缺货、在途核实提醒");
   renderAmazonMetricCards("rakutenStoreDashboardFulfillment", [
     { label: "待发货订单", value: formatMetricNumber(fulfillment.pendingShipmentOrderCount) },
     { label: "已发货订单", value: formatMetricNumber(fulfillment.shippedOrderCount) },
@@ -10405,7 +10420,7 @@ function renderBatchInboundOrders() {
   if (!tbody) return;
   const orders = state.batchInboundOrders.slice(0, state.batchInboundVisibleCount);
   if (!orders.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">-</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">-</td></tr>';
     return;
   }
 
@@ -10442,6 +10457,8 @@ function renderBatchInboundOrders() {
               placeholder: "请输入海运单号",
             })}
           </td>
+          <td><div class="action-row"><input type="date" aria-label="预计到仓日期" id="batchEta-${escapeHtml(order.id)}" value="${escapeHtml(order.expectedArrivalDate || '')}" ${['confirmed', 'void'].includes(order.status) ? 'disabled' : ''}>
+            ${['confirmed', 'void'].includes(order.status) ? '' : `<button class="tiny-btn" data-action="batchInboundSaveExpectedArrival" data-order-id="${escapeHtml(order.id)}">保存</button>`}</div></td>
           <td>${escapeHtml(order.confirmedCount ?? 0)} / ${escapeHtml(order.itemCount ?? 0)}</td>
           <td><div class="action-row">${actions.join("")}</div></td>
         </tr>
@@ -19796,6 +19813,13 @@ function bindDelegates() {
           throw new Error("请输入海运单号");
         }
         window.open(getSeaOrderTrackUrl(seaOrderNo), "_blank", "noopener,noreferrer");
+      } else if (action === "batchInboundSaveExpectedArrival") {
+        const expectedArrivalDate = $( `batchEta-${orderId}`)?.value || "";
+        await request(`/batch-inbound/orders/${orderId}/expected-arrival-date`, {
+          method: "POST", body: JSON.stringify({ expectedArrivalDate }),
+        });
+        showToast("预计到仓日期已保存");
+        await loadBatchInboundOrders({ refreshDetail: false });
       } else if (action === "batchInboundSaveDomesticOrderNo") {
         const input = $(button.dataset.inputId || "");
         const domesticOrderNo = String(input?.value || "").trim();

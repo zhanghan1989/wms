@@ -285,34 +285,42 @@ export class RakutenRmsApiService {
         .map((row) => String(row.skuCode ?? "").trim())
         .filter(Boolean),
     ));
-    const [products, inTransitRows, latestSyncRun] = await Promise.all([
+    const [salesProducts, latestSyncRun] = await Promise.all([
       productIds.length
         ? this.prisma.masterProduct.findMany({
           where: { productId: { in: productIds } },
-          select: { productId: true, productName: true, stockQty: true },
-        })
-        : Promise.resolve([]),
-      productIds.length
-        ? this.prisma.batchInboundItem.groupBy({
-          by: ["productId"],
-          where: {
-            productId: { in: productIds },
-            status: BatchInboundItemStatus.pending,
-            order: {
-              domesticOrderNo: { not: "" },
-              status: {
-                in: [
-                  BatchInboundOrderStatus.waiting_upload,
-                  BatchInboundOrderStatus.waiting_inbound,
-                ],
-              },
-            },
+          select: {
+            productId: true, productName: true, productType: true, stockQty: true,
+            bomComponents: { select: {
+              componentProductId: true, quantity: true,
+              componentProduct: { select: {
+                productId: true, productName: true, productType: true, stockQty: true, status: true,
+              } },
+            } },
           },
-          _sum: { qty: true },
         })
         : Promise.resolve([]),
       latestSyncRunPromise,
     ]);
+    // Include material stocks and arrivals even when materials have no direct sales.
+    const products = Array.from(new Map([
+      ...salesProducts.flatMap((product) => (product.bomComponents ?? []).map((item) => item.componentProduct)),
+      ...salesProducts,
+    ].map((product) => [product.productId, product])).values());
+    const planningProductIds = products.map((product) => product.productId);
+    const inTransitRows = planningProductIds.length
+      ? await this.prisma.batchInboundItem.findMany({
+        where: {
+          productId: { in: planningProductIds },
+          status: BatchInboundItemStatus.pending,
+          order: {
+            domesticOrderNo: { not: "" },
+            status: { in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound] },
+          },
+        },
+        select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true } } },
+      })
+      : [];
     const selectedShop = {
       connectionId: selected.id.toString(),
       shopId: selected.shopId.toString(),
@@ -346,7 +354,8 @@ export class RakutenRmsApiService {
         products,
         inTransit: inTransitRows.map((row) => ({
           productId: row.productId,
-          inTransitQty: Number(row._sum.qty ?? 0),
+          inTransitQty: Number(row.qty ?? 0),
+          expectedArrivalDate: row.order.expectedArrivalDate?.toISOString().slice(0, 10) ?? null,
         })),
       }),
     };
@@ -359,35 +368,50 @@ export class RakutenRmsApiService {
       selectedShop?: { shopName?: string } | null;
       dashboard?: { factoryRecommendations?: { rows?: Array<{
         skuCode?: string; productId?: string; productName?: string | null;
+        productType?: string | null; sourceProductIds?: string[]; finishedStockDeductionQty?: number;
         unitCount90d?: number; averageDaily90d?: number; pendingShipmentQty?: number;
         stockQty?: number; inTransitQty?: number; effectiveStockQty?: number;
         productionLogisticsDemandQty?: number; remainingQtyAtArrival?: number;
         targetStockQty?: number; suggestedFactoryQty?: number;
-      }> } } | null;
+        eligibleInTransitQty?: number; unverifiedInTransitQty?: number; laterInTransitQty?: number;
+        expectedStockoutDate?: string | null; factoryArrivalDate?: string; shortageQtyBeforeArrival?: number;
+      }>; issues?: Array<{ productId: string; reason: string }> } } | null;
     };
     if (!payload.selectedShop) throw new NotFoundException("尚无已启用的乐天店铺连接");
     const scopeName = "乐天渠道（全部店铺）";
     const data = (payload.dashboard?.factoryRecommendations?.rows ?? []).map((row) => ({
       "统计范围": scopeName,
       "产品ID": row.productId ?? "",
-      "乐天SKU": row.skuCode ?? "",
+      "产品类型": row.productType ?? "",
+      "需求来源成品": (row.sourceProductIds ?? []).join("、"),
+      "成品抵扣需求": Number(row.finishedStockDeductionQty ?? 0),
       "产品名称": row.productName ?? "",
-      "近90天销量": Number(row.unitCount90d ?? 0),
-      "90天日均销量": Number(row.averageDaily90d ?? 0),
+      "近90天需求": Number(row.unitCount90d ?? 0),
+      "90天日均需求": Number(row.averageDaily90d ?? 0),
       "当前日本库存": Number(row.stockQty ?? 0),
       "国内单号在途数量": Number(row.inTransitQty ?? 0),
+      "45天内到仓": Number(row.eligibleInTransitQty ?? 0),
+      "待核实在途": Number(row.unverifiedInTransitQty ?? 0),
+      "45天后到仓": Number(row.laterInTransitQty ?? 0),
+      "预计缺货日期": row.expectedStockoutDate ?? "",
+      "到货前缺口": Number(row.shortageQtyBeforeArrival ?? 0),
+      "新备货到仓日": row.factoryArrivalDate ?? "",
       "待发货占用": Number(row.pendingShipmentQty ?? 0),
       "有效库存": Number(row.effectiveStockQty ?? 0),
       "45天预计消耗": Number(row.productionLogisticsDemandQty ?? 0),
       "预计到货剩余": Number(row.remainingQtyAtArrival ?? 0),
-      "90天目标库存": Number(row.targetStockQty ?? 0),
+      "90天净目标需求": Number(row.targetStockQty ?? 0),
       "建议工厂备货数量": Number(row.suggestedFactoryQty ?? 0),
     }));
     const worksheet = XLSX.utils.json_to_sheet(data, {
-      header: ["统计范围", "产品ID", "乐天SKU", "产品名称", "近90天销量", "90天日均销量", "当前日本库存", "国内单号在途数量", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "90天目标库存", "建议工厂备货数量"],
+      header: ["统计范围", "产品ID", "产品名称", "产品类型", "需求来源成品", "成品抵扣需求", "近90天需求", "90天日均需求", "当前日本库存", "国内单号在途数量", "45天内到仓", "待核实在途", "45天后到仓", "预计缺货日期", "到货前缺口", "新备货到仓日", "待发货占用", "有效库存", "45天预计消耗", "预计到货剩余", "90天净目标需求", "建议工厂备货数量"],
     });
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "乐天工厂备货建议");
+    const issues = payload.dashboard?.factoryRecommendations?.issues ?? [];
+    if (issues.length) XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(
+      issues.map((issue) => ({ "产品ID": issue.productId, "待核实事项": issue.reason })),
+    ), "待核实事项");
     const content = XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit",
