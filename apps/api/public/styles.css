@@ -4429,3 +4429,38 @@ button.danger-solid {
 
 .inventory-alert { padding: 10px 12px; color: #854d0e; background: #fef9c3; border: 1px solid #eab308; border-radius: 8px; }
 .inventory-alert:empty { display: none; }
+
+
+/* Factory planning: concise decisions in the table, full breakdown on demand. */
+.factory-recommendation-table { width: 100%; table-layout: fixed; }
+.amazon-dashboard-table-wrap .factory-recommendation-table { min-width: 920px !important; }
+.factory-recommendation-table th:nth-child(1) { width: 23%; }
+.factory-recommendation-table th:nth-child(2) { width: 7%; }
+.factory-recommendation-table th:nth-child(3) { width: 12%; }
+.factory-recommendation-table th:nth-child(4) { width: 10%; }
+.factory-recommendation-table th:nth-child(5) { width: 13%; }
+.factory-recommendation-table th:nth-child(6) { width: 15%; }
+.factory-recommendation-table th:nth-child(7) { width: 12%; }
+.factory-recommendation-table th:nth-child(8) { width: 8%; }
+.factory-product-name, .factory-cell-note { display: block; margin-top: 4px; color: var(--muted); white-space: normal; overflow-wrap: anywhere; }
+.factory-product-name { line-height: 1.5; }
+.factory-cell-note { font-size: 12px; }
+.factory-suggested-qty { font-size: 17px; }
+.factory-recommendation-table .amazon-dashboard-chip { white-space: normal; }
+.factory-detail-row[hidden] { display: none; }
+.factory-detail-row > td { background: #f6faf8; padding: 16px; }
+.factory-detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 28px; }
+.factory-detail-grid h4 { margin: 0 0 10px; font-size: 13px; }
+.factory-detail-grid dl { margin: 0; }
+.factory-detail-grid dl > div { display: flex; justify-content: space-between; gap: 12px; margin: 7px 0; }
+.factory-detail-grid dt { color: var(--muted); white-space: normal; }
+.factory-detail-grid dd { margin: 0; font-weight: 600; }
+.factory-detail-sources { grid-column: 1 / -1; overflow-wrap: anywhere; white-space: normal; }
+.factory-rules { margin: 8px 0 16px; }
+.factory-rules summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.factory-rules p { line-height: 1.7; }
+@media (max-width: 640px) {
+  .amazon-dashboard-table-wrap .factory-recommendation-table { min-width: 0 !important; table-layout: auto; }
+  .factory-detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .factory-recommendation-table .factory-detail-row > td { display: block; }
+}

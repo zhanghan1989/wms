@@ -2831,29 +2831,7 @@ function renderRakutenStoreDashboard(payload) {
   if (factoryIssues) factoryIssues.innerHTML = (factory.issues || []).map((issue) =>
     `<p>${renderMasterProductDetailLink(issue.productId)}：${escapeHtml(issue.reason)}</p>`
   ).join("");
-  renderAmazonDashboardTable("rakutenStoreFactoryRecommendationBody", factoryRows, [
-    (row) => `<strong>${escapeHtml(displayText(row.productId))}</strong>`,
-    (row) => `${renderMasterProductDetailLink(row.productId)}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
-    (row) => escapeHtml(displayText(row.productType)),
-    (row) => (row.sourceProductIds || []).map((id) => renderMasterProductDetailLink(id)).join('、') || '-',
-    (row) => escapeHtml(formatMetricNumber(row.unitCount90d)),
-    (row) => escapeHtml(formatMetricNumber(row.averageDaily90d, 3)),
-    (row) => escapeHtml(formatMetricNumber(row.finishedStockDeductionQty, 3)),
-    (row) => escapeHtml(formatMetricNumber(row.stockQty)),
-    (row) => escapeHtml(formatMetricNumber(row.inTransitQty)),
-    (row) => escapeHtml(formatMetricNumber(row.eligibleInTransitQty)),
-    (row) => Number(row.unverifiedInTransitQty) > 0 ? `<span class="amazon-dashboard-chip warning">${escapeHtml(formatMetricNumber(row.unverifiedInTransitQty))} ${Number(row.overdueInTransitQty) > 0 ? `含逾期 ${escapeHtml(formatMetricNumber(row.overdueInTransitQty))}` : "待核实"}</span>` : '0',
-    (row) => escapeHtml(formatMetricNumber(row.laterInTransitQty)),
-    (row) => escapeHtml(formatMetricNumber(row.pendingShipmentQty)),
-    (row) => escapeHtml(formatMetricNumber(row.effectiveStockQty)),
-    (row) => row.expectedStockoutDate ? `<span class="amazon-dashboard-chip warning">${escapeHtml(row.expectedStockoutDate)}</span>` : '-',
-    (row) => escapeHtml(formatMetricNumber(row.shortageQtyBeforeArrival)),
-    (row) => escapeHtml(displayText(row.factoryArrivalDate)),
-    (row) => escapeHtml(formatMetricNumber(row.productionLogisticsDemandQty, 3)),
-    (row) => escapeHtml(formatMetricNumber(row.remainingQtyAtArrival, 3)),
-    (row) => escapeHtml(formatMetricNumber(row.targetStockQty)),
-    (row) => row.requiresTransitVerification ? '<span class="amazon-dashboard-chip warning">到货逾期、需核实</span>' : `<strong>${escapeHtml(formatMetricNumber(row.suggestedFactoryQty))}</strong>`,
-  ], "乐天渠道当前没有备货或缺货、在途核实提醒");
+  renderRakutenFactoryRecommendations(factoryRows);
   renderAmazonMetricCards("rakutenStoreDashboardFulfillment", [
     { label: "待发货订单", value: formatMetricNumber(fulfillment.pendingShipmentOrderCount) },
     { label: "已发货订单", value: formatMetricNumber(fulfillment.shippedOrderCount) },
@@ -2903,6 +2881,62 @@ async function downloadAmazonStoreFactoryRecommendationsExcel() {
   const endpoint = `/amazon-sp-api/store-dashboard/factory-recommendations-excel?connectionId=${encodeURIComponent(connectionId)}`;
   const fileName = await downloadAuthorizedFile(endpoint, {}, "工厂直发FBA建议.xlsx");
   showToast(`已下载 ${fileName}`);
+}
+
+function renderRakutenFactoryRecommendations(rows) {
+  const body = $("rakutenStoreFactoryRecommendationBody");
+  if (!body) return;
+  const number = (value, digits = 0) => escapeHtml(formatMetricNumber(value, digits));
+  const field = (label, value) => `<div><dt>${escapeHtml(label)}</dt><dd>${value}</dd></div>`;
+  body.innerHTML = rows.length ? rows.map((row, index) => {
+    const detailId = `rakuten-factory-detail-${index}`;
+    const transitNote = Number(row.unverifiedInTransitQty) > 0
+      ? `<span class="amazon-dashboard-chip warning">${number(row.unverifiedInTransitQty)} 待核实${Number(row.overdueInTransitQty) > 0 ? '（含逾期）' : ''}</span>` : '';
+    const risk = row.expectedStockoutDate
+      ? `<span class="amazon-dashboard-chip warning">${escapeHtml(row.expectedStockoutDate)}</span><small class="factory-cell-note">到货前缺口 ${number(row.shortageQtyBeforeArrival)} 件</small>`
+      : '<span class="muted">暂无预计缺货</span>';
+    const recommendation = row.requiresTransitVerification
+      ? '<span class="amazon-dashboard-chip warning">到货逾期、需核实</span>'
+      : `<strong class="factory-suggested-qty">${number(row.suggestedFactoryQty)} 件</strong>${Number(row.suggestedFactoryQty) === 0 ? '<small class="factory-cell-note">无需追加</small>' : ''}`;
+    return `<tr class="factory-summary-row">
+      <td>${renderMasterProductDetailLink(row.productId)}<span class="factory-product-name">${escapeHtml(displayText(row.productName))}</span></td>
+      <td>${escapeHtml(displayText(row.productType))}</td>
+      <td><strong>${number(row.unitCount90d)} 件</strong><small class="factory-cell-note">日均 ${number(row.averageDaily90d, 3)} 件</small></td>
+      <td><strong>${number(row.effectiveStockQty)} 件</strong><small class="factory-cell-note">已扣待发货</small></td>
+      <td><strong>${number(row.inTransitQty)} 件</strong><small class="factory-cell-note">45天内到仓 ${number(row.eligibleInTransitQty)} 件</small>${transitNote}</td>
+      <td>${risk}</td>
+      <td>${recommendation}</td>
+      <td><button type="button" class="tiny-btn ghost" data-factory-detail="${index}" aria-controls="${detailId}" aria-expanded="false">展开</button></td>
+    </tr>
+    <tr id="${detailId}" class="factory-detail-row" hidden><td colspan="8">
+      <div class="factory-detail-grid">
+        <section><h4>库存与占用</h4><dl>
+          ${field('当前日本库存', number(row.stockQty))}${field('待发货占用', number(row.pendingShipmentQty))}
+          ${field('当前可用库存', number(row.effectiveStockQty))}${field('成品抵扣需求', number(row.finishedStockDeductionQty, 3))}
+        </dl></section>
+        <section><h4>在途分布</h4><dl>
+          ${field('已登记在途', number(row.inTransitQty))}${field('45天内到仓', number(row.eligibleInTransitQty))}
+          ${field('待核实在途（含逾期）', number(row.unverifiedInTransitQty))}${field('其中逾期', number(row.overdueInTransitQty))}
+          ${field('45天后到仓', number(row.laterInTransitQty))}
+        </dl></section>
+        <section><h4>备货测算</h4><dl>
+          ${field('新备货到仓日', escapeHtml(displayText(row.factoryArrivalDate)))}
+          ${field('45天预计消耗', number(row.productionLogisticsDemandQty, 3))}${field('预计到货剩余', number(row.remainingQtyAtArrival, 3))}
+          ${field('90天净目标需求', number(row.targetStockQty))}
+        </dl></section>
+        <section class="factory-detail-sources"><h4>需求来源成品</h4><div>${(row.sourceProductIds || []).map((id) => renderMasterProductDetailLink(id)).join('、') || '<span class="muted">产品直接需求</span>'}</div></section>
+      </div>
+    </td></tr>`;
+  }).join('') : '<tr><td colspan="8" class="muted">乐天渠道当前没有备货或缺货、在途核实提醒</td></tr>';
+  body.onclick = (event) => {
+    const button = event.target.closest('button[data-factory-detail]');
+    if (!button || !body.contains(button)) return;
+    const detail = $(button.getAttribute('aria-controls'));
+    if (!detail) return;
+    detail.hidden = !detail.hidden;
+    button.setAttribute('aria-expanded', String(!detail.hidden));
+    button.textContent = detail.hidden ? '展开' : '收起';
+  };
 }
 
 function renderAmazonDashboardTable(bodyId, rows, columns, emptyText) {
