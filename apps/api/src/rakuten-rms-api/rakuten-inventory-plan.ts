@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { promisify } from 'util';
+import { promisify, isDeepStrictEqual } from 'util';
 import { gzip, gunzip } from 'zlib';
 import { InventoryPlanRow } from './rakuten-inventory.types';
 
@@ -79,4 +79,18 @@ export async function inventoryPlanPage(value: unknown, page: number, filter: st
     }
   }
   return { total: plan.total, changedCount: plan.changed, zeroedCount: plan.zero, filteredTotal, rows };
+}
+
+/** Compare against one decompressed block at a time; never hold two full plans. */
+export async function inventoryPlanEquals(value: unknown, rows: InventoryPlanRow[]): Promise<boolean> {
+  if (Array.isArray(value)) return isDeepStrictEqual(value, rows);
+  const plan = stored(value);
+  if (plan.total !== rows.length) return false;
+  let offset = 0;
+  for (const chunk of plan.chunks) {
+    const batch = await readChunk(chunk);
+    if (!isDeepStrictEqual(batch, rows.slice(offset, offset + batch.length))) return false;
+    offset += batch.length;
+  }
+  return offset === rows.length;
 }

@@ -177,6 +177,17 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
   }
 
   private inventoryLastRequestAt = 0;
+  private inventoryThrottle: Promise<void> = Promise.resolve();
+
+  private reserveInventoryRequest(interval: number): Promise<void> {
+    const next = this.inventoryThrottle.then(async () => {
+      const wait = Math.max(0, interval - (Date.now() - this.inventoryLastRequestAt));
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      this.inventoryLastRequestAt = Date.now();
+    });
+    this.inventoryThrottle = next.catch(() => undefined);
+    return next;
+  }
 
   async getInventory(serviceSecret: string, licenseKey: string, inventories: InventoryKey[]): Promise<InventoryRecord[]> {
     if (!inventories.length || inventories.length > 1000) throw new ServiceUnavailableException('库存读取批量必须为1～1000条');
@@ -299,9 +310,8 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
       // ItemAPI items.get permits 5 requests/sec; Inventory writes permit 1/sec.
       // One serialized caller holds the cross-process inventory lease.
       const interval = (path.startsWith('/es/2.0/items/manage-numbers/') || path.startsWith('/es/2.0/items/search?') || path === '/es/2.1/inventories/bulk-get') ? 250 : 1100;
-      const wait = Math.max(0, interval - (Date.now() - this.inventoryLastRequestAt));
-      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
-      this.inventoryLastRequestAt = Date.now();
+      await this.reserveInventoryRequest(interval);
+      const requestStartedAt = Date.now();
       let response: Response;
       try {
         const dispatcher = this.getProxyDispatcher();
@@ -313,9 +323,11 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
         };
         response = await fetch(`https://api.rms.rakuten.co.jp${path}`, options);
       } catch {
+        this.logger.warn(`Inventory API path=${path.split('?')[0]} attempt=${attempt + 1}/${attempts} networkFailure elapsedMs=${Date.now() - requestStartedAt}`);
         if (attempt + 1 < attempts) continue;
         throw new ServiceUnavailableException(write ? '乐天库存写入结果未知（网络超时），请重新预览并回读确认，未自动重试' : '无法连接乐天库存API');
       }
+      this.logger.log(`Inventory API path=${path.split('?')[0]} attempt=${attempt + 1}/${attempts} status=${response.status} headersMs=${Date.now() - requestStartedAt}`);
       if (!write && (response.status === 429 || response.status >= 500) && attempt + 1 < attempts) {
         await response.text();
         await new Promise((resolve) => setTimeout(resolve, Math.min(30, Math.max(1, Number(response.headers.get('retry-after')) || attempt + 1)) * 1000));

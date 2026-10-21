@@ -37,7 +37,11 @@ export class RakutenInventoryCatalogService {
     return Boolean(connection.inventoryCatalogVersion && connection.inventoryCatalogRefreshedAt && connection.inventoryCatalogRefreshedAt.getTime() >= Date.now() - DAY_MS);
   }
 
-  async queue(connectionId: bigint) {
+  async queue(connectionId: bigint, restart = false) {
+    if (restart) await this.prisma.rakutenInventoryCatalogJob.updateMany({
+      where: { connectionId, status: { in: ['queued', 'running'] } },
+      data: { status: 'failed', finishedAt: new Date(), error: '每日刷新从头开始，旧读取任务已结束' },
+    });
     const existing = await this.prisma.rakutenInventoryCatalogJob.findFirst({ where: { connectionId, status: { in: ['queued', 'running'] } }, orderBy: { startedAt: 'desc' } });
     return existing ?? this.prisma.rakutenInventoryCatalogJob.create({ data: { id: randomUUID(), connectionId, status: 'queued', cursorMark: '*' } });
   }
@@ -47,8 +51,8 @@ export class RakutenInventoryCatalogService {
     return Boolean(await this.prisma.rakutenInventoryCatalogJob.findFirst({ where: { connectionId: connection.id, status: { in: ['queued', 'running'] } }, select: { id: true } }));
   }
 
-  async refresh(connection: Connection, renew: () => Promise<void>) {
-    const job = await this.queue(connection.id);
+  async refresh(connection: Connection, renew: () => Promise<void>, restart = false) {
+    const job = await this.queue(connection.id, restart);
     const credentials = [
       this.crypto.decrypt(connection.encryptedServiceSecret, connection.serviceSecretIv, connection.serviceSecretAuthTag),
       this.crypto.decrypt(connection.encryptedLicenseKey, connection.licenseKeyIv, connection.licenseKeyAuthTag),

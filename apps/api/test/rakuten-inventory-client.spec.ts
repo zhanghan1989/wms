@@ -22,6 +22,23 @@ describe('InventoryAPI 2.1 client', () => {
     expect(JSON.parse(request.body)).toEqual({ inventories: [key] });
     expect(request.headers.authorization).toBe(`ESA ${Buffer.from('secret:license').toString('base64')}`);
   });
+  it('serializes request slots when diagnostics and inventory reads run concurrently', async () => {
+    jest.restoreAllMocks();
+    jest.useFakeTimers();
+    try {
+      const times: number[] = [];
+      jest.spyOn(global, 'fetch').mockImplementation(async () => {
+        times.push(Date.now());
+        return new Response(JSON.stringify({ inventories: [{ ...key, quantity: 1 }] }), { status: 200 });
+      });
+      const reads = [1, 2, 3].map(() => client.getInventory('secret', 'license', [key]));
+      await jest.advanceTimersByTimeAsync(1000);
+      await Promise.all(reads);
+      expect(times).toHaveLength(3);
+      expect(times[1] - times[0]).toBeGreaterThanOrEqual(250);
+      expect(times[2] - times[1]).toBeGreaterThanOrEqual(250);
+    } finally { jest.useRealTimers(); }
+  });
   it('accepts a 204 empty response as successful update', async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
     await expect(client.upsertInventory('secret', 'license', [{ ...key, mode: 'ABSOLUTE', quantity: 0 }])).resolves.toBeUndefined();

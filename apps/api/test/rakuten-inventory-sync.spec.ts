@@ -19,8 +19,9 @@ function fixture() {
   const prisma: any = {
     $transaction: jest.fn((action) => action(prisma)),
     rakutenRmsConnection: { findUnique: jest.fn().mockResolvedValue(connection), update: jest.fn(), updateMany: jest.fn(), findMany: jest.fn().mockResolvedValue([connection]) },
-    rakutenScheduleControl: { upsert: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    rakutenScheduleControl: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     rakutenInventoryMapping: { findMany: jest.fn().mockResolvedValue([row]), upsert: jest.fn(), updateMany: jest.fn(), count: jest.fn().mockResolvedValue(1) },
+    masterProductBomItem: { findMany: jest.fn().mockResolvedValue([]) },
     rakutenComboProduct: { findMany: jest.fn().mockResolvedValue([]) },
     masterProduct: { findMany: jest.fn().mockResolvedValue([{ productId: 'P', status: 1, productType: '包' }]), findUnique: jest.fn().mockResolvedValue({ productId: 'P', status: 1, productType: '包' }) },
     rakutenInventoryRun: {
@@ -198,7 +199,7 @@ describe('Rakuten inventory sync', () => {
     expect(result).toMatchObject({ verified: 401 });
     expect(f.client.upsertInventory.mock.calls.map((call) => call[2].length)).toEqual([400, 1]);
     expect(f.prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ isolationLevel: 'RepeatableRead' }));
-    expect(f.orders.inventorySyncPendingDemands).toHaveBeenCalledWith(f.prisma);
+    expect(f.orders.inventorySyncPendingDemands).toHaveBeenCalledWith(f.prisma, ['P']);
   });
 
   it('does not calculate or write WMS mappings outside the current shop catalog', async () => {
@@ -248,6 +249,64 @@ describe('Rakuten inventory sync', () => {
     expect(await f.service.runScheduled()).toMatchObject({ status: 'success', completed: 1 });
     expect(f.catalog.scope).toHaveBeenCalledWith(expect.anything(), [row, freshMapping]);
     expect([...f.runs.values()][0].result).toMatchObject({ total: 2, validated: 2 });
+  });
+
+  it.each([
+    ['success', {}, 1], ['partial', { requiresReview: true }, 1], ['running', {}, 1],
+    ['failed', { requiresReview: true }, 1], ['interrupted', { retryable: true }, 1],
+    ['failed', { retryable: true }, 3],
+  ])('does not retry status=%s result=%j attempts=%s', async (status, result, attempts) => {
+    const f = fixture();
+    f.prisma.rakutenInventoryRun.findMany.mockResolvedValue(Array.from({ length: attempts }, () => ({ status, result })));
+    await f.service.runScheduled(true);
+    expect(f.catalog.refresh).not.toHaveBeenCalled();
+    expect(f.client.upsertInventory).not.toHaveBeenCalled();
+  });
+
+  it('retries only a failed pre-write run and marks new pre-write failures retryable', async () => {
+    const f = fixture();
+    f.catalog.refresh.mockRejectedValueOnce(new Error('temporary read failure'));
+    await f.service.runScheduled();
+    const failed = [...f.runs.values()][0];
+    expect(failed).toMatchObject({ status: 'failed', result: { retryable: true } });
+    f.prisma.rakutenInventoryRun.findMany.mockResolvedValue([failed]);
+    expect(await f.service.runScheduled(true)).toMatchObject({ completed: 1 });
+    expect(f.catalog.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('can recover a missed primary run but never retries an ambiguous write', async () => {
+    const f = fixture();
+    f.client.upsertInventory.mockRejectedValueOnce(new Error('unknown write result'));
+    await f.service.runScheduled(true);
+    const failed = [...f.runs.values()][0];
+    expect(failed.result).toMatchObject({ requiresReview: true });
+    f.prisma.rakutenInventoryRun.findMany.mockResolvedValue([failed]);
+    await f.service.runScheduled(true);
+    expect(f.client.upsertInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows read-only diagnostics while the write lease is occupied', async () => {
+    const f = fixture();
+    (f.client as any).searchCatalogPage = jest.fn().mockResolvedValue({ variants: [] });
+    f.prisma.rakutenScheduleControl.updateMany.mockResolvedValue({ count: 0 });
+    await expect(f.service.checkConnection('1')).resolves.toMatchObject({ readReady: false });
+    expect(f.prisma.rakutenScheduleControl.updateMany).not.toHaveBeenCalled();
+    expect(f.prisma.rakutenInventoryRun.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('includes outside shoulder parents in a scoped reservation snapshot', async () => {
+    const f = fixture();
+    const component = { componentProductId: 'BODY', quantity: 1, componentProduct: { status: 1, productType: '肩带本体' } };
+    f.prisma.masterProductBomItem.findMany.mockResolvedValue([{ parentProductId: 'S' }, { parentProductId: 'T' }]);
+    f.prisma.masterProduct.findMany.mockImplementation(async ({ where, select }: any) => where.productId.in.map((productId: string) => ({
+      productId, status: 1, productType: productId === 'BODY' ? '肩带本体' : '肩带',
+      ...(select.bomComponents ? { bomComponents: productId === 'BODY' ? [] : [component] } : {}),
+    })));
+    f.orders.inventorySyncPendingDemands.mockImplementation(async (_tx, ids) => ids.includes('T') ? [{ productId: 'T', quantity: 3 }] : []);
+    available.mockResolvedValue([{ productId: 'BODY', qty: 10 }, { productId: 'T', qty: 1 }] as any);
+    const quantities = await (f.service as any).stockQuantities(['S'], jest.fn());
+    expect(quantities.get('S')).toBe(8);
+    expect(f.orders.inventorySyncPendingDemands).toHaveBeenCalledWith(f.prisma, expect.arrayContaining(['S', 'T', 'BODY']));
   });
 
   it('returns a persisted background preview before remote checks finish, and scopes paginated results to its owner', async () => {
@@ -343,11 +402,11 @@ describe('Rakuten inventory sync', () => {
     expect(f.client.getItemsVariantIds.mock.calls.map((call) => call[2].length)).toEqual([50, 1]);
     expect(f.client.getItemVariantIds).not.toHaveBeenCalled();
   });
-  it('shares initial quantities across stores but recomputes stock immediately before a write', async () => {
+  it('starts a fresh stock snapshot per shop and recomputes before writes', async () => {
     const f = fixture();
     f.prisma.rakutenRmsConnection.findMany.mockResolvedValue([f.connection, { ...f.connection, id: 2n }]);
     await f.service.runScheduled();
-    expect(f.orders.inventorySyncPendingDemands).toHaveBeenCalledTimes(2);
+    expect(f.orders.inventorySyncPendingDemands).toHaveBeenCalledTimes(3);
     expect(f.client.upsertInventory).toHaveBeenCalledTimes(1);
   });
   it('does not load unrelated physical stock, while retaining reservations from shoulders sharing materials', async () => {
@@ -570,6 +629,18 @@ describe('independent daily inventory processing', () => {
     const options = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, RakutenInventorySchedulerService.prototype.runScheduledInventorySync);
     expect(options).toMatchObject({ cronTime: '0 30 17 * * *', name: 'rakuten-inventory-sync', timeZone: 'Asia/Tokyo', waitForCompletion: true });
   });
+  it('registers only two bounded recovery times and preserves prior results when nothing is eligible', async () => {
+    const options = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, RakutenInventorySchedulerService.prototype.retryScheduledInventorySync);
+    expect(options).toMatchObject({ cronTime: '0 40,50 17 * * *', timeZone: 'Asia/Tokyo', waitForCompletion: true });
+    const inventory = { hasScheduledRetryWork: jest.fn().mockResolvedValue(false), runScheduled: jest.fn() };
+    const schedules = { execute: jest.fn(async (_key, action) => action()) };
+    const scheduler = new RakutenInventorySchedulerService(inventory as any, schedules as any);
+    await scheduler.retryScheduledInventorySync();
+    expect(schedules.execute).not.toHaveBeenCalled();
+    inventory.hasScheduledRetryWork.mockResolvedValue(true);
+    await scheduler.retryScheduledInventorySync();
+    expect(inventory.runScheduled).toHaveBeenCalledWith(true);
+  });
   it('the twenty-minute order flow never triggers inventory, including manual check', async () => {
     const schedules = { enabled: jest.fn().mockResolvedValue(true), execute: jest.fn(async (_key, action) => action()) };
     const scheduler = new RakutenOrderSchedulerService({ syncRakutenTrackingStatuses: async () => ({ failedCount: 0 }) } as any,
@@ -592,6 +663,27 @@ describe('independent daily inventory processing', () => {
 });
 
 describe('pending order reservation deduplication', () => {
+  it('limits Rakuten demands to the stock scope and keeps legacy product overrides', async () => {
+    const prisma = {
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([{ id: 1n, skuCode: 'P', orderQuantity: 2 }]) },
+      amazonOrderRecord: { findMany: jest.fn().mockResolvedValue([
+        { id: 2n, sku: 'alias', shopName: 'shop', rawPayload: { '产品ID': ' 72 ' }, quantityToShip: 3 },
+        { id: 3n, sku: 'alias', shopName: 'shop', rawPayload: { '产品ID': 72 }, quantityToShip: 4 },
+        { id: 4n, sku: 'alias', shopName: 'shop', rawPayload: { '产品ID': 'OTHER' }, quantityToShip: 100 },
+      ]) },
+      manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
+      sku: { findMany: jest.fn().mockResolvedValue([]) },
+      overseasPickingBatchItem: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new OrdersService(prisma as any);
+    expect(await service.inventorySyncPendingDemands(prisma as any, ['P', '72'])).toEqual([
+      { productId: 'P', quantity: 2 }, { productId: '72', quantity: 7 },
+    ]);
+    expect((prisma.rakutenOrderRecord.findMany.mock.calls as any)[0][0].where.AND).toEqual(expect.arrayContaining([
+      { OR: [{ skuCode: { in: ['P', '72'] } }, { setComponentSkuCode: { in: ['P', '72'] } }] },
+    ]));
+  });
+
   it('does not deduct a picking-batch order twice and includes unbatched Rakuten orders', async () => {
     const findMany = jest.fn().mockResolvedValue([
       { id: 1n, skuCode: 'P', orderQuantity: 5 }, { id: 2n, skuCode: 'P', orderQuantity: 3 },

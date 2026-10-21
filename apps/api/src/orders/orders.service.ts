@@ -4472,7 +4472,21 @@ export class OrdersService {
 
   /** Additional reservations for unbatched warehouse orders. Picking/FBA claims are
    * already deducted by availableStock; never deduct the same source row twice. */
-  async inventorySyncPendingDemands(database: Prisma.TransactionClient = this.prisma): Promise<Array<{ productId: string; quantity: number }>> {
+  async inventorySyncPendingDemands(database: Prisma.TransactionClient = this.prisma, productIds?: string[]): Promise<Array<{ productId: string; quantity: number }>> {
+    const targets = productIds ? [...new Set(productIds)] : undefined;
+    if (targets && !targets.length) return [];
+    const targetSet = targets ? new Set(targets) : undefined;
+    // Resolve all known SKU aliases once for this stock snapshot. Mapping validation
+    // below still examines every candidate for each selected order.
+    const targetSkus = targets ? await database.sku.findMany({ where: { status: 1, productId: { in: targets } },
+      select: { sku: true, rbSku: true, fbmSku: true } }) : [];
+    const codesForTargets = [...new Set(targetSkus.flatMap((row) => [row.sku, row.rbSku, row.fbmSku]).filter((code): code is string => Boolean(code)))];
+    const scopedOrders = targets ? { OR: [
+      { sku: { in: codesForTargets } },
+      // Legacy overrides accept numbers and trimmed strings. Keep payload rows
+      // as a conservative fallback rather than omit a real reservation.
+      { rawPayload: { not: Prisma.DbNull } },
+    ] } : undefined;
     const totals = new Map<string, number>();
     const dispatch = { OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: 'overseas' }] };
     for (const source of ['rakuten', 'amazon', 'manual'] as const) {
@@ -4481,15 +4495,16 @@ export class OrdersService {
         const page = { take: 500, orderBy: { id: 'asc' as const }, ...(lastId === undefined ? {} : { cursor: { id: lastId }, skip: 1 }) };
         const rows = source === 'rakuten'
           ? await database.rakutenOrderRecord.findMany({ ...page, select: { id: true, skuCode: true, setComponentSkuCode: true, orderQuantity: true }, where: {
-            ...dispatch, deletedAt: null, warehouseShippedAt: null, sendStatus: OrderSendStatus.unsent,
+            AND: [dispatch, ...(targets ? [{ OR: [{ skuCode: { in: targets } }, { setComponentSkuCode: { in: targets } }] }] : [])],
+            deletedAt: null, warehouseShippedAt: null, sendStatus: OrderSendStatus.unsent,
           } })
           : source === 'amazon'
             ? await database.amazonOrderRecord.findMany({ ...page, select: { id: true, sku: true, shopName: true, rawPayload: true, quantityToShip: true, quantityPurchased: true }, where: { ...dispatch, ...PROCESSABLE_AMAZON_ORDER_WHERE,
-              AND: [{ OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
+              AND: [...(scopedOrders ? [scopedOrders] : []), { OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
                 { OR: [{ orderStatus: null }, { orderStatus: { notIn: ['Canceled', 'Cancelled', 'Shipped'] } }] }],
             } })
             : await database.manualOrderRecord.findMany({ ...page, select: { id: true, sku: true, shopName: true, rawPayload: true, quantityToShip: true, quantityPurchased: true }, where: { ...dispatch, OR: dispatch.OR,
-              AND: [{ OR: [{ shipmentNo: null }, { shipmentNo: '' }] }],
+              AND: [...(scopedOrders ? [scopedOrders] : []), { OR: [{ shipmentNo: null }, { shipmentNo: '' }] }],
             } });
         if (!rows.length) break;
         const refs = await database.overseasPickingBatchItem.findMany({
@@ -4503,17 +4518,24 @@ export class OrdersService {
           where: { status: 1, productId: { not: null }, OR: [{ sku: { in: codes } }, { rbSku: { in: codes } }, { fbmSku: { in: codes } }] },
           select: { sku: true, rbSku: true, fbmSku: true, shop: true, productId: true },
         }) : [];
+        const skuIndex = new Map<string, typeof skuRows>();
+        for (const sku of skuRows) for (const code of new Set([sku.sku, sku.rbSku, sku.fbmSku].filter(Boolean))) {
+          const key = normalizeAmazonSkuLookupKey(code);
+          const bucket = skuIndex.get(key) ?? [];
+          bucket.push(sku); skuIndex.set(key, bucket);
+        }
         const mapped = source === 'rakuten'
           ? (unbatched as Array<{ skuCode: string | null; setComponentSkuCode: string | null; orderQuantity: number | null }>).map((row) => ({ productId: row.skuCode || row.setComponentSkuCode, quantity: row.orderQuantity ?? 1 }))
           : (unbatched as Array<{ sku: string | null; shopName: string | null; rawPayload: Prisma.JsonValue | null; quantityToShip: number | null; quantityPurchased: number | null }>).map((row) => {
             const override = this.getJsonObjectString(row.rawPayload, '产品ID');
-            const matching = skuRows.filter((sku) => [sku.sku, sku.rbSku, sku.fbmSku].some((code) => code && normalizeAmazonSkuLookupKey(code) === normalizeAmazonSkuLookupKey(row.sku)));
+            const matching = skuIndex.get(normalizeAmazonSkuLookupKey(row.sku)) ?? [];
             const scoped = matching.filter((sku) => sku.shop === row.shopName);
             const productIds = [...new Set((scoped.length ? scoped : matching).map((sku) => sku.productId).filter(Boolean))];
             if (!override && productIds.length > 1) throw new BadRequestException('待发货订单SKU对应多个产品，请先修复店铺映射');
             return { productId: override || productIds[0], quantity: row.quantityToShip ?? row.quantityPurchased ?? 1 };
           });
         for (const row of mapped) {
+          if (targetSet && row.productId && !targetSet.has(row.productId)) continue;
           if (!Number.isInteger(row.quantity) || row.quantity < 0) throw new BadRequestException('待发货订单数量异常，库存同步已停止');
           if (!row.quantity) continue;
           if (!row.productId) throw new BadRequestException('待发货订单缺少产品对应关系，请先处理订单再同步库存');

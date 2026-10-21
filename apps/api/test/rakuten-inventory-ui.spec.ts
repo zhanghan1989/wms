@@ -144,6 +144,20 @@ describe('inventory sync configuration UI', () => {
     } finally { jest.useRealTimers(); }
   });
 
+  it('shows elapsed time and the latest heartbeat for a running preview', async () => {
+    jest.useFakeTimers();
+    try {
+      const f = fixture();
+      f.request.mockResolvedValue({ status: 'planning', page: 1, pageSize: 50, total: 0, rows: [],
+        startedAt: '2026-10-21T08:00:00Z', serverTime: '2026-10-21T08:05:00Z',
+        heartbeatAt: '2026-10-21T08:04:58Z', lastProgressAt: '2026-10-21T08:04:50Z', message: '正在计算库存' });
+      await f.api.job('job', '1');
+      expect(f.get('rakutenInventoryPreviewMeta').textContent).toContain('已执行 300 秒');
+      expect(f.get('rakutenInventoryPreviewMeta').textContent).toContain('最近心跳');
+      expect(f.get('rakutenInventoryPreviewMeta').textContent).toContain('最近进展');
+    } finally { jest.useRealTimers(); }
+  });
+
   it('uses filtered page counts but keeps the complete preview eligible for confirmation', async () => {
     const f = fixture(); f.api.filter('zero');
     f.request.mockResolvedValue({ status: 'preview', previewId: 'job', page: 1, pageSize: 50, total: 101, filteredTotal: 1, changedCount: 90, zeroedCount: 1,

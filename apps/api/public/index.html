@@ -2213,7 +2213,7 @@
       </div><button type="button" class="ghost" data-action="closeRakutenWorkflow">关闭</button></div>
       <p id="rakutenWorkflowMeta" class="rakuten-center-status" aria-live="polite">正在读取...</p>
       <section class="rakuten-schedules" aria-label="定时任务控制">
-        <p class="muted">以下开关适用于全部店铺。订单、物流、回传和邮件每20分钟检查；库存每天17:30独立检查（日本时间）。店铺自身的设置仍需开启。关闭后不再定时启动，正在执行的一轮会继续完成。</p>
+        <p class="muted">以下开关适用于全部店铺。订单、物流、回传和邮件每20分钟检查；库存每天17:30独立检查，17:40、17:50仅补跑未开始或写入前失败的店铺（日本时间）。店铺自身的设置仍需开启。关闭后不再定时启动，正在执行的一轮会继续完成。</p>
         <div class="table-scroll"><table>
           <thead><tr><th>定时任务</th><th>定时开关</th><th>运行状态</th><th>下一次计划启动（日本时间）</th><th>上次结果</th></tr></thead>
           <tbody>
@@ -2229,7 +2229,7 @@
       </section>
       <details id="rakutenInventoryPanel" class="rakuten-import-issues">
         <summary>乐天库存同步 · 每天17:30</summary>
-        <p class="muted">每天17:30独立检查，开启上方库存开关并启用对应店铺后生效。订单仍每20分钟导入，店铺需有最近25分钟内完整导入的订单。普通产品使用可用库存，肩带使用可用成品＋可组装数；扣除FBA、拣货及尚未分配批次的待发货占用。本体和配件不单独同步，0库存也会同步。</p>
+        <p class="muted">每天17:30独立检查，17:40、17:50可有限补跑；已成功、部分写入或结果未知的任务不自动重试。开启上方库存开关并启用对应店铺后生效。订单仍每20分钟导入，店铺需有最近25分钟内完整导入的订单。普通产品使用可用库存，肩带使用可用成品＋可组装数；扣除FBA、拣货及尚未分配批次的待发货占用。本体和配件不单独同步，0库存也会同步。</p>
         <p class="muted">每个SKU独立使用全量可用库存，共用材料和多店之间不分配库存，仍有超卖风险。安全库存从每个SKU的结果中扣减。需要库存API 2.1及商品API items.search、items.get、items.bulk.get权限；配送设置随库存保留。</p>
         <h4>1. 同步设置</h4>
         <p class="muted">每天日本时间17:30批量比对库存，更新有差异的SKU，并按当天完整核对状态校验商品。手动预览始终检查全部在售SKU。数量未变化也会比对乐天实际库存，避免漏掉已扣单后的补库存。</p>

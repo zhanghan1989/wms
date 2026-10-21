@@ -1,4 +1,4 @@
-import { decodeInventoryPlan, encodeInventoryPlan, inventoryPlanPage } from '../src/rakuten-rms-api/rakuten-inventory-plan';
+import { decodeInventoryPlan, encodeInventoryPlan, inventoryPlanPage, inventoryPlanEquals } from '../src/rakuten-rms-api/rakuten-inventory-plan';
 import { InventoryPlanRow } from '../src/rakuten-rms-api/rakuten-inventory.types';
 
 const makeRows = (count: number): InventoryPlanRow[] => Array.from({ length: count }, (_, i) => ({
@@ -28,6 +28,20 @@ describe('compressed inventory previews', () => {
     expect((await inventoryPlanPage(plan, 6, 'all')).rows).toEqual(rows.slice(250, 300));
     await expect(inventoryPlanPage(plan, 1, 'all')).rejects.toThrow('损坏');
     await expect(decodeInventoryPlan(plan)).rejects.toThrow('损坏');
+  });
+  it('compares all blocks and legacy plans without materializing a second full plan', async () => {
+    const rows = makeRows(1001);
+    const plan = await encodeInventoryPlan(rows);
+    expect(await inventoryPlanEquals(plan, rows)).toBe(true);
+    expect(await inventoryPlanEquals(rows, rows)).toBe(true);
+    expect(await inventoryPlanEquals(plan, rows.slice(1))).toBe(false);
+    const edited = rows.map((row) => ({ ...row }));
+    edited[1000].quantity++;
+    expect(await inventoryPlanEquals(plan, edited)).toBe(false);
+    const reordered = rows.map((row) => Object.fromEntries(Object.entries(row).reverse()) as InventoryPlanRow);
+    expect(await inventoryPlanEquals(plan, reordered)).toBe(true);
+    plan.chunks[0].data = 'corrupt';
+    await expect(inventoryPlanEquals(plan, rows)).rejects.toThrow('损坏');
   });
   it('accepts legacy previews and empty previews and rejects unknown formats', async () => {
     const rows = makeRows(3);

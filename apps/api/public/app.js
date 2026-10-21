@@ -7751,6 +7751,9 @@ async function loadRakutenInventory() {
     <td><button type="button" class="tiny-btn ghost" data-inventory-edit="${escapeHtml(row.id)}">编辑</button> ${row.enabled ? `<button type="button" class="tiny-btn ghost" data-inventory-disable="${escapeHtml(row.id)}">停用</button>` : ""}</td></tr>`).join("") || '<tr><td colspan="6">尚未配置映射</td></tr>';
   $("rakutenInventoryMappingBody")._mappings = mappings;
   renderRakutenInventoryRuns(data.runs || []);
+  if (data.lock?.heartbeatAt && Date.now() - new Date(data.lock.heartbeatAt).getTime() < 10 * 60_000) {
+    setTextById("rakutenInventoryCheckMeta", `库存任务占用中：${data.lock.lastMessage || "正在执行"}；最近心跳 ${formatRakutenOrderDateTime(data.lock.heartbeatAt)}`);
+  }
   setTextById("rakutenInventoryAlert", data.pauseReason ? `自动同步已暂停：${data.pauseReason}。检查后请先预览并手动同步验证。` : "");
   if (data.resumableJobId) await loadRakutenInventoryJob(data.resumableJobId, connectionId);
   void loadRakutenInventoryIssues().catch((error) => {
@@ -7792,9 +7795,10 @@ async function loadRakutenInventoryJob(jobId, connectionId, page = 1) {
   setTextById("rakutenInventoryPreviewPage", `第 ${job.page} / ${pages} 页 · 筛选结果 ${job.filteredTotal ?? job.total} / ${job.total} 个SKU`);
   $("rakutenInventoryPreviewPrev").disabled = busy || job.status !== "preview" || job.page <= 1;
   $("rakutenInventoryPreviewNext").disabled = busy || job.status !== "preview" || job.page >= pages;
+  const timing = busy && job.startedAt && job.serverTime ? ` · 已执行 ${Math.max(0, Math.floor((new Date(job.serverTime) - new Date(job.startedAt)) / 1000))} 秒${job.heartbeatAt ? ` · 最近心跳 ${formatRakutenOrderDateTime(job.heartbeatAt)}` : ""}${job.lastProgressAt ? ` · 最近进展 ${formatRakutenOrderDateTime(job.lastProgressAt)}` : ""}` : "";
   setTextById("rakutenInventoryPreviewMeta", job.status === "preview"
     ? `共 ${job.total} 个SKU，${job.changedCount} 个需要更新，其中 ${job.zeroedCount || 0} 个将从有库存改为0；请核对归零项。隔离异常 ${job.result?.issues?.length || 0} 个。配送设置保留。预览有效至 ${formatRakutenOrderDateTime(job.expiresAt)}。`
-    : job.message || (busy ? "正在后台处理，关闭页面后会继续" : "任务已结束"));
+    : `${job.message || (busy ? "正在后台处理，关闭页面后会继续" : "任务已结束")}${timing}`);
   if (job.status === "preview" && Array.isArray(job.result?.issues)) {
     void loadRakutenInventoryIssues().catch((error) => {
       if (generation === rakutenInventoryGeneration && connectionId === $("rakutenInventoryShop").value) {
@@ -7887,7 +7891,7 @@ function renderRakutenSchedules(result) {
     row.querySelector("[data-schedule-last]").textContent = task.lastStatus
       ? `${outcomes[task.lastStatus] || task.lastStatus} · ${format(task.finishedAt)}${task.lastMessage ? ` · ${task.lastMessage}` : ""}` : "尚未执行";
   }
-  setTextById("rakutenScheduleMeta", `状态每5秒刷新 · 更新于 ${format(result.serverTime)}。库存按每天日本时间17:30独立启动，其余任务每20分钟启动。下一次为计划时间，任务忙碌或订单未及时导入时可能跳过本轮；邮件开启后也会处理导入后的新订单通知。`);
+  setTextById("rakutenScheduleMeta", `状态每5秒刷新 · 更新于 ${format(result.serverTime)}。库存每天日本时间17:30启动，17:40、17:50仅补跑未开始或写入前失败的店铺；已成功或写入结果待确认的店铺不补跑。其余任务每20分钟启动。下一次为计划时间，任务忙碌或订单未及时导入时可能跳过本轮；邮件开启后也会处理导入后的新订单通知。`);
 }
 
 function startRakutenSchedulePolling() {

@@ -15,6 +15,11 @@ function fixture() {
     $transaction: jest.fn((action) => Array.isArray(action) ? Promise.all(action) : action(prisma)),
     rakutenRmsConnection: { update: jest.fn(async ({ data }) => Object.assign(connection, data)) },
     rakutenInventoryCatalogJob: {
+      updateMany: jest.fn(async ({ where, data }) => {
+        let count = 0;
+        for (const job of jobs) if (job.connectionId === where.connectionId && where.status.in.includes(job.status)) { Object.assign(job, data); count++; }
+        return { count };
+      }),
       findFirst: jest.fn(async ({ where }) => [...jobs].reverse().find((job) => job.connectionId === where.connectionId && (!where.status || where.status.in.includes(job.status))) ?? null),
       create: jest.fn(async ({ data }) => { const job = { productCount: 0, skuCount: 0, ...data }; jobs.push(job); return { ...job }; }),
       update: jest.fn(async ({ where, data }) => { const job = jobs.find((row) => row.id === where.id)!; for (const [key, value] of Object.entries(data)) job[key] = value && typeof value === 'object' && 'increment' in value ? (job[key] ?? 0) + Number(value.increment) : value; return { ...job }; }),
@@ -212,6 +217,15 @@ describe('shop-first Rakuten catalog matching', () => {
     await expect(f.service.scope(f.connection, [mapping] as any)).rejects.toThrow('自动对应关系已有变化');
   });
 
+  it('starts daily refresh from the first page instead of resuming an old cursor', async () => {
+    const f = fixture();
+    f.jobs.push({ id: 'yesterday', connectionId: 1n, status: 'running', cursorMark: 'old-cursor', productCount: 100, skuCount: 20 });
+    f.client.searchCatalogPage.mockResolvedValueOnce(f.page('*', []));
+    await f.service.refresh(f.connection, jest.fn(), true);
+    expect(f.client.searchCatalogPage.mock.calls[0][2]).toBe('*');
+    expect(f.jobs[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('从头开始') });
+    expect(f.connection.inventoryCatalogVersion).not.toBe('yesterday');
+  });
   it('resumes the persisted cursor of an interrupted job instead of restarting or exposing its staging rows', async () => {
     const f = fixture();
     f.jobs.push({ id: 'resume', connectionId: 1n, status: 'running', cursorMark: 'saved-cursor', productCount: 100, skuCount: 20 });

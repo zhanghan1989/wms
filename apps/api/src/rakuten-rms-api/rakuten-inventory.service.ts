@@ -1,4 +1,4 @@
-import { decodeInventoryPlan, encodeInventoryPlan, inventoryPlanPage } from './rakuten-inventory-plan';
+import { inventoryPlanEquals, encodeInventoryPlan, inventoryPlanPage } from './rakuten-inventory-plan';
 import { inventoryCombos, isInventoryCombo, validInventoryCombo } from './rakuten-inventory-combos';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, RakutenRmsConnection } from '@prisma/client';
@@ -28,6 +28,7 @@ const settingsOf = (row: InventoryRecord) => ({
 @Injectable()
 export class RakutenInventoryService {
   private readonly logger = new Logger(RakutenInventoryService.name);
+  private readonly progressTimes = new Map<string, number>();
   constructor(
     private readonly prisma: PrismaService,
     private readonly client: RakutenRmsApiClient,
@@ -50,20 +51,30 @@ export class RakutenInventoryService {
     ] as const;
   }
 
-  private async locked<T>(action: (renew: () => Promise<void>) => Promise<T>): Promise<T> {
+  private async locked<T>(action: (renew: () => Promise<void>) => Promise<T>, label = '库存任务正在执行'): Promise<T> {
     await this.prisma.rakutenScheduleControl.upsert({ where: { key: LOCK_KEY }, create: { key: LOCK_KEY, enabled: false }, update: {} });
     const token = randomUUID();
     const acquired = await this.prisma.rakutenScheduleControl.updateMany({
       where: { key: LOCK_KEY, OR: [{ runToken: null }, { heartbeatAt: { lt: new Date(Date.now() - LEASE_MS) } }] },
-      data: { runToken: token, heartbeatAt: new Date() },
+      data: { runToken: token, startedAt: new Date(), heartbeatAt: new Date(), lastMessage: label },
     });
-    if (acquired.count !== 1) throw new ConflictException('库存同步或配置正在处理，请稍后重试');
+    if (acquired.count !== 1) {
+      const owner = await this.prisma.rakutenScheduleControl.findUnique({ where: { key: LOCK_KEY }, select: { lastMessage: true, startedAt: true, heartbeatAt: true } });
+      throw new ConflictException(`库存同步或配置正在处理，请稍后重试${owner?.lastMessage ? `：${owner.lastMessage}` : ''}${owner?.heartbeatAt ? `；最近心跳 ${owner.heartbeatAt.toISOString()}` : ''}`);
+    }
+    const startedAt = Date.now();
+    let lastLoggedAt = 0;
     const renew = async () => {
       const result = await this.prisma.rakutenScheduleControl.updateMany({
         where: { key: LOCK_KEY, runToken: token, heartbeatAt: { gte: new Date(Date.now() - LEASE_MS) } },
         data: { heartbeatAt: new Date() },
       });
       if (result.count !== 1) throw new ConflictException('库存同步锁已失效，本轮已停止，请重新预览');
+      if (Date.now() - lastLoggedAt >= 30_000) {
+        const memory = process.memoryUsage();
+        this.logger.log(`Inventory task elapsedMs=${Date.now() - startedAt} rssBytes=${memory.rss} heapBytes=${memory.heapUsed}`);
+        lastLoggedAt = Date.now();
+      }
     };
     try {
       // Acquiring this lease proves the previous owner has released it or expired.
@@ -75,7 +86,7 @@ export class RakutenInventoryService {
         data: { status: 'interrupted', finishedAt: new Date(), message: '服务重启或执行中断，请检查乐天库存并重新预览；未自动重试', result: { requiresReview: true } } });
       return await action(renew);
     }
-    finally { await this.prisma.rakutenScheduleControl.updateMany({ where: { key: LOCK_KEY, runToken: token }, data: { runToken: null, heartbeatAt: null } }); }
+    finally { this.progressTimes.clear(); await this.prisma.rakutenScheduleControl.updateMany({ where: { key: LOCK_KEY, runToken: token }, data: { runToken: null, heartbeatAt: null } }); }
   }
 
   async status(connectionId: string, actorId?: bigint) {
@@ -85,6 +96,8 @@ export class RakutenInventoryService {
     const runs = await this.prisma.rakutenInventoryRun.findMany({ where: { connectionId: connection.id }, orderBy: { startedAt: 'desc' }, take: 20,
       select: { id: true, trigger: true, status: true, actorId: true, expiresAt: true, message: true, result: true, startedAt: true, finishedAt: true } });
     return {
+      lock: await this.prisma.rakutenScheduleControl.findUnique({ where: { key: LOCK_KEY },
+        select: { lastMessage: true, heartbeatAt: true, startedAt: true } }),
       enabled: connection.inventorySyncEnabled, lastFullSyncedAt: connection.inventoryLastFullSyncedAt, pauseReason: connection.inventoryPauseReason, failureCount: connection.inventoryFailureCount, mappingCount, catalog: await this.catalog.summary(connection),
       mappings: mappings.map((row) => ({ ...row, id: row.id.toString(), connectionId: row.connectionId.toString() })),
       runs: runs.map(({ actorId: _actorId, ...run }) => run),
@@ -107,29 +120,26 @@ export class RakutenInventoryService {
   }
 
   async checkConnection(connectionId: string) {
-    return this.locked(async (renew) => {
-      const connection = await this.connection(connectionId);
-      const credentials = this.credentials(connection);
-      const steps: Array<{ api: string; status: string; message: string }> = [];
-      const test = async <T>(api: string, action: () => Promise<T>): Promise<T | undefined> => {
-        await renew();
-        try { const value = await action(); steps.push({ api, status: 'passed', message: '读取成功' }); return value; }
-        catch (error) { steps.push({ api, status: 'failed', message: error instanceof Error ? error.message : '读取失败，请检查权限' }); return undefined; }
-      };
-      const page = await test('items.search', () => this.client.searchCatalogPage(...credentials, '*'));
-      const sample = page?.variants.find((row) => !row.hidden && !row.unlimitedStock);
-      if (sample) {
-        await test('items.get', () => this.client.getItemVariantIds(...credentials, sample.manageNumber));
-        await test('items.bulk.get', () => this.client.getItemsVariantIds(...credentials, [sample.manageNumber]));
-        await test('inventories.bulk.get_2.1', async () => {
-          const rows = await this.client.getInventory(...credentials, [sample]);
-          if (!rows.some((row) => inventoryKey(row) === inventoryKey(sample))) throw new BadRequestException('样本SKU缺少库存设置，请先在RMS检查');
-          return rows;
-        });
-      } else for (const api of ['items.get', 'items.bulk.get', 'inventories.bulk.get_2.1']) steps.push({ api, status: 'unverified', message: '没有可用样本SKU，尚未验证；请先读取或配置店铺商品' });
-      steps.push({ api: 'inventories.bulk.upsert_2.1', status: 'unverified', message: '此检测不写入库存，无法确认写入权限；请在RMS检查授权，再通过手动同步验证' });
-      return { readReady: steps.filter((row) => row.api !== 'inventories.bulk.upsert_2.1').every((row) => row.status === 'passed'), steps, checkedAt: new Date() };
-    });
+    const connection = await this.connection(connectionId);
+    const credentials = this.credentials(connection);
+    const steps: Array<{ api: string; status: string; message: string }> = [];
+    const test = async <T>(api: string, action: () => Promise<T>): Promise<T | undefined> => {
+      try { const value = await action(); steps.push({ api, status: 'passed', message: '读取成功' }); return value; }
+      catch (error) { steps.push({ api, status: 'failed', message: error instanceof Error ? error.message : '读取失败，请检查权限' }); return undefined; }
+    };
+    const page = await test('items.search', () => this.client.searchCatalogPage(...credentials, '*'));
+    const sample = page?.variants.find((row) => !row.hidden && !row.unlimitedStock);
+    if (sample) {
+      await test('items.get', () => this.client.getItemVariantIds(...credentials, sample.manageNumber));
+      await test('items.bulk.get', () => this.client.getItemsVariantIds(...credentials, [sample.manageNumber]));
+      await test('inventories.bulk.get_2.1', async () => {
+        const rows = await this.client.getInventory(...credentials, [sample]);
+        if (!rows.some((row) => inventoryKey(row) === inventoryKey(sample))) throw new BadRequestException('样本SKU缺少库存设置，请先在RMS检查');
+        return rows;
+      });
+    } else for (const api of ['items.get', 'items.bulk.get', 'inventories.bulk.get_2.1']) steps.push({ api, status: 'unverified', message: '没有可用样本SKU，尚未验证；请先读取或配置店铺商品' });
+    steps.push({ api: 'inventories.bulk.upsert_2.1', status: 'unverified', message: '此检测不写入库存，无法确认写入权限；请在RMS检查授权，再通过手动同步验证' });
+    return { readReady: steps.filter((row) => row.api !== 'inventories.bulk.upsert_2.1').every((row) => row.status === 'passed'), steps, checkedAt: new Date() };
   }
 
   async cleanupHistory() {
@@ -166,7 +176,7 @@ export class RakutenInventoryService {
       if (enabled && connection.inventoryPauseReason) throw new ConflictException('此店铺因异常暂停，请先预览并手动同步验证成功，再开启自动同步');
       await this.prisma.rakutenRmsConnection.update({ where: { id: connection.id }, data: { inventorySyncEnabled: enabled } });
       return { enabled };
-    });
+    }, `店铺连接 ${connectionId}：保存库存同步开关`);
   }
 
   async saveMapping(connectionId: string, payload: SaveRakutenInventoryMappingDto) {
@@ -197,7 +207,7 @@ export class RakutenInventoryService {
         connectionId: connection.id, version: connection.inventoryCatalogVersion, manageNumber, variantId: payload.variantId,
       }, data: { productId, matchStatus: 'manual' } });
       return this.status(connectionId);
-    });
+    }, `店铺连接 ${connectionId}：保存SKU映射`);
   }
 
   async catalogStatus(connectionId: string, pageRaw?: string, issuesOnly = false, search = '', matchStatus = '', pageSizeRaw = '50') {
@@ -230,7 +240,7 @@ export class RakutenInventoryService {
     return this.locked(async () => {
       await this.prisma.rakutenInventoryMapping.updateMany({ where: { id: parseId(mappingId), connectionId: parseId(connectionId) }, data: { enabled: false } });
       return this.status(connectionId);
-    });
+    }, `店铺连接 ${connectionId}：停用SKU映射`);
   }
 
   /** A shared stock pool is reduced by real order claims; published SKUs then
@@ -250,8 +260,7 @@ export class RakutenInventoryService {
       if (!combo || !validInventoryCombo(combo)) throw new BadRequestException(`组合 ${id} 不存在或明细无效，请修复组合配置`);
     }
     const leafIds = [...new Set(productIds.flatMap((id) => combos.get(id)?.items.map((item) => item.productId) ?? [id]))];
-    const pending = await this.orders.inventorySyncPendingDemands(tx);
-    const ids = [...new Set([...leafIds, ...pending.map((row) => row.productId)])];
+    const ids = [...leafIds];
     const products = [] as Array<{
       productId: string; status: number; productType: string | null;
       bomComponents: Array<{ quantity: number; componentProductId: string; componentProduct: { status: number; productType: string | null } }>;
@@ -268,6 +277,29 @@ export class RakutenInventoryService {
       const bomById = new Map(shoulders.map((row) => [row.productId, row.bomComponents]));
       products.push(...batch.map((row) => ({ ...row, bomComponents: bomById.get(row.productId) ?? [] })));
     }
+    // A shoulder order outside this batch may consume the same material. Include
+    // every parent of these materials before restricting the pending-order query.
+    const materialIds = [...new Set(products.flatMap((row) => row.bomComponents.map((item) => item.componentProductId)))];
+    const poolIds = [...new Set([...leafIds, ...materialIds])];
+    const parents = await tx.masterProductBomItem.findMany({
+      where: { componentProductId: { in: poolIds } }, select: { parentProductId: true }, distinct: ['parentProductId'],
+    });
+    const relatedIds = [...new Set([...materialIds, ...parents.map((row) => row.parentProductId)])].filter((id) => !ids.includes(id));
+    for (let offset = 0; offset < relatedIds.length; offset += 500) {
+      await renew();
+      const batch = await tx.masterProduct.findMany({ where: { productId: { in: relatedIds.slice(offset, offset + 500) } },
+        select: { productId: true, status: true, productType: true,
+          bomComponents: { select: { quantity: true, componentProductId: true, componentProduct: { select: { status: true, productType: true } } } } } });
+      const loaded = new Set(products.map((row) => row.productId));
+      products.push(...batch.filter((row) => !loaded.has(row.productId)));
+    }
+    const pendingIds = [...new Set(products.map((row) => row.productId))];
+    await renew();
+    // One ordered aggregation preserves shared-material allocation order. Large
+    // full-shop plans use one paged scan instead of many huge alias/JSON queries.
+    const pending = pendingIds.length > 1000
+      ? await this.orders.inventorySyncPendingDemands(tx)
+      : await this.orders.inventorySyncPendingDemands(tx, pendingIds);
     const byId = new Map(products.map((row) => [row.productId, row]));
     if (ids.some((id) => !byId.has(id))) throw new BadRequestException('库存同步涉及不存在的产品，请先修复订单或映射');
     const targetProducts = leafIds.map((id) => byId.get(id)!);
@@ -479,6 +511,16 @@ export class RakutenInventoryService {
     throw new ConflictException(reason);
   }
 
+  private async progress(runId: string, connectionId: string, message: string) {
+    const now = Date.now();
+    const memory = process.memoryUsage();
+    this.logger.log(`Inventory run=${runId} connection=${connectionId} stepMs=${now - (this.progressTimes.get(runId) ?? now)} rssBytes=${memory.rss} heapBytes=${memory.heapUsed} stage=${message}`);
+    this.progressTimes.set(runId, now);
+    await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { message } });
+    await this.prisma.rakutenScheduleControl.updateMany({ where: { key: LOCK_KEY, runToken: { not: null } },
+      data: { lastMessage: `店铺连接 ${connectionId}：${message}` } });
+  }
+
   /** Resolve only once the lease and persisted job exist, without holding HTTP open. */
   private background(action: (started: (id: string) => void) => Promise<unknown>) {
     return new Promise<{ jobId: string }>((resolve, reject) => {
@@ -498,15 +540,19 @@ export class RakutenInventoryService {
     const where = { id: jobId, connectionId: parseId(connectionId), actorId: actorId.toString() };
     // Progress polls must never deserialize a complete persisted plan.
     const run = await this.prisma.rakutenInventoryRun.findFirst({ where, select: {
-      id: true, status: true, message: true, result: true, expiresAt: true, planPurgedAt: true,
+      id: true, status: true, message: true, result: true, expiresAt: true, planPurgedAt: true, startedAt: true,
     } });
     if (!run) throw new NotFoundException('库存任务不存在或不属于当前用户');
     const snapshot = run.status === 'preview' ? await this.prisma.rakutenInventoryRun.findFirst({
       where: { ...where, status: 'preview' }, select: { plan: true },
     }) : null;
+    const lease = ['planning', 'checking', 'running'].includes(run.status) ? await this.prisma.rakutenScheduleControl.findUnique({
+      where: { key: LOCK_KEY }, select: { heartbeatAt: true },
+    }) : null;
     const details = await inventoryPlanPage(snapshot?.plan ?? [], page, filter);
     return { detailsPurged: Boolean(run.planPurgedAt), ...details, filter, jobId: run.id, previewId: run.id, status: run.status, message: run.message, result: run.result,
-      expiresAt: run.expiresAt, page, pageSize: 50 };
+      expiresAt: run.expiresAt, startedAt: run.startedAt, lastProgressAt: this.progressTimes.has(run.id) ? new Date(this.progressTimes.get(run.id)!) : null, heartbeatAt: lease?.heartbeatAt ?? null,
+      serverTime: new Date(), page, pageSize: 50 };
   }
 
   async preview(connectionId: string, actorId: bigint, started?: (id: string) => void) {
@@ -519,7 +565,7 @@ export class RakutenInventoryService {
       try {
         const context: InventoryPlanContext = { mode: 'full', scopeCount: 0, skippedCount: 0 };
         const plan = await this.buildPlan(connectionId, renew, async (message) => {
-          await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { message } });
+          await this.progress(run.id, connectionId, message);
         }, undefined, false, context);
         await renew();
         await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { message: `正在保存库存预览 ${plan.length} 个SKU` } });
@@ -535,7 +581,7 @@ export class RakutenInventoryService {
         await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), message: error instanceof Error ? error.message : '预览失败' } });
         throw error;
       }
-    });
+    }, `店铺连接 ${connectionId}：计算库存预览`);
   }
 
   async execute(connectionId: string, previewId: string, actorId: bigint, started?: (id: string) => void) {
@@ -548,16 +594,16 @@ export class RakutenInventoryService {
       try {
         const context: InventoryPlanContext = { mode: 'full', scopeCount: 0, skippedCount: 0 };
         const fresh = await this.buildPlan(connectionId, renew, async (message) => {
-          await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { message } });
+          await this.progress(run.id, connectionId, message);
         }, undefined, false, context);
-        if (!isDeepStrictEqual(context.issues ?? [], (run.result as unknown as InventoryPlanContext | null)?.issues ?? []) || !isDeepStrictEqual(fresh, await decodeInventoryPlan(run.plan))) throw new ConflictException('库存、映射或配送设置已有变化，请重新预览后同步');
+        if (!isDeepStrictEqual(context.issues ?? [], (run.result as unknown as InventoryPlanContext | null)?.issues ?? []) || !await inventoryPlanEquals(run.plan, fresh)) throw new ConflictException('库存、映射或配送设置已有变化，请重新预览后同步');
         await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { status: 'running' } });
         return await this.writePlan(connectionId, run.id, fresh, renew, false, context);
       } catch (error) {
         await this.prisma.rakutenInventoryRun.updateMany({ where: { id: run.id, status: 'checking' }, data: { status: 'failed', finishedAt: new Date(), message: error instanceof Error ? error.message : '复核失败' } });
         throw error;
       }
-    });
+    }, `店铺连接 ${connectionId}：复核与写入库存`);
   }
 
   private async writePlan(connectionId: string, runId: string, plan: InventoryPlanRow[], renew: () => Promise<void>, scheduled: boolean, context?: InventoryPlanContext) {
@@ -646,33 +692,58 @@ export class RakutenInventoryService {
     }
   }
 
-  async runScheduled() {
+  private japanDayStart() {
+    return new Date(new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10) + 'T00:00:00+09:00');
+  }
+
+  private async canRetryScheduledConnection(connectionId: bigint, today: Date) {
+    const recent = await this.prisma.rakutenInventoryRun.findMany({
+      where: { connectionId, trigger: 'scheduled', startedAt: { gte: today } },
+      orderBy: { startedAt: 'desc' }, take: 3, select: { status: true, result: true },
+    });
+    const latest = recent[0];
+    return recent.length < 3 && (!latest || latest.status === 'failed'
+      && (latest.result as { retryable?: boolean } | null)?.retryable === true);
+  }
+
+  async hasScheduledRetryWork() {
+    const connections = await this.prisma.rakutenRmsConnection.findMany({
+      where: { status: 1, inventorySyncEnabled: true, shop: { status: 1 } }, select: { id: true },
+    });
+    const today = this.japanDayStart();
+    for (const connection of connections) if (await this.canRetryScheduledConnection(connection.id, today)) return true;
+    return false;
+  }
+
+  async runScheduled(retry = false) {
     return this.locked(async (renew) => {
       const connections = await this.prisma.rakutenRmsConnection.findMany({ where: { status: 1, inventorySyncEnabled: true, shop: { status: 1 } }, select: { id: true, shop: { select: { name: true } } }, orderBy: { id: 'asc' } });
       const errors: string[] = [];
       let completed = 0;
-      const shared = new Map<string, number>();
+      const today = this.japanDayStart();
       for (const connection of connections) {
+        if (retry && !await this.canRetryScheduledConnection(connection.id, today)) continue;
+        let enteredWrite = false;
         const runId = randomUUID();
         await this.prisma.rakutenInventoryRun.create({ data: { id: runId, connectionId: connection.id, trigger: 'scheduled', status: 'planning', plan: [] } });
         try {
           const active = await this.connection(connection.id.toString());
           // Daily synchronization must discover new listings even when yesterday's
           // snapshot (or a manual refresh) is still less than 24 hours old.
-          await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId },
-            data: { message: '正在刷新乐天在售清单并自动匹配' } });
-          await this.catalog.refresh(active, renew);
+          await this.progress(runId, connection.id.toString(), '正在刷新乐天在售清单并自动匹配');
+          await this.catalog.refresh(active, renew, true);
           const context: InventoryPlanContext = { mode: inventoryFullCheckDue(active.inventoryLastFullSyncedAt) ? 'full' : 'incremental', scopeCount: 0, skippedCount: 0 };
           const plan = await this.buildPlan(connection.id.toString(), renew, async (message) => {
-            await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { message } });
-          }, shared, true, context);
+            await this.progress(runId, connection.id.toString(), message);
+          }, undefined, true, context);
           await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { plan: await encodeInventoryPlan(plan) as unknown as Prisma.InputJsonValue, status: 'running' } });
+          enteredWrite = true;
           await this.writePlan(connection.id.toString(), runId, plan, renew, true, context);
           if (context.issues?.length) errors.push(`${connection.shop.name}：隔离异常SKU ${context.issues.length} 个，请查看库存待处理列表`);
           completed += 1;
         } catch (error) {
           const message = error instanceof Error ? error.message : '库存同步失败';
-          await this.prisma.rakutenInventoryRun.updateMany({ where: { id: runId, status: { in: ['planning', 'running'] } }, data: { status: 'failed', message, finishedAt: new Date() } });
+          await this.prisma.rakutenInventoryRun.updateMany({ where: { id: runId, status: { in: ['planning', 'running'] } }, data: { status: 'failed', message, finishedAt: new Date(), result: { retryable: !enteredWrite } } });
           const updated = await this.prisma.rakutenRmsConnection.update({ where: { id: connection.id }, data: { inventoryFailureCount: { increment: 1 } } });
           if (updated?.inventoryFailureCount >= 3) await this.prisma.rakutenRmsConnection.update({ where: { id: connection.id }, data: {
             inventorySyncEnabled: false, inventoryPauseReason: `库存同步连续失败 ${updated.inventoryFailureCount} 次：${message}`,
