@@ -2213,14 +2213,14 @@
       </div><button type="button" class="ghost" data-action="closeRakutenWorkflow">关闭</button></div>
       <p id="rakutenWorkflowMeta" class="rakuten-center-status" aria-live="polite">正在读取...</p>
       <section class="rakuten-schedules" aria-label="定时任务控制">
-        <p class="muted">以下开关适用于全部店铺。订单、物流、回传和邮件每20分钟检查；库存每小时30分独立检查（日本时间）。店铺自身的设置仍需开启。关闭后不再定时启动，正在执行的一轮会继续完成。</p>
+        <p class="muted">以下开关适用于全部店铺。订单、物流、回传和邮件每20分钟检查；库存每天17:30独立检查（日本时间）。店铺自身的设置仍需开启。关闭后不再定时启动，正在执行的一轮会继续完成。</p>
         <div class="table-scroll"><table>
           <thead><tr><th>定时任务</th><th>定时开关</th><th>运行状态</th><th>下一次计划启动（日本时间）</th><th>上次结果</th></tr></thead>
           <tbody>
             <tr data-schedule-row="import"><td>订单导入</td><td><button type="button" class="ghost" data-schedule-toggle="import" role="switch" aria-checked="false" aria-label="订单定时导入" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
             <tr data-schedule-row="tracking"><td>物流自动查询<br><button id="rakutenTrackingFailuresOpen" type="button" class="tiny-btn ghost">查看失败单号</button></td><td><button type="button" class="ghost" data-schedule-toggle="tracking" role="switch" aria-checked="false" aria-label="物流自动查询" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
             <tr data-schedule-row="shipping"><td>快递单号回传</td><td><button type="button" class="ghost" data-schedule-toggle="shipping" role="switch" aria-checked="false" aria-label="快递单号定时回传" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
-            <tr data-schedule-row="inventory"><td>库存自动同步<br><small>每小时30分 · 日本时间</small><br><button id="rakutenInventoryOpen" type="button" class="tiny-btn ghost">映射、预览与记录</button></td><td><button type="button" class="ghost" data-schedule-toggle="inventory" role="switch" aria-checked="false" aria-label="库存自动同步" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
+            <tr data-schedule-row="inventory"><td>库存自动同步<br><small>每天17:30 · 日本时间</small><br><button id="rakutenInventoryOpen" type="button" class="tiny-btn ghost">映射、预览与记录</button></td><td><button type="button" class="ghost" data-schedule-toggle="inventory" role="switch" aria-checked="false" aria-label="库存自动同步" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
             <tr data-schedule-row="mail"><td>邮件发送</td><td><button type="button" class="ghost" data-schedule-toggle="mail" role="switch" aria-checked="false" aria-label="邮件定时发送" disabled>读取中</button></td><td data-schedule-status>读取中</td><td data-schedule-next>—</td><td data-schedule-last>—</td></tr>
           </tbody>
         </table></div>
@@ -2228,11 +2228,11 @@
         <p id="rakutenScheduleMeta" class="muted" aria-live="polite">正在读取定时状态...</p>
       </section>
       <details id="rakutenInventoryPanel" class="rakuten-import-issues">
-        <summary>乐天库存同步 · 每小时30分</summary>
-        <p class="muted">每小时30分独立检查，开启上方库存开关并启用对应店铺后生效。订单仍每20分钟导入，店铺需有最近25分钟内完整导入的订单。普通产品使用可用库存，肩带使用可用成品＋可组装数；扣除FBA、拣货及尚未分配批次的待发货占用。本体和配件不单独同步，0库存也会同步。</p>
+        <summary>乐天库存同步 · 每天17:30</summary>
+        <p class="muted">每天17:30独立检查，开启上方库存开关并启用对应店铺后生效。订单仍每20分钟导入，店铺需有最近25分钟内完整导入的订单。普通产品使用可用库存，肩带使用可用成品＋可组装数；扣除FBA、拣货及尚未分配批次的待发货占用。本体和配件不单独同步，0库存也会同步。</p>
         <p class="muted">每个SKU独立使用全量可用库存，共用材料和多店之间不分配库存，仍有超卖风险。安全库存从每个SKU的结果中扣减。需要库存API 2.1及商品API items.search、items.get、items.bulk.get权限；配送设置随库存保留。</p>
         <h4>1. 同步设置</h4>
-        <p class="muted">每小时批量比对库存，只校验和更新有差异的SKU；每天首次检查完整校验商品。手动预览始终检查全部在售SKU。数量未变化也会比对乐天实际库存，避免漏掉已扣单后的补库存。</p>
+        <p class="muted">每天日本时间17:30批量比对库存，更新有差异的SKU，并按当天完整核对状态校验商品。手动预览始终检查全部在售SKU。数量未变化也会比对乐天实际库存，避免漏掉已扣单后的补库存。</p>
         <div class="rakuten-center-toolbar">
           <label>店铺<select id="rakutenInventoryShop"></select></label>
           <label><input id="rakutenInventoryEnabled" type="checkbox" /> 允许此店铺自动同步库存</label>

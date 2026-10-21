@@ -170,8 +170,8 @@ describe('inventory sync configuration UI', () => {
     expect(html).toContain('data-schedule-toggle="inventory"');
     expect(html).toContain('aria-label="库存自动同步"');
     expect(html).toContain('每个SKU独立使用全量可用库存');
-    expect(html).toContain('每小时30分独立检查');
-    expect(html).toContain('每天首次检查完整校验商品');
+    expect(html).toContain('每天17:30独立检查');
+    expect(html).toContain('按当天完整核对状态校验商品');
     expect(html).not.toContain('每20分钟跟随自动处理流程执行');
   });
 });

@@ -531,10 +531,10 @@ describe('Rakuten inventory sync', () => {
   });
 });
 
-describe('independent hourly inventory processing', () => {
-  it('registers the hourly half-past Tokyo job with overlap prevention', () => {
+describe('independent daily inventory processing', () => {
+  it('registers the daily 17:30 Tokyo job with overlap prevention', () => {
     const options = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, RakutenInventorySchedulerService.prototype.runScheduledInventorySync);
-    expect(options).toMatchObject({ cronTime: '0 30 * * * *', name: 'rakuten-inventory-sync', timeZone: 'Asia/Tokyo', waitForCompletion: true });
+    expect(options).toMatchObject({ cronTime: '0 30 17 * * *', name: 'rakuten-inventory-sync', timeZone: 'Asia/Tokyo', waitForCompletion: true });
   });
   it('the twenty-minute order flow never triggers inventory, including manual check', async () => {
     const schedules = { enabled: jest.fn().mockResolvedValue(true), execute: jest.fn(async (_key, action) => action()) };
@@ -543,7 +543,7 @@ describe('independent hourly inventory processing', () => {
     await scheduler.runScheduledOrderProcessing(); await scheduler.runNow();
     expect(schedules.execute.mock.calls.map((row) => row[0])).not.toContain('inventory');
   });
-  it.each([true, false])('the hourly job respects the persisted global switch: %s', async (enabled) => {
+  it.each([true, false])('the daily job respects the persisted global switch: %s', async (enabled) => {
     const inventory = { runScheduled: jest.fn().mockResolvedValue({ status: 'success', errors: [] }) };
     const schedules = { execute: jest.fn(async (_key, action) => enabled ? action() : undefined) };
     await new RakutenInventorySchedulerService(inventory as any, schedules as any).runScheduledInventorySync();

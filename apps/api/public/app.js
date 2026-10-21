@@ -7887,7 +7887,7 @@ function renderRakutenSchedules(result) {
     row.querySelector("[data-schedule-last]").textContent = task.lastStatus
       ? `${outcomes[task.lastStatus] || task.lastStatus} · ${format(task.finishedAt)}${task.lastMessage ? ` · ${task.lastMessage}` : ""}` : "尚未执行";
   }
-  setTextById("rakutenScheduleMeta", `状态每5秒刷新 · 更新于 ${format(result.serverTime)}。库存按每小时30分独立启动，其余任务每20分钟启动。下一次为计划时间，任务忙碌或订单未及时导入时可能跳过本轮；邮件开启后也会处理导入后的新订单通知。`);
+  setTextById("rakutenScheduleMeta", `状态每5秒刷新 · 更新于 ${format(result.serverTime)}。库存按每天日本时间17:30独立启动，其余任务每20分钟启动。下一次为计划时间，任务忙碌或订单未及时导入时可能跳过本轮；邮件开启后也会处理导入后的新订单通知。`);
 }
 
 function startRakutenSchedulePolling() {

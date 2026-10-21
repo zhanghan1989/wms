@@ -4,7 +4,7 @@ import { Cron } from '@nestjs/schedule';
 import { RakutenInventoryService } from './rakuten-inventory.service';
 import { RakutenScheduleControlService } from './rakuten-schedule-control.service';
 
-export const RAKUTEN_INVENTORY_CRON = '0 30 * * * *';
+export const RAKUTEN_INVENTORY_CRON = '0 30 17 * * *';
 
 @Injectable()
 export class RakutenInventorySchedulerService {
