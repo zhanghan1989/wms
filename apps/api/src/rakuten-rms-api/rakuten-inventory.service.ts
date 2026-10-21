@@ -435,14 +435,29 @@ export class RakutenInventoryService {
       await progress(`正在校验在售商品 ${offset} / ${manageNumbers.length}`);
       const variants = await this.client.getItemsVariantIds(...credentials, manageNumbers.slice(offset, offset + 50), true);
       for (const [key, values] of variants) variantsByItem.set(key, new Set(values));
+      await progress(`已校验在售商品 ${Math.min(offset + 50, manageNumbers.length)} / ${manageNumbers.length}`);
     }
     mappings = mappings.filter((mapping) => {
       if (variantsByItem.get(mapping.manageNumber)?.has(mapping.variantId)) return true;
       isolate(mapping, '商品或SKU已下架、销售期无效或编号失效，请刷新清单并修正映射'); return false;
     });
     if (context) context.issues = issues;
-    for (const issue of issues) await this.prisma.rakutenInventoryMapping.updateMany({ where: { id: parseId(issue.mappingId), connectionId: connection.id },
-      data: { syncIssue: issue.reason, syncIssueAt: new Date() } });
+    const issueGroups = new Map<string, bigint[]>();
+    for (const issue of issues) {
+      const ids = issueGroups.get(issue.reason) ?? [];
+      ids.push(parseId(issue.mappingId));
+      issueGroups.set(issue.reason, ids);
+    }
+    let recordedIssues = 0;
+    for (const [reason, ids] of issueGroups) for (let offset = 0; offset < ids.length; offset += 500) {
+      await renew();
+      await progress(`正在记录异常SKU ${recordedIssues} / ${issues.length}`);
+      const batch = ids.slice(offset, offset + 500);
+      await this.prisma.rakutenInventoryMapping.updateMany({ where: { id: { in: batch }, connectionId: connection.id },
+        data: { syncIssue: reason, syncIssueAt: new Date() } });
+      recordedIssues += batch.length;
+    }
+    await progress(`正在生成库存预览，已隔离异常SKU ${issues.length} 个`);
     if (scheduled && issues.length >= 10 && issues.length >= allMappings.length * 0.5) await this.pause(connection.id, `${issues.length} 个SKU异常（达到范围50%），已暂停，请检查清单及连接`);
     const plan: InventoryPlanRow[] = mappings.map((mapping) => {
       const old = remote.get(inventoryKey(mapping))!;
@@ -518,8 +533,10 @@ export class RakutenInventoryService {
         const plan = await this.buildPlan(connectionId, renew, async (message) => {
           await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { message } });
         }, undefined, false, context);
+        await renew();
+        await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { message: `正在保存库存预览 ${plan.length} 个SKU` } });
         const expiresAt = new Date(Date.now() + 10 * 60_000);
-        await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { status: 'preview', plan: json(plan), result: json(context), expiresAt, message: '预览完成，请核对后确认同步' } });
+        await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { status: 'preview', plan: plan as unknown as Prisma.InputJsonValue, result: json(context), expiresAt, message: '预览完成，请核对后确认同步' } });
         return { previewId: run.id, expiresAt, rows: plan, changedCount: plan.filter((row) => row.quantity !== row.currentQuantity).length };
       } catch (error) {
         await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), message: error instanceof Error ? error.message : '预览失败' } });
@@ -652,7 +669,7 @@ export class RakutenInventoryService {
           const plan = await this.buildPlan(connection.id.toString(), renew, async (message) => {
             await this.prisma.rakutenInventoryRun.update({ where: { id: runId }, data: { message } });
           }, shared, true, context);
-          await this.prisma.rakutenInventoryRun.update({ where: { id: runId }, data: { plan: json(plan), status: 'running' } });
+          await this.prisma.rakutenInventoryRun.update({ where: { id: runId }, data: { plan: plan as unknown as Prisma.InputJsonValue, status: 'running' } });
           await this.writePlan(connection.id.toString(), runId, plan, renew, true, context);
           if (context.issues?.length) errors.push(`${connection.shop.name}：隔离异常SKU ${context.issues.length} 个，请查看库存待处理列表`);
           completed += 1;

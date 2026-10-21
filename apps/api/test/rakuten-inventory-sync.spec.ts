@@ -260,6 +260,23 @@ describe('Rakuten inventory sync', () => {
     expect(result.size).toBe(10001);
   });
 
+  it('batches large SKU isolation and reports the stages after the final item check', async () => {
+    const f = fixture();
+    const mappings = Array.from({ length: 1201 }, (_, i) => ({ ...row, id: BigInt(i + 1), variantId: `v${i}` }));
+    f.prisma.rakutenInventoryMapping.findMany.mockResolvedValue(mappings);
+    f.client.getInventory.mockImplementation(async (_a, _b, keys) => keys.map((key: any) => ({ ...key, quantity: 0 })));
+    f.client.getItemsVariantIds.mockResolvedValue(new Map([['item', []]]));
+    const progress = jest.fn();
+    const context = { mode: 'full', scopeCount: 0, skippedCount: 0 };
+    const plan = await (f.service as any).buildPlan('1', jest.fn(), progress, undefined, false, context);
+    expect(plan).toEqual([]);
+    const writes = f.prisma.rakutenInventoryMapping.updateMany.mock.calls.map(([query]: any) => query);
+    expect(writes.map((query: any) => query.where.id.in.length)).toEqual([500, 500, 201]);
+    expect(progress).toHaveBeenCalledWith('已校验在售商品 1 / 1');
+    expect(progress).toHaveBeenCalledWith('正在记录异常SKU 1000 / 1201');
+    expect(progress).toHaveBeenLastCalledWith('正在生成库存预览，已隔离异常SKU 1201 个');
+  });
+
   it('returns a background execute job and never allows its preview to execute twice', async () => {
     const f = fixture(); const preview = await f.service.preview('1', 2n);
     const job = await f.service.queueExecute('1', preview.previewId, 2n);
@@ -425,7 +442,7 @@ describe('Rakuten inventory sync', () => {
     expect(f.client.upsertInventory.mock.calls[0][2]).toEqual([expect.objectContaining({ variantId: 'SkuA' })]);
     const run = [...f.runs.values()][0];
     expect(run).toMatchObject({ status: 'partial', result: { excluded: 1, verified: 1, requiresReview: true } });
-    expect(f.prisma.rakutenInventoryMapping.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 12n, connectionId: 1n }, data: expect.objectContaining({ syncIssue: expect.stringContaining('失效') }) }));
+    expect(f.prisma.rakutenInventoryMapping.updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { in: [12n] }, connectionId: 1n }, data: expect.objectContaining({ syncIssue: expect.stringContaining('失效') }) }));
     expect(f.prisma.rakutenRmsConnection.update.mock.calls.every((call: any) => !call[0].data.inventoryLastFullSyncedAt)).toBe(true);
   });
   it('never treats a remote request failure as an isolated bad SKU', async () => {
