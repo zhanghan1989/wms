@@ -208,12 +208,46 @@ describe('Rakuten inventory sync', () => {
     expect(f.client.getInventory).not.toHaveBeenCalled();
     expect(f.client.upsertInventory).not.toHaveBeenCalled();
   });
-  it('refreshes a stale catalog before the scheduled inventory plan is built', async () => {
-    const f = fixture(); f.catalog.needsRefresh.mockResolvedValueOnce(true);
+  it('refreshes even a fresh catalog before the scheduled inventory plan is built', async () => {
+    const f = fixture(); f.catalog.needsRefresh.mockResolvedValue(false);
     await f.service.runScheduled();
     expect(f.catalog.refresh).toHaveBeenCalledTimes(1);
     expect(f.catalog.refresh.mock.invocationCallOrder[0]).toBeLessThan(f.catalog.scope.mock.invocationCallOrder[0]);
     expect(f.client.upsertInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the shop when refreshing fails without using the old catalog', async () => {
+    const f = fixture();
+    f.catalog.refresh.mockRejectedValueOnce(new Error('乐天清单读取失败'));
+    const result = await f.service.runScheduled();
+    expect(result).toMatchObject({ status: 'failed', completed: 0, errors: ['店铺：乐天清单读取失败'] });
+    expect(f.catalog.scope).not.toHaveBeenCalled();
+    expect(f.client.getInventory).not.toHaveBeenCalled();
+    expect(f.client.upsertInventory).not.toHaveBeenCalled();
+    expect([...f.runs.values()][0]).toMatchObject({ status: 'failed', message: '乐天清单读取失败' });
+  });
+
+  it('continues other shops after one catalog refresh fails', async () => {
+    const f = fixture();
+    f.prisma.rakutenRmsConnection.findMany.mockResolvedValue([f.connection, { ...f.connection, id: 2n }]);
+    f.catalog.refresh.mockRejectedValueOnce(new Error('店铺清单读取失败')).mockResolvedValueOnce(undefined);
+    const result = await f.service.runScheduled();
+    expect(result).toMatchObject({ status: 'partial', completed: 1 });
+    expect(f.catalog.refresh).toHaveBeenCalledTimes(2);
+    expect(f.catalog.scope).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes mappings discovered by the refresh in the same scheduled run', async () => {
+    const f = fixture();
+    const freshMapping = { ...row, id: 12n, variantId: 'NewSku' };
+    f.catalog.refresh.mockImplementationOnce(async () => {
+      f.prisma.rakutenInventoryMapping.findMany.mockResolvedValue([row, freshMapping]);
+    });
+    f.client.getInventory.mockImplementation(async (_a, _b, keys) => keys.map((key: any) => ({ ...key, quantity: 10 })));
+    f.client.getItemsVariantIds.mockResolvedValue(new Map([['item', ['SkuA', 'NewSku']]]));
+    expect(await f.service.runScheduled()).toMatchObject({ status: 'success', completed: 1 });
+    expect(f.catalog.scope).toHaveBeenCalledWith(expect.anything(), [row, freshMapping]);
+    expect([...f.runs.values()][0].result).toMatchObject({ total: 2, validated: 2 });
   });
 
   it('returns a persisted background preview before remote checks finish, and scopes paginated results to its owner', async () => {

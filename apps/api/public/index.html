@@ -2250,7 +2250,7 @@
           <button id="rakutenInventoryCatalogDownload" type="button" class="ghost">下载清单</button>
         </div>
         <p id="rakutenInventoryCatalogMeta" class="muted" aria-live="polite">尚未读取乐天商品清单。</p>
-        <p class="muted">以乐天在售清单为范围，包含缺货SKU。按SKU管理番号精确匹配WMS产品ID，并以该店铺的系统联携用SKU补充匹配；zh-组合编号精确对应系统组合名称，按明细可售套数同步；两者冲突需人工确认，保留人工映射，不截取编号或模糊匹配；未匹配、重复匹配及关系变化项不上传。仓库/下架、非数量管理及销售时间外商品跳过。清单每天自动刷新，读取失败时保留原清单。乐天搜索索引新增或删除商品可能延迟最多24小时。</p>
+        <p class="muted">以乐天在售清单为范围，包含缺货SKU。按SKU管理番号精确匹配WMS产品ID，并以该店铺的系统联携用SKU补充匹配；zh-组合编号精确对应系统组合名称，按明细可售套数同步；两者冲突需人工确认，保留人工映射，不截取编号或模糊匹配；未匹配、重复匹配及关系变化项不上传。仓库/下架、非数量管理及销售时间外商品跳过。每天17:30自动同步前先完整刷新清单并重新匹配；读取失败时保留原清单供查看，停止该店铺本轮同步。乐天搜索索引新增或删除商品可能延迟最多24小时。</p>
         <div class="table-scroll"><table>
           <thead><tr><th>乐天商品</th><th>商品管理番号</th><th>SKU管理番号</th><th>系统联携用SKU</th><th>WMS产品ID</th><th>匹配与范围</th><th>操作</th></tr></thead>
           <tbody id="rakutenInventoryCatalogBody"></tbody>

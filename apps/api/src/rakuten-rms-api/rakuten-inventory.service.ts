@@ -657,7 +657,11 @@ export class RakutenInventoryService {
         await this.prisma.rakutenInventoryRun.create({ data: { id: runId, connectionId: connection.id, trigger: 'scheduled', status: 'planning', plan: [] } });
         try {
           const active = await this.connection(connection.id.toString());
-          if (await this.catalog.needsRefresh(active)) await this.catalog.refresh(active, renew);
+          // Daily synchronization must discover new listings even when yesterday's
+          // snapshot (or a manual refresh) is still less than 24 hours old.
+          await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId },
+            data: { message: '正在刷新乐天在售清单并自动匹配' } });
+          await this.catalog.refresh(active, renew);
           const context: InventoryPlanContext = { mode: inventoryFullCheckDue(active.inventoryLastFullSyncedAt) ? 'full' : 'incremental', scopeCount: 0, skippedCount: 0 };
           const plan = await this.buildPlan(connection.id.toString(), renew, async (message) => {
             await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { message } });
