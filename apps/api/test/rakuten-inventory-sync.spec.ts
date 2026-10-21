@@ -65,6 +65,8 @@ describe('Rakuten inventory sync', () => {
     const f = fixture();
     const preview = await f.service.preview('1', 2n);
     expect(preview.rows[0]).toMatchObject({ quantity: 10, currentQuantity: 3 });
+    expect(f.runs.get(preview.previewId).plan.format).toBe('gzip-chunks-v1');
+    for (const [query] of f.prisma.rakutenInventoryRun.update.mock.calls) expect(query.select).toEqual({ id: true });
     expect(f.client.upsertInventory).not.toHaveBeenCalled();
     // MySQL JSON storage can reorder object keys; comparison must be semantic.
     f.runs.get(preview.previewId).plan = preview.rows.map((value) => Object.fromEntries(Object.entries(value).reverse()));

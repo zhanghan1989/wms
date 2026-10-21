@@ -1,3 +1,4 @@
+import { decodeInventoryPlan, encodeInventoryPlan, inventoryPlanPage } from './rakuten-inventory-plan';
 import { inventoryCombos, isInventoryCombo, validInventoryCombo } from './rakuten-inventory-combos';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, RakutenRmsConnection } from '@prisma/client';
@@ -503,22 +504,9 @@ export class RakutenInventoryService {
     const snapshot = run.status === 'preview' ? await this.prisma.rakutenInventoryRun.findFirst({
       where: { ...where, status: 'preview' }, select: { plan: true },
     }) : null;
-    const plan = Array.isArray(snapshot?.plan) ? snapshot.plan as unknown as InventoryPlanRow[] : [];
-    const rows: InventoryPlanRow[] = [];
-    let filteredTotal = 0, changedCount = 0, zeroedCount = 0;
-    const start = (page - 1) * 50;
-    for (const row of plan) {
-      const changed = row.quantity !== row.currentQuantity;
-      const zeroed = row.currentQuantity > 0 && row.quantity === 0;
-      if (changed) changedCount++;
-      if (zeroed) zeroedCount++;
-      if (filter === 'all' || filter === 'changed' && changed || filter === 'zero' && zeroed) {
-        if (filteredTotal >= start && rows.length < 50) rows.push(row);
-        filteredTotal++;
-      }
-    }
-    return { detailsPurged: Boolean(run.planPurgedAt), filteredTotal, filter, jobId: run.id, previewId: run.id, status: run.status, message: run.message, result: run.result,
-      expiresAt: run.expiresAt, page, pageSize: 50, total: plan.length, changedCount, zeroedCount, rows };
+    const details = await inventoryPlanPage(snapshot?.plan ?? [], page, filter);
+    return { detailsPurged: Boolean(run.planPurgedAt), ...details, filter, jobId: run.id, previewId: run.id, status: run.status, message: run.message, result: run.result,
+      expiresAt: run.expiresAt, page, pageSize: 50 };
   }
 
   async preview(connectionId: string, actorId: bigint, started?: (id: string) => void) {
@@ -531,15 +519,20 @@ export class RakutenInventoryService {
       try {
         const context: InventoryPlanContext = { mode: 'full', scopeCount: 0, skippedCount: 0 };
         const plan = await this.buildPlan(connectionId, renew, async (message) => {
-          await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { message } });
+          await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { message } });
         }, undefined, false, context);
         await renew();
-        await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { message: `正在保存库存预览 ${plan.length} 个SKU` } });
+        await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { message: `正在保存库存预览 ${plan.length} 个SKU` } });
+        const storedPlan = await encodeInventoryPlan(plan, async (saved) => {
+          await renew();
+          await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { message: `正在压缩库存预览 ${saved} / ${plan.length}` } });
+        });
+        await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { message: `正在写入压缩预览 ${plan.length} 个SKU` } });
         const expiresAt = new Date(Date.now() + 10 * 60_000);
-        await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { status: 'preview', plan: plan as unknown as Prisma.InputJsonValue, result: json(context), expiresAt, message: '预览完成，请核对后确认同步' } });
+        await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { status: 'preview', plan: storedPlan as unknown as Prisma.InputJsonValue, result: json(context), expiresAt, message: '预览完成，请核对后确认同步' } });
         return { previewId: run.id, expiresAt, rows: plan, changedCount: plan.filter((row) => row.quantity !== row.currentQuantity).length };
       } catch (error) {
-        await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), message: error instanceof Error ? error.message : '预览失败' } });
+        await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { status: 'failed', finishedAt: new Date(), message: error instanceof Error ? error.message : '预览失败' } });
         throw error;
       }
     });
@@ -555,10 +548,10 @@ export class RakutenInventoryService {
       try {
         const context: InventoryPlanContext = { mode: 'full', scopeCount: 0, skippedCount: 0 };
         const fresh = await this.buildPlan(connectionId, renew, async (message) => {
-          await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { message } });
+          await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { message } });
         }, undefined, false, context);
-        if (!isDeepStrictEqual(context.issues ?? [], (run.result as unknown as InventoryPlanContext | null)?.issues ?? []) || !isDeepStrictEqual(fresh, run.plan)) throw new ConflictException('库存、映射或配送设置已有变化，请重新预览后同步');
-        await this.prisma.rakutenInventoryRun.update({ where: { id: run.id }, data: { status: 'running' } });
+        if (!isDeepStrictEqual(context.issues ?? [], (run.result as unknown as InventoryPlanContext | null)?.issues ?? []) || !isDeepStrictEqual(fresh, await decodeInventoryPlan(run.plan))) throw new ConflictException('库存、映射或配送设置已有变化，请重新预览后同步');
+        await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: run.id }, data: { status: 'running' } });
         return await this.writePlan(connectionId, run.id, fresh, renew, false, context);
       } catch (error) {
         await this.prisma.rakutenInventoryRun.updateMany({ where: { id: run.id, status: 'checking' }, data: { status: 'failed', finishedAt: new Date(), message: error instanceof Error ? error.message : '复核失败' } });
@@ -579,7 +572,7 @@ export class RakutenInventoryService {
         this.assertFreshOrders(connection);
         if (scheduled && !connection.inventorySyncEnabled) throw new ConflictException('店铺库存同步已关闭，本轮已停止');
         const credentials = this.credentials(connection);
-        await this.prisma.rakutenInventoryRun.update({ where: { id: runId }, data: { message: `已核对 ${verified} / ${changed.length} 个待更新SKU`, result: { changed: changed.length, attempted, acknowledged, verified } } });
+        await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { message: `已核对 ${verified} / ${changed.length} 个待更新SKU`, result: { changed: changed.length, attempted, acknowledged, verified } } });
         const chunk = changed.slice(offset, offset + PAGE_SIZE);
         // Read immediately before replacement to preserve the latest delivery settings.
         const latest = await this.client.getInventory(...credentials, chunk);
@@ -622,14 +615,14 @@ export class RakutenInventoryService {
         inventoryFailureCount: 0, inventoryBaselineCount: context?.scopeCount ?? plan.length, ...(complete ? { inventoryPauseReason: null } : {}),
         ...(full ? { inventoryLastFullSyncedAt: new Date() } : {}),
       } });
-      await this.prisma.rakutenInventoryRun.update({ where: { id: runId }, data: { status: complete ? 'success' : 'partial', finishedAt: new Date(), result, message: `隔离异常 ${issues.length} 个；${fullRequested ? "完整核对" : "变化检查"}：共 ${result.total} 个SKU，比对 ${result.checked} 个，校验商品 ${result.validated} 个，更新并核对 ${verified} 个，跳过未变化 ${result.skipped} 个` } });
+      await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { status: complete ? 'success' : 'partial', finishedAt: new Date(), result, message: `隔离异常 ${issues.length} 个；${fullRequested ? "完整核对" : "变化检查"}：共 ${result.total} 个SKU，比对 ${result.checked} 个，校验商品 ${result.validated} 个，更新并核对 ${verified} 个，跳过未变化 ${result.skipped} 个` } });
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : '库存同步失败';
       if (attempted > verified) await this.prisma.rakutenRmsConnection.update({ where: { id: parseId(connectionId) }, data: {
         inventorySyncEnabled: false, inventoryPauseReason: `写入未全部回读确认，请检查乐天库存并手动验证：${message}`,
       } });
-      await this.prisma.rakutenInventoryRun.update({ where: { id: runId }, data: {
+      await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: {
         status: acknowledged || verified ? 'partial' : 'failed', finishedAt: new Date(),
         message: `${message}（尝试写入 ${attempted}，API确认 ${acknowledged}，回读确认 ${verified}）`,
         result: { changed: changed.length, attempted, acknowledged, verified, requiresReview: true },
@@ -667,9 +660,9 @@ export class RakutenInventoryService {
           if (await this.catalog.needsRefresh(active)) await this.catalog.refresh(active, renew);
           const context: InventoryPlanContext = { mode: inventoryFullCheckDue(active.inventoryLastFullSyncedAt) ? 'full' : 'incremental', scopeCount: 0, skippedCount: 0 };
           const plan = await this.buildPlan(connection.id.toString(), renew, async (message) => {
-            await this.prisma.rakutenInventoryRun.update({ where: { id: runId }, data: { message } });
+            await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { message } });
           }, shared, true, context);
-          await this.prisma.rakutenInventoryRun.update({ where: { id: runId }, data: { plan: plan as unknown as Prisma.InputJsonValue, status: 'running' } });
+          await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { plan: await encodeInventoryPlan(plan) as unknown as Prisma.InputJsonValue, status: 'running' } });
           await this.writePlan(connection.id.toString(), runId, plan, renew, true, context);
           if (context.issues?.length) errors.push(`${connection.shop.name}：隔离异常SKU ${context.issues.length} 个，请查看库存待处理列表`);
           completed += 1;
