@@ -254,7 +254,7 @@ describe('Rakuten inventory sync', () => {
   it.each([
     ['success', {}, 1], ['partial', { requiresReview: true }, 1], ['running', {}, 1],
     ['failed', { requiresReview: true }, 1], ['interrupted', { retryable: true }, 1],
-    ['failed', { retryable: true }, 3],
+    ['failed', { retryable: true }, 2],
   ])('does not retry status=%s result=%j attempts=%s', async (status, result, attempts) => {
     const f = fixture();
     f.prisma.rakutenInventoryRun.findMany.mockResolvedValue(Array.from({ length: attempts }, () => ({ status, result })));
@@ -629,9 +629,9 @@ describe('independent daily inventory processing', () => {
     const options = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, RakutenInventorySchedulerService.prototype.runScheduledInventorySync);
     expect(options).toMatchObject({ cronTime: '0 30 17 * * *', name: 'rakuten-inventory-sync', timeZone: 'Asia/Tokyo', waitForCompletion: true });
   });
-  it('registers only two bounded recovery times and preserves prior results when nothing is eligible', async () => {
+  it('registers only one bounded recovery time and preserves prior results when nothing is eligible', async () => {
     const options = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, RakutenInventorySchedulerService.prototype.retryScheduledInventorySync);
-    expect(options).toMatchObject({ cronTime: '0 40,50 17 * * *', timeZone: 'Asia/Tokyo', waitForCompletion: true });
+    expect(options).toMatchObject({ cronTime: '0 45 17 * * *', timeZone: 'Asia/Tokyo', waitForCompletion: true });
     const inventory = { hasScheduledRetryWork: jest.fn().mockResolvedValue(false), runScheduled: jest.fn() };
     const schedules = { execute: jest.fn(async (_key, action) => action()) };
     const scheduler = new RakutenInventorySchedulerService(inventory as any, schedules as any);

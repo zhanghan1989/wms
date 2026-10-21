@@ -699,10 +699,10 @@ export class RakutenInventoryService {
   private async canRetryScheduledConnection(connectionId: bigint, today: Date) {
     const recent = await this.prisma.rakutenInventoryRun.findMany({
       where: { connectionId, trigger: 'scheduled', startedAt: { gte: today } },
-      orderBy: { startedAt: 'desc' }, take: 3, select: { status: true, result: true },
+      orderBy: { startedAt: 'desc' }, take: 2, select: { status: true, result: true },
     });
     const latest = recent[0];
-    return recent.length < 3 && (!latest || latest.status === 'failed'
+    return recent.length < 2 && (!latest || latest.status === 'failed'
       && (latest.result as { retryable?: boolean } | null)?.retryable === true);
   }
 

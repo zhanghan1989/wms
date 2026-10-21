@@ -17,8 +17,8 @@ export class RakutenInventorySchedulerService {
     catch (error) { this.logger.warn(`库存历史清理未完成，下次再试：${error instanceof Error ? error.message : '未知错误'}`); }
   }
 
-  // Two bounded recovery opportunities; successful/ambiguous shop runs are never replayed.
-  @Cron('0 40,50 17 * * *', { name: 'rakuten-inventory-retry', timeZone: 'Asia/Tokyo', waitForCompletion: true })
+  // One bounded recovery opportunity; successful/ambiguous shop runs are never replayed.
+  @Cron('0 45 17 * * *', { name: 'rakuten-inventory-retry', timeZone: 'Asia/Tokyo', waitForCompletion: true })
   async retryScheduledInventorySync(): Promise<void> {
     try {
       if (!await this.inventory.hasScheduledRetryWork()) return;
