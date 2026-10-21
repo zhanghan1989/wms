@@ -4473,7 +4473,7 @@ export class OrdersService {
   /** Additional reservations for unbatched warehouse orders. Picking/FBA claims are
    * already deducted by availableStock; never deduct the same source row twice. */
   async inventorySyncPendingDemands(database: Prisma.TransactionClient = this.prisma): Promise<Array<{ productId: string; quantity: number }>> {
-    const demands: Array<{ productId: string; quantity: number }> = [];
+    const totals = new Map<string, number>();
     const dispatch = { OR: [{ dispatchMode: null }, { dispatchMode: '' }, { dispatchMode: 'overseas' }] };
     for (const source of ['rakuten', 'amazon', 'manual'] as const) {
       let lastId: bigint | undefined;
@@ -4517,17 +4517,13 @@ export class OrdersService {
           if (!Number.isInteger(row.quantity) || row.quantity < 0) throw new BadRequestException('待发货订单数量异常，库存同步已停止');
           if (!row.quantity) continue;
           if (!row.productId) throw new BadRequestException('待发货订单缺少产品对应关系，请先处理订单再同步库存');
-          demands.push({ productId: row.productId, quantity: row.quantity });
+          const quantity = (totals.get(row.productId) ?? 0) + row.quantity;
+          if (!Number.isSafeInteger(quantity)) throw new BadRequestException('待发货预占总数异常，库存同步已停止');
+          totals.set(row.productId, quantity);
         }
         lastId = rows[rows.length - 1].id;
         if (rows.length < 500) break;
       }
-    }
-    const totals = new Map<string, number>();
-    for (const demand of demands) {
-      const quantity = (totals.get(demand.productId) ?? 0) + demand.quantity;
-      if (!Number.isSafeInteger(quantity)) throw new BadRequestException('待发货预占总数异常，库存同步已停止');
-      totals.set(demand.productId, quantity);
     }
     return [...totals].map(([productId, quantity]) => ({ productId, quantity }));
   }

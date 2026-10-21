@@ -187,26 +187,34 @@ export class RakutenInventoryCatalogService {
 
   async scope(connection: Connection, mappings: RakutenInventoryMapping[]) {
     if (!this.isFresh(connection)) throw new ConflictException('请先刷新乐天商品清单；仅同步最近24小时成功读取的在售SKU');
-    const rows = await this.prisma.rakutenInventoryCatalog.findMany({ where: { connectionId: connection.id, version: connection.inventoryCatalogVersion! } });
-    const byKey = new Map(rows.map((row) => [inventoryKey(row), row]));
+    const eligible: RakutenInventoryMapping[] = [];
     const now = new Date();
-    const eligible = mappings.filter((mapping) => {
-      const entry = byKey.get(inventoryKey(mapping));
-      return mapping.enabled && entry && !catalogExclusion(entry, now) && entry.productId === mapping.productId && ['matched', 'manual'].includes(entry.matchStatus);
-    });
-    // A daily catalog must not freeze an outdated automatic WMS correspondence.
-    // Recheck just the enabled shop SKU codes, never the entire WMS catalog.
-    const automatic = eligible.filter((mapping) => mapping.source === 'auto');
-    for (const batch of chunks(automatic)) {
-      const variants = batch.map((mapping) => {
-        const row = byKey.get(inventoryKey(mapping))!;
-        return { ...row, salesStart: row.salesStart?.toISOString() ?? null, salesEnd: row.salesEnd?.toISOString() ?? null };
+    // Keep only one batch of catalog fields in memory. Titles/candidate JSON
+    // from the entire shop are not needed to determine the sync scope.
+    for (const batch of chunks(mappings.filter((mapping) => mapping.enabled))) {
+      const rows = await this.prisma.rakutenInventoryCatalog.findMany({ where: {
+        connectionId: connection.id, version: connection.inventoryCatalogVersion!,
+        OR: batch.map(({ manageNumber, variantId }) => ({ manageNumber, variantId })),
+      }, select: { manageNumber: true, variantId: true, merchantDefinedSkuId: true, title: true,
+        hidden: true, unlimitedStock: true, salesStart: true, salesEnd: true, productId: true, matchStatus: true } });
+      const byKey = new Map(rows.map((row) => [inventoryKey(row), row]));
+      const accepted = batch.filter((mapping) => {
+        const entry = byKey.get(inventoryKey(mapping));
+        return entry && !catalogExclusion(entry, now) && entry.productId === mapping.productId && ['matched', 'manual'].includes(entry.matchStatus);
       });
-      const checked = await this.matchPage(connection, connection.inventoryCatalogVersion!, variants);
-      const byTarget = new Map(checked.map((row) => [inventoryKey(row), row]));
-      if (batch.some((mapping) => byTarget.get(inventoryKey(mapping))?.productId !== mapping.productId)) {
-        throw new ConflictException('WMS自动对应关系已有变化，请刷新乐天清单并处理冲突后再同步');
+      const automatic = accepted.filter((mapping) => mapping.source === 'auto');
+      if (automatic.length) {
+        const variants = automatic.map((mapping) => {
+          const row = byKey.get(inventoryKey(mapping))!;
+          return { ...row, salesStart: row.salesStart?.toISOString() ?? null, salesEnd: row.salesEnd?.toISOString() ?? null };
+        });
+        const checked = await this.matchPage(connection, connection.inventoryCatalogVersion!, variants);
+        const byTarget = new Map(checked.map((row) => [inventoryKey(row), row]));
+        if (automatic.some((mapping) => byTarget.get(inventoryKey(mapping))?.productId !== mapping.productId)) {
+          throw new ConflictException('WMS自动对应关系已有变化，请刷新乐天清单并处理冲突后再同步');
+        }
       }
+      eligible.push(...accepted);
     }
     return eligible;
   }

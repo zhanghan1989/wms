@@ -326,7 +326,15 @@ export class RakutenInventoryService {
       };
       let low = 0, high = members.reduce((limit, id) => Math.min(limit, availability(id)), 99999);
       const fits = (count: number) => {
-        const remaining = new Map(pool);
+        // Only bundle members and their materials can be consumed. Copying the
+        // shop-wide pool for every binary-search step made large previews churn.
+        const remaining = new Map<string, number>();
+        for (const id of members) {
+          remaining.set(id, pool.get(id) ?? 0);
+          for (const item of byId.get(id)!.bomComponents) {
+            remaining.set(item.componentProductId, pool.get(item.componentProductId) ?? 0);
+          }
+        }
         const assembly = new Map<string, number>();
         for (const id of members) {
           const used = Math.min(count, remaining.get(id) ?? 0);
@@ -351,7 +359,12 @@ export class RakutenInventoryService {
       }
       return low;
     };
+    let processedCombos = 0;
     for (const [name, combo] of combos) {
+      if (processedCombos++ % 100 === 0) {
+        await renew();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
       const members = combo.items.map((item) => item.productId);
       const quantity = bundleQuantity(members, stock);
       quantities.set(name, quantity);
@@ -466,15 +479,31 @@ export class RakutenInventoryService {
     const page = Number(pageRaw ?? 1);
     if (!Number.isSafeInteger(page) || page < 1 || page > 1000000) throw new BadRequestException('预览页码不合法');
     if (!['all', 'changed', 'zero'].includes(filter)) throw new BadRequestException('预览筛选不合法');
-    const run = await this.prisma.rakutenInventoryRun.findFirst({ where: { id: jobId, connectionId: parseId(connectionId), actorId: actorId.toString() } });
+    const where = { id: jobId, connectionId: parseId(connectionId), actorId: actorId.toString() };
+    // Progress polls must never deserialize a complete persisted plan.
+    const run = await this.prisma.rakutenInventoryRun.findFirst({ where, select: {
+      id: true, status: true, message: true, result: true, expiresAt: true, planPurgedAt: true,
+    } });
     if (!run) throw new NotFoundException('库存任务不存在或不属于当前用户');
-    const plan = Array.isArray(run.plan) ? run.plan as unknown as InventoryPlanRow[] : [];
-    const filtered = plan.filter((row) => filter === 'all' || filter === 'changed' && row.quantity !== row.currentQuantity || filter === 'zero' && row.currentQuantity > 0 && row.quantity === 0);
-    return { detailsPurged: Boolean(run.planPurgedAt), filteredTotal: filtered.length, filter, jobId: run.id, previewId: run.id, status: run.status, message: run.message, result: run.result,
-      expiresAt: run.expiresAt, page, pageSize: 50, total: plan.length,
-      changedCount: plan.filter((row) => row.quantity !== row.currentQuantity).length,
-      zeroedCount: plan.filter((row) => row.currentQuantity > 0 && row.quantity === 0).length,
-      rows: run.status === 'preview' ? filtered.slice((page - 1) * 50, page * 50) : [] };
+    const snapshot = run.status === 'preview' ? await this.prisma.rakutenInventoryRun.findFirst({
+      where: { ...where, status: 'preview' }, select: { plan: true },
+    }) : null;
+    const plan = Array.isArray(snapshot?.plan) ? snapshot.plan as unknown as InventoryPlanRow[] : [];
+    const rows: InventoryPlanRow[] = [];
+    let filteredTotal = 0, changedCount = 0, zeroedCount = 0;
+    const start = (page - 1) * 50;
+    for (const row of plan) {
+      const changed = row.quantity !== row.currentQuantity;
+      const zeroed = row.currentQuantity > 0 && row.quantity === 0;
+      if (changed) changedCount++;
+      if (zeroed) zeroedCount++;
+      if (filter === 'all' || filter === 'changed' && changed || filter === 'zero' && zeroed) {
+        if (filteredTotal >= start && rows.length < 50) rows.push(row);
+        filteredTotal++;
+      }
+    }
+    return { detailsPurged: Boolean(run.planPurgedAt), filteredTotal, filter, jobId: run.id, previewId: run.id, status: run.status, message: run.message, result: run.result,
+      expiresAt: run.expiresAt, page, pageSize: 50, total: plan.length, changedCount, zeroedCount, rows };
   }
 
   async preview(connectionId: string, actorId: bigint, started?: (id: string) => void) {

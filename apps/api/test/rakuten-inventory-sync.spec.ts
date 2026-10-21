@@ -25,10 +25,11 @@ function fixture() {
     masterProduct: { findMany: jest.fn().mockResolvedValue([{ productId: 'P', status: 1, productType: '包' }]), findUnique: jest.fn().mockResolvedValue({ productId: 'P', status: 1, productType: '包' }) },
     rakutenInventoryRun: {
       create: jest.fn(async ({ data }) => { const record = { ...data, startedAt: new Date() }; runs.set(data.id, record); return record; }),
-      findFirst: jest.fn(async ({ where }) => {
+      findFirst: jest.fn(async ({ where, select }) => {
         const run = runs.get(where.id);
         return run && run.connectionId === where.connectionId && run.actorId === where.actorId
-          && (!where.status || run.status === where.status) && (!where.expiresAt || run.expiresAt > where.expiresAt.gt) ? run : null;
+          && (!where.status || run.status === where.status) && (!where.expiresAt || run.expiresAt > where.expiresAt.gt)
+          ? select ? Object.fromEntries(Object.keys(select).filter((key) => select[key]).map((key) => [key, run[key]])) : run : null;
       }),
       updateMany: jest.fn(async ({ where, data }) => {
         let count = 0;
@@ -232,6 +233,33 @@ describe('Rakuten inventory sync', () => {
     expect((await f.service.jobStatus('1', job.jobId, 2n, '3')).rows).toHaveLength(1);
     expect(f.client.upsertInventory).not.toHaveBeenCalled();
   });
+  it('polls running and completed tasks without loading their large stored plan', async () => {
+    const f = fixture();
+    for (const status of ['planning', 'checking', 'running', 'success', 'failed']) {
+      const run = { id: 'job', connectionId: 1n, actorId: '2', status,
+        get plan(): never { throw new Error('must not load plan'); } };
+      f.runs.set('job', run);
+      await expect(f.service.jobStatus('1', 'job', 2n)).resolves.toMatchObject({ status, rows: [] });
+    }
+    expect(f.prisma.rakutenInventoryRun.findFirst).toHaveBeenCalledTimes(5);
+    for (const [query] of f.prisma.rakutenInventoryRun.findFirst.mock.calls) expect(query.select.plan).toBeUndefined();
+  });
+
+  it('keeps combo stock correct with a large unrelated stock pool and shared materials', async () => {
+    const f = fixture();
+    const unrelated = Array.from({ length: 10000 }, (_, i) => `P${i}`);
+    const combo = { comboName: 'zh-shared', items: ['S', 'T'].map((productId) => ({ productId, product: { status: 1, productType: '肩带' } })) };
+    f.prisma.rakutenComboProduct.findMany.mockResolvedValue([combo]);
+    f.prisma.masterProduct.findMany.mockImplementation(async ({ where, select }: any) => where.productId.in.map((productId: string) => ({
+      productId, status: 1, productType: ['S', 'T'].includes(productId) ? '肩带' : '包',
+      ...(select.bomComponents ? { bomComponents: [{ componentProductId: 'BODY', quantity: 1, componentProduct: { status: 1, productType: '肩带本体' } }] } : {}),
+    })));
+    available.mockImplementation(async (_tx, ids) => ids.map((productId) => ({ productId, qty: productId === 'BODY' ? 11 : 0 })) as any);
+    const result = await (f.service as any).stockQuantities(['zh-shared', ...unrelated], jest.fn());
+    expect(result.get('zh-shared')).toBe(5);
+    expect(result.size).toBe(10001);
+  });
+
   it('returns a background execute job and never allows its preview to execute twice', async () => {
     const f = fixture(); const preview = await f.service.preview('1', 2n);
     const job = await f.service.queueExecute('1', preview.previewId, 2n);

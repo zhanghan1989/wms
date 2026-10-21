@@ -174,6 +174,19 @@ describe('shop-first Rakuten catalog matching', () => {
     await expect(f.service.scope(f.connection, mappings as any)).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it('bounds scope queries to 500 mappings and omits unused candidate JSON', async () => {
+    const f = fixture();
+    const mappings = Array.from({ length: 1201 }, (_, i) => ({ connectionId: 1n, manageNumber: 'item', variantId: `v${i}`,
+      productId: 'P', enabled: true, source: 'manual' }));
+    f.catalogRows.push(...mappings.map((mapping) => ({ ...mapping, version: 'old', matchStatus: 'manual',
+      hidden: false, unlimitedStock: false, salesStart: null, salesEnd: null })));
+    const result = await f.service.scope(f.connection, mappings as any);
+    expect(result).toHaveLength(1201);
+    const queries = f.prisma.rakutenInventoryCatalog.findMany.mock.calls;
+    expect(queries.map(([query]: any) => query.where.OR.length)).toEqual([500, 500, 201]);
+    for (const [query] of queries) expect(query.select.candidates).toBeUndefined();
+  });
+
   it('refreshes once per day, or when a queued refresh needs recovery', async () => {
     const f = fixture();
     expect(await f.service.needsRefresh(f.connection)).toBe(false);
