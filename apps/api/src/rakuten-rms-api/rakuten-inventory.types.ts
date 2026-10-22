@@ -20,6 +20,9 @@ export type RakutenCatalogPage = {
   numFound: number; nextCursorMark: string; variants: RakutenCatalogVariant[]; itemCount: number;
 };
 
+// Full product payloads can be large even without inventory data.
+export const RAKUTEN_CATALOG_PAGE_SIZE = 25;
+
 export const RAKUTEN_INVENTORY_JOB_NAME = 'rakuten-inventory-sync';
 export type InventoryPlanContext = {
   mode: 'full' | 'incremental'; scopeCount: number; skippedCount: number; issues?: InventorySkuIssue[];

@@ -8,7 +8,7 @@ import {
   RakutenSearchOrderResponse,
 } from './rakuten-rms-api.types';
 
-import { InventoryKey, InventoryRecord, InventoryWrite, RakutenCatalogPage, RakutenCatalogVariant } from './rakuten-inventory.types';
+import { InventoryKey, InventoryRecord, InventoryWrite, RakutenCatalogPage, RakutenCatalogVariant, RAKUTEN_CATALOG_PAGE_SIZE } from './rakuten-inventory.types';
 
 const RAKUTEN_API_BASE_URL = 'https://api.rms.rakuten.co.jp/es/2.0/order';
 const SEARCH_PAGE_SIZE = 1000;
@@ -234,11 +234,11 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
   }
 
   async searchCatalogPage(serviceSecret: string, licenseKey: string, cursorMark: string): Promise<RakutenCatalogPage> {
-    const query = new URLSearchParams({ cursorMark, hits: '100', isHiddenItem: 'false', isHiddenVariant: 'false', isInventoryIncluded: 'false' });
+    const query = new URLSearchParams({ cursorMark, hits: String(RAKUTEN_CATALOG_PAGE_SIZE), isHiddenItem: 'false', isHiddenVariant: 'false', isInventoryIncluded: 'false' });
     // No stockout filter: zero-stock SKUs must remain eligible for restocking.
     const payload = await this.inventoryRequest(serviceSecret, licenseKey, `/es/2.0/items/search?${query}`);
     if (!payload || !Number.isInteger(payload.numFound) || payload.numFound < 0 || !Array.isArray(payload.results)
-      || payload.results.length > 100 || typeof payload.nextCursorMark !== 'string' || !payload.nextCursorMark) {
+      || payload.results.length > RAKUTEN_CATALOG_PAGE_SIZE || typeof payload.nextCursorMark !== 'string' || !payload.nextCursorMark) {
       throw new ServiceUnavailableException('乐天商品清单返回格式或游标异常，未更新同步范围');
     }
     return { numFound: payload.numFound, nextCursorMark: payload.nextCursorMark,
@@ -319,7 +319,9 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
           method: body === undefined ? 'GET' : 'POST',
           headers: { authorization: `ESA ${Buffer.from(`${serviceSecret}:${licenseKey}`).toString('base64')}`, 'content-type': 'application/json', accept: 'application/json' },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-          signal: AbortSignal.timeout(20_000), ...(dispatcher ? { dispatcher } : {}),
+          // Catalog pages include full product data and can exceed 10 MB.
+          // The timeout covers both headers and the complete response body.
+          signal: AbortSignal.timeout(!write && path.startsWith('/es/2.0/items/search?') ? 60_000 : 20_000), ...(dispatcher ? { dispatcher } : {}),
         };
         response = await fetch(`https://api.rms.rakuten.co.jp${path}`, options);
       } catch {
@@ -329,14 +331,30 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
       }
       this.logger.log(`Inventory API path=${path.split('?')[0]} attempt=${attempt + 1}/${attempts} status=${response.status} headersMs=${Date.now() - requestStartedAt}`);
       if (!write && (response.status === 429 || response.status >= 500) && attempt + 1 < attempts) {
-        await response.text();
+        // A truncated error body must not bypass the bounded status retry.
+        try { await response.text(); } catch { /* Classification is already known from HTTP status. */ }
         await new Promise((resolve) => setTimeout(resolve, Math.min(30, Math.max(1, Number(response.headers.get('retry-after')) || attempt + 1)) * 1000));
         continue;
       }
       if (write && response.status === 204) return;
       let payload: Record<string, any>;
-      try { payload = JSON.parse(await response.text()); }
-      catch { throw new ServiceUnavailableException(`乐天库存API返回格式异常（HTTP ${response.status}）`); }
+      const bodyStartedAt = Date.now();
+      let responseText = '';
+      let bodyRead = false;
+      try {
+        responseText = await response.text();
+        bodyRead = true;
+        payload = JSON.parse(responseText);
+        this.logger.log(`Inventory API path=${path.split('?')[0]} attempt=${attempt + 1}/${attempts} bodyBytes=${Buffer.byteLength(responseText, 'utf8')} bodyMs=${Date.now() - bodyStartedAt} elapsedMs=${Date.now() - requestStartedAt}`);
+      } catch (error) {
+        // Log classifications only: remote bodies and headers may contain secrets.
+        const kind = !bodyRead ? 'body-read-failed' : !responseText.trim() ? 'empty' : /^\s*</.test(responseText) ? 'markup' : 'invalid-json';
+        const timeout = !bodyRead && typeof error === 'object' && error !== null && 'name' in error && ['TimeoutError', 'AbortError'].includes(String(error.name));
+        this.logger.warn(`Inventory API path=${path.split('?')[0]} attempt=${attempt + 1}/${attempts} status=${response.status} bodyKind=${kind} bodyChars=${responseText.length} timeout=${timeout} elapsedMs=${Date.now() - requestStartedAt}`);
+        if (!write && response.ok && attempt + 1 < attempts) continue;
+        const detail = !bodyRead ? timeout ? '响应正文读取超时或中断' : '响应正文读取失败' : kind === 'empty' ? '响应正文为空' : kind === 'markup' ? '响应为HTML/XML，非JSON' : '响应正文不是有效JSON';
+        throw new ServiceUnavailableException(`乐天库存API返回格式异常（HTTP ${response.status}，${detail}）${write ? '；写入结果未知，请重新预览并回读确认，未自动重试' : ''}`);
+      }
       if (!response.ok || !payload || payload.errors?.length) {
         // Do not persist arbitrary remote response text, which could contain credentials.
         const codes = Array.isArray(payload?.errors) ? payload.errors.map((e: { code?: unknown }) => String(e.code ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32)).join(',') : '';

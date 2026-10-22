@@ -17,8 +17,18 @@ export class RakutenInventorySchedulerService {
     catch (error) { this.logger.warn(`库存历史清理未完成，下次再试：${error instanceof Error ? error.message : '未知错误'}`); }
   }
 
+  @Cron('0 10 17 * * *', { name: 'rakuten-inventory-catalog-prepare', timeZone: 'Asia/Tokyo', waitForCompletion: true })
+  async prepareCatalogs(): Promise<void> {
+    try {
+      if (!await this.schedules.enabled('inventory')) return;
+      await this.inventory.prepareScheduledCatalogs();
+    } catch (error) {
+      this.logger.warn(`商品清单提前刷新未完成，库存任务将重新检查：${error instanceof Error ? error.message : '未知错误'}`);
+    }
+  }
+
   // One bounded recovery opportunity; successful/ambiguous shop runs are never replayed.
-  @Cron('0 45 17 * * *', { name: 'rakuten-inventory-retry', timeZone: 'Asia/Tokyo', waitForCompletion: true })
+  @Cron('0 50 17 * * *', { name: 'rakuten-inventory-retry', timeZone: 'Asia/Tokyo', waitForCompletion: true })
   async retryScheduledInventorySync(): Promise<void> {
     try {
       if (!await this.inventory.hasScheduledRetryWork()) return;

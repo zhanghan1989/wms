@@ -48,6 +48,47 @@ function fixture() {
 }
 
 describe('shop-first Rakuten catalog matching', () => {
+  it('reuses only complete error-free catalogs from today and the last hour', () => {
+    const f = fixture(); const now = new Date('2026-10-22T17:30:00+09:00');
+    const prepared: any = { ...f.connection, inventoryCatalogRefreshedAt: new Date('2026-10-22T17:05:00+09:00') };
+    expect(f.service.isPreparedForSync(prepared, now)).toBe(true);
+    for (const changes of [
+      { inventoryCatalogVersion: null }, { inventoryCatalogError: 'failed' },
+      { inventoryCatalogRefreshedAt: new Date('2026-10-22T16:29:00+09:00') },
+      { inventoryCatalogRefreshedAt: new Date('2026-10-22T17:31:00+09:00') },
+    ]) expect(f.service.isPreparedForSync({ ...prepared, ...changes }, now)).toBe(false);
+    expect(f.service.isPreparedForSync({ ...prepared, inventoryCatalogRefreshedAt: new Date('2026-10-21T23:59:00+09:00') }, new Date('2026-10-22T00:10:00+09:00'))).toBe(false);
+  });
+
+  it('reports the failed page and never publishes its partial staging data', async () => {
+    const f = fixture(); const progress = jest.fn();
+    f.client.searchCatalogPage.mockResolvedValueOnce(f.page('second', [variant('one')])).mockRejectedValueOnce(new Error('body timeout'));
+    await expect(f.service.refresh(f.connection, jest.fn(), true, progress)).rejects.toThrow('第 2 页读取失败（已读取 1 个商品）');
+    expect(progress).toHaveBeenLastCalledWith('正在读取商品清单第 2 页，已读取 1 个商品');
+    expect(f.connection.inventoryCatalogVersion).toBe('old');
+    expect(f.prisma.rakutenInventoryCatalog.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('cleans only aged terminal staging versions in bounded batches and retains job summaries', async () => {
+    const f = fixture(); const renew = jest.fn();
+    f.prisma.rakutenRmsConnection.findMany = jest.fn().mockResolvedValue([{ id: 1n, inventoryCatalogVersion: 'live' }]);
+    f.prisma.rakutenInventoryCatalogJob.findMany = jest.fn().mockResolvedValue([{ id: 'failed-old' }]);
+    f.prisma.rakutenInventoryCatalog.groupBy = jest.fn().mockResolvedValue([{ version: 'failed-old' }, { version: 'queued-old' }]);
+    f.prisma.rakutenInventoryCatalog.findMany.mockResolvedValueOnce([{ id: 5n }]);
+    f.prisma.rakutenInventoryCatalog.deleteMany.mockResolvedValue({ count: 1 });
+    expect(await f.service.cleanupStaging(renew)).toBe(1);
+    expect(f.prisma.rakutenInventoryCatalog.groupBy.mock.calls[0][0].where.version).toEqual({ not: 'live' });
+    expect(f.prisma.rakutenInventoryCatalogJob.findMany.mock.calls[0][0].where).toMatchObject({
+      id: { in: ['failed-old', 'queued-old'] }, status: { in: ['success', 'failed'] }, finishedAt: { lt: expect.any(Date) },
+    });
+    expect(f.prisma.rakutenInventoryCatalog.findMany.mock.calls[0][0]).toMatchObject({ take: 500, select: { id: true } });
+    expect(f.prisma.rakutenInventoryCatalog.deleteMany).toHaveBeenCalledWith({ where: {
+      connectionId: 1n, version: { in: ['failed-old'] }, id: { in: [5n] },
+    } });
+    expect(f.prisma.rakutenInventoryCatalogJob.update).not.toHaveBeenCalled();
+    expect(renew).toHaveBeenCalled();
+  });
+
   it('prioritizes merchant-defined SKU, uses exact case and falls back to variant ID only without a primary match', () => {
     const index = new Map([['merchant', new Set(['P1'])], ['SkuA', new Set(['P2'])], ['ambiguous', new Set(['P2', 'P1'])]]);
     expect(catalogCandidates(variant('SkuA', 'merchant'), index)).toEqual(['P1']);

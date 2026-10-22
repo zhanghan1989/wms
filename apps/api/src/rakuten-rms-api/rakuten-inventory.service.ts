@@ -162,7 +162,8 @@ export class RakutenInventoryService {
         purged += result.count;
         if (rows.length < 500) break;
       }
-      return { purged };
+      const catalogPurged = await this.catalog.cleanupStaging(renew);
+      return { purged, catalogPurged };
     });
   }
 
@@ -740,6 +741,30 @@ export class RakutenInventoryService {
     return false;
   }
 
+  async prepareScheduledCatalogs() {
+    return this.locked(async (renew) => {
+      // Leave room before the 17:30 write job; in-flight reads remain bounded.
+      const deadline = Date.now() + 15 * 60_000;
+      const renewPreparation = async () => {
+        if (Date.now() >= deadline) throw new ConflictException('商品清单提前刷新已达到15分钟，留待库存任务重新检查');
+        await renew();
+      };
+      const connections = await this.prisma.rakutenRmsConnection.findMany({ where: {
+        status: 1, inventorySyncEnabled: true, shop: { status: 1 },
+      }, select: { id: true }, orderBy: { id: 'asc' } });
+      for (const connection of connections) {
+        if (Date.now() >= deadline) break;
+        try {
+          const active = await this.connection(connection.id.toString());
+          if (!active.inventorySyncEnabled) continue;
+          await this.catalog.refresh(active, renewPreparation, true);
+        } catch (error) {
+          this.logger.warn(`Inventory catalog preparation failed for connection ${connection.id}: ${error instanceof Error ? error.message : '读取失败'}`);
+        }
+      }
+    }, '正在提前刷新每日库存商品清单');
+  }
+
   async runScheduled(retry = false) {
     return this.locked(async (renew) => {
       const connections = await this.prisma.rakutenRmsConnection.findMany({ where: { status: 1, inventorySyncEnabled: true, shop: { status: 1 } }, select: { id: true, shop: { select: { name: true } } }, orderBy: { id: 'asc' } });
@@ -755,8 +780,13 @@ export class RakutenInventoryService {
           const active = await this.connection(connection.id.toString());
           // Daily synchronization must discover new listings even when yesterday's
           // snapshot (or a manual refresh) is still less than 24 hours old.
-          await this.progress(runId, connection.id.toString(), '正在刷新乐天在售清单并自动匹配');
-          await this.catalog.refresh(active, renew, true);
+          // Reuse only a complete, error-free catalog from today's preparation window.
+          // A failed preparation never permits a fallback to yesterday's scope.
+          if (!this.catalog.isPreparedForSync(active) || await this.catalog.needsRefresh(active)) {
+            await this.catalog.refresh(active, renew, true, (message) => this.progress(runId, connection.id.toString(), message));
+          } else {
+            await this.progress(runId, connection.id.toString(), '已使用最近一小时完整刷新的商品清单，正在核对库存');
+          }
           const context: InventoryPlanContext = { mode: inventoryFullCheckDue(active.inventoryLastFullSyncedAt) ? 'full' : 'incremental', scopeCount: 0, skippedCount: 0 };
           const plan = await this.buildPlan(connection.id.toString(), renew, async (message) => {
             await this.progress(runId, connection.id.toString(), message);

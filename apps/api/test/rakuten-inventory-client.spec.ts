@@ -58,6 +58,40 @@ describe('InventoryAPI 2.1 client', () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 200 }));
     await expect(client.getInventory('secret', 'license', [key])).rejects.toThrow();
   });
+  it.each(['', '<html>private remote response</html>', '{broken'])('retries malformed successful reads with a bounded attempt count', async (body) => {
+    fetchMock.mockImplementation(async () => new Response(body, { status: 200 }));
+    await expect(client.getInventory('secret', 'license', [key])).rejects.toThrow('HTTP 200');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+  it('recovers from a transient malformed read', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ inventories: [{ ...key, quantity: 2 }] }), { status: 200 }));
+    await expect(client.getInventory('secret', 'license', [key])).resolves.toEqual([{ ...key, quantity: 2 }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+  it('retries interrupted read bodies', async () => {
+    fetchMock.mockResolvedValueOnce({ status: 200, ok: true, text: async () => { throw new Error('terminated'); } })
+      .mockResolvedValueOnce(new Response(JSON.stringify({ inventories: [{ ...key, quantity: 2 }] }), { status: 200 }));
+    await expect(client.getInventory('secret', 'license', [key])).resolves.toEqual([{ ...key, quantity: 2 }]);
+  });
+  it('identifies body timeouts after HTTP 200 without treating them as invalid JSON', async () => {
+    fetchMock.mockImplementation(async () => ({ status: 200, ok: true, text: async () => { throw new DOMException('private detail', 'TimeoutError'); } }));
+    await expect(client.getInventory('secret', 'license', [key])).rejects.toThrow('响应正文读取超时或中断');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+  it('does not replay malformed write responses or expose their contents', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('<html>private remote response</html>', { status: 200 }));
+    const result = client.upsertInventory('secret', 'license', [{ ...key, mode: 'ABSOLUTE', quantity: 1 }]);
+    await expect(result).rejects.toThrow('写入结果未知');
+    await expect(result).rejects.not.toThrow('private remote response');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it('retries server errors even if their response body is interrupted', async () => {
+    fetchMock.mockResolvedValueOnce({ status: 503, ok: false, headers: new Headers(), text: async () => { throw new Error('terminated'); } })
+      .mockResolvedValueOnce(new Response(JSON.stringify({ inventories: [{ ...key, quantity: 2 }] }), { status: 200 }));
+    await expect(client.getInventory('secret', 'license', [key])).resolves.toEqual([{ ...key, quantity: 2 }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
   it('validates batch and quantity bounds before sending a write', async () => {
     for (const quantity of [-1, 100000, 1.5]) {
       await expect(client.upsertInventory('secret', 'license', [{ ...key, mode: 'ABSOLUTE', quantity }])).rejects.toThrow('不合法');
@@ -79,7 +113,7 @@ describe('InventoryAPI 2.1 client', () => {
     const url = new URL(fetchMock.mock.calls[0][0]);
     expect(url.pathname).toBe('/es/2.0/items/search');
     expect(url.searchParams.get('cursorMark')).toBe('*');
-    expect(url.searchParams.get('hits')).toBe('100');
+    expect(url.searchParams.get('hits')).toBe('25');
     expect(url.searchParams.get('isHiddenItem')).toBe('false');
     expect(url.searchParams.has('offset')).toBe(false);
     expect(url.searchParams.has('isItemStockout')).toBe(false);
@@ -92,6 +126,16 @@ describe('InventoryAPI 2.1 client', () => {
   ])('rejects partial/malformed catalog data rather than publishing an empty scope: %j', async (payload) => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(payload), { status: 200 }));
     await expect(client.searchCatalogPage('secret', 'license', '*')).rejects.toThrow();
+  });
+
+  it('allows large catalog bodies more time while preserving inventory write timeouts', async () => {
+    const timeout = jest.spyOn(AbortSignal, 'timeout');
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ numFound: 0, nextCursorMark: '*', results: [] }), { status: 200 }));
+    await client.searchCatalogPage('secret', 'license', '*');
+    expect(timeout).toHaveBeenLastCalledWith(60_000);
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await client.upsertInventory('secret', 'license', [{ ...key, mode: 'ABSOLUTE', quantity: 1 }]);
+    expect(timeout).toHaveBeenLastCalledWith(20_000);
   });
 
   it('bulk-validates actual products using the official direct results array, excluding hidden and expired variants', async () => {

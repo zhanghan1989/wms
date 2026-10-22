@@ -1,10 +1,10 @@
-import { ConflictException, Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { ConflictException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { Prisma, RakutenInventoryCatalog, RakutenInventoryMapping, RakutenRmsConnection } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { RakutenRmsApiClient } from './rakuten-rms-api.client';
 import { RakutenRmsApiCryptoService } from './rakuten-rms-api-crypto.service';
-import { inventoryKey, RakutenCatalogVariant } from './rakuten-inventory.types';
+import { inventoryKey, RakutenCatalogVariant, RakutenCatalogPage } from './rakuten-inventory.types';
 
 import { inventoryCombos, isInventoryCombo, validInventoryCombo } from './rakuten-inventory-combos';
 
@@ -31,10 +31,47 @@ export function catalogCandidates(variant: Pick<RakutenCatalogVariant, 'merchant
 
 @Injectable()
 export class RakutenInventoryCatalogService {
+  private readonly logger = new Logger(RakutenInventoryCatalogService.name);
+
   constructor(private readonly prisma: PrismaService, private readonly client: RakutenRmsApiClient, private readonly crypto: RakutenRmsApiCryptoService) {}
 
   isFresh(connection: RakutenRmsConnection) {
     return Boolean(connection.inventoryCatalogVersion && connection.inventoryCatalogRefreshedAt && connection.inventoryCatalogRefreshedAt.getTime() >= Date.now() - DAY_MS);
+  }
+
+  isPreparedForSync(connection: RakutenRmsConnection, now = new Date()) {
+    const refreshed = connection.inventoryCatalogRefreshedAt;
+    return Boolean(connection.inventoryCatalogVersion && !connection.inventoryCatalogError && refreshed
+      && refreshed <= now && refreshed.getTime() >= now.getTime() - 60 * 60_000
+      && refreshed.getTime() >= Date.parse(`${new Date(now.getTime() + 9 * 3600_000).toISOString().slice(0, 10)}T00:00:00+09:00`));
+  }
+
+  // Called under the inventory lease, including when recent refreshes all failed.
+  async cleanupStaging(renew: () => Promise<void>) {
+    const cutoff = new Date(Date.now() - 2 * DAY_MS);
+    const connections = await this.prisma.rakutenRmsConnection.findMany({ select: { id: true, inventoryCatalogVersion: true } });
+    let purged = 0;
+    for (const connection of connections) {
+      const versions = await this.prisma.rakutenInventoryCatalog.groupBy({ by: ['version'], where: {
+        connectionId: connection.id, createdAt: { lt: cutoff },
+        ...(connection.inventoryCatalogVersion ? { version: { not: connection.inventoryCatalogVersion } } : {}),
+      }, orderBy: { version: 'asc' }, take: 100 });
+      if (!versions.length) continue;
+      const jobs = await this.prisma.rakutenInventoryCatalogJob.findMany({ where: {
+        id: { in: versions.map((row) => row.version) }, connectionId: connection.id, status: { in: ['success', 'failed'] }, finishedAt: { lt: cutoff },
+      }, select: { id: true }, orderBy: { startedAt: 'asc' }, take: 100 });
+      if (!jobs.length) continue;
+      const where = { connectionId: connection.id, version: { in: jobs.map((job) => job.id) } };
+      for (let batch = 0; batch < 10; batch++) {
+        await renew();
+        const rows = await this.prisma.rakutenInventoryCatalog.findMany({ where, select: { id: true }, orderBy: { id: 'asc' }, take: 500 });
+        if (!rows.length) break;
+        const removed = await this.prisma.rakutenInventoryCatalog.deleteMany({ where: { ...where, id: { in: rows.map((row) => row.id) } } });
+        purged += removed.count;
+        if (rows.length < 500) break;
+      }
+    }
+    return purged;
   }
 
   async queue(connectionId: bigint, restart = false) {
@@ -51,7 +88,7 @@ export class RakutenInventoryCatalogService {
     return Boolean(await this.prisma.rakutenInventoryCatalogJob.findFirst({ where: { connectionId: connection.id, status: { in: ['queued', 'running'] } }, select: { id: true } }));
   }
 
-  async refresh(connection: Connection, renew: () => Promise<void>, restart = false) {
+  async refresh(connection: Connection, renew: () => Promise<void>, restart = false, progress: (message: string) => Promise<void> = async () => {}) {
     const job = await this.queue(connection.id, restart);
     const credentials = [
       this.crypto.decrypt(connection.encryptedServiceSecret, connection.serviceSecretIv, connection.serviceSecretAuthTag),
@@ -62,12 +99,21 @@ export class RakutenInventoryCatalogService {
     let productCount = job.productCount;
     let expectedMinimum = job.productCount;
     const visited = new Set<string>();
+    let pageNumber = 0;
     try {
       while (true) {
         await renew();
         if (visited.has(cursor)) throw new ServiceUnavailableException('商品搜索游标循环，未替换原有清单');
         visited.add(cursor);
-        const page = await this.client.searchCatalogPage(...credentials, cursor);
+        pageNumber++;
+        await progress(`正在读取商品清单第 ${pageNumber} 页，已读取 ${productCount} 个商品`);
+        const startedAt = Date.now();
+        let page: RakutenCatalogPage;
+        try { page = await this.client.searchCatalogPage(...credentials, cursor); }
+        catch (error) {
+          throw new ServiceUnavailableException(`商品清单第 ${pageNumber} 页读取失败（已读取 ${productCount} 个商品）：${error instanceof Error ? error.message : '请求失败'}`);
+        }
+        this.logger.log(`Catalog job=${job.id} connection=${connection.id} page=${pageNumber} items=${page.itemCount} skus=${page.variants.length} elapsedMs=${Date.now() - startedAt}`);
         expectedMinimum = Math.max(expectedMinimum, page.numFound);
         if (!page.itemCount && page.nextCursorMark !== cursor) throw new ServiceUnavailableException('商品搜索空页未正常结束，未替换原有清单');
         const rows = await this.matchPage(connection, job.id, page.variants);
@@ -101,8 +147,7 @@ export class RakutenInventoryCatalogService {
         } }),
         this.prisma.rakutenInventoryCatalogJob.update({ where: { id: job.id }, data: { status: 'success', finishedAt: new Date() } }),
       ]);
-      // Only superseded staging/snapshot rows are removed; mappings and run logs remain.
-      await this.prisma.rakutenInventoryCatalog.deleteMany({ where: { connectionId: connection.id, version: { not: job.id }, createdAt: { lt: new Date(Date.now() - 2 * DAY_MS) } } }).catch(() => undefined);
+      // Superseded and failed staging rows are cleaned in bounded overnight batches.
       return job.id;
     } catch (error) {
       const message = error instanceof Error ? error.message : '商品清单读取失败';

@@ -55,7 +55,7 @@ function fixture() {
   };
   const orders = { inventorySyncPendingDemands: jest.fn().mockResolvedValue([]) };
   available.mockResolvedValue([{ productId: 'P', qty: 10 }] as any);
-  const catalog = { summary: jest.fn(), scope: jest.fn(async (_connection, mappings) => mappings), needsRefresh: jest.fn().mockResolvedValue(false), refresh: jest.fn() };
+  const catalog = { cleanupStaging: jest.fn().mockResolvedValue(0), isPreparedForSync: jest.fn().mockReturnValue(false), summary: jest.fn(), scope: jest.fn(async (_connection, mappings) => mappings), needsRefresh: jest.fn().mockResolvedValue(false), refresh: jest.fn() };
   const service = new RakutenInventoryService(prisma as any, client as any, { decrypt: () => 'test-only' } as any, orders as any, catalog as any);
   return { service, prisma, client, connection, runs, orders, catalog };
 }
@@ -234,6 +234,51 @@ describe('Rakuten inventory sync', () => {
     expect(f.catalog.refresh).toHaveBeenCalledTimes(1);
     expect(f.catalog.refresh.mock.invocationCallOrder[0]).toBeLessThan(f.catalog.scope.mock.invocationCallOrder[0]);
     expect(f.client.upsertInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses a recent complete prepared catalog but keeps inventory verification', async () => {
+    const f = fixture(); f.catalog.isPreparedForSync.mockReturnValue(true);
+    await f.service.runScheduled();
+    expect(f.catalog.refresh).not.toHaveBeenCalled();
+    expect(f.client.getItemsVariantIds).toHaveBeenCalled();
+    expect(f.client.upsertInventory).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes again if a pending catalog job exists despite recent preparation', async () => {
+    const f = fixture(); f.catalog.isPreparedForSync.mockReturnValue(true); f.catalog.needsRefresh.mockResolvedValue(true);
+    await f.service.runScheduled();
+    expect(f.catalog.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('prepares catalogs without creating inventory runs or writing stock', async () => {
+    const f = fixture();
+    await f.service.prepareScheduledCatalogs();
+    expect(f.catalog.refresh).toHaveBeenCalledTimes(1);
+    expect(f.runs.size).toBe(0);
+    expect(f.client.getInventory).not.toHaveBeenCalled();
+    expect(f.client.upsertInventory).not.toHaveBeenCalled();
+  });
+
+  it('stops preparation at its time budget and leaves later shops for the main run', async () => {
+    const f = fixture(); let now = Date.now(); const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    f.prisma.rakutenRmsConnection.findMany.mockResolvedValue([{ id: 1n }, { id: 2n }]);
+    f.catalog.refresh.mockImplementationOnce(async (_active, renew) => {
+      now += 15 * 60_000;
+      await expect(renew()).rejects.toThrow('15分钟');
+    });
+    try {
+      await f.service.prepareScheduledCatalogs();
+      expect(f.catalog.refresh).toHaveBeenCalledTimes(1);
+      expect(f.client.upsertInventory).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+
+  it('continues preparing other shops after a catalog failure', async () => {
+    const f = fixture(); f.prisma.rakutenRmsConnection.findMany.mockResolvedValue([{ id: 1n }, { id: 2n }]);
+    f.catalog.refresh.mockRejectedValueOnce(new Error('temporary'));
+    await f.service.prepareScheduledCatalogs();
+    expect(f.catalog.refresh).toHaveBeenCalledTimes(2);
+    expect(f.prisma.rakutenRmsConnection.update).not.toHaveBeenCalled();
   });
 
   it('stops the shop when refreshing fails without using the old catalog', async () => {
@@ -648,9 +693,22 @@ describe('independent daily inventory processing', () => {
     const options = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, RakutenInventorySchedulerService.prototype.runScheduledInventorySync);
     expect(options).toMatchObject({ cronTime: '0 30 17 * * *', name: 'rakuten-inventory-sync', timeZone: 'Asia/Tokyo', waitForCompletion: true });
   });
+  it('prepares at 17:10 only when the inventory schedule is enabled', async () => {
+    expect(Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, RakutenInventorySchedulerService.prototype.prepareCatalogs))
+      .toMatchObject({ cronTime: '0 10 17 * * *', timeZone: 'Asia/Tokyo', waitForCompletion: true });
+    const inventory = { prepareScheduledCatalogs: jest.fn() };
+    const schedules = { enabled: jest.fn().mockResolvedValue(false) };
+    const scheduler = new RakutenInventorySchedulerService(inventory as any, schedules as any);
+    await scheduler.prepareCatalogs();
+    expect(inventory.prepareScheduledCatalogs).not.toHaveBeenCalled();
+    schedules.enabled.mockResolvedValue(true);
+    await scheduler.prepareCatalogs();
+    expect(inventory.prepareScheduledCatalogs).toHaveBeenCalledTimes(1);
+  });
+
   it('registers only one bounded recovery time and preserves prior results when nothing is eligible', async () => {
     const options = Reflect.getMetadata(SCHEDULE_CRON_OPTIONS, RakutenInventorySchedulerService.prototype.retryScheduledInventorySync);
-    expect(options).toMatchObject({ cronTime: '0 45 17 * * *', timeZone: 'Asia/Tokyo', waitForCompletion: true });
+    expect(options).toMatchObject({ cronTime: '0 50 17 * * *', timeZone: 'Asia/Tokyo', waitForCompletion: true });
     const inventory = { hasScheduledRetryWork: jest.fn().mockResolvedValue(false), runScheduled: jest.fn() };
     const schedules = { execute: jest.fn(async (_key, action) => action()) };
     const scheduler = new RakutenInventorySchedulerService(inventory as any, schedules as any);

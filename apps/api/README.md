@@ -38,7 +38,7 @@
 - `AMAZON_SP_API_OAUTH_DRAFT`: 未上架公开应用设为`true`；正式上架后改为`false`。
 - `AMAZON_SP_API_SELLER_CENTRAL_URL`: 发起授权的Seller Central站点，日本站默认`https://sellercentral.amazon.co.jp`。
 - `AMAZON_SP_API_ENCRYPTION_KEY`: 用于AES-256-GCM加密店铺Refresh Token，使用 `openssl rand -base64 32` 生成并持久保存。
-- `AMAZON_SP_API_SYNC_CRON`: 默认 `0 0 16 * * *`，即每天中国时间16:00（日本时间17:00）执行一次。
+- `AMAZON_SP_API_SYNC_CRON`: 默认 `0 30 15 * * *`，即每天中国时间15:30（日本时间16:30）执行一次。
 - `AMAZON_SP_API_SYNC_TIMEZONE`: Amazon同步任务时区，默认 `Asia/Shanghai`（中国时间）。
 - `AMAZON_SP_API_INCLUDE_RECIPIENT`: 默认 `false`。取得FBM收件地址需要获批Direct-to-Consumer Shipping受限角色并完成PII安全控制后才能设为`true`。
 

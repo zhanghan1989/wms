@@ -26,7 +26,7 @@ import { StartAmazonOAuthDto } from './dto/start-amazon-oauth.dto';
 import { SyncAmazonConnectionDto } from './dto/sync-amazon-connection.dto';
 import { UpdateAmazonConnectionDto } from './dto/update-amazon-connection.dto';
 
-const AMAZON_SYNC_CRON = process.env.AMAZON_SP_API_SYNC_CRON || '0 0 16 * * *';
+const AMAZON_SYNC_CRON = process.env.AMAZON_SP_API_SYNC_CRON || '0 30 15 * * *';
 const AMAZON_SYNC_TIMEZONE = process.env.AMAZON_SP_API_SYNC_TIMEZONE || 'Asia/Shanghai';
 const AMAZON_SCHEDULED_SYNC_ENABLED =
   String(process.env.AMAZON_SP_API_SCHEDULED_SYNC_ENABLED ?? 'false').toLowerCase() === 'true';
