@@ -7661,6 +7661,23 @@ async function loadRakutenInventoryCatalog() {
   return data;
 }
 
+async function downloadRakutenInventoryRunChanges(connectionId, runId) {
+  const rows = [["产品ID", "商品管理番号", "SKU管理番号", "同步前库存", "本次目标库存", "库存变化量", "写入状态", "可用成品", "可组装数", "待发货预占影响", "安全库存"]];
+  let total, downloaded = 0;
+  for (let page = 1; ; page++) {
+    const data = await request(rakutenInventoryUrl(connectionId, `/runs/${encodeURIComponent(runId)}/changes?page=${page}`));
+    if (page === 1) total = data.total;
+    if (data.total !== total || (!data.rows?.length && downloaded < total)) throw new Error("同步明细读取不完整，请重新下载");
+    for (const row of data.rows || []) rows.push([row.productId, row.manageNumber, row.variantId, row.currentQuantity, row.quantity, row.change,
+      row.writeStatus, row.stock?.finishedStock ?? "", row.stock?.assemblableStock ?? "", row.stock?.pendingReserved ?? "", row.safetyStock]);
+    downloaded += data.rows.length;
+    if (downloaded >= total) break;
+  }
+  const safeRows = rows.map(row => row.map(value => typeof value === "string" && /^[\s]*[=+@-]/.test(value) ? `'${value}` : value));
+  triggerCsvDownload(`乐天库存变化_${connectionId}_${runId}.csv`, safeRows);
+  showToast(`已下载本次同步 ${downloaded} 个SKU的库存变化`);
+}
+
 async function downloadRakutenInventoryCatalog(connectionId) {
   const filter = $("rakutenInventoryCatalogFilter").value;
   const params = new URLSearchParams({ pageSize: "500", issuesOnly: String(filter !== "all"), search: $("rakutenInventoryCatalogSearch").value.trim() });
@@ -7826,7 +7843,7 @@ async function loadRakutenInventoryJob(jobId, connectionId, page = 1) {
 }
 function renderRakutenInventoryRuns(runs) {
   const statuses = { preview: "待确认预览", planning: "正在计算", checking: "正在复核", running: "正在同步", success: "完成", partial: "部分完成，需检查", failed: "失败，需检查", interrupted: "执行中断，需检查", expired: "已过期，明细已清理" };
-  $("rakutenInventoryRunsBody").innerHTML = runs.map((row) => `<tr><td>${escapeHtml(formatRakutenOrderDateTime(row.startedAt))}</td><td>${row.trigger === "scheduled" ? "定时" : "手动"}</td><td>${escapeHtml(statuses[row.status] || row.status)}</td><td>${escapeHtml(row.message || "—")}</td></tr>`).join("") || '<tr><td colspan="4">尚无同步记录</td></tr>';
+  $("rakutenInventoryRunsBody").innerHTML = runs.map((row) => `<tr><td>${escapeHtml(formatRakutenOrderDateTime(row.startedAt))}</td><td>${row.trigger === "scheduled" ? "定时" : "手动"}</td><td>${escapeHtml(statuses[row.status] || row.status)}</td><td>${escapeHtml(row.message || "—")}</td><td>${row.planPurgedAt ? "明细已清理" : ["success", "partial", "failed", "interrupted"].includes(row.status) ? `<button type="button" class="tiny-btn ghost" data-inventory-run-download="${escapeHtml(row.id)}">下载本次库存变化</button>` : "—"}</td></tr>`).join("") || '<tr><td colspan="5">尚无同步记录</td></tr>';
 }
 async function rakutenInventoryAction(button, action) {
   if (rakutenInventorySaving || rakutenInventoryLoading) return;
@@ -16591,6 +16608,11 @@ function bindForms() {
     if (result?.job && !["queued", "running"].includes(result.job.status)) await loadRakutenInventory();
     showToast("已开始后台读取乐天清单，不会写入乐天库存");
   }));
+  $("rakutenInventoryRunsBody").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-inventory-run-download]");
+    if (!button) return;
+    rakutenInventoryAction(button, connectionId => downloadRakutenInventoryRunChanges(connectionId, button.dataset.inventoryRunDownload));
+  });
   $("rakutenInventoryCatalogDownload").addEventListener("click", (event) => rakutenInventoryAction(event.currentTarget, downloadRakutenInventoryCatalog));
   $("rakutenInventoryCatalogSearchBtn").addEventListener("click", async () => {
     rakutenInventoryCatalogPage = 1;

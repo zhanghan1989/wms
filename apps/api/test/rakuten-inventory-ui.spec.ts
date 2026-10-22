@@ -9,7 +9,7 @@ function fixture() {
   const request = jest.fn();
   const download = jest.fn();
   const api = runInNewContext(`${source.slice(source.indexOf('let rakutenInventoryCatalogTimer;'), source.indexOf('let rakutenScheduleTimer;'))};
-    ({downloadCatalog: downloadRakutenInventoryCatalog, parseBulk: parseRakutenInventoryBulk, loadCatalog: loadRakutenInventoryCatalog, load: loadRakutenInventory, job: loadRakutenInventoryJob, issues: loadRakutenInventoryIssues, filter: value => {rakutenInventoryPreviewFilter = value;}, renderCatalog: renderRakutenInventoryCatalog, action: rakutenInventoryAction, setPreview: p => {rakutenInventoryPreview = p;}, preview: () => rakutenInventoryPreview})`, {
+    ({downloadChanges: downloadRakutenInventoryRunChanges, downloadCatalog: downloadRakutenInventoryCatalog, parseBulk: parseRakutenInventoryBulk, loadCatalog: loadRakutenInventoryCatalog, load: loadRakutenInventory, job: loadRakutenInventoryJob, issues: loadRakutenInventoryIssues, filter: value => {rakutenInventoryPreviewFilter = value;}, renderCatalog: renderRakutenInventoryCatalog, action: rakutenInventoryAction, setPreview: p => {rakutenInventoryPreview = p;}, preview: () => rakutenInventoryPreview})`, {
     $: get, request, triggerCsvDownload: download, URLSearchParams, setTimeout, clearTimeout, setTextById: (id: string, value: string) => { get(id).textContent = value; },
     escapeHtml: (value: unknown) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!)),
     formatRakutenOrderDateTime: (value: string) => value, withBusyButton: async (_a: any, _b: any, action: any) => action(), showToast: jest.fn(),
@@ -19,6 +19,16 @@ function fixture() {
 }
 
 describe('inventory sync configuration UI', () => {
+  it('downloads all change pages and preserves negative numeric deltas while protecting identifiers', async () => {
+    const f = fixture();
+    f.request.mockResolvedValueOnce({ total: 2, rows: [{ productId: '=bad', currentQuantity: 5, quantity: 2, change: -3, writeStatus: '回读确认' }] })
+      .mockResolvedValueOnce({ total: 2, rows: [{ productId: 'P2', currentQuantity: 0, quantity: 2, change: 2 }] });
+    await f.api.downloadChanges('1', 'run');
+    expect(f.request).toHaveBeenLastCalledWith(expect.stringContaining('/runs/run/changes?page=2'));
+    expect(f.download.mock.calls[0][1]).toHaveLength(3);
+    expect(f.download.mock.calls[0][1][1][0]).toBe("'=bad");
+    expect(f.download.mock.calls[0][1][1][5]).toBe(-3);
+  });
   it('parses bounded explicit batch mappings without dropping disabled/safety settings and rejects duplicate targets', () => {
     const f = fixture();
     const parsed = f.api.parseBulk('P1\tItem\tSkuA\t8\t0\nP2\titem\tSkuB\t0\t1');

@@ -62,6 +62,25 @@ function fixture() {
 
 describe('Rakuten inventory sync', () => {
   beforeEach(() => jest.clearAllMocks());
+  it('exports only changed rows with per-row write confirmation and scopes the run to its shop', async () => {
+    const f = fixture();
+    f.prisma.rakutenInventoryRun.findFirst.mockResolvedValue({ id: 'run', status: 'partial',
+      result: { verified: 1, acknowledged: 2, attempted: 3 }, plan: [
+        ...[0, 1, 2, 3].map(i => ({ productId: `P${i}`, manageNumber: 'item', variantId: `v${i}`, currentQuantity: 5, quantity: 2 })),
+        { productId: 'same', currentQuantity: 2, quantity: 2 },
+      ] });
+    const data = await f.service.runChanges('1', 'run');
+    expect(data.total).toBe(4);
+    expect(data.rows.map(row => row.change)).toEqual([-3, -3, -3, -3]);
+    expect(data.rows.map(row => row.writeStatus)).toEqual(['回读确认', 'API已确认，未回读确认', '已尝试写入，结果待核实', '未写入']);
+    expect(f.prisma.rakutenInventoryRun.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'run', connectionId: 1n } }));
+    f.prisma.rakutenInventoryRun.findFirst.mockResolvedValue({ planPurgedAt: new Date() });
+    await expect(f.service.runChanges('1', 'run')).rejects.toThrow('已按保留规则清理');
+    f.prisma.rakutenInventoryRun.findFirst.mockResolvedValue({ status: 'running' });
+    await expect(f.service.runChanges('1', 'run')).rejects.toThrow('结束后下载');
+    f.prisma.rakutenInventoryRun.findFirst.mockResolvedValue(null);
+    await expect(f.service.runChanges('2', 'run')).rejects.toThrow('记录不存在');
+  });
   it('previews without writing, preserves delivery fields and verifies an absolute update', async () => {
     const f = fixture();
     const preview = await f.service.preview('1', 2n);

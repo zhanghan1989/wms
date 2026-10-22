@@ -94,7 +94,7 @@ export class RakutenInventoryService {
     const mappings = await this.prisma.rakutenInventoryMapping.findMany({ where: { connectionId: connection.id }, orderBy: { id: 'asc' }, take: 200 });
     const mappingCount = await this.prisma.rakutenInventoryMapping.count({ where: { connectionId: connection.id } });
     const runs = await this.prisma.rakutenInventoryRun.findMany({ where: { connectionId: connection.id }, orderBy: { startedAt: 'desc' }, take: 20,
-      select: { id: true, trigger: true, status: true, actorId: true, expiresAt: true, message: true, result: true, startedAt: true, finishedAt: true } });
+      select: { id: true, trigger: true, status: true, actorId: true, expiresAt: true, message: true, result: true, planPurgedAt: true, startedAt: true, finishedAt: true } });
     return {
       lock: await this.prisma.rakutenScheduleControl.findUnique({ where: { key: LOCK_KEY },
         select: { lastMessage: true, heartbeatAt: true, startedAt: true } }),
@@ -532,6 +532,31 @@ export class RakutenInventoryService {
   }
   queuePreview(connectionId: string, actorId: bigint) { return this.background((started) => this.preview(connectionId, actorId, started)); }
   queueExecute(connectionId: string, previewId: string, actorId: bigint) { return this.background((started) => this.execute(connectionId, previewId, actorId, started)); }
+
+  async runChanges(connectionId: string, runId: string, pageRaw?: string) {
+    const page = Number(pageRaw ?? 1);
+    if (!Number.isSafeInteger(page) || page < 1 || page > 1000000) throw new BadRequestException('明细页码不合法');
+    await this.connection(connectionId, false);
+    const run = await this.prisma.rakutenInventoryRun.findFirst({
+      where: { id: runId, connectionId: parseId(connectionId) },
+      select: { id: true, status: true, plan: true, planPurgedAt: true, result: true, startedAt: true },
+    });
+    if (!run) throw new NotFoundException('库存同步记录不存在');
+    if (run.planPurgedAt) throw new BadRequestException('本次同步明细已按保留规则清理，无法下载');
+    if (!['success', 'partial', 'failed', 'interrupted'].includes(run.status)) throw new BadRequestException('请等待本次同步结束后下载');
+    const details = await inventoryPlanPage(run.plan, page, 'changed');
+    const result = (run.result ?? {}) as Record<string, unknown>;
+    const verified = Number(result.verified ?? 0);
+    const acknowledged = Number(result.acknowledged ?? verified);
+    const attempted = Number(result.attempted ?? acknowledged);
+    return { runId: run.id, startedAt: run.startedAt, total: details.filteredTotal, page, pageSize: 50,
+      rows: details.rows.map((row, index) => {
+        const ordinal = (page - 1) * 50 + index;
+        return { ...row, change: row.quantity - row.currentQuantity,
+          writeStatus: ordinal < verified ? '回读确认' : ordinal < acknowledged ? 'API已确认，未回读确认' : ordinal < attempted ? '已尝试写入，结果待核实' : run.status === 'interrupted' ? '任务中断，写入状态待核实' : '未写入' };
+      }),
+    };
+  }
 
   async jobStatus(connectionId: string, jobId: string, actorId: bigint, pageRaw?: string, filter = 'all') {
     const page = Number(pageRaw ?? 1);

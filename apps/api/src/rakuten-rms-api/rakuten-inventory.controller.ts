@@ -17,6 +17,7 @@ export class RakutenInventoryController {
   @Put('enabled') enabled(@Param('connectionId') id: string, @Body() payload: UpdateRakutenInventoryEnabledDto) { return this.inventory.setEnabled(id, payload.enabled); }
   @Put('mappings') mapping(@Param('connectionId') id: string, @Body() payload: SaveRakutenInventoryMappingDto) { return this.inventory.saveMapping(id, payload); }
   @Post('mappings/:mappingId/disable') disable(@Param('connectionId') id: string, @Param('mappingId') mappingId: string) { return this.inventory.disableMapping(id, mappingId); }
+  @Get('runs/:runId/changes') changes(@Param('connectionId') id: string, @Param('runId') runId: string, @Query('page') page?: string) { return this.inventory.runChanges(id, runId, page); }
   @Get('jobs/:jobId') job(@Param('connectionId') id: string, @Param('jobId') jobId: string, @CurrentUser() user: AuthUser, @Query('page') page?: string, @Query('filter') filter?: string) { return this.inventory.jobStatus(id, jobId, user.id, page, filter); }
   @Post('preview') preview(@Param('connectionId') id: string, @CurrentUser() user: AuthUser) { return this.inventory.queuePreview(id, user.id); }
   @Post('execute') execute(@Param('connectionId') id: string, @Body() payload: ExecuteRakutenInventoryDto, @CurrentUser() user: AuthUser) { return this.inventory.queueExecute(id, payload.previewId, user.id); }
