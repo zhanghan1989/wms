@@ -9,3 +9,10 @@ apps/api/storage
 apps/api/test
 *.log
 *.tar.gz
+
+# Local runtime data and environment files are never build inputs.
+apps/api/data
+**/.env
+**/.env.*
+!**/.env.example
+**/*.tsbuildinfo

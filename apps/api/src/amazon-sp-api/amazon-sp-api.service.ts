@@ -1018,7 +1018,7 @@ export class AmazonSpApiService {
   private async buildDashboardSnapshot(): Promise<boolean> {
     const activeConnections = await this.prisma.amazonSpApiConnection.findMany({
       where: { status: 1 },
-      include: { shop: { select: { name: true } } },
+      select: { id: true, lastSyncError: true, lastSuccessfulSyncAt: true, shop: { select: { name: true } } },
       orderBy: { id: 'asc' },
     });
     if (!activeConnections.length) return false;
@@ -1139,6 +1139,7 @@ export class AmazonSpApiService {
         row.fbaUnfulfillableQty += inventory.unfulfillableQty;
       },
     );
+    productByShopSku.clear();
     this.logSyncResources('snapshot-inventory', { rows: inventoryCount, groups: grouped.size });
 
     let fbaRows = 0;

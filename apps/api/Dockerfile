@@ -5,7 +5,9 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/package.json
 RUN npm ci
 
-COPY apps/api ./apps/api
+COPY apps/api/tsconfig*.json ./apps/api/
+COPY apps/api/prisma ./apps/api/prisma
+COPY apps/api/src ./apps/api/src
 RUN npm run -w api prisma:generate && npm run -w api build
 
 FROM node:22-alpine AS runtime

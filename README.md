@@ -20,7 +20,9 @@ WMS 项目第一个正式版（`v1.0.0`）代码仓库。
 1. 复制环境变量文件  
 `copy apps\\api\\.env.example apps\\api\\.env`
 2. 启动依赖  
-`docker compose up -d db redis`
+`docker compose up -d db`
+Redis 默认不启动；当前业务未使用 Redis，需要时可执行 `docker compose --profile redis up -d redis`。
+
 3. 初始化数据库  
 `npm run -w api prisma:generate`  
 `npm run -w api prisma:migrate`  

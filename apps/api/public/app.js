@@ -7916,6 +7916,10 @@ function startRakutenSchedulePolling() {
   const generation = ++rakutenScheduleGeneration;
   const poll = async () => {
     if (generation !== rakutenScheduleGeneration || $("rakutenWorkflowModal").classList.contains("hidden")) return;
+    if (document.hidden) {
+      rakutenScheduleTimer = setTimeout(poll, 5000);
+      return;
+    }
     if (!rakutenScheduleSaving) {
       try {
         const result = await request("/rakuten-rms-api/automation/schedules");

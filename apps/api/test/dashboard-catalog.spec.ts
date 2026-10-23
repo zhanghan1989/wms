@@ -1,6 +1,20 @@
 import { dashboardCodes, loadDashboardProducts, loadDashboardSkus } from '../src/inventory/dashboard-catalog';
 
 describe('selective dashboard catalog', () => {
+  it('reads stocked products in bounded pages without losing rows or reloading referenced stock', async () => {
+    const products = Array.from({ length: 1001 }, (_, n) => ({ productId: `P${String(n).padStart(4, '0')}`, stockQty: 1 }));
+    const findMany = jest.fn(async (query) => {
+      if (!query.where.stockQty) return query.where.productId.in.map((productId: string) => ({ productId, stockQty: 0 }));
+      const start = query.cursor ? products.findIndex(row => row.productId === query.cursor.productId) + query.skip : 0;
+      return products.slice(start, start + query.take);
+    });
+    const rows = await loadDashboardProducts({ masterProduct: { findMany } } as never, ['P0000', 'sold', 'sold']);
+    expect(rows).toHaveLength(1002);
+    expect(new Set(rows.map(row => row.productId)).size).toBe(1002);
+    expect(findMany.mock.calls.slice(0, 3).map(([query]) => query.take)).toEqual([500, 500, 500]);
+    expect(findMany.mock.calls[3][0].where.productId.in).toEqual(['sold']);
+  });
+
   it('loads negative/positive stock plus zero-stock referenced products, excluding inactive and unrelated products', async () => {
     const products = [
       { productId: 'stock', stockQty: 10, status: 1 },

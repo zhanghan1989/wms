@@ -28,11 +28,21 @@ export async function loadDashboardSkus(prisma: PrismaService, codes: string[]):
 
 export async function loadDashboardProducts(prisma: PrismaService, productIds: string[], includeStock = true) {
   const select = { productId: true, productName: true, stockQty: true, firstStockedAt: true, productType: true } as const;
-  const stocked = includeStock
-    ? await prisma.masterProduct.findMany({ where: { status: 1, stockQty: { not: 0 } }, select })
-    : [];
-  const rows = new Map(stocked.map(row => [row.productId, row]));
-  const missing = productIds.filter(id => !rows.has(id));
+  const rows = new Map<string, Prisma.MasterProductGetPayload<{ select: typeof select }>>();
+  if (includeStock) {
+    let afterProductId: string | undefined;
+    while (true) {
+      const page = await prisma.masterProduct.findMany({
+        where: { status: 1, stockQty: { not: 0 } }, select,
+        orderBy: { productId: 'asc' }, take: batchSize,
+        ...(afterProductId === undefined ? {} : { cursor: { productId: afterProductId }, skip: 1 }),
+      });
+      for (const row of page) rows.set(row.productId, row);
+      if (page.length < batchSize) break;
+      afterProductId = page[page.length - 1].productId;
+    }
+  }
+  const missing = [...new Set(productIds)].filter(id => !rows.has(id));
   for (let offset = 0; offset < missing.length; offset += batchSize) {
     const matches = await prisma.masterProduct.findMany({
       where: { status: 1, productId: { in: missing.slice(offset, offset + batchSize) } }, select,

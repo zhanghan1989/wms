@@ -36,7 +36,7 @@ try {
   }
 
   Write-Output 'Starting local WMS containers...'
-  & docker @composeArgs up -d db redis | Out-Host
+  & docker @composeArgs up -d db | Out-Host
 
   if ($RebuildApi) {
     Write-Output 'Rebuilding and starting API container...'

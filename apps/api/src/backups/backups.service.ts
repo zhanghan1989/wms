@@ -40,6 +40,7 @@ export class BackupsService implements OnModuleInit {
   private readonly sqlRowBatchSize = this.resolveSqlRowBatchSize();
   private readonly zipCompressionLevel = this.resolveZipCompressionLevel();
   private isCreating = false;
+  private reconciliation: Promise<void> | undefined;
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -55,6 +56,7 @@ export class BackupsService implements OnModuleInit {
   @Cron(WEEKLY_BACKUP_CRON, {
     name: 'weekly-database-backup',
     timeZone: BACKUP_TIMEZONE,
+    waitForCompletion: true,
   })
   async runWeeklyBackup(): Promise<void> {
     try {
@@ -65,8 +67,9 @@ export class BackupsService implements OnModuleInit {
     }
   }
 
-  @Cron('0 */15 * * * *', { name: 'backup-file-reconcile', timeZone: BACKUP_TIMEZONE })
+  @Cron('0 */15 * * * *', { name: 'backup-file-reconcile', timeZone: BACKUP_TIMEZONE, waitForCompletion: true })
   async reconcileFilesInBackground(): Promise<void> {
+    if (this.isCreating) return;
     try { await this.reconcileBackupRecordsAndFiles(); }
     catch (error) { this.logger.warn(`备份文件检查失败: ${error instanceof Error ? error.message : String(error)}`); }
   }
@@ -137,6 +140,8 @@ export class BackupsService implements OnModuleInit {
     this.isCreating = true;
     let tempSqlPath: string | null = null;
     try {
+      // Let an existing scan finish before a new ZIP becomes visible on disk.
+      await this.reconciliation;
       await this.ensureBackupDir();
       const now = new Date();
       const stamp = this.formatTimestamp(now);
@@ -199,7 +204,15 @@ export class BackupsService implements OnModuleInit {
     }
   }
 
-  private async reconcileBackupRecordsAndFiles(): Promise<void> {
+  private reconcileBackupRecordsAndFiles(): Promise<void> {
+    if (this.reconciliation) return this.reconciliation;
+    this.reconciliation = this.performReconciliation().finally(() => {
+      this.reconciliation = undefined;
+    });
+    return this.reconciliation;
+  }
+
+  private async performReconciliation(): Promise<void> {
     await this.ensureBackupDir();
     await this.syncRecordsFromFilesystem();
     await this.markMissingFilesAsRemoved();
