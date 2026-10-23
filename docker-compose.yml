@@ -16,9 +16,6 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be configured in .env}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be configured in .env}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-12h}
-      AUTH_REQUIRE_MFA: ${AUTH_REQUIRE_MFA:-false}
-      AUTH_REQUIRE_PASSWORD_ROTATION: ${AUTH_REQUIRE_PASSWORD_ROTATION:-false}
-      AUTH_MFA_ENCRYPTION_KEY: ${AUTH_MFA_ENCRYPTION_KEY:?AUTH_MFA_ENCRYPTION_KEY must be configured in .env}
       DEPLOY_SESSION_VERSION: ${DEPLOY_SESSION_VERSION:-local-dev}
       THIRD_PARTY_API_KEY: ${THIRD_PARTY_API_KEY:?THIRD_PARTY_API_KEY must be configured in .env}
       XIYA_EXPORT_URL: ${XIYA_EXPORT_URL:-http://103.236.55.93/api/external/products}

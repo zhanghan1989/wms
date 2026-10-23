@@ -1,3 +1,5 @@
+> 历史资料（2026-10-23）：Amazon SP-API 申请安全准备已取消，本文中的申请检查项不再作为上线要求。MFA 登录及设置功能已移除。
+
 # Amazon SP-API 申请证据索引
 
 本索引用于 Developer Profile 提交、Amazon 补件和内部复审。截图或报告中不得包含密码、Refresh Token、API Key、MFA Secret、完整数据库连接串或买家个人信息。

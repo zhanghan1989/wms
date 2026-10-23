@@ -3151,7 +3151,6 @@ async function openInventoryHomeDefault({ markAsUserNavigation = false } = {}) {
 
 async function openInventoryStartupView() {
   if (!state.token) return;
-  if (state.me?.mfaEnrollmentRequired) return;
   if (hasUserNavigatedSinceBootstrap) return;
   if (await openPendingAmazonAppstoreAuthorization()) return;
   if (await openPendingMasterProductDetailFromUrl()) return;
@@ -8331,19 +8330,6 @@ async function startAmazonOAuth() {
   const authorizationUrl = String(result?.authorizationUrl || '').trim();
   if (!authorizationUrl) throw new Error('后台未返回Amazon授权地址');
   window.location.assign(authorizationUrl);
-}
-
-async function openMfaSetupModal() {
-  if (state.me?.mfaEnabled) {
-    showToast('当前账号已经启用MFA');
-    return;
-  }
-  const result = await request('/auth/me/mfa/setup', { method: 'POST', body: '{}',
-  });
-  $('mfaSetupAccount').value = `Fulangke WMS / ${state.me?.username || ''}`;
-  $('mfaSetupSecret').value = String(result?.secret || '');
-  $('mfaSetupCode').value = '';
-  openModal('mfaSetupModal');
 }
 
 function buildAmazonAppstoreOAuthPayload(pending) {
@@ -15953,10 +15939,6 @@ async function reloadAll() {
     return;
   }
 
-  if (state.me?.mfaEnrollmentRequired) {
-    await openMfaSetupModal();
-    return;
-  }
 
   const isAdmin = hasAdminAccess(state.me?.role);
   const tasks = [loadProductEditPendingSummary(), loadFbaPendingSummary()];
@@ -16002,7 +15984,6 @@ function bindForms() {
           body: JSON.stringify({
             username: $("gateUsername").value.trim(),
             password: $("gatePassword").value,
-            ...($("gateMfaCode").value.trim() ? { mfaCode: $("gateMfaCode").value.trim() } : {}),
           }),
         });
         hasUserNavigatedSinceBootstrap = false;
@@ -16944,8 +16925,8 @@ function bindForms() {
         }
         const mode = String($("resetPasswordMode").value || "reset");
         const password = String($("resetPasswordNewPassword").value || "").trim();
-        if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9])\S{12,64}$/.test(password)) {
-          throw new Error("密码必须为12到64位，并同时包含大写字母、小写字母、数字和特殊字符，且不能包含空格");
+        if (!/^\S{6,64}$/.test(password)) {
+          throw new Error("密码必须为6到64位，且不能包含空格");
         }
 
         await request(`/users/${encodeURIComponent(userId)}/reset-password`, {
@@ -19327,42 +19308,9 @@ function bindForms() {
   $("openProfileModal").addEventListener("click", () => {
     $("profileUsername").value = state.me?.username || "";
     $("profileRole").value = state.me?.role || "";
-    $("profileMfaStatus").value = state.me?.mfaEnabled ? "已启用" : "未启用";
-    $("openMfaSetupBtn").classList.toggle("hidden", Boolean(state.me?.mfaEnabled));
     $("profileCurrentPassword").value = "";
     $("profileNewPassword").value = "";
     openModal("profileModal");
-  });
-
-  $("openMfaSetupBtn")?.addEventListener("click", async () => {
-    try {
-      closeModal("profileModal");
-      await openMfaSetupModal();
-    } catch (error) {
-      showToast(error.message, true);
-    }
-  });
-
-  $("mfaSetupForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const code = String($("mfaSetupCode").value || "").trim();
-    try {
-      await withBusyButton($("mfaSetupEnableBtn"), "验证中...", async () => {
-        const result = await request("/auth/me/mfa/enable", {
-          method: "POST",
-          body: JSON.stringify({ code }),
-        });
-        state.token = persistAuthToken(result.accessToken);
-        state.authDeployVersion = persistAuthDeployVersion(result.deployVersion);
-        state.currentDeployVersion = String(result.deployVersion || "").trim();
-        closeModal("mfaSetupModal");
-        await reloadAll();
-        await openInventoryStartupView();
-        showToast("MFA已启用");
-      });
-    } catch (error) {
-      showToast(error.message, true);
-    }
   });
 
   $("profileForm").addEventListener("submit", async (event) => {

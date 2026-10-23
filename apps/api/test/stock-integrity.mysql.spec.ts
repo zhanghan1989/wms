@@ -334,7 +334,7 @@ mysql('stock integrity against isolated MySQL', () => {
     try {
       const user = await db.user.findUniqueOrThrow({ where: { id: operatorId } });
       const jwt = new JwtService({ secret: process.env.JWT_SECRET, signOptions: { expiresIn: '1h' } });
-      const auth = new AuthService(db as any, jwt, new AuditService(db as any), {} as any);
+      const auth = new AuthService(db as any, jwt, new AuditService(db as any));
       const strategy = new JwtStrategy(db as any);
       const login = await auth.login(user.username, 'TestOnly@123');
       const claims = jwt.verify(login.accessToken);

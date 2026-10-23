@@ -9,7 +9,6 @@ interface JwtPayload {
   sub?: string;
   jti?: string;
   sessionVersion?: number;
-  mfaPending?: boolean;
 }
 
 @Injectable()
@@ -37,16 +36,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       || user.sessionVersion !== payload.sessionVersion) {
       throw new UnauthorizedException('登录已失效，请重新登录');
     }
-    const requireMfa = String(process.env.AUTH_REQUIRE_MFA ?? 'false').toLowerCase() === 'true';
-    const requireRotation = String(process.env.AUTH_REQUIRE_PASSWORD_ROTATION ?? 'false').toLowerCase() === 'true';
     return {
       id: user.id,
       username: user.username,
       role: user.role,
       sessionId: session.id,
-      mfaPending: payload.mfaPending === true || (requireMfa && !user.mfaEnabledAt),
-      passwordChangeRequired: requireRotation && (!user.passwordChangedAt
-        || user.passwordChangedAt.getTime() + 365 * 86400000 <= Date.now()),
     };
   }
 }

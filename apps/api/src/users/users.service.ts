@@ -10,7 +10,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../constants/audit-event-type';
 import { parseId } from '../common/utils';
 import { PrismaService } from '../prisma/prisma.service';
-import { isStrongPassword, STRONG_PASSWORD_MESSAGE } from '../auth/password-policy';
+import { isValidPassword, PASSWORD_MESSAGE } from '../auth/password-policy';
 import { UserOptionsService } from '../user-options/user-options.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -350,8 +350,8 @@ export class UsersService {
     }
 
     const nextPassword = String(password || '').trim();
-    if (!isStrongPassword(nextPassword)) {
-      throw new BadRequestException(STRONG_PASSWORD_MESSAGE);
+    if (!isValidPassword(nextPassword)) {
+      throw new BadRequestException(PASSWORD_MESSAGE);
     }
 
     const passwordHash = await hash(nextPassword, 10);

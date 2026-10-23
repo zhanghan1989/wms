@@ -5,6 +5,4 @@ export interface AuthUser {
   username: string;
   role: Role;
   sessionId?: string;
-  mfaPending?: boolean;
-  passwordChangeRequired?: boolean;
 }

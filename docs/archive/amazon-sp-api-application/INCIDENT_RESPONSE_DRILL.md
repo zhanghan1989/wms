@@ -1,3 +1,5 @@
+> 历史资料（2026-10-23）：Amazon SP-API 申请安全准备已取消，本文中的申请检查项不再作为上线要求。MFA 登录及设置功能已移除。
+
 # Amazon 安全事件桌面演练记录
 
 本记录配合 `INCIDENT_RESPONSE_PLAN.md` 使用。首次演练应在提交 Developer Profile 前完成，此后至少每 6 个月一次。

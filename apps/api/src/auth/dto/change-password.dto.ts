@@ -1,5 +1,5 @@
 import { IsString, Length, Matches } from 'class-validator';
-import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_PATTERN } from '../password-policy';
+import { PASSWORD_MESSAGE, PASSWORD_PATTERN } from '../password-policy';
 
 export class ChangePasswordDto {
   @IsString()
@@ -7,7 +7,7 @@ export class ChangePasswordDto {
   currentPassword!: string;
 
   @IsString()
-  @Length(12, 64)
-  @Matches(STRONG_PASSWORD_PATTERN, { message: STRONG_PASSWORD_MESSAGE })
+  @Length(6, 64)
+  @Matches(PASSWORD_PATTERN, { message: PASSWORD_MESSAGE })
   newPassword!: string;
 }

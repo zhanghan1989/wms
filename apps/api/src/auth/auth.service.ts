@@ -6,7 +6,6 @@ import { AuditAction, Prisma, User } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthMfaService } from './auth-mfa.service';
 
 @Injectable()
 export class AuthService {
@@ -16,7 +15,6 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly auditService: AuditService,
-    private readonly mfaService: AuthMfaService,
   ) {}
 
   getDeploySessionVersion(): string {
@@ -25,13 +23,10 @@ export class AuthService {
     ).trim() || 'local-dev';
   }
 
-  async login(username: string, password: string, mfaCode?: string): Promise<{
+  async login(username: string, password: string): Promise<{
     accessToken: string;
     deployVersion: string;
-    mfaEnrollmentRequired: boolean;
-    passwordChangeRequired: boolean;
     user: Pick<User, 'id' | 'username' | 'role' | 'status' | 'department'> & {
-      mfaEnabled: boolean;
     };
   }> {
     const user = await this.prisma.user.findUnique({
@@ -44,10 +39,6 @@ export class AuthService {
         status: true,
         sessionVersion: true,
         passwordHash: true,
-        mfaSecretEncrypted: true,
-        mfaSecretIv: true,
-        mfaSecretAuthTag: true,
-        mfaEnabledAt: true,
         passwordChangedAt: true,
       },
     });
@@ -60,48 +51,24 @@ export class AuthService {
       throw new UnauthorizedException('用户名或密码错误');
     }
 
-    const mfaEnabled = Boolean(
-      user.mfaEnabledAt
-      && user.mfaSecretEncrypted
-      && user.mfaSecretIv
-      && user.mfaSecretAuthTag,
-    );
-    if (mfaEnabled) {
-      const secret = this.mfaService.decrypt({
-        encryptedValue: user.mfaSecretEncrypted!,
-        iv: user.mfaSecretIv!,
-        authTag: user.mfaSecretAuthTag!,
-      });
-      if (!this.mfaService.verify(secret, String(mfaCode ?? ''))) {
-        throw new UnauthorizedException('用户名、密码或MFA验证码错误');
-      }
-    }
-    const mfaEnrollmentRequired = this.isMfaRequired() && !mfaEnabled;
-    const passwordChangeRequired = this.isPasswordChangeRequired(user.passwordChangedAt);
 
-    const accessToken = await this.issueAccessToken(user, mfaEnrollmentRequired);
+    const accessToken = await this.issueAccessToken(user);
 
     return {
       accessToken,
       deployVersion: this.getDeploySessionVersion(),
-      mfaEnrollmentRequired,
-      passwordChangeRequired,
       user: {
         id: user.id,
         username: user.username,
         role: user.role,
         department: user.username === this.protectedUsername ? '' : user.department,
         status: user.status,
-        mfaEnabled,
       },
     };
   }
 
   async getMe(id: bigint): Promise<
     Pick<User, 'id' | 'username' | 'role' | 'status' | 'department'> & {
-      mfaEnabled: boolean;
-      mfaEnrollmentRequired: boolean;
-      passwordChangeRequired: boolean;
     }
   > {
     const user = await this.prisma.user.findUnique({
@@ -114,7 +81,6 @@ export class AuthService {
         status: true,
         sessionVersion: true,
         passwordHash: true,
-        mfaEnabledAt: true,
         passwordChangedAt: true,
       },
     });
@@ -127,79 +93,7 @@ export class AuthService {
       role: user.role,
       department: user.username === this.protectedUsername ? '' : user.department,
       status: user.status,
-      mfaEnabled: Boolean(user.mfaEnabledAt),
-      mfaEnrollmentRequired: this.isMfaRequired() && !user.mfaEnabledAt,
-      passwordChangeRequired: this.isPasswordChangeRequired(user.passwordChangedAt),
     };
-  }
-
-  async setupMfa(id: bigint): Promise<{ secret: string; otpAuthUri: string }> {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
-      select: { id: true, username: true, status: true, mfaEnabledAt: true },
-    });
-    if (!user || user.status !== 1) throw new UnauthorizedException('用户不存在');
-    if (user.mfaEnabledAt) throw new BadRequestException('MFA已经启用');
-
-    const secret = this.mfaService.generateSecret();
-    const encrypted = this.mfaService.encrypt(secret);
-    const setup = await this.prisma.user.updateMany({
-      where: { id, status: 1, mfaEnabledAt: null },
-      data: {
-        mfaSecretEncrypted: encrypted.encryptedValue,
-        mfaSecretIv: encrypted.iv,
-        mfaSecretAuthTag: encrypted.authTag,
-        mfaEnabledAt: null,
-      },
-    });
-    if (setup.count !== 1) throw new BadRequestException('MFA状态已变化，请刷新后重试');
-    return {
-      secret,
-      otpAuthUri: this.mfaService.buildOtpAuthUri(user.username, secret),
-    };
-  }
-
-  async enableMfa(id: bigint, code: string): Promise<{
-    success: true;
-    accessToken: string;
-    deployVersion: string;
-  }> {
-    const user = await this.prisma.user.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        username: true,
-        role: true,
-        status: true,
-        sessionVersion: true,
-        mfaSecretEncrypted: true,
-        mfaSecretIv: true,
-        mfaSecretAuthTag: true,
-        mfaEnabledAt: true,
-        passwordChangedAt: true,
-      },
-    });
-    if (!user || user.status !== 1) throw new UnauthorizedException('用户不存在');
-    if (user.mfaEnabledAt) throw new BadRequestException('MFA已经启用');
-    if (!user.mfaSecretEncrypted || !user.mfaSecretIv || !user.mfaSecretAuthTag) {
-      throw new BadRequestException('请先生成MFA密钥');
-    }
-    const secret = this.mfaService.decrypt({
-      encryptedValue: user.mfaSecretEncrypted,
-      iv: user.mfaSecretIv,
-      authTag: user.mfaSecretAuthTag,
-    });
-    if (!this.mfaService.verify(secret, code)) {
-      throw new BadRequestException('MFA验证码无效，请确认手机时间后重试');
-    }
-    const enabled = await this.prisma.user.updateMany({
-      where: { id, status: 1, sessionVersion: user.sessionVersion,
-        mfaEnabledAt: null, mfaSecretEncrypted: user.mfaSecretEncrypted },
-      data: { mfaEnabledAt: new Date(), sessionVersion: { increment: 1 } },
-    });
-    if (enabled.count !== 1) throw new BadRequestException('账号或MFA状态已变化，请重新登录');
-    const accessToken = await this.issueAccessToken({ ...user, sessionVersion: user.sessionVersion + 1 }, false);
-    return { success: true, accessToken, deployVersion: this.getDeploySessionVersion() };
   }
 
   async changePassword(
@@ -217,7 +111,6 @@ export class AuthService {
         status: true,
         sessionVersion: true,
         passwordHash: true,
-        mfaEnabledAt: true,
       },
     });
     if (!user || user.status !== 1 || !user.passwordHash) {
@@ -266,7 +159,6 @@ export class AuthService {
 
     const accessToken = await this.issueAccessToken(
       { ...user, sessionVersion: user.sessionVersion + 1 },
-      this.isMfaRequired() && !user.mfaEnabledAt,
     );
     return { success: true, accessToken, deployVersion: this.getDeploySessionVersion() };
   }
@@ -278,7 +170,6 @@ export class AuthService {
 
   private async issueAccessToken(
     user: Pick<User, 'id' | 'username' | 'role' | 'sessionVersion'>,
-    mfaPending: boolean,
   ): Promise<string> {
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`);
@@ -289,8 +180,7 @@ export class AuthService {
       const jti = randomUUID();
       const token = await this.jwtService.signAsync({
         sub: current.id.toString(), username: current.username, role: current.role,
-        sessionVersion: current.sessionVersion, jti, mfaPending,
-        passwordChangeRequired: this.isPasswordChangeRequired(current.passwordChangedAt),
+        sessionVersion: current.sessionVersion, jti,
       });
       const decoded = this.jwtService.decode<{ exp: number }>(token);
       await tx.authSession.deleteMany({ where: { userId: current.id, expiresAt: { lte: new Date() } } });
@@ -301,17 +191,4 @@ export class AuthService {
     });
   }
 
-  private isMfaRequired(): boolean {
-    return String(process.env.AUTH_REQUIRE_MFA ?? 'false').toLowerCase() === 'true';
-  }
-
-  private isPasswordChangeRequired(passwordChangedAt: Date | null): boolean {
-    if (String(process.env.AUTH_REQUIRE_PASSWORD_ROTATION ?? 'false').toLowerCase() !== 'true') {
-      return false;
-    }
-    const expiresAt = passwordChangedAt
-      ? passwordChangedAt.getTime() + 365 * 24 * 60 * 60 * 1000
-      : 0;
-    return expiresAt <= Date.now();
-  }
 }

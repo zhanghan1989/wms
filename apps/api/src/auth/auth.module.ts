@@ -5,7 +5,6 @@ import { PassportModule } from '@nestjs/passport';
 import { StringValue } from 'ms';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
-import { AuthMfaService } from './auth-mfa.service';
 import { JwtStrategy } from './jwt.strategy';
 import { getJwtSecret } from './jwt-config';
 
@@ -21,7 +20,7 @@ import { getJwtSecret } from './jwt-config';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, AuthMfaService, JwtStrategy],
+  providers: [AuthService, JwtStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}

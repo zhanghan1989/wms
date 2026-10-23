@@ -1,12 +1,12 @@
 import { IsString, Length, Matches } from 'class-validator';
 import {
-  STRONG_PASSWORD_MESSAGE,
-  STRONG_PASSWORD_PATTERN,
+  PASSWORD_MESSAGE,
+  PASSWORD_PATTERN,
 } from '../../auth/password-policy';
 
 export class ResetUserPasswordDto {
   @IsString()
-  @Length(12, 64)
-  @Matches(STRONG_PASSWORD_PATTERN, { message: STRONG_PASSWORD_MESSAGE })
+  @Length(6, 64)
+  @Matches(PASSWORD_PATTERN, { message: PASSWORD_MESSAGE })
   password!: string;
 }

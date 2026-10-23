@@ -48,7 +48,7 @@ describe('revocable sessions and privilege boundaries', () => {
   });
   it('logout removes only the current session and makes it unusable', async () => {
     const { tx, strategy } = fixture();
-    const service = new AuthService(tx, {} as any, {} as any, {} as any);
+    const service = new AuthService(tx, {} as any, {} as any);
     await service.logout(2n, 'session-1');
     expect(tx.authSession.deleteMany).toHaveBeenCalledWith({ where: { id: 'session-1', userId: 2n } });
     await expect(strategy.validate({ sub: '2', jti: 'session-1', sessionVersion: 0 })).rejects.toBeInstanceOf(UnauthorizedException);
