@@ -19,7 +19,7 @@ WMS 第一个正式版发布，覆盖用户权限、海外仓、产品、库存�
 
 ## 部署与验证
 - 部署说明：`docs/DEPLOY_ALIYUN.md`
-- 发布说明：`docs/RELEASE_v1.0.0.md`
+- 发布说明：`RELEASE_v1.0.0.md`
 - 变更明细：`CHANGELOG.md`
 - 验证命令：
   - `npm run -w api build`

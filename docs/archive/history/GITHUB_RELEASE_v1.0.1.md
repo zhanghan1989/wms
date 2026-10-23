@@ -23,5 +23,5 @@ WMS v1.0.1 是 v1.0.0 后的稳定迭代版本，重点覆盖 FBA 出库链路�
 
 ## 文档
 
-- 发布说明：`docs/RELEASE_v1.0.1.md`
+- 发布说明：`RELEASE_v1.0.1.md`
 - 部署文档：`docs/DEPLOY_ALIYUN.md`

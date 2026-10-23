@@ -23,7 +23,7 @@ RUN npm ci --omit=dev --no-audit --no-fund \
 
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 COPY apps/api/public ./apps/api/public
-COPY docs ./docs
+COPY docs/*.xlsx docs/*.xlsm ./docs/
 COPY apps/print-agent/prebuilt ./apps/print-agent/prebuilt
 RUN mkdir -p /app/data /app/storage/backups
 

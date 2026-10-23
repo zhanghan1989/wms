@@ -1,13 +1,12 @@
-# WMS v1.0.0
+# WMS
 
-WMS 项目第一个正式版（`v1.0.0`）代码仓库。
+WMS 仓库管理系统，包含业务 API、管理页面和打印代理。
 
 ## 仓库结构
 - `apps/api`: NestJS + Prisma + MySQL，包含 API 与前端静态页面
-- `apps/web`: 预留目录
 - `docs`: 部署、交接、模板与发布文档
 
-## 正式版范围（v1.0.0）
+## 主要功能
 - 用户与权限：登录、用户管理、角色/部门配置
 - 海外仓管理：箱号管理、货架管理、移动箱子/移动产品
 - 产品管理：单个新增、批量上传、编辑申请与确认
@@ -53,8 +52,8 @@ Redis 默认不启动；当前业务未使用 Redis，需要时可执行 `docker
 ## 文档索引
 - 文档总览：`docs/README.md`
 - 本地开发：`docs/LOCAL_DEV.md`
-- 发布说明：`docs/RELEASE_v1.0.0.md`
-- GitHub Release 文案：`docs/GITHUB_RELEASE_v1.0.0.md`
+- 发布说明：`docs/archive/history/RELEASE_v1.0.0.md`
+- GitHub Release 文案：`docs/archive/history/GITHUB_RELEASE_v1.0.0.md`
 - 部署文档：`docs/DEPLOY_ALIYUN.md`
 - UTF-8 文本命令约定：`docs/UTF8_TEXT_COMMANDS.md`
 - 变更记录：`CHANGELOG.md`

@@ -1,4 +1,17 @@
-# 阿里云部署说明（WMS V1 第一版）
+# 阿里云部署说明
+
+## 当前生产部署
+
+当前生产使用根目录 `docker-compose.yml`：API 与 MySQL 独立容器运行，API 仅绑定 `127.0.0.1:3000`，由 Nginx 提供 HTTPS。管理页面位于 `apps/api/public`，已随 API 发布。Redis 默认不启动。
+
+自动部署由 `.github/workflows/deploy-ecs.yml` 执行：推送 `main` 或手动触发，校验通过后在 GitHub Actions 构建镜像，传到 `production` 环境的 `ECS_HOST`，在服务器 `~/wms` 部署指定提交并默认执行 `prisma migrate deploy`。服务器根目录 `.env` 提供 Compose 配置，参考根目录 `.env.example`。
+
+当前流程还发布公司官网，并配置乐天日本出口服务，因此新系统不能直接照搬当前部署任务。新服务器应使用独立数据库、密钥、域名、备份和 GitHub Environment；首次启用前核对店铺授权及自动同步设置。现有 Actions 不会因新服务器克隆仓库而自动部署到新服务器。
+
+## 早期 RDS 部署方案（历史参考）
+
+以下保留使用 `docker-compose.aliyun.yml` 和外部 RDS 的早期方案，区别于当前生产流程。该配置暂时保留供核对人工部署用途；不要将其作为当前生产配置直接执行。生产迁移应使用 `prisma migrate deploy`，种子初始化仅用于空白数据库。
+
 
 ## 1. 推荐架构
 
@@ -7,7 +20,7 @@
 - 缓存（可选）：`阿里云 Redis`
 - 域名与证书：`域名 + SSL 证书（可选）`
 
-说明：当前第一版 API 已可直接部署；前端尚未正式实现，可先通过 API 验证业务。
+说明：以下为早期方案记录。
 
 ## 2. 阿里云资源准备
 
@@ -72,7 +85,7 @@ docker compose -f docker-compose.aliyun.yml up -d --build
 ## 7. 迁移与种子数据
 
 ```bash
-docker compose -f docker-compose.aliyun.yml exec api npm run prisma:migrate
+docker compose -f docker-compose.aliyun.yml exec api npm run prisma:migrate:deploy
 docker compose -f docker-compose.aliyun.yml exec api npm run prisma:seed
 ```
 
