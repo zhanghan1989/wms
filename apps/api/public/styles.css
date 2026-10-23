@@ -411,6 +411,17 @@ h3 {
   grid-template-columns: repeat(5, minmax(120px, 1fr));
 }
 
+#preregisterBatchInboundForm .preregister-actions {
+  align-items: center;
+  align-self: end;
+}
+
+#preregisterBatchInboundForm .preregister-actions button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 12px;
+}
+
 .inventory-search-form {
   grid-template-columns: minmax(420px, 46%) 100px 150px;
   justify-content: start;

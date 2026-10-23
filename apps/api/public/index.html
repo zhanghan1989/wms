@@ -1604,8 +1604,10 @@
             <label>新建或更新原批次<select id="preregisterBatchOrderId"><option value="">新建预登记批次</option></select></label>
             <label>新建批次号<input id="preregisterBatchNo" maxlength="48" placeholder="例如 PO-20261020-01，更新时可留空" /></label>
             <label>完整产品数量表<input id="preregisterBatchFile" type="file" accept=".xlsx,.xls,.csv" required /></label>
-            <button type="submit">预览并登记</button>
-            <button type="button" id="downloadPreregisterTemplateBtn" class="ghost">下载无箱号模板</button>
+            <div class="action-row preregister-actions">
+              <button type="submit">预览并登记</button>
+              <button type="button" id="downloadPreregisterTemplateBtn" class="ghost">下载无箱号模板</button>
+            </div>
           </form>
         </article>
 
