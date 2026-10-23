@@ -7902,7 +7902,14 @@ function renderRakutenSchedules(result) {
     button.textContent = task.enabled ? "已开启" : "已关闭";
     button.classList.toggle("active", task.enabled);
     button.disabled = rakutenScheduleSaving;
-    row.querySelector("[data-schedule-status]").textContent = `${statuses[task.status] || task.status}${task.status === "running" ? `（${format(task.startedAt)} 开始）` : ""}`;
+    const importErrors = task.key === "import" ? (result.importAlerts || []).map((alert) => `${alert.shopName}：${alert.reason}`) : [];
+    const elapsed = task.status === "running" && task.startedAt && result.serverTime
+      ? new Date(result.serverTime).getTime() - new Date(task.startedAt).getTime() : 0;
+    row.querySelector("[data-schedule-status]").textContent = [
+      `${statuses[task.status] || task.status}${task.status === "running" ? `（${format(task.startedAt)} 开始）` : ""}`,
+      elapsed >= 5 * 60_000 ? "已执行超过5分钟，尚未结束；可能仍在等待外部接口或数据库" : "",
+      importErrors.length ? `已记录的导入异常（成功导入后清除）：${importErrors.join("；")}` : "",
+    ].filter(Boolean).join("\n");
     row.querySelector("[data-schedule-next]").textContent = task.enabled ? format(task.nextRunAt) : "已关闭";
     row.querySelector("[data-schedule-last]").textContent = task.lastStatus
       ? `${outcomes[task.lastStatus] || task.lastStatus} · ${format(task.finishedAt)}${task.lastMessage ? ` · ${task.lastMessage}` : ""}` : "尚未执行";

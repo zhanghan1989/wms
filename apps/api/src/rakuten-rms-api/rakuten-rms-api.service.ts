@@ -835,11 +835,17 @@ export class RakutenRmsApiService {
         const fetched = await this.fetchSyncItems(row, 7);
         results.push(await this.runSync(row, fetched));
       } catch (error) {
-        results.push({
-          connectionId: row.id.toString(),
-          shopName: row.shop.name,
-          error: this.errorMessage(error),
-        });
+        const message = this.errorMessage(error);
+        // Fetch/search can fail before runSync creates a run. Persist the error
+        // now so it is visible while subsequent shops are still importing.
+        try {
+          await this.prisma.rakutenRmsConnection.update({ where: { id: row.id }, data: { lastSyncError: message }, select: { id: true } });
+        } catch {
+          // Recording a shop's failure must not stop imports for other shops.
+          // Do not log raw database errors, which may contain connection details.
+          this.logger.warn(`Rakuten connection ${row.id}: failed to persist order import error; continuing remaining shops`);
+        }
+        results.push({ connectionId: row.id.toString(), shopName: row.shop.name, error: message });
       }
     }
     return { results };

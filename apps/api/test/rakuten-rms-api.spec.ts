@@ -52,6 +52,31 @@ describe("Rakuten RMS API integration", () => {
     expect(syncAllConnections).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['fetch', false], ['fetch', true], ['import', false], ['import', true],
+  ])('continues subsequent shops after a %s failure even when error persistence fails=%s', async (stage, persistenceFails) => {
+    const rows = [{ id: 1n, shop: { name: 'First' } }, { id: 2n, shop: { name: 'Second' } }];
+    const update = persistenceFails ? jest.fn().mockRejectedValue(new Error('private database details')) : jest.fn().mockResolvedValue({ id: 1n });
+    const prisma = { rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue(rows), update } } as unknown as PrismaService;
+    const service = new RakutenRmsApiService(prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+    const fetchItems = jest.spyOn(service as any, 'fetchSyncItems').mockResolvedValue({});
+    const run = jest.spyOn(service as any, 'runSync').mockResolvedValue({ connectionId: '2', status: 'success' });
+    const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+    if (stage === 'fetch') fetchItems.mockRejectedValueOnce(new Error('original import failure'));
+    else run.mockRejectedValueOnce(new Error('original import failure'));
+
+    await expect(service.syncAllConnections()).resolves.toEqual({ results: [
+      { connectionId: '1', shopName: 'First', error: 'original import failure' },
+      { connectionId: '2', status: 'success' },
+    ] });
+    expect(fetchItems).toHaveBeenNthCalledWith(2, rows[1], 7);
+    expect(run).toHaveBeenLastCalledWith(rows[1], {});
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({ where: { id: 1n }, data: { lastSyncError: 'original import failure' }, select: { id: true } });
+    expect(warn).toHaveBeenCalledTimes(persistenceFails ? 1 : 0);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('private database details');
+  });
+
   it("encrypts the RMS credentials with authenticated encryption", () => {
     process.env.RAKUTEN_RMS_API_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
     const crypto = new RakutenRmsApiCryptoService();

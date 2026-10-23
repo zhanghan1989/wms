@@ -40,14 +40,17 @@ export class RakutenScheduleControlService {
   }
 
   async status() {
-    const [rows, alerts] = await Promise.all([
+    const [rows, alerts, importErrors] = await Promise.all([
       Promise.all(RAKUTEN_SCHEDULE_KEYS.map((key) => this.ensure(key))),
       this.prisma.rakutenRmsConnection.findMany({ where: { inventoryPauseReason: { not: null } },
         select: { id: true, inventoryPauseReason: true, shop: { select: { name: true } } }, orderBy: { id: 'asc' }, take: 50 }),
+      this.prisma.rakutenRmsConnection.findMany({ where: { status: 1, syncOrders: true, lastSyncError: { not: null } },
+        select: { id: true, lastSyncError: true, shop: { select: { name: true } } }, orderBy: { id: 'asc' }, take: 50 }),
     ]);
     const jobs = this.registry.getCronJobs();
     const now = Date.now();
     return {
+      importAlerts: importErrors.filter((row) => row.lastSyncError).map((row) => ({ connectionId: row.id.toString(), shopName: row.shop.name, reason: row.lastSyncError })),
       inventoryAlerts: alerts.map((row) => ({ connectionId: row.id.toString(), shopName: row.shop.name, reason: row.inventoryPauseReason })),
       timeZone: 'Asia/Tokyo', refreshSeconds: 5, serverTime: new Date(now).toISOString(),
       tasks: rows.map((row) => {
