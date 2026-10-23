@@ -182,6 +182,7 @@ jobs:
               echo "Missing deployment image tar: ${IMAGE_TAR}"
               exit 1
             fi
+            timed "resource_check_before_image_load" bash scripts/wms-resource-check.sh
             timed "docker_load_api_image" timeout --kill-after=30s 10m docker load --input "${IMAGE_TAR}"
             {
               printf '%s\n' 'services:'
@@ -197,6 +198,7 @@ jobs:
             timed "validate_api_image_compose" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress config --quiet
             timed_retry "compose_up_db" 3 docker compose up -d db
             if [ "${RUN_MIGRATIONS}" = "true" ]; then
+              timed "resource_check_before_migration" bash scripts/wms-resource-check.sh
               echo "Running prisma migrate deploy..."
               timed "prisma_migrate_deploy" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml run --rm --no-deps api timeout -k 30 300 npm run -w api prisma:migrate:deploy
             else

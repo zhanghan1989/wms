@@ -133,7 +133,7 @@ export class SkusController {
   }
 
   @Post('import-excel')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024, files: 1 } }))
   async importExcel(
     @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
     @CurrentUser() user: AuthUser,
@@ -151,7 +151,7 @@ export class SkusController {
   }
 
   @Post('bulk-delete-excel')
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024, files: 1 } }))
   async bulkDeleteExcel(
     @UploadedFile() file: { buffer?: Buffer; originalname?: string } | undefined,
     @CurrentUser() user: AuthUser,

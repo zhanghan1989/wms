@@ -339,12 +339,15 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
       if (write && response.status === 204) return;
       let payload: Record<string, any>;
       const bodyStartedAt = Date.now();
+      const memoryBefore = process.memoryUsage();
       let responseText = '';
       let bodyRead = false;
       try {
         responseText = await response.text();
         bodyRead = true;
         payload = JSON.parse(responseText);
+        const memoryAfter = process.memoryUsage();
+        this.logger.log(`Inventory response path=${path.split('?')[0]} rssBytes=${memoryAfter.rss} heapBytes=${memoryAfter.heapUsed} heapDeltaBytes=${memoryAfter.heapUsed - memoryBefore.heapUsed} externalBytes=${memoryAfter.external}`);
         this.logger.log(`Inventory API path=${path.split('?')[0]} attempt=${attempt + 1}/${attempts} bodyBytes=${Buffer.byteLength(responseText, 'utf8')} bodyMs=${Date.now() - bodyStartedAt} elapsedMs=${Date.now() - requestStartedAt}`);
       } catch (error) {
         // Log classifications only: remote bodies and headers may contain secrets.

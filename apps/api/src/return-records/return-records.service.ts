@@ -109,7 +109,9 @@ export class ReturnRecordsService {
     originalName: string | undefined,
     userId: bigint,
   ): Promise<{ sourceFileName: string; totalRows: number; createdCount: number; rows: unknown[] }> {
+    if (fileBuffer.length > 20 * 1024 * 1024) throw new BadRequestException('Excel文件不能超过20 MiB');
     const rows = this.parseExcelRows(fileBuffer);
+    if (rows.length > 10000) throw new BadRequestException('单次最多导入10000条返品记录，请拆分文件');
     if (!rows.length) {
       throw new BadRequestException('Excel中没有可导入的返品记录');
     }
@@ -258,7 +260,7 @@ export class ReturnRecordsService {
   private parseExcelRows(fileBuffer: Buffer): ParsedReturnRecordRow[] {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0 });
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0, sheetRows: 10002 });
     } catch {
       throw new BadRequestException('Excel文件格式无法识别');
     }
@@ -266,6 +268,11 @@ export class ReturnRecordsService {
     const sheet = firstSheetName ? workbook.Sheets[firstSheetName] : null;
     if (!sheet) {
       throw new BadRequestException('Excel中没有工作表');
+    }
+    // A bounded parser may omit later rows, including rows after blank gaps.
+    const fullRange = sheet['!fullref'] || sheet['!ref'];
+    if (fullRange && XLSX.utils.decode_range(fullRange).e.r > 10000) {
+      throw new BadRequestException('工作表最多10000条数据行，请删除多余空行或拆分文件');
     }
 
     return XLSX.utils

@@ -41,3 +41,13 @@ it('does not start writes if product preparation fails', async () => {
   expect(prisma.returnRecord.create).not.toHaveBeenCalled();
   expect(prisma.$transaction).not.toHaveBeenCalled();
 });
+
+it('rejects excessive import rows before any product queries or writes', async () => {
+  const { service, prisma } = fixture();
+  jest.spyOn(service as any, 'parseExcelRows').mockReturnValue(
+    Array.from({ length: 10001 }, () => ({ productId: 'P1' })),
+  );
+  await expect(service.importExcel(Buffer.alloc(0), 'returns.xlsx', 7n)).rejects.toThrow('10000');
+  expect(prisma.masterProduct.findUnique).not.toHaveBeenCalled();
+  expect(prisma.$transaction).not.toHaveBeenCalled();
+});
