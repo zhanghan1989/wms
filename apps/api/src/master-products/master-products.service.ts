@@ -1391,7 +1391,7 @@ export class MasterProductsService {
   private parseShoulderStrapBomImportRows(fileBuffer: Buffer): ShoulderStrapBomImportRow[] {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0 });
     } catch {
       throw new BadRequestException('无法解析肩带 BOM Excel 文件');
     }
@@ -2139,7 +2139,7 @@ export class MasterProductsService {
   private parseImportRows(fileBuffer: Buffer): ParsedMasterProductImport {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0 });
     } catch {
       throw new BadRequestException('无法解析 Excel 文件');
     }

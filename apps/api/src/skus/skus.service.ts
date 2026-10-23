@@ -866,7 +866,7 @@ export class SkusService {
   private parseImportRows(fileBuffer: Buffer): ImportSkuRow[] {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0 });
     } catch {
       throw new BadRequestException('Invalid Excel file');
     }
@@ -954,7 +954,7 @@ export class SkusService {
   private parseBulkDeleteSkuCodes(fileBuffer: Buffer): string[] {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0 });
     } catch {
       throw new BadRequestException('Invalid Excel file');
     }

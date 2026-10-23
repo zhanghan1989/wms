@@ -114,7 +114,15 @@ export class ReturnRecordsService {
       throw new BadRequestException('Excel中没有可导入的返品记录');
     }
     const sourceFileName = String(originalName || '返品表.xlsx').trim();
-    const dataList = await Promise.all(rows.map((row) => this.buildCreateData(row, userId, sourceFileName)));
+    // Bound product lookup concurrency so large imports do not fill the query queue.
+    const dataList: Record<string, unknown>[] = [];
+    const batchSize = 50;
+    for (let offset = 0; offset < rows.length; offset += batchSize) {
+      const batch = await Promise.all(
+        rows.slice(offset, offset + batchSize).map((row) => this.buildCreateData(row, userId, sourceFileName)),
+      );
+      dataList.push(...batch);
+    }
     const createdRows = await this.prisma.$transaction(
       dataList.map((data) => (this.prisma as any).returnRecord.create({ data })),
     );
@@ -250,7 +258,7 @@ export class ReturnRecordsService {
   private parseExcelRows(fileBuffer: Buffer): ParsedReturnRecordRow[] {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0 });
     } catch {
       throw new BadRequestException('Excel文件格式无法识别');
     }

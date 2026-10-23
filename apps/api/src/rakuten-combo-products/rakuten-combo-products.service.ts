@@ -285,7 +285,7 @@ export class RakutenComboProductsService {
   private parseImportRows(fileBuffer: Buffer): NormalizedComboPayload[] {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: 0 });
     } catch {
       throw new BadRequestException('无法解析 Excel 文件');
     }
