@@ -30,9 +30,8 @@ const privacy = pages.find(({ file }) => file === 'privacy/index.html')?.html ??
 
 const assertions = [
   ['home identifies the legal entity', home.includes('乳山市弗朗克贸易有限公司')],
-  ['home names the product', home.includes('Fulangke WMS')],
-  ['home describes FBA and FBM', home.includes('FBA') && home.includes('FBM')],
-  ['home describes pricing', home.includes('邀请制测试阶段') && home.includes('按协议报价')],
+  ['home uses company branding', home.includes('弗朗克贸易') && !/WMS|Amazon|FBA|FBM|OAuth/.test(home)],
+  ['public pages do not link to WMS', pages.every(({ html }) => !/wms\.fulangke\.cn|进入系统|系统登录/.test(html))],
   ['home provides direct contact', home.includes('mailto:flachic0001@gmail.com')],
   ['home links privacy policy', home.includes('href="/privacy/"')],
   ['home links terms', home.includes('href="/terms/"')],

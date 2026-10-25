@@ -236,3 +236,28 @@ img { max-width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
+
+/* Compact company homepage. */
+.company-home { --max: 1080px; }
+.company-home .hero { padding: 88px 0 64px; }
+.company-home .hero h1 { max-width: none; font-size: clamp(40px, 6vw, 72px); line-height: 1.2; letter-spacing: -.03em; }
+.company-home .hero-lead { max-width: 720px; }
+.home-contact-link { flex-shrink: 0; color: var(--green-dark); font-size: 14px; text-decoration: none; }
+.home-contact-link:hover { text-decoration: underline; }
+.home-details { padding: 0 0 72px; }
+.company-home .about-grid { gap: 48px; align-items: start; }
+.company-home h2 { margin: 0 0 20px; font-size: 22px; }
+.company-home .contact-card { padding: 30px; }
+.company-home .contact-card .eyebrow { color: var(--lime); }
+.company-home .contact-card a { overflow-wrap: anywhere; }
+.home-policy-links { display: flex; flex-wrap: wrap; gap: 24px; font-size: 13px; }
+.home-policy-links a { text-decoration: none; }
+.home-policy-links a:hover { text-decoration: underline; }
+.company-home .site-footer { padding-top: 28px; }
+.company-home .footer-bottom { margin-top: 24px; }
+@media (max-width: 620px) {
+  .company-home .hero { padding: 56px 0 40px; }
+  .company-home .hero-lead { font-size: 16px; }
+  .company-home .about-grid { gap: 28px; }
+  .home-details { padding-bottom: 40px; }
+}
