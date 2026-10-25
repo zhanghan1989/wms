@@ -275,6 +275,12 @@ body {
   font-size: 12px;
 }
 
+.session-personal-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .quick-actions-toggle {
   display: none;
 }
@@ -3764,7 +3770,13 @@ button.danger-solid {
     background: rgba(255, 255, 255, 0.72);
   }
 
-  .session-actions:not(.expanded) button:nth-child(n + 3) {
+  .session-personal-actions {
+    grid-column: 1 / -1;
+    gap: 10px;
+  }
+
+  .session-actions:not(.expanded) button:nth-child(n + 3),
+  .session-actions:not(.expanded) .session-personal-actions {
     display: none;
   }
 
