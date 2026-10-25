@@ -253,8 +253,7 @@ img { max-width: 100%; }
 .home-policy-links { display: flex; flex-wrap: wrap; gap: 24px; font-size: 13px; }
 .home-policy-links a { text-decoration: none; }
 .home-policy-links a:hover { text-decoration: underline; }
-.company-home .site-footer { padding-top: 28px; }
-.company-home .footer-bottom { margin-top: 24px; }
+
 @media (max-width: 620px) {
   .company-home .hero { padding: 56px 0 40px; }
   .company-home .hero-lead { font-size: 16px; }
@@ -272,4 +271,16 @@ img { max-width: 100%; }
   .company-home .hero { padding: 40px 0 32px; }
   .company-home .hero h1 .home-title-line { display: block; }
   .company-home .hero-lead { font-size: 16px; }
+}
+
+/* Keep the compact footer at the bottom of short pages. */
+.company-home { min-height: 100vh; min-height: 100svh; display: flex; flex-direction: column; }
+.company-home main { flex: 1; }
+.company-home .site-footer { padding: 22px 0; color: var(--ink-soft); background: var(--paper); border-top: 1px solid var(--line); }
+.home-footer-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px 28px; font-size: 12px; }
+.home-footer-links { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+.home-footer-links a { text-decoration: none; }
+.home-footer-links a:hover { color: var(--green); text-decoration: underline; }
+@media (max-width: 620px) {
+  .home-footer-row { flex-direction: column; align-items: flex-start; }
 }
