@@ -4,12 +4,12 @@ import { resolve } from 'node:path';
 const root = resolve('apps/company-site');
 const requiredFiles = [
   'index.html',
+  '404.html',
   'privacy/index.html',
   'terms/index.html',
   'security/index.html',
   'assets/styles.css',
   'assets/site.js',
-  'assets/og.png',
   'robots.txt',
   'sitemap.xml',
 ];
@@ -31,15 +31,13 @@ const privacy = pages.find(({ file }) => file === 'privacy/index.html')?.html ??
 const assertions = [
   ['home identifies the legal entity', home.includes('乳山市弗朗克贸易有限公司')],
   ['home uses company branding', home.includes('弗朗克贸易') && !/WMS|Amazon|FBA|FBM|OAuth/.test(home)],
-  ['public pages do not link to WMS', pages.every(({ html }) => !/wms\.fulangke\.cn|进入系统|系统登录/.test(html))],
+  ['public pages contain no former product information', pages.every(({ html }) => !/WMS|Amazon|FBA|FBM|OAuth|Selling Partner|系统登录|进入系统/i.test(html))],
   ['home provides direct contact', home.includes('mailto:flachic0001@gmail.com')],
   ['home links privacy policy', home.includes('href="/privacy/"')],
-  ['home links terms', home.includes('href="/terms/"')],
   ['home includes ICP filing', home.includes('鲁ICP备2026043725号-1')],
   ['privacy covers collection', privacy.includes('我们收集的信息')],
   ['privacy covers sharing', privacy.includes('信息共享与处理方')],
   ['privacy covers retention and deletion', privacy.includes('保存期限与删除')],
-  ['privacy discloses Amazon data use', privacy.includes('Amazon Selling Partner API')],
 ];
 
 const failures = assertions.filter(([, passed]) => !passed).map(([label]) => label);

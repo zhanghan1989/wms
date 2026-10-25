@@ -261,3 +261,15 @@ img { max-width: 100%; }
   .company-home .about-grid { gap: 28px; }
   .home-details { padding-bottom: 40px; }
 }
+
+.company-home .hero h1 { font-size: clamp(36px, 4.8vw, 58px); line-height: 1.3; }
+.company-home .hero h1 .home-title-line { display: inline-block; white-space: nowrap; color: var(--ink); }
+.company-home .hero h1 .home-title-line + .home-title-line { color: var(--green); }
+.company-home .hero { padding: 60px 0 44px; }
+.company-home .hero-lead { margin-top: 22px; font-size: 17px; }
+.company-home .home-details { padding-bottom: 56px; }
+@media (max-width: 620px) {
+  .company-home .hero { padding: 40px 0 32px; }
+  .company-home .hero h1 .home-title-line { display: block; }
+  .company-home .hero-lead { font-size: 16px; }
+}
