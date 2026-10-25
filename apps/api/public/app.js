@@ -3821,7 +3821,7 @@ function buildDeleteBlockedMessage(entityLabel, reasons) {
 }
 
 function bindTabs() {
-  document.querySelectorAll(".nav-btn").forEach((button) => {
+  document.querySelectorAll(".nav-btn[data-target]").forEach((button) => {
     button.addEventListener("click", () => switchPanel(button.dataset.target));
   });
 }
@@ -22136,6 +22136,9 @@ void (async function initializeBranding() {
   let logoReading = false;
   let fileRevision = 0;
   function apply(value) {
+    document.querySelectorAll("[data-branding-color]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.brandingColor === value.themeColor.toLowerCase()));
+    });
     document.title = value.siteName;
     document.querySelectorAll(".brand-title").forEach((el) => { el.textContent = value.siteName; });
     document.querySelectorAll(".brand-mark").forEach((el) => {
@@ -22180,6 +22183,13 @@ void (async function initializeBranding() {
     if (event.target.id === "brandingName") draft.siteName = event.target.value;
     if (event.target.id === "brandingColor") draft.themeColor = event.target.value;
     apply(draft);
+  });
+  document.querySelectorAll("[data-branding-color]").forEach((button) => {
+    button.addEventListener("click", () => {
+      draft.themeColor = button.dataset.brandingColor;
+      $("brandingColor").value = draft.themeColor;
+      apply(draft);
+    });
   });
   $("brandingLogo").addEventListener("change", async (event) => {
     const revision = ++fileRevision;

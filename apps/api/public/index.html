@@ -195,7 +195,6 @@
         <button type="button" id="openDataBackupPanel">数据备份</button>
         <button type="button" id="openSystemDashboardPanel">系统看板</button>
         <button type="button" id="openMyAuditLog" class="ghost">我的日志</button>
-        <button type="button" id="openBrandingSettings" class="ghost hidden">品牌外观</button>
         <button type="button" id="openProfileModal" class="ghost">个人设置</button>
       </div>
     </div>
@@ -205,6 +204,7 @@
     <aside class="sidebar">
       <button class="nav-btn" data-target="users">用户管理</button>
       <button class="nav-btn" data-target="audit">操作日志</button>
+      <button type="button" id="openBrandingSettings" class="nav-btn hidden" aria-haspopup="dialog">系统设置</button>
     </aside>
 
     <section class="panel-wrap">
@@ -3767,13 +3767,23 @@
   <div id="toast" class="toast hidden"></div>
 <dialog id="brandingDialog" aria-labelledby="brandingHeading">
     <form id="brandingForm">
-      <h3 id="brandingHeading">品牌外观</h3>
+      <h3 id="brandingHeading">系统设置</h3>
       <p class="muted">保存后对所有用户生效。预览仅影响当前页面，取消后还原。</p>
       <label>网站名称<input id="brandingName" maxlength="60" required /></label>
       <label>Logo<input id="brandingLogo" type="file" accept="image/png,image/jpeg,image/webp" /></label>
       <p class="muted">支持 PNG、JPEG、WebP，最大 60 KB，建议使用正方形图片。</p>
       <button id="brandingRemoveLogo" type="button" class="ghost">移除 Logo</button>
       <label>主题色<input id="brandingColor" type="color" /></label>
+      <div class="branding-presets" role="group" aria-label="常用主题色">
+        <button type="button" class="ghost branding-preset" data-branding-color="#0f8a5f" aria-pressed="false"><span class="branding-swatch" style="background: #0f8a5f" aria-hidden="true"></span>默认绿</button>
+        <button type="button" class="ghost branding-preset" data-branding-color="#2563eb" aria-pressed="false"><span class="branding-swatch" style="background: #2563eb" aria-hidden="true"></span>经典蓝</button>
+        <button type="button" class="ghost branding-preset" data-branding-color="#4f46e5" aria-pressed="false"><span class="branding-swatch" style="background: #4f46e5" aria-hidden="true"></span>靛蓝</button>
+        <button type="button" class="ghost branding-preset" data-branding-color="#7c3aed" aria-pressed="false"><span class="branding-swatch" style="background: #7c3aed" aria-hidden="true"></span>紫色</button>
+        <button type="button" class="ghost branding-preset" data-branding-color="#0e7490" aria-pressed="false"><span class="branding-swatch" style="background: #0e7490" aria-hidden="true"></span>青色</button>
+        <button type="button" class="ghost branding-preset" data-branding-color="#c2410c" aria-pressed="false"><span class="branding-swatch" style="background: #c2410c" aria-hidden="true"></span>橙色</button>
+        <button type="button" class="ghost branding-preset" data-branding-color="#be185d" aria-pressed="false"><span class="branding-swatch" style="background: #be185d" aria-hidden="true"></span>玫红</button>
+        <button type="button" class="ghost branding-preset" data-branding-color="#475569" aria-pressed="false"><span class="branding-swatch" style="background: #475569" aria-hidden="true"></span>石墨灰</button>
+      </div>
       <p id="brandingStatus" role="status" aria-live="polite"></p>
       <div class="branding-actions">
         <button type="button" id="brandingReset" class="ghost">恢复默认</button>

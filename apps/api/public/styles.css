@@ -4486,3 +4486,8 @@ button.danger-solid {
 body.branding-custom { background: var(--bg); }
 body.branding-custom .nav-btn.active { background: var(--brand-soft); border-color: var(--accent); }
 body.branding-custom button:not(.ghost):not(.nav-btn) { border-color: var(--accent); }
+
+.branding-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+#brandingForm .branding-preset { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: #fff; color: var(--ink); }
+#brandingForm .branding-preset[aria-pressed="true"] { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+.branding-swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
