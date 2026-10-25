@@ -195,6 +195,7 @@
         <button type="button" id="openDataBackupPanel">数据备份</button>
         <button type="button" id="openSystemDashboardPanel">系统看板</button>
         <button type="button" id="openMyAuditLog" class="ghost">我的日志</button>
+        <button type="button" id="openBrandingSettings" class="ghost hidden">品牌外观</button>
         <button type="button" id="openProfileModal" class="ghost">个人设置</button>
       </div>
     </div>
@@ -3764,5 +3765,22 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+<dialog id="brandingDialog" aria-labelledby="brandingHeading">
+    <form id="brandingForm">
+      <h3 id="brandingHeading">品牌外观</h3>
+      <p class="muted">保存后对所有用户生效。预览仅影响当前页面，取消后还原。</p>
+      <label>网站名称<input id="brandingName" maxlength="60" required /></label>
+      <label>Logo<input id="brandingLogo" type="file" accept="image/png,image/jpeg,image/webp" /></label>
+      <p class="muted">支持 PNG、JPEG、WebP，最大 60 KB，建议使用正方形图片。</p>
+      <button id="brandingRemoveLogo" type="button" class="ghost">移除 Logo</button>
+      <label>主题色<input id="brandingColor" type="color" /></label>
+      <p id="brandingStatus" role="status" aria-live="polite"></p>
+      <div class="branding-actions">
+        <button type="button" id="brandingReset" class="ghost">恢复默认</button>
+        <button type="button" id="brandingCancel" class="ghost">取消</button>
+        <button type="submit" id="brandingSave">保存设置</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

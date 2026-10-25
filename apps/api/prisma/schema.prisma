@@ -1838,3 +1838,12 @@ model RakutenInventoryCatalogJob {
   @@index([connectionId, startedAt])
   @@map("rakuten_inventory_catalog_jobs")
 }
+
+model SiteBranding {
+  id           Int    @id
+  siteName     String @default("库存管理系统") @map("site_name") @db.VarChar(60)
+  logo         String @db.MediumText
+  themeColor   String @default("#0f8a5f") @map("theme_color") @db.VarChar(7)
+
+  @@map("site_branding")
+}

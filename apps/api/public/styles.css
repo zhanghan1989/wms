@@ -4475,3 +4475,14 @@ button.danger-solid {
   .factory-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .factory-recommendation-table .factory-detail-row > td { display: block; }
 }
+
+#brandingDialog { width: min(520px, calc(100vw - 32px)); max-height: 90vh; overflow: auto; border: 1px solid var(--line); border-radius: 16px; padding: 24px; color: var(--ink); background: #fff; }
+#brandingDialog::backdrop { background: rgba(0,0,0,.35); }
+#brandingForm { display: grid; gap: 16px; }
+#brandingForm label { display: grid; gap: 8px; }
+#brandingForm input[type=color] { width: 100%; height: 44px; }
+.branding-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.brand-mark img { width: 100%; height: 100%; object-fit: contain; border-radius: inherit; }
+body.branding-custom { background: var(--bg); }
+body.branding-custom .nav-btn.active { background: var(--brand-soft); border-color: var(--accent); }
+body.branding-custom button:not(.ghost):not(.nav-btn) { border-color: var(--accent); }

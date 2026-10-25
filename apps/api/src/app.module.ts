@@ -1,3 +1,4 @@
+import { BrandingModule } from './branding/branding.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -33,6 +34,7 @@ import { UsersModule } from './users/users.module';
     }),
     ScheduleModule.forRoot(),
     PrismaModule,
+    BrandingModule,
     AmazonSpApiModule,
     AuthModule,
     BackupsModule,

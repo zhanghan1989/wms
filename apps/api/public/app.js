@@ -3057,6 +3057,7 @@ function collapseQuickActions() {
 }
 
 function applyRoleView() {
+  $("openBrandingSettings").classList.toggle("hidden", !isCurrentUserSystemAdmin());
   const layout = document.querySelector(".layout");
   const quickActions = $("employeeQuickActions");
   const quickActionsToggle = $("toggleQuickActionsBtn");
@@ -22122,3 +22123,123 @@ handleAmazonOAuthReturn();
 switchPanel("inventory", { markAsUserNavigation: false });
 openStartupView()
   .catch((error) => showToast(error.message, true));
+
+// Shared branding is loaded before editing; unsaved previews stay in this browser.
+void (async function initializeBranding() {
+  const dialog = $("brandingDialog");
+  const form = $("brandingForm");
+  const status = $("brandingStatus");
+  let saved;
+  let defaults;
+  let draft;
+  let busy = false;
+  let logoReading = false;
+  let fileRevision = 0;
+  function apply(value) {
+    document.title = value.siteName;
+    document.querySelectorAll(".brand-title").forEach((el) => { el.textContent = value.siteName; });
+    document.querySelectorAll(".brand-mark").forEach((el) => {
+      el.replaceChildren();
+      if (value.logo) {
+        const img = document.createElement("img");
+        img.src = value.logo;
+        img.alt = value.siteName;
+        el.append(img);
+      } else el.textContent = "W";
+    });
+    const custom = value.themeColor.toLowerCase() !== defaults.themeColor;
+    document.body.classList.toggle("branding-custom", custom);
+    const root = document.documentElement;
+    for (const key of ["--accent", "--accent-2", "--primary", "--bg", "--brand-soft"]) root.style.removeProperty(key);
+    if (custom) {
+      root.style.setProperty("--accent", value.themeColor);
+      root.style.setProperty("--primary", value.themeColor);
+      root.style.setProperty("--accent-2", value.themeColor);
+      root.style.setProperty("--bg", `color-mix(in srgb, ${value.themeColor} 5%, white)`);
+      root.style.setProperty("--brand-soft", `color-mix(in srgb, ${value.themeColor} 10%, white)`);
+    }
+  }
+  function fill() {
+    $("brandingName").value = draft.siteName;
+    $("brandingColor").value = draft.themeColor;
+    $("brandingLogo").value = "";
+    apply(draft);
+  }
+  $("openBrandingSettings").addEventListener("click", async () => {
+    try {
+      const result = await request("/branding");
+      saved = result.settings;
+      defaults = result.defaults;
+      draft = { ...saved };
+      status.textContent = "";
+      fill();
+      dialog.showModal();
+    } catch (error) { showToast(error.message, true); }
+  });
+  form.addEventListener("input", (event) => {
+    if (event.target.id === "brandingName") draft.siteName = event.target.value;
+    if (event.target.id === "brandingColor") draft.themeColor = event.target.value;
+    apply(draft);
+  });
+  $("brandingLogo").addEventListener("change", async (event) => {
+    const revision = ++fileRevision;
+    const file = event.target.files[0];
+    if (!file) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type) || file.size > 60 * 1024) {
+      status.textContent = "请选择不超过 60 KB 的 PNG、JPEG 或 WebP 图片。";
+      event.target.value = "";
+      return;
+    }
+    logoReading = true;
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const img = new Image();
+      img.src = data;
+      await img.decode();
+      if (revision !== fileRevision || !dialog.open) return;
+      draft.logo = data;
+      apply(draft);
+      status.textContent = "Logo 已预览，保存后生效。";
+    } catch { status.textContent = "无法读取图片，请重新选择。"; }
+    finally { if (revision === fileRevision) logoReading = false; }
+  });
+  $("brandingRemoveLogo").onclick = () => { ++fileRevision; logoReading = false; draft.logo = ""; fill(); };
+  $("brandingReset").onclick = () => {
+    ++fileRevision; logoReading = false;
+    draft = { ...defaults };
+    fill();
+    status.textContent = "已预览默认外观，点击保存设置后对所有用户生效。";
+  };
+  $("brandingCancel").onclick = () => { if (!busy) dialog.close(); };
+  dialog.addEventListener("cancel", (event) => { if (busy) event.preventDefault(); });
+  dialog.addEventListener("close", () => { ++fileRevision; logoReading = false; if (saved) apply(saved); });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (busy || logoReading) { status.textContent = "请等待图片读取或保存完成。"; return; }
+    if (!draft.siteName.trim()) { status.textContent = "请输入网站名称。"; return; }
+    busy = true;
+    const controls = [...form.elements];
+    controls.forEach((el) => { el.disabled = true; });
+    try {
+      const result = await request("/branding", { method: "PUT", body: JSON.stringify({ siteName: draft.siteName.trim(), logo: draft.logo, themeColor: draft.themeColor }) });
+      saved = result.settings;
+      apply(saved);
+      dialog.close();
+      showToast("品牌外观已保存");
+    } catch (error) { status.textContent = error.message; }
+    finally { busy = false; controls.forEach((el) => { el.disabled = false; }); }
+  });
+  try {
+    const response = await fetch("/api/branding");
+    const result = await response.json();
+    if (!response.ok || result.code !== 0) throw new Error("品牌外观加载失败");
+    defaults = result.data.defaults;
+    saved = result.data.settings;
+    if (!dialog.open) apply(saved);
+  } catch (error) { console.warn(error.message); }
+})();
