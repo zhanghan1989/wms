@@ -12896,7 +12896,7 @@ function renderChinaOrderProcessingTable() {
           <td>${escapeHtml(displayText(item.shippingName))}</td>
           <td>${escapeHtml(displayText(item.availableStock))}</td>
           <td>${escapeHtml(displayText(formatChinaDispatchReason(item)))}</td>
-          <td>${item.source === "rakuten" ? `<button type="button" class="secondary" data-action="switchChinaOrderToJapan" data-source="rakuten" data-id="${escapeHtml(item.id)}" ${(item.xiyaPulledAt || item.xiyaExportedAt) ? 'disabled title="Xiya 已拉取，不能切日本发"' : ""}>切日本发</button>` : ""}</td>
+          <td>${item.source === "rakuten" ? `<button type="button" class="tiny-btn danger" data-action="switchChinaOrderToJapan" data-source="rakuten" data-id="${escapeHtml(item.id)}" ${(item.xiyaPulledAt || item.xiyaExportedAt) ? 'disabled title="Xiya 已拉取，不能切日本发"' : ""}>切日本发</button>` : ""}</td>
         </tr>
       `,
       )
