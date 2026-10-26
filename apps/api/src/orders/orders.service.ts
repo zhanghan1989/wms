@@ -2823,6 +2823,34 @@ export class OrdersService {
     });
   }
 
+  async getOverdueOrders() {
+    const now = new Date();
+    const createdAt = { lt: new Date(now.getTime() - 72 * 60 * 60 * 1000) };
+    const select = { id: true, orderId: true, createdAt: true, shipmentNo: true };
+    // Read all aged candidates so whitespace-only tracking numbers are also detected.
+    const [rakuten, amazon, manual] = await Promise.all([
+      this.prisma.rakutenOrderRecord.findMany({ where: { deletedAt: null, createdAt }, select }),
+      this.prisma.amazonOrderRecord.findMany({ where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, createdAt }, select }),
+      this.prisma.manualOrderRecord.findMany({ where: { createdAt }, select }),
+    ]);
+    const rows = [
+      ...rakuten.map((row) => ({ ...row, source: 'rakuten' })),
+      ...amazon.map((row) => ({ ...row, source: 'amazon' })),
+      ...manual.map((row) => ({ ...row, source: 'manual' })),
+    ].filter((row) => !String(row.shipmentNo ?? '').trim())
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const orders = new Map<string, { source: string; id: string; orderId: string | null; createdAt: Date; waitingHours: number; lineCount: number }>();
+    for (const row of rows) {
+      const orderId = row.orderId;
+      const key = `${row.source}:${orderId || `record:${row.id}`}`;
+      const existing = orders.get(key);
+      if (existing) { existing.lineCount += 1; continue; }
+      orders.set(key, { source: row.source, id: String(row.id), orderId,
+        createdAt: row.createdAt, waitingHours: Math.floor((now.getTime() - row.createdAt.getTime()) / 3600000), lineCount: 1 });
+    }
+    return { count: orders.size, checkedAt: now.toISOString(), items: [...orders.values()] };
+  }
+
   async list(limitParam?: string, offsetParam?: string): Promise<OrderListItem[]> {
     const parsedLimit = Number(limitParam);
     const limit = Number.isInteger(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 1000) : 200;

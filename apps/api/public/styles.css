@@ -4503,3 +4503,28 @@ body.branding-custom button:not(.ghost):not(.nav-btn) { border-color: var(--acce
 #brandingForm .branding-preset { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: #fff; color: var(--ink); }
 #brandingForm .branding-preset[aria-pressed="true"] { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 .branding-swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
+
+/* Order exit reminder stays beside the processing entrances on wide screens. */
+#ordersTableWrap.order-processing-landing-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 20px;
+}
+.overdue-order-reminder {
+  flex: 1 1 300px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #d5e3dc;
+  border-radius: 12px;
+  background: #f6faf7;
+}
+.overdue-order-reminder.has-overdue {
+  border-color: #e9bd76;
+  background: #fff8eb;
+}
+.overdue-order-reminder summary { cursor: pointer; font-weight: 700; }
+.overdue-order-reminder.has-overdue summary { color: #92500c; }
+.overdue-order-reminder [data-orders] { max-height: 320px; overflow: auto; }
+.overdue-order-row { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid #e6ddcd; overflow-wrap: anywhere; }
+.overdue-order-row span { font-size: 13px; color: #6e6253; }

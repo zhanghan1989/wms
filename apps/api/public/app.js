@@ -3185,6 +3185,9 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
 
   const panel = $(targetId);
   if (panel) panel.classList.add("active");
+  if (targetId === "orderProcessing" && state.token) {
+    loadOverdueOrderReminder();
+  }
   if (targetId === "inventory") {
     focusInventorySearch();
     return;
@@ -3570,6 +3573,48 @@ function ensureOrderProcessingLandingUi() {
   chinaBtn.textContent = "\u4E2D\u56FD\u8BA2\u5355\u5904\u7406";
   actions.appendChild(chinaBtn);
   legacyOrdersWrap.appendChild(actions);
+  const reminder = document.createElement("details");
+  reminder.id = "overdueOrderReminder";
+  reminder.className = "overdue-order-reminder";
+  reminder.innerHTML = '<summary>超过 72 小时未处理订单：待加载</summary><p class="muted">按首次进入系统时间计算，提醒尚无运单号的订单。</p><button type="button" class="ghost compact-btn" data-refresh>刷新</button><div data-orders aria-live="polite"></div>';
+  reminder.querySelector("[data-refresh]").addEventListener("click", loadOverdueOrderReminder);
+  reminder.querySelector("[data-orders]").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-source]");
+    if (button) openOrderSearchOrderDetail(button.dataset.source, button.dataset.id)
+      .catch((error) => showToast(error.message, true));
+  });
+  legacyOrdersWrap.appendChild(reminder);
+  window.setInterval(() => {
+    if (state.token && !document.hidden && $("orderProcessing")?.classList.contains("active")) {
+      loadOverdueOrderReminder();
+    }
+  }, 60000);
+}
+
+async function loadOverdueOrderReminder() {
+  const reminder = $("overdueOrderReminder");
+  if (!reminder || !state.token) return;
+  const summary = reminder.querySelector("summary");
+  const list = reminder.querySelector("[data-orders]");
+  const refresh = reminder.querySelector("[data-refresh]");
+  if (refresh.disabled) return;
+  refresh.disabled = true;
+  summary.textContent = "超过 72 小时未处理订单：加载中…";
+  try {
+    const data = await request("/orders/overdue");
+    if (!state.token) return;
+    reminder.classList.toggle("has-overdue", data.count > 0);
+    summary.textContent = `超过 72 小时未处理订单：${data.count} 单`;
+    const labels = { rakuten: "乐天", amazon: "亚马逊", manual: "手动" };
+    list.innerHTML = data.items.length ? data.items.map((item) =>
+      `<div class="overdue-order-row"><button type="button" class="inline-link-btn" data-source="${escapeHtml(item.source)}" data-id="${escapeHtml(item.id)}">${escapeHtml(item.orderId || item.id)}</button><span>${escapeHtml(labels[item.source] || item.source)} · 已等待 ${escapeHtml(item.waitingHours)} 小时 · ${escapeHtml(item.lineCount)} 条明细</span></div>`
+    ).join("") : '<p class="muted">暂无超时未处理订单</p>';
+  } catch (error) {
+    summary.textContent = "超过 72 小时未处理订单：加载失败";
+    list.textContent = "请点击刷新重试";
+  } finally {
+    refresh.disabled = false;
+  }
 }
 
 function getSubmitButton(form, event) {

@@ -34,6 +34,12 @@ export class OrdersController {
     return this.ordersService.list(limit, offset);
   }
 
+  @Get('overdue')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getOverdueOrders() {
+    return this.ordersService.getOverdueOrders();
+  }
+
   @Get('amazon')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async listAmazon(@Query('limit') limit?: string, @Query('offset') offset?: string): Promise<unknown[]> {
