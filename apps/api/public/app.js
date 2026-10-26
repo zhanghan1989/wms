@@ -3639,7 +3639,7 @@ async function loadOverdueOrderReminder() {
     summary.textContent = `超过 72 小时未处理订单：${data.count} 单`;
     const labels = { rakuten: "乐天", amazon: "亚马逊", manual: "手动" };
     list.innerHTML = data.items.length ? data.items.map((item) =>
-      `<div class="overdue-order-row"><button type="button" class="inline-link-btn" data-source="${escapeHtml(item.source)}" data-id="${escapeHtml(item.id)}">${escapeHtml(item.orderId || item.id)}</button><span>${escapeHtml(labels[item.source] || item.source)} · 已等待 ${escapeHtml(item.waitingHours)} 小时 · ${escapeHtml(item.lineCount)} 条明细</span></div>`
+      `<div class="overdue-order-row"><button type="button" class="inline-link-btn" data-source="${escapeHtml(item.source)}" data-id="${escapeHtml(item.id)}">${escapeHtml(item.orderId || item.id)}</button><span>${escapeHtml(labels[item.source] || item.source)} · ${escapeHtml((item.fulfillmentModes || []).map((mode) => mode === "xiya_api" ? "中国处理" : "海外仓处理").join(" / ") || "待确认")} · 已等待 ${escapeHtml(item.waitingHours)} 小时 · ${escapeHtml(item.lineCount)} 条明细</span></div>`
     ).join("") : '<p class="muted">暂无超时未处理订单</p>';
   } catch (error) {
     summary.textContent = "超过 72 小时未处理订单：加载失败";

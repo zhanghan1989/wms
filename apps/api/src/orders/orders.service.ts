@@ -2826,27 +2826,37 @@ export class OrdersService {
   async getOverdueOrders() {
     const now = new Date();
     const createdAt = { lt: new Date(now.getTime() - 72 * 60 * 60 * 1000) };
-    const select = { id: true, orderId: true, createdAt: true, shipmentNo: true };
     // Read all aged candidates so whitespace-only tracking numbers are also detected.
     const [rakuten, amazon, manual] = await Promise.all([
-      this.prisma.rakutenOrderRecord.findMany({ where: { deletedAt: null, createdAt }, select }),
-      this.prisma.amazonOrderRecord.findMany({ where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, createdAt }, select }),
-      this.prisma.manualOrderRecord.findMany({ where: { createdAt }, select }),
+      this.prisma.rakutenOrderRecord.findMany({ where: { deletedAt: null, createdAt } }),
+      this.prisma.amazonOrderRecord.findMany({ where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, createdAt } }),
+      this.prisma.manualOrderRecord.findMany({ where: { createdAt } }),
+    ]);
+    const withoutTracking = <T extends { shipmentNo: string | null }>(rows: T[]) =>
+      rows.filter((row) => !String(row.shipmentNo ?? '').trim());
+    const [rakutenPending, amazonPending, manualPending] = await Promise.all([
+      this.enrichOrderRows(withoutTracking(rakuten)),
+      this.enrichAmazonOrderRows(withoutTracking(amazon)),
+      this.enrichManualOrderRows(withoutTracking(manual) as unknown as ManualOrderRecordLike[]),
     ]);
     const rows = [
-      ...rakuten.map((row) => ({ ...row, source: 'rakuten' })),
-      ...amazon.map((row) => ({ ...row, source: 'amazon' })),
-      ...manual.map((row) => ({ ...row, source: 'manual' })),
-    ].filter((row) => !String(row.shipmentNo ?? '').trim())
+      ...rakutenPending.map((row) => ({ ...row, source: 'rakuten' })),
+      ...amazonPending.map((row) => ({ ...row, source: 'amazon' })),
+      ...manualPending.map((row) => ({ ...row, source: 'manual' })),
+    ]
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-    const orders = new Map<string, { source: string; id: string; orderId: string | null; createdAt: Date; waitingHours: number; lineCount: number }>();
+    const orders = new Map<string, { source: string; id: string; orderId: string | null; createdAt: Date; waitingHours: number; lineCount: number; fulfillmentModes: string[] }>();
     for (const row of rows) {
       const orderId = row.orderId;
       const key = `${row.source}:${orderId || `record:${row.id}`}`;
       const existing = orders.get(key);
-      if (existing) { existing.lineCount += 1; continue; }
+      if (existing) {
+        existing.lineCount += 1;
+        if (!existing.fulfillmentModes.includes(row.fulfillmentMode)) existing.fulfillmentModes.push(row.fulfillmentMode);
+        continue;
+      }
       orders.set(key, { source: row.source, id: String(row.id), orderId,
-        createdAt: row.createdAt, waitingHours: Math.floor((now.getTime() - row.createdAt.getTime()) / 3600000), lineCount: 1 });
+        createdAt: row.createdAt, waitingHours: Math.floor((now.getTime() - row.createdAt.getTime()) / 3600000), lineCount: 1, fulfillmentModes: [row.fulfillmentMode] });
     }
     return { count: orders.size, checkedAt: now.toISOString(), items: [...orders.values()] };
   }

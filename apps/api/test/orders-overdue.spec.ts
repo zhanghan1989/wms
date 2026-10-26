@@ -14,9 +14,17 @@ describe('overdue order reminder', () => {
       const manual = jest.fn().mockResolvedValue([{ id: 5n, orderId: null, createdAt, shipmentNo: null }]);
       const service = new OrdersService({ rakutenOrderRecord: { findMany: rakuten },
         amazonOrderRecord: { findMany: amazon }, manualOrderRecord: { findMany: manual } } as any);
+      jest.spyOn(service as any, 'enrichOrderRows').mockImplementation(async (rows: any) =>
+        rows.map((row: any) => ({ ...row, fulfillmentMode: row.id === 2n ? 'xiya_api' : 'overseas_warehouse' })));
+      jest.spyOn(service as any, 'enrichAmazonOrderRows').mockImplementation(async (rows: any) =>
+        rows.map((row: any) => ({ ...row, fulfillmentMode: 'xiya_api' })));
+      jest.spyOn(service as any, 'enrichManualOrderRows').mockImplementation(async (rows: any) =>
+        rows.map((row: any) => ({ ...row, fulfillmentMode: 'overseas_warehouse' })));
       const result = await service.getOverdueOrders();
       expect(result.count).toBe(3);
-      expect(result.items[0]).toMatchObject({ source: 'rakuten', id: '1', lineCount: 2, waitingHours: 96 });
+      expect(result.items[0]).toMatchObject({ source: 'rakuten', id: '1', lineCount: 2, waitingHours: 96, fulfillmentModes: ['overseas_warehouse', 'xiya_api'] });
+      expect(result.items[1].fulfillmentModes).toEqual(['xiya_api']);
+      expect(result.items[2].fulfillmentModes).toEqual(['overseas_warehouse']);
       expect(rakuten).toHaveBeenCalledWith(expect.objectContaining({ where: {
         deletedAt: null, createdAt: { lt: new Date('2026-10-23T03:00:00Z') },
       } }));
