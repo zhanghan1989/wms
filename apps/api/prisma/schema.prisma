@@ -1230,6 +1230,7 @@ model RakutenOrderRecord {
   trackingCheckedAt              DateTime?             @map("tracking_checked_at")
   trackingError                  String?               @map("tracking_error") @db.Text
   dispatchMode                   String?               @map("dispatch_mode") @db.VarChar(32)
+  xiyaPulledAt                   DateTime?             @map("xiya_pulled_at")
   xiyaExportedAt                 DateTime?             @map("xiya_exported_at")
   sendStatus                     OrderSendStatus       @default(unsent) @map("send_status")
   deliveryMethod                 String?               @map("delivery_method") @db.VarChar(128)

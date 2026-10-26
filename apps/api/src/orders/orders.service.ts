@@ -432,6 +432,7 @@ interface OverseasWarehouseOrderListItem {
   shipAddress3?: string | null;
   dispatchMode?: string | null;
   chinaDispatchReason?: string | null;
+  xiyaPulledAt?: string | null;
   xiyaExportedAt?: string | null;
   xiyaStatus?: 'pending_tracking' | 'tracking_registered' | 'acknowledged';
   shipmentCompany?: string | null;
@@ -5061,6 +5062,36 @@ export class OrdersService {
     };
   }
 
+  async switchChinaOrderToJapan(sourceRaw: string, idRaw: string) {
+    const source = String(sourceRaw ?? '').trim();
+    if (source !== 'rakuten') {
+      throw new BadRequestException('仅支持待 Xiya 拉取的乐天订单切日本发');
+    }
+    const id = parseId(idRaw, 'id');
+    await this.prisma.$transaction(async (tx) => {
+      const model = tx.rakutenOrderRecord;
+      const row = await model.findFirst({ where: { deletedAt: null, id } });
+      if (!row) throw new NotFoundException('订单不存在或当前不可处理');
+      if (row.xiyaPulledAt || row.xiyaExportedAt) throw new BadRequestException('Xiya 已拉取该订单，无法切日本发');
+      const active = await this.loadActiveOverseasPickingBatchRefs([{ source, sourceRecordId: id }]);
+      if (String(row.shipmentNo ?? '').trim() || row.sendStatus !== OrderSendStatus.unsent ||
+          rakutenOrderRemarkNeedsConfirmation(row) || active.has(`rakuten:${id.toString()}`)) {
+        throw new BadRequestException('订单已登记运单、已进入拣货或尚未确认备注，无法切日本发');
+      }
+      const enriched = await this.enrichOrderRows([row]);
+      if (!this.isChinaDispatchMode(row.dispatchMode) && enriched[0]?.fulfillmentMode !== 'xiya_api') {
+        throw new BadRequestException('当前订单已不在待 Xiya 拉取范围内');
+      }
+      const result = await model.updateMany({
+        where: { deletedAt: null, id, dispatchMode: row.dispatchMode, sendStatus: OrderSendStatus.unsent,
+          orderRemark: row.orderRemark, xiyaPulledAt: null, xiyaExportedAt: null, OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
+        data: { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
+      });
+      if (result.count !== 1) throw new BadRequestException('订单状态已变化，请刷新后重试');
+    });
+    return { success: true, source, id: id.toString(), dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS, updatedIds: [id.toString()] };
+  }
+
   async listChinaOrderProcessing(
     limitParam?: string,
     scopeParam?: string,
@@ -5189,6 +5220,7 @@ export class OrdersService {
               rawPayload: row.rawPayload,
               dispatchMode: dispatchMode || null,
               chinaDispatchReason: this.resolveChinaDispatchReason(dispatchMode),
+              xiyaPulledAt: row.xiyaPulledAt?.toISOString() ?? null,
               xiyaExportedAt: row.xiyaExportedAt?.toISOString() ?? null,
               xiyaStatus: row.shipmentNo ? ('tracking_registered' as const) : ('pending_tracking' as const),
               shipmentCompany: row.shipmentCompany,
@@ -8570,8 +8602,23 @@ export class OrdersService {
       })),
     ]);
 
+    // Claim before returning data. The conditional write competes with Japan switching
+    // on the same record, so an order can only be handed to one fulfilment route.
+    const claimedRakutenRows: typeof enrichedRakutenRows = [];
+    for (const row of enrichedRakutenRows) {
+      if (rakutenOrderRemarkNeedsConfirmation(row) ||
+          !this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs)) continue;
+      const claimed = await this.prisma.rakutenOrderRecord.updateMany({
+        where: { id: row.id, deletedAt: null, dispatchMode: row.dispatchMode,
+          sendStatus: OrderSendStatus.unsent, orderRemark: row.orderRemark,
+          OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
+        data: { xiyaPulledAt: row.xiyaPulledAt ?? new Date() },
+      });
+      if (claimed.count === 1) claimedRakutenRows.push(row);
+    }
+
     const targetRows = [
-      ...enrichedRakutenRows
+      ...claimedRakutenRows
         .filter((row) => !rakutenOrderRemarkNeedsConfirmation(row) && this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, activePickedRefs,
           ),
         )
@@ -8710,6 +8757,9 @@ export class OrdersService {
             where: { deletedAt: null,
               id: { in: eligibleRakutenIds },
               xiyaExportedAt: null,
+              sendStatus: OrderSendStatus.unsent,
+              AND: [{ OR: [{ dispatchMode: null }, { dispatchMode: { not: OVERSEAS_DISPATCH_MODE.OVERSEAS } }] }],
+              OR: [{ shipmentNo: null }, { shipmentNo: '' }],
             },
             data: {
               xiyaExportedAt: acknowledgedAt,
@@ -9725,6 +9775,8 @@ export class OrdersService {
           ? await this.prisma.rakutenOrderRecord.updateMany({
               where: { deletedAt: null,
                 id: { in: ids },
+                // Recheck routing at write time: a user may have switched to Japan after enrichment.
+                AND: [{ OR: [{ dispatchMode: null }, { dispatchMode: { not: OVERSEAS_DISPATCH_MODE.OVERSEAS } }] }],
                 sendStatus: OrderSendStatus.unsent,
                 OR: [{ shipmentNo: null }, { shipmentNo: '' }],
               },
@@ -9739,6 +9791,8 @@ export class OrdersService {
             ? await this.prisma.amazonOrderRecord.updateMany({
                 where: {
                   id: { in: ids },
+                // Recheck routing at write time: a user may have switched to Japan after enrichment.
+                AND: [{ OR: [{ dispatchMode: null }, { dispatchMode: { not: OVERSEAS_DISPATCH_MODE.OVERSEAS } }] }],
                   OR: [{ shipmentNo: null }, { shipmentNo: '' }],
                 },
                 data: {
@@ -9750,6 +9804,8 @@ export class OrdersService {
             : await (this.prisma as any).manualOrderRecord.updateMany({
                 where: {
                   id: { in: ids },
+                // Recheck routing at write time: a user may have switched to Japan after enrichment.
+                AND: [{ OR: [{ dispatchMode: null }, { dispatchMode: { not: OVERSEAS_DISPATCH_MODE.OVERSEAS } }] }],
                   OR: [{ shipmentNo: null }, { shipmentNo: '' }],
                 },
                 data: {

@@ -17,7 +17,7 @@ describe('Rakuten remark confirmation', () => {
 
   function setup(rows: any[]) {
     const service = new OrdersService({
-      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows) },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
       amazonOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
       manualOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
     } as never);

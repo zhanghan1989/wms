@@ -318,6 +318,12 @@ export class OrdersController {
     return this.ordersService.switchOverseasWarehouseOrderToChina(source, id);
   }
 
+  @Post('china-orders/:source/:id/switch-to-japan')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async switchChinaOrderToJapan(@Param('source') source: string, @Param('id') id: string): Promise<unknown> {
+    return this.ordersService.switchChinaOrderToJapan(source, id);
+  }
+
   @Get('china-orders')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async listChinaOrderProcessing(

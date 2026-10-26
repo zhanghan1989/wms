@@ -20,6 +20,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
   const makeRow = (overrides: Partial<RakutenOrderRecord> = {}): RakutenOrderRecord => ({
     id: 1n,
+    xiyaPulledAt: null,
     deletedAt: null, deletedBy: null,
     warehouseShippedAt: new Date('2026-08-21T00:00:00Z'), warehouseShippedBy: 9n,
     rmsConnectionId: 7n,

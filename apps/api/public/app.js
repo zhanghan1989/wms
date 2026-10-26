@@ -12879,7 +12879,7 @@ function renderChinaOrderProcessingTable() {
   }
 
   if (!pendingList.length) {
-    pendingBody.innerHTML = '<tr><td colspan="11" class="muted">暂无待 Xiya 拉取的中国发订单</td></tr>';
+    pendingBody.innerHTML = '<tr><td colspan="12" class="muted">暂无待 Xiya 拉取的中国发订单</td></tr>';
   } else {
     pendingBody.innerHTML = pendingList
       .map(
@@ -12896,6 +12896,7 @@ function renderChinaOrderProcessingTable() {
           <td>${escapeHtml(displayText(item.shippingName))}</td>
           <td>${escapeHtml(displayText(item.availableStock))}</td>
           <td>${escapeHtml(displayText(formatChinaDispatchReason(item)))}</td>
+          <td>${item.source === "rakuten" ? `<button type="button" class="secondary" data-action="switchChinaOrderToJapan" data-source="rakuten" data-id="${escapeHtml(item.id)}" ${(item.xiyaPulledAt || item.xiyaExportedAt) ? 'disabled title="Xiya 已拉取，不能切日本发"' : ""}>切日本发</button>` : ""}</td>
         </tr>
       `,
       )
@@ -20972,8 +20973,23 @@ function bindDelegates() {
     }
   });
 
-  const handleChinaOrderProcessingClick = (event) => {
+  const handleChinaOrderProcessingClick = async (event) => {
     try {
+      const switchTrigger = event.target.closest("button[data-action='switchChinaOrderToJapan']");
+      if (switchTrigger) {
+        if (switchTrigger.disabled) return;
+        switchTrigger.disabled = true;
+        try {
+          if (!await openActionConfirmModal("确认将该乐天订单切日本发并进入海外仓处理？库存不足时仍需补货后才能拣货。", "切日本发", "确认切换")) return;
+          await request(`/orders/china-orders/${encodeURIComponent(switchTrigger.dataset.source)}/${encodeURIComponent(switchTrigger.dataset.id)}/switch-to-japan`, { method: "POST" });
+          await Promise.all([loadChinaOrderProcessingOrders(), loadOverseasOrderProcessingOrders()]);
+          showToast("订单已切日本发，进入海外仓处理");
+        } finally {
+          switchTrigger.disabled = false;
+        }
+        return;
+      }
+
       const rakutenTrigger = event.target.closest("button[data-action='openChinaRakutenOrderDetail']");
       if (rakutenTrigger) {
         const item = state.chinaOrderProcessingOrders.find(
