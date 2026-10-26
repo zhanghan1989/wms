@@ -12834,6 +12834,12 @@ async function downloadChinaOrderProcessingOrders() {
   showToast(`已下载 ${fileName}`);
 }
 
+function isOverseasOrderStockShort(item) {
+  const available = Math.max(0, Number(item?.availableStock || 0))
+    + (item?.assemblableStockApplicable ? Math.max(0, Number(item?.assemblableStock || 0)) : 0);
+  return available < Math.max(1, Number(item?.orderQuantity || 1));
+}
+
 function renderOverseasOrderProcessingTable() {
   const tbody = $("overseasOrderProcessingBody");
   const summary = $("overseasOrderProcessingSummary");
@@ -12845,9 +12851,10 @@ function renderOverseasOrderProcessingTable() {
   const visibleList = list.slice(0, visibleCount);
   const rakutenCount = list.filter((item) => item.source === "rakuten").length;
   const amazonCount = list.filter((item) => item.source === "amazon").length;
+  const shortageCount = list.filter(isOverseasOrderStockShort).length;
   const manualCount = list.filter((item) => item.source === "manual").length;
   if (summary) {
-    summary.textContent = `共 ${list.length} 条待处理订单，其中 乐天 ${rakutenCount} 条，亚马逊 ${amazonCount} 条，手动订单 ${manualCount} 条。`;
+    summary.textContent = `共 ${list.length} 条待处理订单，其中 乐天 ${rakutenCount} 条，亚马逊 ${amazonCount} 条，手动订单 ${manualCount} 条。${shortageCount ? `其中 ${shortageCount} 条库存不足，请补货或切中国发。` : ""}`;
   }
 
   if (!list.length) {
@@ -12894,6 +12901,7 @@ function renderOverseasOrderProcessingTable() {
             : '<span class="muted">-</span>'
         }</td>
         <td>
+          ${isOverseasOrderStockShort(item) ? '<span class="overseas-batch-stock-warning">缺货待处理</span><br>' : ""}
           <button
             type="button"
             class="tiny-btn danger"

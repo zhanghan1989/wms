@@ -4568,7 +4568,7 @@ export class OrdersService {
       for (const row of enriched) {
         const eligible = target === 'china'
           ? this.shouldExportOrderToThirdParty('rakuten', row.id, row.dispatchMode, row.fulfillmentMode, active)
-          : row.fulfillmentMode === 'overseas_warehouse' && row.availableStock + row.assemblableStock > 0 && !active.has(`rakuten:${row.id}`);
+          : row.fulfillmentMode === 'overseas_warehouse' && !active.has(`rakuten:${row.id}`);
         if (eligible) orderIds.add(String(row.orderId || row.id));
       }
       if (rows.length < take) break;
@@ -4716,8 +4716,7 @@ export class OrdersService {
               row.fulfillmentMode === 'overseas_warehouse' &&
               (!rakutenOrderRemarkNeedsConfirmation(row) || (includeAll && Boolean(String(row.shipmentNo ?? "").trim()))) &&
               (includeAll ||
-                (row.availableStock + row.assemblableStock > 0 &&
-                  !activePickedRefs.has(`rakuten:${row.id.toString()}`))),
+                !activePickedRefs.has(`rakuten:${row.id.toString()}`)),
           )
           .map((row) => ({
             source: 'rakuten' as const,
@@ -4752,8 +4751,7 @@ export class OrdersService {
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
               (includeAll ||
-                (row.availableStock + row.assemblableStock > 0 &&
-                  !activePickedRefs.has(`amazon:${row.id.toString()}`))),
+                !activePickedRefs.has(`amazon:${row.id.toString()}`)),
           )
           .map((row) => ({
             source: 'amazon' as const,
@@ -4786,8 +4784,7 @@ export class OrdersService {
             (row) =>
               row.fulfillmentMode === 'overseas_warehouse' &&
               (includeAll ||
-                (row.availableStock + row.assemblableStock > 0 &&
-                  !activePickedRefs.has(`manual:${row.id.toString()}`))),
+                !activePickedRefs.has(`manual:${row.id.toString()}`)),
           )
           .map((row) => ({
             source: 'manual' as const,
@@ -4862,7 +4859,6 @@ export class OrdersService {
       if (
         !enrichedRow ||
         enrichedRow.fulfillmentMode !== 'overseas_warehouse' ||
-        enrichedRow.availableStock + enrichedRow.assemblableStock <= 0 ||
         activePickedRefs.has(`rakuten:${id.toString()}`)
       ) {
         throw new BadRequestException('当前订单已不在海外仓待处理范围内，无法切中国发');
@@ -4926,7 +4922,6 @@ export class OrdersService {
     if (
       !enrichedRow ||
       enrichedRow.fulfillmentMode !== 'overseas_warehouse' ||
-      enrichedRow.availableStock + enrichedRow.assemblableStock <= 0 ||
       activePickedRefs.has(`${source}:${id.toString()}`)
     ) {
       throw new BadRequestException('当前订单已不在海外仓待处理范围内，无法切中国发');

@@ -61,7 +61,7 @@ describe('Rakuten remark confirmation', () => {
     expect(rakutenOrderRemarkNeedsConfirmation(data)).toBe(false);
   });
 
-  it('counts unique blocked orders, excluding shipped, no-stock and active picking rows', async () => {
+  it('counts unique blocked orders including shortages, excluding shipped and active picking rows', async () => {
     const rows = [
       { ...base, id: 1n, orderRemark: '请周末配送' },
       { ...base, id: 2n, orderRemark: '请周末配送' },
@@ -73,7 +73,7 @@ describe('Rakuten remark confirmation', () => {
     ];
     const service = setup(rows);
     (service as any).loadActiveOverseasPickingBatchRefs.mockResolvedValue(new Set(['rakuten:6']));
-    await expect(service.getOverseasUnconfirmedOrderCount()).resolves.toEqual({ count: 2 });
+    await expect(service.getOverseasUnconfirmedOrderCount()).resolves.toEqual({ count: 3 });
   });
 
   it('blocks unconfirmed China orders but preserves shipment history', async () => {
