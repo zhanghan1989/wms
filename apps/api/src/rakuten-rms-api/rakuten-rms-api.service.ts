@@ -1,3 +1,4 @@
+import { storeDashboardPeriod } from '../common/store-dashboard-period';
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
 import {
@@ -179,12 +180,13 @@ export class RakutenRmsApiService {
     })) };
   }
 
-  async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string, minimumDailySalesRaw?: string): Promise<unknown> {
+  async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string, minimumDailySalesRaw?: string, month?: string): Promise<unknown> {
     const minimumAverageDailySalesExclusive = minimumDailySalesRaw === undefined ? 0.05 : Number(minimumDailySalesRaw);
     if (minimumDailySalesRaw?.trim() === "" || !Number.isFinite(minimumAverageDailySalesExclusive) || minimumAverageDailySalesExclusive < 0) {
       throw new BadRequestException("日均需求门槛须为大于或等于0的数字");
     }
-    const days = [7, 30, 90].includes(Number(daysRaw)) ? Number(daysRaw) : 30;
+    const period = storeDashboardPeriod(new Date(), daysRaw, month);
+    const { days } = period;
     const connections = await this.prisma.rakutenRmsConnection.findMany({
       where: { status: 1, syncOrders: true },
       include: { shop: { select: { id: true, name: true } } },
@@ -206,7 +208,7 @@ export class RakutenRmsApiService {
     const includesLegacyData = selected.shop.name === LEGACY_RAKUTEN_DEFAULT_SHOP_NAME;
     const now = new Date();
     const analysisDays = Math.max(days * 2, 90);
-    const analysisStart = new Date(now.getTime() - analysisDays * 24 * 60 * 60 * 1000);
+    const analysisStart = new Date(Math.min(period.previousStart.getTime(), now.getTime() - analysisDays * 86400000));
     const analysisEndDay = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     const orderScope = includesLegacyData
       ? Prisma.sql`(rms_connection_id = ${selected.id} OR rms_connection_id IS NULL)`
@@ -375,6 +377,7 @@ export class RakutenRmsApiService {
         includesLegacyData,
       },
       dashboard: buildRakutenStoreDashboard({
+        period,
         now,
         days,
         orders,

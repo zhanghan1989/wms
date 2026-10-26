@@ -1,3 +1,4 @@
+import { exportStoreDashboard } from '../common/store-dashboard-export';
 import { Body, Controller, Get, Param, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -51,9 +52,25 @@ export class RakutenRmsApiController {
   async getStoreDashboard(
     @Query('connectionId') connectionId?: string,
     @Query('days') days?: string,
+    @Query('month') month?: string,
     @Query('minimumDailySales') minimumDailySales?: string,
   ): Promise<unknown> {
-    return this.service.getStoreDashboard(connectionId, days, minimumDailySales);
+    return this.service.getStoreDashboard(connectionId, days, minimumDailySales, month);
+  }
+
+  @Get('store-dashboard/export-excel')
+  async downloadStoreDashboardExcel(
+    @Res() res: Response,
+    @Query('connectionId') connectionId?: string,
+    @Query('days') days?: string,
+    @Query('month') month?: string,
+    @Query('minimumDailySales') minimumDailySales?: string,
+  ): Promise<void> {
+    const file = exportStoreDashboard(await this.service.getStoreDashboard(connectionId, days, minimumDailySales, month), '乐天');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(file.content);
   }
 
   @Get('store-dashboard/factory-recommendations-excel')

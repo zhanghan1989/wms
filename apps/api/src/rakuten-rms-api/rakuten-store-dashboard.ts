@@ -1,3 +1,4 @@
+import { StoreDashboardPeriod } from '../common/store-dashboard-period';
 import { InboundArrivalDates, resolveInboundExpectedArrivalDate } from '../common/inbound-expected-arrival';
 import { buildFactoryMaterialMetrics, FactoryProduct } from './rakuten-factory-materials';
 
@@ -98,6 +99,7 @@ function metrics(rows: RakutenDashboardOrderRow[]) {
 export function buildRakutenStoreDashboard(input: {
   now: Date;
   days: number;
+  period?: StoreDashboardPeriod;
   orders: RakutenDashboardOrderRow[];
   factoryOrders?: RakutenDashboardOrderRow[];
   minimumAverageDailySalesExclusive?: number;
@@ -109,11 +111,12 @@ export function buildRakutenStoreDashboard(input: {
   const minimumAverageDailySalesExclusive = typeof threshold === 'number' && Number.isFinite(threshold) && threshold >= 0
     ? threshold : FACTORY_MIN_AVERAGE_DAILY_SALES_EXCLUSIVE;
   const periodMs = days * 24 * 60 * 60 * 1000;
-  const periodStart = new Date(now.getTime() - periodMs);
-  const previousStart = new Date(periodStart.getTime() - periodMs);
+  const periodStart = input.period?.start ?? new Date(now.getTime() - periodMs);
+  const periodEnd = input.period?.end ?? now;
+  const previousStart = input.period?.previousStart ?? new Date(periodStart.getTime() - periodMs);
   const activeRows = orders.filter((row) => !isCancelled(row.orderStatusText));
   const datedRows = activeRows.map((row) => ({ row, date: parseDate(row.orderImportedAtRaw) }));
-  const currentRows = datedRows.filter(({ date }) => date && date >= periodStart && date < now).map(({ row }) => row);
+  const currentRows = datedRows.filter(({ date }) => date && date >= periodStart && date < periodEnd).map(({ row }) => row);
   const previousRows = datedRows.filter(({ date }) => date && date >= previousStart && date < periodStart).map(({ row }) => row);
   const current = metrics(currentRows);
   const previous = metrics(previousRows);
@@ -296,7 +299,7 @@ export function buildRakutenStoreDashboard(input: {
   }
 
   return {
-    period: { days, start: periodStart.toISOString(), end: now.toISOString(), currency: 'JPY' },
+    period: { days, start: periodStart.toISOString(), end: periodEnd.toISOString(), month: input.period?.month ?? null, currency: 'JPY' },
     summary: current,
     comparison: {
       previous,
@@ -304,7 +307,7 @@ export function buildRakutenStoreDashboard(input: {
       unitCountChangePct: percentageChange(current.unitCount, previous.unitCount),
       salesAmountChangePct: percentageChange(current.salesAmount, previous.salesAmount),
     },
-    daily: recentTokyoDateKeys(now, days).map((date) => {
+    daily: recentTokyoDateKeys(input.period?.month ? new Date(periodEnd.getTime() - 1) : now, days).map((date) => {
       const row = dailyMap.get(date);
       return {
         date,

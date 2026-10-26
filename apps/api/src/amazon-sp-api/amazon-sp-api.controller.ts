@@ -1,3 +1,4 @@
+import { exportStoreDashboard } from '../common/store-dashboard-export';
 import { Body, Controller, ForbiddenException, Get, Param, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { Response } from 'express';
@@ -98,8 +99,23 @@ export class AmazonSpApiController {
   async getStoreDashboard(
     @Query('connectionId') connectionId?: string,
     @Query('days') days?: string,
+    @Query('month') month?: string,
   ): Promise<unknown> {
-    return this.service.getStoreDashboard(connectionId, days);
+    return this.service.getStoreDashboard(connectionId, days, month);
+  }
+
+  @Get('store-dashboard/export-excel')
+  async downloadStoreDashboardExcel(
+    @Res() res: Response,
+    @Query('connectionId') connectionId?: string,
+    @Query('days') days?: string,
+    @Query('month') month?: string,
+  ): Promise<void> {
+    const file = exportStoreDashboard(await this.service.getStoreDashboard(connectionId, days, month), 'Amazon');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(file.content);
   }
 
   @Get('store-dashboard/factory-recommendations-excel')

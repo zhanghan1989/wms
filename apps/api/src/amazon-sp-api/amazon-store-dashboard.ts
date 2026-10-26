@@ -1,3 +1,4 @@
+import { StoreDashboardPeriod } from '../common/store-dashboard-period';
 export interface AmazonDashboardFbaOrderRow {
   orderId: string;
   sellerSku: string | null;
@@ -135,6 +136,7 @@ function calculateMetrics(
 export function buildAmazonStoreDashboard(input: {
   now: Date;
   days: number;
+  period?: StoreDashboardPeriod;
   fbaOrders: AmazonDashboardFbaOrderRow[];
   fbmOrders: AmazonDashboardFbmOrderRow[];
   inventory: AmazonDashboardInventoryRow[];
@@ -147,9 +149,10 @@ export function buildAmazonStoreDashboard(input: {
   const trackingStartedAt = input.trackingStartedAt ?? now;
   const lastSales = input.lastSales ?? [];
   const periodMs = days * 24 * 60 * 60 * 1000;
-  const periodStart = new Date(now.getTime() - periodMs);
-  const previousStart = new Date(periodStart.getTime() - periodMs);
-  const current = calculateMetrics(fbaOrders, fbmOrders, periodStart, now);
+  const periodStart = input.period?.start ?? new Date(now.getTime() - periodMs);
+  const periodEnd = input.period?.end ?? now;
+  const previousStart = input.period?.previousStart ?? new Date(periodStart.getTime() - periodMs);
+  const current = calculateMetrics(fbaOrders, fbmOrders, periodStart, periodEnd);
   const previous = calculateMetrics(fbaOrders, fbmOrders, previousStart, periodStart);
   const factoryPeriodStart = new Date(now.getTime() - FACTORY_RECOMMENDATION_DAYS * 24 * 60 * 60 * 1000);
 
@@ -332,7 +335,7 @@ export function buildAmazonStoreDashboard(input: {
   };
 
   const currentFbaRows = fbaOrders.filter((row) => SUCCESS_FBA_STATUSES.has(String(row.orderStatus ?? '').toUpperCase())
-    && inRange(row.purchaseDate, periodStart, now));
+    && inRange(row.purchaseDate, periodStart, periodEnd));
   for (const row of currentFbaRows) {
     const metric = productFor(row.sellerSku, row.asin, row.productName);
     metric.fbaOrders.add(row.orderId);
@@ -340,7 +343,7 @@ export function buildAmazonStoreDashboard(input: {
     metric.fbaSalesAmount += nonNegative(row.itemAmount);
   }
   const currentFbmRows = fbmOrders.filter((row) => !EXCLUDED_FBM_STATUSES.has(String(row.orderStatus ?? '').toUpperCase())
-    && inRange(row.purchaseDateRaw, periodStart, now));
+    && inRange(row.purchaseDateRaw, periodStart, periodEnd));
   for (const row of currentFbmRows) {
     const metric = productFor(row.sku, null, row.productName);
     if (row.orderId) metric.fbmOrders.add(row.orderId);
@@ -404,7 +407,8 @@ export function buildAmazonStoreDashboard(input: {
     period: {
       days,
       start: periodStart.toISOString(),
-      end: now.toISOString(),
+      end: periodEnd.toISOString(),
+      month: input.period?.month ?? null,
       currency: currencies.length === 1 ? currencies[0] : currencies.join('/') || 'JPY',
     },
     summary: current,
@@ -445,12 +449,12 @@ export function buildAmazonStoreDashboard(input: {
       rows: factoryRecommendations,
     },
     orderStatuses: {
-      fba: fbaOrders.filter((row) => inRange(row.purchaseDate, periodStart, now)).reduce<Record<string, number>>((result, row) => {
+      fba: fbaOrders.filter((row) => inRange(row.purchaseDate, periodStart, periodEnd)).reduce<Record<string, number>>((result, row) => {
         const key = String(row.orderStatus || 'UNKNOWN').toUpperCase();
         result[key] = (result[key] ?? 0) + 1;
         return result;
       }, {}),
-      fbm: fbmOrders.filter((row) => inRange(row.purchaseDateRaw, periodStart, now)).reduce<Record<string, number>>((result, row) => {
+      fbm: fbmOrders.filter((row) => inRange(row.purchaseDateRaw, periodStart, periodEnd)).reduce<Record<string, number>>((result, row) => {
         const key = String(row.orderStatus || 'UNKNOWN').toUpperCase();
         result[key] = (result[key] ?? 0) + 1;
         return result;

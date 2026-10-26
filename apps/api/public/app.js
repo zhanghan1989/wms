@@ -2531,7 +2531,7 @@ function renderAmazonStoreDashboard(payload) {
     .map((value) => new Date(value || 0).getTime())
     .filter((value) => Number.isFinite(value) && value > 0);
   const lastOrdersSync = orderSyncTimes.length ? formatDate(new Date(Math.max(...orderSyncTimes))) : "尚未同步";
-  $("amazonStoreDashboardMeta").textContent = `${selectedShop.shopName} / 近${period.days || payload.days || 30}天 / 订单同步 ${lastOrdersSync} / 看板生成 ${generatedAt}`;
+  $("amazonStoreDashboardMeta").textContent = `${selectedShop.shopName} / ${period.month ? `${period.month}（日本时间）` : `近${period.days || payload.days || 30}天`} / 订单同步 ${lastOrdersSync} / 看板生成 ${generatedAt}`;
   renderAmazonSyncProgress(payload.latestSyncRun);
 
   const issue = selectedShop.syncIssue;
@@ -2659,6 +2659,29 @@ function renderAmazonStoreDashboard(payload) {
   hydrateResponsiveTableLabels($("amazonDashboard"));
 }
 
+function storeDashboardPeriodQuery(channel, days) {
+  const input = $(`${channel}StoreDashboardMonth`);
+  const monthly = days === "month";
+  $(`${channel}StoreDashboardMonthLabel`)?.classList.toggle("hidden", !monthly);
+  if (!input.value) input.value = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit" }).format(new Date());
+  input.max = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit" }).format(new Date());
+  if (monthly && !/^\d{4}-\d{2}$/.test(input.value)) throw new Error("请选择统计月份");
+  return new URLSearchParams(monthly ? { month: input.value } : { days });
+}
+
+async function exportStoreDashboardExcel(channel) {
+  const payload = state[`${channel}StoreDashboard`];
+  if (state[`${channel}StoreDashboardLoading`]) throw new Error("数据正在加载，请稍后导出");
+  if (!payload?.dashboard || !payload?.selectedShop) throw new Error("请先加载店铺看板");
+  const period = payload.dashboard.period;
+  const query = new URLSearchParams({ connectionId: payload.selectedShop.connectionId });
+  if (period.month) query.set("month", period.month);
+  else query.set("days", String(period.days));
+  if (channel === "rakuten") query.set("minimumDailySales", String(payload.dashboard.factoryRecommendations.minimumAverageDailySalesExclusive));
+  const endpoint = channel === "amazon" ? "amazon-sp-api" : "rakuten-rms-api";
+  await downloadAuthorizedFile(`/${endpoint}/store-dashboard/export-excel?${query}`, {}, "店铺看板.xlsx");
+}
+
 async function loadAmazonStoreDashboard(options = {}) {
   if (!state.token) return;
   const requestId = Number(state.amazonStoreDashboardRequestId || 0) + 1;
@@ -2677,7 +2700,7 @@ async function loadAmazonStoreDashboard(options = {}) {
     $("amazonStoreDashboardMeta").textContent = "正在读取所选店铺数据…";
   }
   try {
-    const query = new URLSearchParams({ days });
+    const query = storeDashboardPeriodQuery("amazon", days);
     if (connectionId) query.set("connectionId", connectionId);
     const payload = await request(`/amazon-sp-api/store-dashboard?${query.toString()}`);
     if (requestId !== state.amazonStoreDashboardRequestId) return;
@@ -2771,7 +2794,7 @@ function renderRakutenStoreDashboard(payload) {
   const topProducts = Array.isArray(dashboard.topProducts) ? dashboard.topProducts : [];
   const sourceSummary = payload.sourceSummary || {};
   const lastOrdersSync = selectedShop.lastOrdersSyncedAt ? formatDate(selectedShop.lastOrdersSyncedAt) : "尚未同步";
-  $("rakutenStoreDashboardMeta").textContent = `${selectedShop.shopName} / 近${period.days || payload.days || 30}天 / 订单同步 ${lastOrdersSync} / 看板生成 ${payload.generatedAt ? formatDate(payload.generatedAt) : "-"}`;
+  $("rakutenStoreDashboardMeta").textContent = `${selectedShop.shopName} / ${period.month ? `${period.month}（日本时间）` : `近${period.days || payload.days || 30}天`} / 订单同步 ${lastOrdersSync} / 看板生成 ${payload.generatedAt ? formatDate(payload.generatedAt) : "-"}`;
   const issueBox = $("rakutenStoreDashboardIssue");
   if (issueBox) {
     issueBox.classList.toggle("hidden", !selectedShop.syncIssue);
@@ -2858,16 +2881,20 @@ function rakutenFactoryMinimumDailySales() {
 }
 
 async function loadRakutenStoreDashboard(options = {}) {
-  if (!state.token || state.rakutenStoreDashboardLoading) return;
+  if (!state.token) return;
+  const requestId = (state.rakutenStoreDashboardRequestId || 0) + 1;
+  state.rakutenStoreDashboardRequestId = requestId;
   state.rakutenStoreDashboardLoading = true;
   const connectionId = String(options.connectionId || $("rakutenStoreDashboardShop")?.value || state.rakutenStoreDashboard?.selectedShop?.connectionId || "").trim();
   const days = String(options.days || $("rakutenStoreDashboardDays")?.value || state.rakutenStoreDashboard?.days || "30").trim();
   try {
-    const query = new URLSearchParams({ days, minimumDailySales: rakutenFactoryMinimumDailySales() });
+    const query = storeDashboardPeriodQuery("rakuten", days);
+    query.set("minimumDailySales", rakutenFactoryMinimumDailySales());
     if (connectionId) query.set("connectionId", connectionId);
-    renderRakutenStoreDashboard(await request(`/rakuten-rms-api/store-dashboard?${query.toString()}`));
+    const payload = await request(`/rakuten-rms-api/store-dashboard?${query.toString()}`);
+    if (requestId === state.rakutenStoreDashboardRequestId) renderRakutenStoreDashboard(payload);
   } finally {
-    state.rakutenStoreDashboardLoading = false;
+    if (requestId === state.rakutenStoreDashboardRequestId) state.rakutenStoreDashboardLoading = false;
   }
 }
 
@@ -16248,6 +16275,17 @@ function bindForms() {
       showToast(error.message, true);
     }
   });
+  for (const channel of ["amazon", "rakuten"]) {
+    $(`${channel}StoreDashboardMonth`)?.addEventListener("change", async () => {
+      try {
+        await (channel === "amazon" ? loadAmazonStoreDashboard({ clearExisting: true }) : loadRakutenStoreDashboard());
+      } catch (error) { showToast(error.message, true); }
+    });
+    $(`export${channel === "amazon" ? "Amazon" : "Rakuten"}StoreDashboardBtn`)?.addEventListener("click", async (event) => {
+      try { await withBusyButton(event.currentTarget, "导出中...", () => exportStoreDashboardExcel(channel)); }
+      catch (error) { showToast(error.message, true); }
+    });
+  }
   $("amazonStoreDashboardDays")?.addEventListener("change", async (event) => {
     try {
       await loadAmazonStoreDashboard({ days: event.currentTarget.value, clearExisting: true });

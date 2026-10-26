@@ -1,3 +1,4 @@
+import { storeDashboardPeriod } from '../common/store-dashboard-period';
 import {
   BadRequestException,
   ConflictException,
@@ -632,22 +633,21 @@ export class AmazonSpApiService {
   private dashboardCache = new Map<string, { expires: number; value: Promise<unknown> }>();
   private invalidateDashboardCache(): void { this.dashboardCache.clear(); }
 
-  async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string): Promise<unknown> {
-    const key = `${connectionIdRaw || ''}:${daysRaw || '30'}`;
+  async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string, month?: string): Promise<unknown> {
+    const key = `${connectionIdRaw || ''}:${daysRaw || '30'}:${month || ''}`;
     const cached = this.dashboardCache.get(key);
     if (cached && cached.expires > Date.now()) return cached.value;
     if (this.dashboardCache.size >= 60) this.dashboardCache.delete(this.dashboardCache.keys().next().value!);
-    const value = this.buildStoreDashboard(connectionIdRaw, daysRaw);
+    const value = this.buildStoreDashboard(connectionIdRaw, daysRaw, month);
     const entry = { expires: Date.now() + 30000, value };
     this.dashboardCache.set(key, entry);
     value.catch(() => { if (this.dashboardCache.get(key) === entry) this.dashboardCache.delete(key); });
     return value;
   }
 
-  private async buildStoreDashboard(connectionIdRaw?: string, daysRaw?: string): Promise<unknown> {
-    const allowedDays = new Set([7, 30, 90]);
-    const requestedDays = Number(daysRaw ?? 30);
-    const days = allowedDays.has(requestedDays) ? requestedDays : 30;
+  private async buildStoreDashboard(connectionIdRaw?: string, daysRaw?: string, month?: string): Promise<unknown> {
+    const period = storeDashboardPeriod(new Date(), daysRaw, month);
+    const { days } = period;
     const connections = await this.prisma.amazonSpApiConnection.findMany({
       where: { status: 1 },
       include: { shop: { select: { id: true, name: true, status: true } } },
@@ -671,7 +671,7 @@ export class AmazonSpApiService {
 
     const now = new Date();
     const queryDays = Math.max(days * 2, 90);
-    const queryStart = new Date(now.getTime() - queryDays * 24 * 60 * 60 * 1000);
+    const queryStart = new Date(Math.min(period.previousStart.getTime(), now.getTime() - queryDays * 86400000));
     const trackingStartedAt = connection.dashboardTrackingStartedAt ?? now;
     const [fbaOrders, fbmOrderRows, inventory, skus, latestRun] = await Promise.all([
       this.prisma.amazonFbaOrderItem.findMany({
@@ -784,6 +784,7 @@ export class AmazonSpApiService {
     ]);
 
     const dashboard = buildAmazonStoreDashboard({
+      period,
       now,
       days,
       fbaOrders: fbaOrders.map((row) => ({

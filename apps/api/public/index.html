@@ -488,8 +488,11 @@
                 <option value="7">近7天</option>
                 <option value="30" selected>近30天</option>
                 <option value="90">近90天</option>
+                <option value="month">按月份</option>
               </select>
             </label>
+            <label id="amazonStoreDashboardMonthLabel" class="hidden">月份<input type="month" id="amazonStoreDashboardMonth" aria-label="统计月份"></label>
+            <button type="button" id="exportAmazonStoreDashboardBtn">导出Excel</button>
             <button type="button" id="reloadAmazonStoreDashboardBtn" class="admin-access-only hidden">从Amazon拉取最新数据</button>
           </div>
           <div id="amazonStoreDashboardMeta" class="amazon-dashboard-file-meta muted">正在读取已授权店铺…</div>
@@ -620,7 +623,10 @@
             <label>乐天店铺<select id="rakutenStoreDashboardShop"></select></label>
             <label>统计周期<select id="rakutenStoreDashboardDays">
               <option value="7">近7天</option><option value="30" selected>近30天</option><option value="90">近90天</option>
+              <option value="month">按月份</option>
             </select></label>
+            <label id="rakutenStoreDashboardMonthLabel" class="hidden">月份<input type="month" id="rakutenStoreDashboardMonth" aria-label="统计月份"></label>
+            <button type="button" id="exportRakutenStoreDashboardBtn">导出Excel</button>
           </div>
           <div id="rakutenStoreDashboardMeta" class="amazon-dashboard-file-meta muted">正在读取已配置店铺…</div>
           <div id="rakutenStoreDashboardIssue" class="amazon-store-dashboard-issue hidden" role="status"></div>
