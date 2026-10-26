@@ -3576,10 +3576,12 @@ function ensureOrderProcessingLandingUi() {
   const reminder = document.createElement("button");
   reminder.type = "button";
   reminder.id = "overdueOrderReminder";
-  reminder.className = "ghost overdue-order-reminder";
+  reminder.className = "ghost overdue-order-reminder hidden";
   reminder.textContent = "超过 72 小时未处理订单：待加载";
   reminder.setAttribute("aria-haspopup", "dialog");
-  legacyOrdersWrap.appendChild(reminder);
+  const exitHead = legacyOrdersWrap.closest(".card").querySelector(".card-head");
+  exitHead.classList.add("order-processing-exit-head");
+  exitHead.appendChild(reminder);
   const modal = document.createElement("div");
   modal.id = "overdueOrdersModal";
   modal.className = "modal hidden";
@@ -3587,7 +3589,7 @@ function ensureOrderProcessingLandingUi() {
   document.body.appendChild(modal);
   const close = () => {
     closeModal(modal.id);
-    reminder.focus();
+    (reminder.classList.contains("hidden") ? overseasBtn : reminder).focus();
   };
   reminder.addEventListener("click", () => {
     openModal(modal.id);
@@ -3631,10 +3633,10 @@ async function loadOverdueOrderReminder() {
   const refresh = modal.querySelector("[data-refresh]");
   if (refresh.disabled) return;
   refresh.disabled = true;
-  summary.textContent = "超过 72 小时未处理订单：加载中…";
   try {
     const data = await request("/orders/overdue");
     if (!state.token) return;
+    reminder.classList.toggle("hidden", Number(data.count) <= 0);
     modal.querySelector("[data-count]").textContent = `共 ${data.count} 单`;
     summary.textContent = `超过 72 小时未处理订单：${data.count} 单`;
     const labels = { rakuten: "乐天", amazon: "亚马逊", manual: "手动" };
@@ -3642,7 +3644,6 @@ async function loadOverdueOrderReminder() {
       `<div class="overdue-order-row"><button type="button" class="inline-link-btn" data-source="${escapeHtml(item.source)}" data-id="${escapeHtml(item.id)}">${escapeHtml(item.orderId || item.id)}</button><span>${escapeHtml(labels[item.source] || item.source)} · ${escapeHtml((item.fulfillmentModes || []).map((mode) => mode === "xiya_api" ? "中国处理" : "海外仓处理").join(" / ") || "待确认")} · 已等待 ${escapeHtml(item.waitingHours)} 小时 · ${escapeHtml(item.lineCount)} 条明细</span></div>`
     ).join("") : '<p class="muted">暂无超时未处理订单</p>';
   } catch (error) {
-    summary.textContent = "超过 72 小时未处理订单：加载失败";
     list.textContent = "请点击刷新重试";
   } finally {
     refresh.disabled = false;
