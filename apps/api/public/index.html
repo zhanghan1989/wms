@@ -493,9 +493,11 @@
             </label>
             <label id="amazonStoreDashboardMonthLabel" class="hidden">月份<input type="month" id="amazonStoreDashboardMonth" aria-label="统计月份"></label>
             <button type="button" id="exportAmazonStoreDashboardBtn">导出Excel</button>
-            <button type="button" id="reloadAmazonStoreDashboardBtn" class="admin-access-only hidden">从Amazon拉取最新数据</button>
           </div>
-          <div id="amazonStoreDashboardMeta" class="amazon-dashboard-file-meta muted">正在读取已授权店铺…</div>
+          <div class="amazon-store-dashboard-meta-row">
+            <span id="amazonStoreDashboardMeta" class="amazon-dashboard-file-meta muted">正在读取已授权店铺…</span>
+            <button type="button" id="reloadAmazonStoreDashboardBtn" class="ghost admin-access-only hidden">立即刷新</button>
+          </div>
           <div id="amazonStoreDashboardSyncProgress" class="amazon-sync-progress hidden" role="status" aria-live="polite">
             <div class="amazon-sync-progress-head">
               <strong id="amazonStoreDashboardSyncProgressTitle">Amazon同步准备中</strong>

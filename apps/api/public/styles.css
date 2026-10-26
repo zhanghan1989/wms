@@ -686,9 +686,45 @@ button.ghost {
 }
 
 .amazon-store-dashboard-toolbar {
-  grid-template-columns: minmax(220px, 1fr) minmax(150px, 220px) auto;
-  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
   margin-bottom: 10px;
+}
+
+.amazon-store-dashboard-toolbar > label {
+  flex: 0 1 180px;
+  min-width: 0;
+}
+
+.amazon-store-dashboard-toolbar > label:first-child {
+  flex: 1 1 220px;
+}
+
+.amazon-store-dashboard-toolbar > button {
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .amazon-store-dashboard-toolbar > label {
+    flex-basis: 100%;
+  }
+}
+
+.amazon-store-dashboard-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.amazon-store-dashboard-meta-row > button {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .amazon-store-dashboard-issue {

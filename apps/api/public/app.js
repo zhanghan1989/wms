@@ -14950,7 +14950,7 @@ async function restoreAmazonDeletedOrder(id) {
   });
 }
 
-function startAmazonPullCooldown(button, seconds = 60, idleText = "从Amazon拉取最新数据") {
+function startAmazonPullCooldown(button, seconds = 60, idleText = "立即刷新") {
   if (!button) return;
   let remaining = seconds;
   button.disabled = true;
