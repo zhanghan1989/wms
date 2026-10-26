@@ -4504,27 +4504,29 @@ body.branding-custom button:not(.ghost):not(.nav-btn) { border-color: var(--acce
 #brandingForm .branding-preset[aria-pressed="true"] { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
 .branding-swatch { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
 
-/* Order exit reminder stays beside the processing entrances on wide screens. */
+/* Keep the overdue reminder inline with the order processing buttons. */
 #ordersTableWrap.order-processing-landing-wrap {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 20px;
+  align-items: center;
+  gap: 16px 24px;
 }
-.overdue-order-reminder {
-  flex: 1 1 300px;
-  min-width: 0;
-  padding: 16px;
-  border: 1px solid #d5e3dc;
-  border-radius: 12px;
-  background: #f6faf7;
+#ordersTableWrap .overdue-order-reminder {
+  padding: 6px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #dc2626;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  min-height: auto;
 }
-.overdue-order-reminder.has-overdue {
-  border-color: #e9bd76;
-  background: #fff8eb;
-}
-.overdue-order-reminder summary { cursor: pointer; font-weight: 700; }
-.overdue-order-reminder.has-overdue summary { color: #92500c; }
-.overdue-order-reminder [data-orders] { max-height: 320px; overflow: auto; }
-.overdue-order-row { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 10px 0; border-bottom: 1px solid #e6ddcd; overflow-wrap: anywhere; }
-.overdue-order-row span { font-size: 13px; color: #6e6253; }
+#ordersTableWrap .overdue-order-reminder:hover { color: #b91c1c; text-decoration: underline; }
+#ordersTableWrap .overdue-order-reminder:focus-visible { outline: 2px solid #dc2626; outline-offset: 4px; }
+.overdue-orders-card { max-height: 80vh; overflow: auto; }
+.overdue-orders-card [data-count] { color: #dc2626; font-weight: 600; }
+.overdue-orders-card [data-orders] { margin-top: 12px; }
+.overdue-order-row { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 14px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.overdue-order-row span { font-size: 13px; color: var(--muted); }

@@ -3573,17 +3573,48 @@ function ensureOrderProcessingLandingUi() {
   chinaBtn.textContent = "\u4E2D\u56FD\u8BA2\u5355\u5904\u7406";
   actions.appendChild(chinaBtn);
   legacyOrdersWrap.appendChild(actions);
-  const reminder = document.createElement("details");
+  const reminder = document.createElement("button");
+  reminder.type = "button";
   reminder.id = "overdueOrderReminder";
-  reminder.className = "overdue-order-reminder";
-  reminder.innerHTML = '<summary>超过 72 小时未处理订单：待加载</summary><p class="muted">按首次进入系统时间计算，提醒尚无运单号的订单。</p><button type="button" class="ghost compact-btn" data-refresh>刷新</button><div data-orders aria-live="polite"></div>';
-  reminder.querySelector("[data-refresh]").addEventListener("click", loadOverdueOrderReminder);
-  reminder.querySelector("[data-orders]").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-source]");
-    if (button) openOrderSearchOrderDetail(button.dataset.source, button.dataset.id)
-      .catch((error) => showToast(error.message, true));
-  });
+  reminder.className = "ghost overdue-order-reminder";
+  reminder.textContent = "超过 72 小时未处理订单：待加载";
+  reminder.setAttribute("aria-haspopup", "dialog");
   legacyOrdersWrap.appendChild(reminder);
+  const modal = document.createElement("div");
+  modal.id = "overdueOrdersModal";
+  modal.className = "modal hidden";
+  modal.innerHTML = '<div class="modal-card overdue-orders-card" role="dialog" aria-modal="true" aria-labelledby="overdueOrdersTitle"><div class="modal-head"><h3 id="overdueOrdersTitle">超过 72 小时未处理订单</h3><button type="button" class="ghost compact-btn" data-close aria-label="关闭">关闭</button></div><p class="muted">按首次进入系统时间计算，提醒尚无运单号的订单。</p><div class="action-row"><span data-count></span><button type="button" class="ghost compact-btn" data-refresh>刷新</button></div><div data-orders aria-live="polite"></div></div>';
+  document.body.appendChild(modal);
+  const close = () => {
+    closeModal(modal.id);
+    reminder.focus();
+  };
+  reminder.addEventListener("click", () => {
+    openModal(modal.id);
+    modal.querySelector("[data-close]").focus();
+    loadOverdueOrderReminder();
+  });
+  modal.querySelector("[data-close]").addEventListener("click", close);
+  modal.addEventListener("click", (event) => { if (event.target === modal) close(); });
+  modal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.stopPropagation(); close(); }
+    if (event.key === "Tab") {
+      const buttons = [...modal.querySelectorAll("button:not(:disabled)")];
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
+  modal.querySelector("[data-refresh]").addEventListener("click", loadOverdueOrderReminder);
+  modal.querySelector("[data-orders]").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-source]");
+    if (button) {
+      close();
+      openOrderSearchOrderDetail(button.dataset.source, button.dataset.id)
+        .catch((error) => showToast(error.message, true));
+    }
+  });
   window.setInterval(() => {
     if (state.token && !document.hidden && $("orderProcessing")?.classList.contains("active")) {
       loadOverdueOrderReminder();
@@ -3594,16 +3625,17 @@ function ensureOrderProcessingLandingUi() {
 async function loadOverdueOrderReminder() {
   const reminder = $("overdueOrderReminder");
   if (!reminder || !state.token) return;
-  const summary = reminder.querySelector("summary");
-  const list = reminder.querySelector("[data-orders]");
-  const refresh = reminder.querySelector("[data-refresh]");
+  const modal = $("overdueOrdersModal");
+  const summary = reminder;
+  const list = modal.querySelector("[data-orders]");
+  const refresh = modal.querySelector("[data-refresh]");
   if (refresh.disabled) return;
   refresh.disabled = true;
   summary.textContent = "超过 72 小时未处理订单：加载中…";
   try {
     const data = await request("/orders/overdue");
     if (!state.token) return;
-    reminder.classList.toggle("has-overdue", data.count > 0);
+    modal.querySelector("[data-count]").textContent = `共 ${data.count} 单`;
     summary.textContent = `超过 72 小时未处理订单：${data.count} 单`;
     const labels = { rakuten: "乐天", amazon: "亚马逊", manual: "手动" };
     list.innerHTML = data.items.length ? data.items.map((item) =>
