@@ -2823,14 +2823,52 @@ export class OrdersService {
     });
   }
 
+  private overdueSummary?: { count: number; checkedAt: string };
+  private overdueSummaryPending?: Promise<{ count: number; checkedAt: string }>;
+
+  private async loadOverdueCandidates() {
+    const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    // Filter in the database before loading records or calculating fulfilment.
+    return this.prisma.$queryRaw<Array<{ source: string; id: bigint; orderId: string | null }>>`
+      SELECT 'rakuten' AS source, id, order_id AS orderId FROM rakuten_order_records
+      WHERE deleted_at IS NULL AND created_at < ${cutoff}
+        AND (shipment_no IS NULL OR shipment_no REGEXP '^[[:space:]]*$')
+      UNION ALL
+      SELECT 'amazon' AS source, id, order_id AS orderId FROM amazon_order_records
+      WHERE source_kind <> 'sp_api' AND created_at < ${cutoff}
+        AND (shipment_no IS NULL OR shipment_no REGEXP '^[[:space:]]*$')
+      UNION ALL
+      SELECT 'manual' AS source, id, order_id AS orderId FROM manual_order_records
+      WHERE created_at < ${cutoff}
+        AND (shipment_no IS NULL OR shipment_no REGEXP '^[[:space:]]*$')
+    `;
+  }
+
+  async getOverdueOrderSummary() {
+    if (this.overdueSummary && Date.now() - Date.parse(this.overdueSummary.checkedAt) < 5 * 60_000) {
+      return this.overdueSummary;
+    }
+    if (this.overdueSummaryPending) return this.overdueSummaryPending;
+    const checkedAt = new Date().toISOString();
+    const pending = this.loadOverdueCandidates().then((rows) => {
+      const count = new Set(rows.map((row) => `${row.source}:${row.orderId || `record:${row.id}`}`)).size;
+      const result = { count, checkedAt };
+      if (!this.overdueSummary || this.overdueSummary.checkedAt <= checkedAt) this.overdueSummary = result;
+      return this.overdueSummary;
+    }).finally(() => { this.overdueSummaryPending = undefined; });
+    this.overdueSummaryPending = pending;
+    return pending;
+  }
+
   async getOverdueOrders() {
     const now = new Date();
     const createdAt = { lt: new Date(now.getTime() - 72 * 60 * 60 * 1000) };
-    // Read all aged candidates so whitespace-only tracking numbers are also detected.
+    const candidates = await this.loadOverdueCandidates();
+    const ids = (source: string) => candidates.filter((row) => row.source === source).map((row) => row.id);
     const [rakuten, amazon, manual] = await Promise.all([
-      this.prisma.rakutenOrderRecord.findMany({ where: { deletedAt: null, createdAt } }),
-      this.prisma.amazonOrderRecord.findMany({ where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, createdAt } }),
-      this.prisma.manualOrderRecord.findMany({ where: { createdAt } }),
+      this.prisma.rakutenOrderRecord.findMany({ where: { deletedAt: null, createdAt, id: { in: ids('rakuten') } } }),
+      this.prisma.amazonOrderRecord.findMany({ where: { ...PROCESSABLE_AMAZON_ORDER_WHERE, createdAt, id: { in: ids('amazon') } } }),
+      this.prisma.manualOrderRecord.findMany({ where: { createdAt, id: { in: ids('manual') } } }),
     ]);
     const withoutTracking = <T extends { shipmentNo: string | null }>(rows: T[]) =>
       rows.filter((row) => !String(row.shipmentNo ?? '').trim());
@@ -2858,7 +2896,11 @@ export class OrdersService {
       orders.set(key, { source: row.source, id: String(row.id), orderId,
         createdAt: row.createdAt, waitingHours: Math.floor((now.getTime() - row.createdAt.getTime()) / 3600000), lineCount: 1, fulfillmentModes: [row.fulfillmentMode] });
     }
-    return { count: orders.size, checkedAt: now.toISOString(), items: [...orders.values()] };
+    const result = { count: orders.size, checkedAt: now.toISOString(), items: [...orders.values()] };
+    if (!this.overdueSummary || this.overdueSummary.checkedAt <= result.checkedAt) {
+      this.overdueSummary = { count: result.count, checkedAt: result.checkedAt };
+    }
+    return result;
   }
 
   async list(limitParam?: string, offsetParam?: string): Promise<OrderListItem[]> {

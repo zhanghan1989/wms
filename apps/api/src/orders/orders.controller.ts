@@ -34,6 +34,12 @@ export class OrdersController {
     return this.ordersService.list(limit, offset);
   }
 
+  @Get('overdue/summary')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getOverdueOrderSummary() {
+    return this.ordersService.getOverdueOrderSummary();
+  }
+
   @Get('overdue')
   @UseGuards(JwtAuthGuard, RolesGuard)
   async getOverdueOrders() {

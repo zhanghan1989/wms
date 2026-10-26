@@ -3186,7 +3186,7 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
   const panel = $(targetId);
   if (panel) panel.classList.add("active");
   if (targetId === "orderProcessing" && state.token) {
-    loadOverdueOrderReminder();
+    loadOverdueOrderSummary();
   }
   if (targetId === "inventory") {
     focusInventorySearch();
@@ -3617,28 +3617,86 @@ function ensureOrderProcessingLandingUi() {
         .catch((error) => showToast(error.message, true));
     }
   });
-  window.setInterval(() => {
+  const refreshSummaryIfVisible = () => {
     if (state.token && !document.hidden && $("orderProcessing")?.classList.contains("active")) {
-      loadOverdueOrderReminder();
+      loadOverdueOrderSummary();
     }
-  }, 60000);
+  };
+  document.addEventListener("visibilitychange", refreshSummaryIfVisible);
+}
+
+let overdueSummaryPending = null;
+let overdueSummarySnapshot = null;
+let overdueSummaryTimer = null;
+const OVERDUE_SUMMARY_TTL = 5 * 60000;
+
+function overdueSummaryStorageKey() {
+  return `overdue-summary-v1:${state.me?.id || state.me?.username || ""}`;
+}
+
+function displayOverdueOrderSummary(data) {
+  const reminder = $("overdueOrderReminder");
+  if (!reminder) return;
+  reminder.classList.toggle("hidden", Number(data.count) <= 0);
+  reminder.textContent = `超过 72 小时未处理订单：${data.count} 单`;
+  reminder.title = `更新时间：${new Date(data.checkedAt).toLocaleString()}`;
+  clearTimeout(overdueSummaryTimer);
+  overdueSummaryTimer = setTimeout(() => {
+    if (state.token && !document.hidden && $("orderProcessing")?.classList.contains("active")) {
+      loadOverdueOrderSummary();
+    }
+  }, Math.max(1000, Date.parse(data.checkedAt) + OVERDUE_SUMMARY_TTL - Date.now() + 100));
+}
+
+function saveOverdueOrderSummary(data) {
+  const key = overdueSummaryStorageKey();
+  if (overdueSummarySnapshot?.key === key && overdueSummarySnapshot.data.checkedAt > data.checkedAt) return;
+  overdueSummarySnapshot = { key, data: { count: data.count, checkedAt: data.checkedAt } };
+  displayOverdueOrderSummary(data);
+  try {
+    sessionStorage.setItem(overdueSummaryStorageKey(), JSON.stringify({ count: data.count, checkedAt: data.checkedAt }));
+  } catch { /* Storage may be unavailable; the server still caches the summary. */ }
+}
+
+async function loadOverdueOrderSummary() {
+  if (!state.token || !state.me) return;
+  const token = state.token;
+  const key = overdueSummaryStorageKey();
+  let cached = overdueSummarySnapshot?.key === key ? overdueSummarySnapshot.data : null;
+  try { cached ||= JSON.parse(sessionStorage.getItem(key) || "null"); } catch {}
+  try {
+    if (cached && Number.isInteger(cached.count) && cached.count >= 0 &&
+        Date.now() - Date.parse(cached.checkedAt) >= 0 &&
+        Date.now() - Date.parse(cached.checkedAt) < OVERDUE_SUMMARY_TTL) {
+      displayOverdueOrderSummary(cached);
+      return;
+    }
+  } catch { /* Load from the server when the local snapshot is unavailable. */ }
+  if (overdueSummaryPending?.token === token) return overdueSummaryPending.promise;
+  const promise = request("/orders/overdue/summary").then((data) => {
+    if (state.token === token) saveOverdueOrderSummary(data);
+  }).catch(() => {}).finally(() => {
+    if (overdueSummaryPending?.promise === promise) overdueSummaryPending = null;
+  });
+  overdueSummaryPending = { token, promise };
+  return promise;
 }
 
 async function loadOverdueOrderReminder() {
   const reminder = $("overdueOrderReminder");
   if (!reminder || !state.token) return;
   const modal = $("overdueOrdersModal");
-  const summary = reminder;
   const list = modal.querySelector("[data-orders]");
   const refresh = modal.querySelector("[data-refresh]");
   if (refresh.disabled) return;
   refresh.disabled = true;
+  list.textContent = "正在加载订单…";
+  const token = state.token;
   try {
     const data = await request("/orders/overdue");
-    if (!state.token) return;
-    reminder.classList.toggle("hidden", Number(data.count) <= 0);
+    if (state.token !== token) return;
+    saveOverdueOrderSummary(data);
     modal.querySelector("[data-count]").textContent = `共 ${data.count} 单`;
-    summary.textContent = `超过 72 小时未处理订单：${data.count} 单`;
     const labels = { rakuten: "乐天", amazon: "亚马逊", manual: "手动" };
     list.innerHTML = data.items.length ? data.items.map((item) =>
       `<div class="overdue-order-row"><button type="button" class="inline-link-btn" data-source="${escapeHtml(item.source)}" data-id="${escapeHtml(item.id)}">${escapeHtml(item.orderId || item.id)}</button><span>${escapeHtml(labels[item.source] || item.source)} · ${escapeHtml((item.fulfillmentModes || []).map((mode) => mode === "xiya_api" ? "中国处理" : "海外仓处理").join(" / ") || "待确认")} · 已等待 ${escapeHtml(item.waitingHours)} 小时 · ${escapeHtml(item.lineCount)} 条明细</span></div>`
@@ -3995,6 +4053,7 @@ async function loadMe() {
   try {
     await ensureAuthDeployVersion();
     state.me = await request("/auth/me", { skipDeployVersionCheck: true });
+    void loadOverdueOrderSummary();
     $("sessionInfo").textContent = `${state.me.username}`;
     setAuthGate(true);
     applyRoleView();
