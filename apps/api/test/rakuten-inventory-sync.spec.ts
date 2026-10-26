@@ -438,9 +438,11 @@ describe('Rakuten inventory sync', () => {
 
   it('returns a background execute job and never allows its preview to execute twice', async () => {
     const f = fixture(); const preview = await f.service.preview('1', 2n);
+    const execute = jest.spyOn(f.service, 'execute');
     const job = await f.service.queueExecute('1', preview.previewId, 2n);
     expect(job.jobId).toBe(preview.previewId);
-    for (let i = 0; i < 20 && !['success', 'failed'].includes(f.runs.get(job.jobId).status); i++) await new Promise(setImmediate);
+    expect(execute).toHaveBeenCalledTimes(1);
+    await execute.mock.results[0].value;
     expect(f.runs.get(job.jobId).status).toBe('success');
     await expect(f.service.queueExecute('1', preview.previewId, 2n)).rejects.toThrow('预览已过期');
     expect(f.client.upsertInventory).toHaveBeenCalledTimes(1);
