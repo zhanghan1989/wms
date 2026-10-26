@@ -3635,7 +3635,7 @@ function ensureOrderProcessingLandingUi() {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
   });
-  modal.querySelector("[data-refresh]").addEventListener("click", loadOverdueOrderReminder);
+  modal.querySelector("[data-refresh]").addEventListener("click", () => loadOverdueOrderReminder({ refresh: true }));
   modal.querySelector("[data-orders]").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-source]");
     if (button) {
@@ -3655,10 +3655,15 @@ function ensureOrderProcessingLandingUi() {
 let overdueSummaryPending = null;
 let overdueSummarySnapshot = null;
 let overdueSummaryTimer = null;
-const OVERDUE_SUMMARY_TTL = 5 * 60000;
+function nextOverdueSummaryRefresh(checkedAt) {
+  // 09:30 Asia/Tokyo is 00:30 UTC, independent of the browser timezone.
+  const checked = new Date(checkedAt);
+  const boundary = Date.UTC(checked.getUTCFullYear(), checked.getUTCMonth(), checked.getUTCDate(), 0, 30);
+  return boundary > checked.getTime() ? boundary : boundary + 86400000;
+}
 
 function overdueSummaryStorageKey() {
-  return `overdue-summary-v1:${state.me?.id || state.me?.username || ""}`;
+  return `overdue-summary-daily-v1:${state.me?.id || state.me?.username || ""}`;
 }
 
 function displayOverdueOrderSummary(data) {
@@ -3672,7 +3677,7 @@ function displayOverdueOrderSummary(data) {
     if (state.token && !document.hidden && $("orderProcessing")?.classList.contains("active")) {
       loadOverdueOrderSummary();
     }
-  }, Math.max(1000, Date.parse(data.checkedAt) + OVERDUE_SUMMARY_TTL - Date.now() + 100));
+  }, nextOverdueSummaryRefresh(new Date().toISOString()) - Date.now() + 30000);
 }
 
 function saveOverdueOrderSummary(data) {
@@ -3694,7 +3699,7 @@ async function loadOverdueOrderSummary() {
   try {
     if (cached && Number.isInteger(cached.count) && cached.count >= 0 &&
         Date.now() - Date.parse(cached.checkedAt) >= 0 &&
-        Date.now() - Date.parse(cached.checkedAt) < OVERDUE_SUMMARY_TTL) {
+        Date.now() < nextOverdueSummaryRefresh(cached.checkedAt) + 30000) {
       displayOverdueOrderSummary(cached);
       return;
     }
@@ -3709,7 +3714,7 @@ async function loadOverdueOrderSummary() {
   return promise;
 }
 
-async function loadOverdueOrderReminder() {
+async function loadOverdueOrderReminder({ refresh: forceRefresh = false } = {}) {
   const reminder = $("overdueOrderReminder");
   if (!reminder || !state.token) return;
   const modal = $("overdueOrdersModal");
@@ -3720,7 +3725,7 @@ async function loadOverdueOrderReminder() {
   list.textContent = "正在加载订单…";
   const token = state.token;
   try {
-    const data = await request("/orders/overdue");
+    const data = await request(forceRefresh ? "/orders/overdue?refresh=true" : "/orders/overdue");
     if (state.token !== token) return;
     saveOverdueOrderSummary(data);
     modal.querySelector("[data-count]").textContent = `共 ${data.count} 单`;

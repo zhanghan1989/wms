@@ -2824,8 +2824,8 @@ export class OrdersService {
     });
   }
 
-  private overdueSummary?: { count: number; checkedAt: string };
-  private overdueSummaryPending?: Promise<{ count: number; checkedAt: string }>;
+  private overdueSnapshot?: Awaited<ReturnType<OrdersService['buildOverdueOrders']>>;
+  private overdueSnapshotPending?: Promise<Awaited<ReturnType<OrdersService['buildOverdueOrders']>>>;
 
   private async loadOverdueCandidates() {
     const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000);
@@ -2846,22 +2846,31 @@ export class OrdersService {
   }
 
   async getOverdueOrderSummary() {
-    if (this.overdueSummary && Date.now() - Date.parse(this.overdueSummary.checkedAt) < 5 * 60_000) {
-      return this.overdueSummary;
+    const { count, checkedAt } = await this.getOverdueOrders();
+    return { count, checkedAt };
+  }
+
+  @Cron('0 30 9 * * *', { name: 'daily-overdue-orders', timeZone: 'Asia/Tokyo' })
+  async runScheduledOverdueOrders(): Promise<void> {
+    try {
+      await this.getOverdueOrders(true);
+    } catch (error) {
+      this.logger.error('Daily overdue order refresh failed', error instanceof Error ? error.stack : String(error));
     }
-    if (this.overdueSummaryPending) return this.overdueSummaryPending;
-    const checkedAt = new Date().toISOString();
-    const pending = this.loadOverdueCandidates().then((rows) => {
-      const count = new Set(rows.map((row) => `${row.source}:${row.orderId || `record:${row.id}`}`)).size;
-      const result = { count, checkedAt };
-      if (!this.overdueSummary || this.overdueSummary.checkedAt <= checkedAt) this.overdueSummary = result;
-      return this.overdueSummary;
-    }).finally(() => { this.overdueSummaryPending = undefined; });
-    this.overdueSummaryPending = pending;
+  }
+
+  async getOverdueOrders(refresh = false) {
+    if (!refresh && this.overdueSnapshot) return this.overdueSnapshot;
+    if (this.overdueSnapshotPending) return this.overdueSnapshotPending;
+    const pending = this.buildOverdueOrders().then((result) => {
+      this.overdueSnapshot = result;
+      return result;
+    }).finally(() => { this.overdueSnapshotPending = undefined; });
+    this.overdueSnapshotPending = pending;
     return pending;
   }
 
-  async getOverdueOrders() {
+  private async buildOverdueOrders() {
     const now = new Date();
     const createdAt = { lt: new Date(now.getTime() - 72 * 60 * 60 * 1000) };
     const candidates = await this.loadOverdueCandidates();
@@ -2898,9 +2907,6 @@ export class OrdersService {
         createdAt: row.createdAt, waitingHours: Math.floor((now.getTime() - row.createdAt.getTime()) / 3600000), lineCount: 1, fulfillmentModes: [row.fulfillmentMode] });
     }
     const result = { count: orders.size, checkedAt: now.toISOString(), items: [...orders.values()] };
-    if (!this.overdueSummary || this.overdueSummary.checkedAt <= result.checkedAt) {
-      this.overdueSummary = { count: result.count, checkedAt: result.checkedAt };
-    }
     return result;
   }
 

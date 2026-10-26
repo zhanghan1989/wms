@@ -42,8 +42,8 @@ export class OrdersController {
 
   @Get('overdue')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  async getOverdueOrders() {
-    return this.ordersService.getOverdueOrders();
+  async getOverdueOrders(@Query('refresh') refresh?: string) {
+    return this.ordersService.getOverdueOrders(refresh === 'true');
   }
 
   @Get('amazon')
