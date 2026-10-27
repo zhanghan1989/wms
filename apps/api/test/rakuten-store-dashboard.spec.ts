@@ -4,8 +4,93 @@ import { RakutenRmsApiClient } from '../src/rakuten-rms-api/rakuten-rms-api.clie
 import { RakutenRmsApiCryptoService } from '../src/rakuten-rms-api/rakuten-rms-api-crypto.service';
 import { RakutenRmsApiService } from '../src/rakuten-rms-api/rakuten-rms-api.service';
 import { buildRakutenStoreDashboard } from '../src/rakuten-rms-api/rakuten-store-dashboard';
+import { RakutenSalesService } from '../src/rakuten-rms-api/rakuten-sales.service';
 
 describe('Rakuten store dashboard', () => {
+  it('resolves combo components from configuration while keeping purchase SKU sales separate', () => {
+    const dashboard = buildRakutenStoreDashboard({
+      now: new Date('2026-08-21T12:00:00.000Z'), days: 7,
+      products: [
+        { productId: '12251', productName: '原始内胆包', stockQty: 12 },
+        { productId: '1088', productName: '组合配件', stockQty: 5 },
+      ],
+      combos: [
+        { comboName: 'zh-12251', items: [{ productId: '12251' }, { productId: '1088' }] },
+        { comboName: 'zh-single', items: [{ productId: '12251' }] },
+        { comboName: 'zh-empty', items: [] },
+        { comboName: 'zh-incomplete', items: [{ productId: '12251' }, { productId: 'missing' }] },
+      ],
+      orders: ['zh-12251', '12251', 'ZH-SINGLE', 'zh-1088', 'zh-empty', 'zh-incomplete'].map((skuCode, index) => ({
+        orderId: `order-${index}`, skuCode, productName: '乐天购买商品', orderQuantity: 2,
+        orderStatusText: '300', orderImportedAtRaw: '2026-08-20', dispatchMode: 'overseas',
+        shipmentNo: 'TRACK', trackingIsDelivered: false, salesAmount: 1000 - index * 100,
+      })),
+    }) as any;
+
+    expect(dashboard.topProducts).toHaveLength(6);
+    expect(dashboard.topProducts[0]).toMatchObject({
+      skuCode: 'zh-12251', productId: null, orderCount: 1, unitCount: 2, salesAmount: 1000,
+      stockQty: 5, daysOfCover: 17.5,
+      componentProducts: [
+        { productId: '12251', productName: '原始内胆包', stockQty: 12 },
+        { productId: '1088', productName: '组合配件', stockQty: 5 },
+      ],
+    });
+    expect(dashboard.topProducts[1]).toMatchObject({ skuCode: '12251', productId: '12251', salesAmount: 900 });
+    expect(dashboard.topProducts[2]).toMatchObject({ skuCode: 'ZH-SINGLE', componentProducts: [{ productId: '12251' }] });
+    for (const row of dashboard.topProducts.slice(3)) {
+      expect(row).toMatchObject({ productId: null, componentProducts: [], stockQty: null, daysOfCover: null });
+    }
+    expect(dashboard.matchCoverage).toEqual({ productCount: 6, matchedCount: 3, unmatchedCount: 3 });
+    expect(dashboard.summary).toMatchObject({ unitCount: 12, salesAmount: 4500 });
+    expect(dashboard.topProducts.reduce((sum: number, row: any) => sum + row.salesAmount, 0)).toBe(4500);
+  });
+
+  it('loads configured originals even when a combo only appears in financial sales', async () => {
+    const comboFindMany = jest.fn().mockResolvedValue([
+      { comboName: 'zh-12251', items: [{ productId: '12251' }, { productId: '1088' }] },
+    ]);
+    const productFindMany = jest.fn().mockResolvedValue([
+      { productId: '12251', productName: '原始内胆包', stockQty: 12, bomComponents: [] },
+      { productId: '1088', productName: '组合配件', stockQty: 5, bomComponents: [] },
+    ]);
+    const prisma = {
+      rakutenRmsConnection: { findMany: jest.fn().mockResolvedValue([{
+        id: 7n, shopId: 3n, shop: { id: 3n, name: '乐天-1号店' },
+      }]) },
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
+      rakutenComboProduct: { findMany: comboFindMany },
+      masterProduct: { findMany: productFindMany },
+      batchInboundItem: { findMany: jest.fn().mockResolvedValue([]) },
+      batchInboundOrder: { findMany: jest.fn().mockResolvedValue([]) },
+      rakutenRmsSyncRun: { findFirst: jest.fn().mockResolvedValue(null) },
+    } as unknown as PrismaService;
+    const sales = { read: jest.fn().mockResolvedValue({ ready: true, rows: [{
+      orderId: 'financial-only', skuCode: 'zh-12251', productName: '乐天组合', orderQuantity: 1,
+      orderStatusText: '600', orderImportedAtRaw: new Date(Date.now() - 86400000),
+      dispatchMode: null, shipmentNo: null, trackingIsDelivered: false, salesAmount: 3000,
+    }] }) } as unknown as RakutenSalesService;
+    const service = new RakutenRmsApiService(
+      prisma, {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService, undefined, sales,
+    );
+
+    const result = await service.getStoreDashboard('7', '7') as any;
+
+    expect(comboFindMany).toHaveBeenCalledWith({
+      where: { comboName: { in: ['zh-12251'] } },
+      select: { comboName: true, items: { orderBy: { position: 'asc' }, select: { productId: true } } },
+    });
+    expect(productFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { productId: { in: ['zh-12251', '12251', '1088'] } },
+    }));
+    expect(result.dashboard.topProducts[0]).toMatchObject({
+      skuCode: 'zh-12251', salesAmount: 3000,
+      componentProducts: [{ productId: '12251' }, { productId: '1088' }],
+    });
+    expect(result.dashboard.matchCoverage).toMatchObject({ matchedCount: 1, unmatchedCount: 0 });
+  });
+
   it('calculates sales, fulfillment and factory recommendations', () => {
     const dashboard = buildRakutenStoreDashboard({
       now: new Date('2026-08-21T12:00:00.000Z'),

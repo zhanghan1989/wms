@@ -2782,6 +2782,16 @@ async function waitForAmazonSyncCompletion(connectionId, queuedAt, onProgress, t
   throw new Error("Amazon同步仍在后台运行，请稍后刷新看板查看结果");
 }
 
+function renderRakutenDashboardProduct(row) {
+  const components = Array.isArray(row.componentProducts) ? row.componentProducts : [];
+  if (components.length) {
+    return `<span class="muted">组合原始产品</span><br>${components.map((product) =>
+      `${renderMasterProductDetailLink(product.productId)}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(product.productName))}</span>`
+    ).join("<br>")}`;
+  }
+  return `${row.productId ? renderMasterProductDetailLink(row.productId) : '<span class="amazon-dashboard-chip warning">未匹配</span>'}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`;
+}
+
 function renderRakutenStoreDashboard(payload) {
   state.rakutenStoreDashboard = payload || null;
   const shops = Array.isArray(payload?.shops) ? payload.shops : [];
@@ -2860,7 +2870,7 @@ function renderRakutenStoreDashboard(payload) {
   renderAmazonDashboardTable("rakutenStoreDashboardProductBody", topProducts.slice(0, 30), [
     (_row, index) => escapeHtml(String(index + 1)),
     (row) => `<strong>${escapeHtml(displayText(row.skuCode))}</strong>`,
-    (row) => `${row.productId ? renderMasterProductDetailLink(row.productId) : '<span class="amazon-dashboard-chip warning">未匹配</span>'}<br><span class="amazon-dashboard-name">${escapeHtml(displayText(row.productName))}</span>`,
+    (row) => renderRakutenDashboardProduct(row),
     (row) => escapeHtml(formatMetricNumber(row.orderCount)),
     (row) => escapeHtml(formatMetricNumber(row.unitCount)),
     (row) => escapeHtml(formatAmazonStoreCurrency(row.salesAmount, "JPY")),

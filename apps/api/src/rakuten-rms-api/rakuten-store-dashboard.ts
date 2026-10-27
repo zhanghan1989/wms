@@ -17,6 +17,11 @@ export interface RakutenDashboardOrderRow {
 
 export type RakutenDashboardProductRow = FactoryProduct;
 
+export interface RakutenDashboardComboRow {
+  comboName: string;
+  items: Array<{ productId: string }>;
+}
+
 export interface RakutenDashboardInTransitRow extends InboundArrivalDates {
   productId: string;
   inTransitQty: number;
@@ -105,6 +110,7 @@ export function buildRakutenStoreDashboard(input: {
   factoryOrders?: RakutenDashboardOrderRow[];
   minimumAverageDailySalesExclusive?: number;
   products: RakutenDashboardProductRow[];
+  combos?: RakutenDashboardComboRow[];
   inTransit?: RakutenDashboardInTransitRow[];
 }): unknown {
   const { now, days, orders, factoryOrders = orders, products, inTransit = [] } = input;
@@ -132,6 +138,7 @@ export function buildRakutenStoreDashboard(input: {
   current.overseasUnitCount = fulfillment.overseasUnitCount;
   current.chinaUnitCount = fulfillment.chinaUnitCount;
   const productLookup = new Map(products.map((row) => [normalize(row.productId), row]));
+  const comboLookup = new Map((input.combos ?? []).map((row) => [normalize(row.comboName), row]));
   const todayKey = tokyoDateKey(now);
   const todayMs = Date.parse(`${todayKey}T00:00:00.000Z`);
   const dateAfterDays = (days: number) => new Date(todayMs + days * 86400000).toISOString().slice(0, 10);
@@ -262,18 +269,29 @@ export function buildRakutenStoreDashboard(input: {
 
   const productMetrics = new Map<string, {
     skuCode: string; productId: string | null; productName: string | null; stockQty: number | null;
+    componentProducts: Array<{ productId: string; productName: string | null; stockQty: number }>;
     orders: Set<string>; units: number; salesAmount: number; shippedUnits: number;
   }>();
   for (const row of currentRows) {
     const skuCode = String(row.skuCode ?? '').trim() || '(无SKU)';
-    const product = productLookup.get(normalize(skuCode));
-    const key = product ? `product:${normalize(product.productId)}` : `sku:${normalize(skuCode)}`;
+    const isCombo = /^zh-/i.test(skuCode);
+    const product = isCombo ? undefined : productLookup.get(normalize(skuCode));
+    const combo = isCombo ? comboLookup.get(normalize(skuCode)) : undefined;
+    const components = (combo?.items ?? []).map((item) => productLookup.get(normalize(item.productId)));
+    const componentProducts = components.length && components.every((item) => item)
+      ? components.map((item) => ({
+        productId: item!.productId, productName: item!.productName || null, stockQty: nonNegative(item!.stockQty),
+      })) : [];
+    // Keep original purchase SKUs separate, even when they share component products.
+    const key = `sku:${normalize(skuCode)}`;
     let metric = productMetrics.get(key);
     if (!metric) {
       metric = {
         skuCode, productId: product?.productId ?? null,
         productName: product?.productName || row.productName || null,
-        stockQty: product ? nonNegative(product.stockQty) : null,
+        componentProducts,
+        stockQty: product ? nonNegative(product.stockQty)
+          : componentProducts.length ? Math.min(...componentProducts.map((item) => item.stockQty)) : null,
         orders: new Set(), units: 0, salesAmount: 0, shippedUnits: 0,
       };
       productMetrics.set(key, metric);
@@ -288,6 +306,7 @@ export function buildRakutenStoreDashboard(input: {
     skuCode: row.skuCode,
     productId: row.productId,
     productName: row.productName,
+    componentProducts: row.componentProducts,
     orderCount: row.orders.size,
     unitCount: row.units,
     salesAmount: Math.round(row.salesAmount),
@@ -330,8 +349,8 @@ export function buildRakutenStoreDashboard(input: {
     topProducts,
     matchCoverage: {
       productCount: topProducts.length,
-      matchedCount: topProducts.filter((row) => row.productId).length,
-      unmatchedCount: topProducts.filter((row) => !row.productId).length,
+      matchedCount: topProducts.filter((row) => row.productId || row.componentProducts.length).length,
+      unmatchedCount: topProducts.filter((row) => !row.productId && !row.componentProducts.length).length,
     },
     fulfillment: {
       pendingShipmentOrderCount: current.pendingShipmentOrderCount,

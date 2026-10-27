@@ -293,10 +293,16 @@ export class RakutenRmsApiService {
         .map((row) => String(row.skuCode ?? "").trim())
         .filter(Boolean),
     ));
+    const comboSkus = productIds.filter((sku) => /^zh-/i.test(sku));
+    const combos = comboSkus.length ? await this.prisma.rakutenComboProduct.findMany({
+      where: { comboName: { in: comboSkus } },
+      select: { comboName: true, items: { orderBy: { position: 'asc' }, select: { productId: true } } },
+    }) : [];
+    const dashboardProductIds = [...new Set([...productIds, ...combos.flatMap((combo) => combo.items.map((item) => item.productId))])];
     const [salesProducts, latestSyncRun] = await Promise.all([
-      productIds.length
+      dashboardProductIds.length
         ? this.prisma.masterProduct.findMany({
-          where: { productId: { in: productIds } },
+          where: { productId: { in: dashboardProductIds } },
           select: {
             productId: true, productName: true, productType: true, stockQty: true,
             bomComponents: { select: {
@@ -389,6 +395,7 @@ export class RakutenRmsApiService {
         factoryOrders,
         minimumAverageDailySalesExclusive,
         products,
+        combos,
         inTransit: [...inTransitRows, ...preregisteredTransit].map((row) => ({
           productId: row.productId,
           inTransitQty: Number(row.qty ?? 0),
