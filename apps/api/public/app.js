@@ -454,6 +454,7 @@ const SKU_EDIT_PENDING_BLOCK_MESSAGE = "正在编辑产品申请中，请管理�
 
 const AUDIT_EVENT_TEXT_MAP = {
   box_created: "新增箱号",
+  rakuten_sales_reconciled: "乐天销售对账",
   box_field_updated: "箱号信息更新",
   box_renamed: "箱号重命名",
   box_disabled: "禁用箱号",
@@ -2815,6 +2816,14 @@ function renderRakutenStoreDashboard(payload) {
     issueBox.classList.toggle("hidden", !selectedShop.syncIssue);
     issueBox.textContent = selectedShop.syncIssue?.message || "";
   }
+  if (sourceSummary.sales?.ready === false) {
+    $("rakutenStoreDashboardResult")?.classList.add("hidden");
+    if (issueBox) {
+      issueBox.classList.remove("hidden");
+      issueBox.textContent = sourceSummary.sales.error || "所选周期销售数据尚未完成RMS对账，请稍后刷新或联系管理员补齐历史销售数据。";
+    }
+    return;
+  }
   renderAmazonMetricCards("rakutenStoreDashboardSummary", [
     { label: "总订单", value: `${formatMetricNumber(summary.orderCount)} 单` },
     { label: "总销量", value: `${formatMetricNumber(summary.unitCount)} 件` },
@@ -2847,7 +2856,7 @@ function renderRakutenStoreDashboard(payload) {
   }
   $("rakutenStoreDashboardTrendMeta").textContent = `按日本时间显示完整 ${daily.length} 个自然日（含0销量日期）；柱高为商品销售额，数字为销量`;
   const matchCoverage = dashboard.matchCoverage || {};
-  $("rakutenStoreDashboardProductMeta").textContent = `按商品销售额排序 / 系统产品已匹配 ${formatMetricNumber(matchCoverage.matchedCount)} / 未匹配 ${formatMetricNumber(matchCoverage.unmatchedCount)}`;
+  $("rakutenStoreDashboardProductMeta").textContent = `按乐天购买SKU的销售额排序（优惠券按金额分摊） / 系统产品已匹配 ${formatMetricNumber(matchCoverage.matchedCount)} / 未匹配 ${formatMetricNumber(matchCoverage.unmatchedCount)}`;
   renderAmazonDashboardTable("rakutenStoreDashboardProductBody", topProducts.slice(0, 30), [
     (_row, index) => escapeHtml(String(index + 1)),
     (row) => `<strong>${escapeHtml(displayText(row.skuCode))}</strong>`,
@@ -2883,7 +2892,7 @@ function renderRakutenStoreDashboard(payload) {
     ? `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细 + 历史手动导入 ${formatMetricNumber(sourceSummary.legacyItemCount)} 条明细。`
     : `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细。`;
   const licenseText = selectedShop.licenseExpiresAt ? ` RMS License 到期时间：${formatDate(selectedShop.licenseExpiresAt)}。` : "";
-  $("rakutenStoreDashboardStatusMeta").textContent = `${sourceText}${licenseText} 取消订单已排除。`;
+  $("rakutenStoreDashboardStatusMeta").textContent = `${sourceText}${licenseText} 销售按RMS原订单统计，已扣优惠券并排除取消；库存与履约按WMS出库明细。销售对账：${sourceSummary.sales?.syncedAt ? formatDate(sourceSummary.sales.syncedAt) : "尚未同步"}。${sourceSummary.sales?.error ? ` 最近对账异常：${sourceSummary.sales.error}` : ""}`;
   hydrateResponsiveTableLabels($("rakutenDashboard"));
 }
 

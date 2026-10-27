@@ -12,11 +12,12 @@ import { RakutenRmsApiCryptoService } from './rakuten-rms-api-crypto.service';
 import { RakutenRmsApiService } from './rakuten-rms-api.service';
 import { RakutenRmsAutomationService } from './rakuten-rms-automation.service';
 import { RakutenScheduleControlService } from './rakuten-schedule-control.service';
+import { RakutenSalesService } from './rakuten-sales.service';
 
 @Module({
   imports: [AuditModule, OrdersModule],
   controllers: [RakutenRmsApiController, RakutenInventoryController],
-  providers: [RakutenInventorySchedulerService, RakutenInventoryCatalogService, RakutenInventoryService, RakutenRmsApiService, RakutenRmsApiClient, RakutenRmsApiCryptoService, RakutenRmsAutomationService, RakutenOrderSchedulerService, RakutenScheduleControlService],
+  providers: [RakutenSalesService, RakutenInventorySchedulerService, RakutenInventoryCatalogService, RakutenInventoryService, RakutenRmsApiService, RakutenRmsApiClient, RakutenRmsApiCryptoService, RakutenRmsAutomationService, RakutenOrderSchedulerService, RakutenScheduleControlService],
   exports: [RakutenRmsApiService],
 })
 export class RakutenRmsApiModule {}

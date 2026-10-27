@@ -49,6 +49,7 @@ export const AuditEventType = {
   RAKUTEN_SHIPPING_RETRIED: 'rakuten_shipping_retried',
   RAKUTEN_SHIPPING_IGNORED: 'rakuten_shipping_ignored',
   RAKUTEN_AUTOMATION_CIRCUIT_RESET: 'rakuten_automation_circuit_reset',
+  RAKUTEN_SALES_RECONCILED: 'rakuten_sales_reconciled',
 } as const;
 
 export type AuditEventTypeValue = (typeof AuditEventType)[keyof typeof AuditEventType];

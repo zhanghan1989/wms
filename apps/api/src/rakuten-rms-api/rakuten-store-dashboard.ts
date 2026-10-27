@@ -101,6 +101,7 @@ export function buildRakutenStoreDashboard(input: {
   days: number;
   period?: StoreDashboardPeriod;
   orders: RakutenDashboardOrderRow[];
+  fulfillmentOrders?: RakutenDashboardOrderRow[];
   factoryOrders?: RakutenDashboardOrderRow[];
   minimumAverageDailySalesExclusive?: number;
   products: RakutenDashboardProductRow[];
@@ -120,6 +121,16 @@ export function buildRakutenStoreDashboard(input: {
   const previousRows = datedRows.filter(({ date }) => date && date >= previousStart && date < periodStart).map(({ row }) => row);
   const current = metrics(currentRows);
   const previous = metrics(previousRows);
+  const cancelledOrderIds = new Set(orders.filter((row) => isCancelled(row.orderStatusText)).map((row) => row.orderId));
+  const currentFulfillmentRows = input.fulfillmentOrders ? input.fulfillmentOrders.filter((row) => {
+    const date = parseDate(row.orderImportedAtRaw);
+    return !isCancelled(row.orderStatusText) && !cancelledOrderIds.has(row.orderId)
+      && date && date >= periodStart && date < periodEnd;
+  }) : currentRows;
+  const fulfillment = metrics(currentFulfillmentRows);
+  current.pendingShipmentOrderCount = fulfillment.pendingShipmentOrderCount;
+  current.overseasUnitCount = fulfillment.overseasUnitCount;
+  current.chinaUnitCount = fulfillment.chinaUnitCount;
   const productLookup = new Map(products.map((row) => [normalize(row.productId), row]));
   const todayKey = tokyoDateKey(now);
   const todayMs = Date.parse(`${todayKey}T00:00:00.000Z`);
@@ -324,8 +335,8 @@ export function buildRakutenStoreDashboard(input: {
     },
     fulfillment: {
       pendingShipmentOrderCount: current.pendingShipmentOrderCount,
-      shippedOrderCount: new Set(currentRows.filter((row) => row.shipmentNo).map((row) => row.orderId).filter(Boolean)).size,
-      deliveredOrderCount: new Set(currentRows.filter((row) => row.trackingIsDelivered).map((row) => row.orderId).filter(Boolean)).size,
+      shippedOrderCount: new Set(currentFulfillmentRows.filter((row) => row.shipmentNo).map((row) => row.orderId).filter(Boolean)).size,
+      deliveredOrderCount: new Set(currentFulfillmentRows.filter((row) => row.trackingIsDelivered).map((row) => row.orderId).filter(Boolean)).size,
       overseasUnitCount: current.overseasUnitCount,
       chinaUnitCount: current.chinaUnitCount,
     },

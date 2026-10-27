@@ -144,6 +144,7 @@ enum AuditEventType {
   rakuten_shipping_retried
   rakuten_shipping_ignored
   rakuten_automation_circuit_reset
+  rakuten_sales_reconciled
 }
 
 enum MasterProductSyncStatus {
@@ -456,6 +457,11 @@ model RakutenRmsConnection {
   lastOrdersSyncedAt       DateTime?                    @map("last_orders_synced_at")
   lastSuccessfulSyncAt     DateTime?                    @map("last_successful_sync_at")
   lastSyncError            String?                      @map("last_sync_error") @db.Text
+  salesCoverageStart       DateTime?                    @map("sales_coverage_start")
+  salesCoverageEnd         DateTime?                    @map("sales_coverage_end")
+  lastSalesSyncedAt        DateTime?                    @map("last_sales_synced_at")
+  lastSalesSyncError       String?                      @map("last_sales_sync_error") @db.Text
+  salesSnapshots           RakutenSalesSnapshot[]
   createdAt                DateTime                     @default(now()) @map("created_at")
   updatedAt                DateTime                     @updatedAt @map("updated_at")
   shop                     Shop                         @relation(fields: [shopId], references: [id], onDelete: Cascade)
@@ -471,6 +477,26 @@ model RakutenRmsConnection {
   @@index([status])
   @@index([automationLockedAt], map: "idx_rakuten_connection_automation_lock")
   @@map("rakuten_rms_connections")
+}
+
+// Financial facts belong to the original customer order, never a warehouse parcel.
+// items contains only purchase SKU/name/quantity and allocated net sales, no buyer data.
+model RakutenSalesSnapshot {
+  id             BigInt @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId   BigInt @map("connection_id") @db.UnsignedBigInt
+  orderId        String @map("order_id") @db.VarChar(128)
+  orderedAt      DateTime @map("ordered_at")
+  orderProgress  String @map("order_progress") @db.VarChar(32)
+  goodsAmount    Decimal @map("goods_amount") @db.Decimal(16, 2)
+  couponAmount   Decimal @map("coupon_amount") @db.Decimal(16, 2)
+  items          Json
+  contentHash    String @map("content_hash") @db.Char(64)
+  syncedAt       DateTime @map("synced_at")
+  connection     RakutenRmsConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, orderId])
+  @@index([connectionId, orderedAt])
+  @@map("rakuten_sales_snapshots")
 }
 
 model RakutenOrderImportIssue {

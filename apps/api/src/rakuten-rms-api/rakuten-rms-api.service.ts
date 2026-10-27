@@ -28,6 +28,7 @@ import { RakutenRmsApiCryptoService } from "./rakuten-rms-api-crypto.service";
 import { RakutenRmsAutomationService } from "./rakuten-rms-automation.service";
 import { RakutenJsonObject } from "./rakuten-rms-api.types";
 import { buildRakutenStoreDashboard } from "./rakuten-store-dashboard";
+import { RakutenSalesService } from './rakuten-sales.service';
 
 const RAKUTEN_SCHEDULED_SYNC_ENABLED =
   String(process.env.RAKUTEN_RMS_API_SCHEDULED_SYNC_ENABLED ?? "false").toLowerCase() === "true";
@@ -149,6 +150,7 @@ export class RakutenRmsApiService {
     private readonly client: RakutenRmsApiClient,
     private readonly crypto: RakutenRmsApiCryptoService,
     @Optional() private readonly automation?: RakutenRmsAutomationService,
+    @Optional() private readonly sales?: RakutenSalesService,
   ) {}
 
   async listConnections(): Promise<unknown[]> {
@@ -187,6 +189,11 @@ export class RakutenRmsApiService {
     }
     const period = storeDashboardPeriod(new Date(), daysRaw, month);
     const { days } = period;
+    if (!period.month) {
+      const today = this.formatTokyoDateKey(period.end, '-');
+      period.start = new Date(new Date(`${today}T00:00:00+09:00`).getTime() - (days - 1) * 86400000);
+      period.previousStart = new Date(period.start.getTime() - days * 86400000);
+    }
     const connections = await this.prisma.rakutenRmsConnection.findMany({
       where: { status: 1, syncOrders: true },
       include: { shop: { select: { id: true, name: true } } },
@@ -238,16 +245,7 @@ export class RakutenRmsApiService {
           dispatch_mode AS dispatchMode,
           shipment_no AS shipmentNo,
           tracking_is_delivered AS trackingIsDelivered,
-          COALESCE(
-            CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.subtotalPrice')), ',', ''), ''), 'null') AS DECIMAL(16, 2)),
-            CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.subtotal')), ',', ''), ''), 'null') AS DECIMAL(16, 2)),
-            CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.price')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
-            CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.itemPrice')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
-            CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.unitPrice')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
-            CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$."単価"')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
-            CAST(NULLIF(NULLIF(REPLACE(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.unitPrice')), ',', ''), ''), 'null') AS DECIMAL(16, 2)) * COALESCE(order_quantity, 0),
-            0
-          ) AS salesAmount
+          0 AS salesAmount
         FROM rakuten_order_records
         WHERE deleted_at IS NULL AND ${orderScope}
           AND order_imported_date >= ${this.formatTokyoDateKey(analysisStart, "-")}
@@ -286,8 +284,12 @@ export class RakutenRmsApiService {
       orderImportedAtRaw: row.orderImportedDate,
       salesAmount: 0,
     }));
+    const financial = this.sales ? await this.sales.read(selected.id, period.previousStart, period.end) : null;
+    const financialRows = financial?.rows;
+    const shippedOrderIds = new Set(orders.filter((row) => row.shipmentNo).map((row) => row.orderId));
+    for (const row of financialRows ?? []) if (shippedOrderIds.has(row.orderId)) row.shipmentNo = '已登记';
     const productIds = Array.from(new Set(
-      [...orders, ...factoryOrders]
+      [...orders, ...factoryOrders, ...(financialRows ?? [])]
         .map((row) => String(row.skuCode ?? "").trim())
         .filter(Boolean),
     ));
@@ -375,12 +377,15 @@ export class RakutenRmsApiService {
         apiItemCount: orders.filter((row) => row.rmsConnectionId === selected.id).length,
         legacyItemCount: orders.filter((row) => row.rmsConnectionId === null).length,
         includesLegacyData,
+        sales: financial ? { ready: financial.ready, coverageStart: financial.coverageStart,
+          coverageEnd: financial.coverageEnd, syncedAt: financial.syncedAt, error: financial.error } : null,
       },
       dashboard: buildRakutenStoreDashboard({
         period,
         now,
         days,
-        orders,
+        orders: financialRows ?? orders,
+        fulfillmentOrders: orders,
         factoryOrders,
         minimumAverageDailySalesExclusive,
         products,
