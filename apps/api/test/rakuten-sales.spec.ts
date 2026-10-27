@@ -46,6 +46,13 @@ describe('RMS original-order financial facts', () => {
     good.PackageModelList.push({ ...good.PackageModelList[0], basketId: 2 });
     expect(parseRakutenSalesOrder(good).items).toHaveLength(4);
   });
+  it('ignores RMS removed zero-quantity lines while validating the remaining order total', () => {
+    const o = order();
+    o.PackageModelList[0].ItemModelList.push({ itemDetailId: 3, price: 0, units: 0,
+      itemName: 'Removed', SkuModelList: [{ variantId: 'removed' }] });
+    expect(parseRakutenSalesOrder(o).items.map(x => x.skuCode)).toEqual(['zh-combo', 'cd-01']);
+    expect(() => parseRakutenSalesOrder({ ...o, goodsPrice: 3001 })).toThrow('不一致');
+  });
   it('stores no customer information in financial snapshots', () => {
     const snapshot = parseRakutenSalesOrder(order('private', { OrdererModel: { emailAddress: 'private@example.test' }, remarks: 'private' }));
     expect(JSON.stringify(snapshot)).not.toContain('private@example.test');

@@ -35,7 +35,8 @@ export function parseRakutenSalesOrder(order: RakutenJsonObject) {
       if (seen.has(itemId)) throw new Error(`RMS销售订单${orderId}商品明细重复`);
       seen.add(itemId);
       const quantity = money(item.units, '购买数量');
-      if (!quantity) throw new Error(`RMS销售订单${orderId}购买数量为0`);
+      // RMS retains removed order lines with units=0; they contribute no sale.
+      if (!quantity) continue;
       const sku = ((item.SkuModelList ?? []) as RakutenJsonObject[])[0];
       items.push({ itemId, skuCode: String(sku?.variantId ?? item.manageNumber ?? item.itemNumber ?? '').trim(),
         productName: String(item.itemName ?? ''), quantity, salesAmount: 0 });
