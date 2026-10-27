@@ -1321,6 +1321,32 @@ describe("Rakuten RMS API integration", () => {
     });
   });
 
+  it("retries an interrupted read body and rejects malformed successful JSON", async () => {
+    const interrupted = new Response('{}');
+    jest.spyOn(interrupted, 'text').mockRejectedValue(new Error('body timeout'));
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(interrupted)
+      .mockResolvedValueOnce(new Response('<html>bad gateway</html>'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ OrderModelList: [] })));
+    await expect(new RakutenRmsApiClient().getOrders('secret', 'key', ['421951-1'])).resolves.toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a successful search without its order list and pagination", async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('{}'));
+    await expect(new RakutenRmsApiClient().searchOrders('secret', 'key', {
+      start: new Date('2026-09-01T00:00:00Z'), end: new Date('2026-09-02T00:00:00Z'),
+    })).rejects.toThrow('搜索结果格式不完整');
+  });
+
+  it("never replays a shipment write after its response body is interrupted", async () => {
+    const interrupted = new Response('{}');
+    jest.spyOn(interrupted, 'text').mockRejectedValue(new Error('body timeout'));
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(interrupted);
+    await expect(new RakutenRmsApiClient().updateOrderShipping('secret', 'key', '421951-1', [])).rejects.toThrow('body timeout');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("posts automatic shipment data to updateOrderShipping without retrying the mutation", async () => {
     const fetchMock = jest.spyOn(global, "fetch").mockResolvedValueOnce(
       new Response(JSON.stringify({ MessageModelList: [{ messageType: "INFO", messageCode: "OK" }] }), {

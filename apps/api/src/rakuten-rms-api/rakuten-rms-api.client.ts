@@ -83,8 +83,12 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
           },
         );
         this.assertNoApiErrors(payload.MessageModelList);
-        orderNumbers.push(...(Array.isArray(payload.orderNumberList) ? payload.orderNumberList : []));
-        totalPages = Math.max(1, Number(payload.PaginationResponseModel?.totalPages ?? 1));
+        const pages = Number(payload.PaginationResponseModel?.totalPages);
+        if (!Array.isArray(payload.orderNumberList) || !Number.isInteger(pages) || pages < 0 || pages > 10000) {
+          throw new ServiceUnavailableException('乐天 RMS 订单搜索结果格式不完整，未更新同步范围');
+        }
+        orderNumbers.push(...payload.orderNumberList);
+        totalPages = Math.max(1, pages);
         page += 1;
       } while (page <= totalPages);
       if (rangeEnd.getTime() >= options.end.getTime()) break;
@@ -149,7 +153,7 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
             'user-agent': '001-wms-rakuten-sync/1.0',
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          signal: AbortSignal.timeout(operation === 'updateOrderShipping' ? REQUEST_TIMEOUT_MS : 60_000),
           ...(dispatcher ? { dispatcher } : {}),
         };
         response = await fetch(url, requestInit);
@@ -163,7 +167,17 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
       }
       lastResponse = response;
       if (response.status !== 429 && response.status < 500) {
-        return this.readResponse<T>(response);
+        try {
+          return await this.readResponse<T>(response);
+        } catch (error) {
+          // A response body can time out after fetch has returned its headers.
+          // Only read operations may be replayed; shipment writes remain single-attempt.
+          if (!response.ok || attempt + 1 >= maxAttempts) throw error;
+          lastResponse = null;
+          lastNetworkError = error;
+          await new Promise((resolve) => setTimeout(resolve, (attempt + 1) * 250));
+          continue;
+        }
       }
       const retryAfter = Math.min(Number(response.headers.get('retry-after') ?? attempt + 1) || attempt + 1, 5);
       await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
@@ -420,8 +434,10 @@ export class RakutenRmsApiClient implements OnModuleDestroy {
     const text = await response.text();
     let payload: unknown = {};
     try {
-      payload = text ? JSON.parse(text) : {};
+      payload = JSON.parse(text);
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Invalid object');
     } catch {
+      if (response.ok) throw new ServiceUnavailableException('乐天 RMS API 响应不是有效JSON对象，未更新同步范围');
       payload = { message: text.slice(0, 500) };
     }
     if (!response.ok) {
