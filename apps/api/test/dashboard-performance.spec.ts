@@ -127,11 +127,11 @@ describe('dashboard refresh after inventory changes', () => {
     const source = script.slice(script.indexOf('function loadOverviewDashboard(options'), script.indexOf('\nfunction formatFileSize'));
     const state = { token: 'session', overviewDashboard: { old: true }, overviewDashboardGeneration: 0,
       overviewNeedsRefresh: false, overviewDashboardCache: new Map(), overviewIncludesFba: false,
-      overviewFbaSnapshotId: '', overviewDashboardDays: 30 };
+      overviewFbaSnapshotId: '', overviewDashboardDays: 30, overviewDashboardMonth: '' };
     const request = jest.fn().mockResolvedValue({ fresh: true });
     const render = jest.fn();
     const context = createContext({ state, request, URLSearchParams, Date,
-      $: () => ({ classList: { contains: () => active } }),
+      $: () => ({ value: '', classList: { contains: () => active, toggle: jest.fn() } }),
       overviewDashboardLoadPromise: null, overviewDashboardLoadKey: '',
       renderOverviewDashboard: render, setTextById: jest.fn(), formatOverviewNumber: String });
     runInContext(source, context);
@@ -140,7 +140,7 @@ describe('dashboard refresh after inventory changes', () => {
 
   it('defers recalculation while hidden and requests fresh data when the dashboard is next opened', async () => {
     const { state, request, context } = setup(false);
-    state.overviewDashboardCache.set('base::30', { data: { old: true }, expiresAt: Date.now() + 60_000 });
+    state.overviewDashboardCache.set('base::30:', { data: { old: true }, expiresAt: Date.now() + 60_000 });
     await context.refreshOverviewAfterInventoryChange();
     expect(request).not.toHaveBeenCalled();
     expect(state.overviewDashboardCache.size).toBe(0);
@@ -165,7 +165,7 @@ describe('dashboard refresh after inventory changes', () => {
     finishOld({ old: true });
     await oldRequest;
     expect(state.overviewDashboard).toEqual({ fresh: true });
-    expect(state.overviewDashboardCache.get('base::30').data).toEqual({ fresh: true });
+    expect(state.overviewDashboardCache.get('base::30:').data).toEqual({ fresh: true });
     expect(render).toHaveBeenCalledTimes(1);
   });
 });

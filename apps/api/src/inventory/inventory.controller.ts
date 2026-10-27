@@ -195,6 +195,7 @@ export class InventoryController {
     @Query('includeFba') includeFba?: string,
     @Query('fbaSnapshotId') fbaSnapshotId?: string,
     @Query('days') days?: string,
+    @Query('month') month?: string,
     @Query('refresh') refresh?: string,
     @Query('paged') paged?: string,
   ): Promise<unknown> {
@@ -202,9 +203,28 @@ export class InventoryController {
       includeFba: includeFba === 'true',
       fbaSnapshotId,
       days: Number(days),
+      month,
       forceRefresh: refresh === 'true',
     });
     return paged === 'true' ? dashboardFirstPages(dashboard) : dashboard;
+  }
+
+  @Get('dashboard/export-excel')
+  async downloadOverviewDashboardExcel(
+    @Res() res: Response,
+    @Query('includeFba') includeFba?: string,
+    @Query('fbaSnapshotId') fbaSnapshotId?: string,
+    @Query('days') days?: string,
+    @Query('month') month?: string,
+  ): Promise<void> {
+    const file = await this.inventoryService.buildOverviewDashboardExcel({
+      includeFba: includeFba === 'true', fbaSnapshotId, days: Number(days), month,
+    });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Length', String(file.content.length));
+    res.end(file.content);
   }
 
   @Get('dashboard/page')

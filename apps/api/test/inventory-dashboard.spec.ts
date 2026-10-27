@@ -337,5 +337,40 @@ describe('inventory dashboard no-sales age classification', () => {
         _sum: { quantityShipped: true },
       }),
     );
+
+    // Historical months need data older than the independent production lookback.
+    const boundaries = ['2024-01-31T14:59:59Z', '2024-01-31T15:00:00Z',
+      '2024-02-29T14:59:59Z', '2024-02-29T15:00:00Z'];
+    const rakutenTemplate = (await prisma.rakutenOrderRecord.findMany())[0];
+    prisma.rakutenOrderRecord.findMany.mockResolvedValue(boundaries.map((date, index) => ({
+      ...rakutenTemplate, id: BigInt(100 + index), orderId: `month-${index}`, skuCode: 'P1',
+      isComboOrder: false, comboOrderSku: null, setComponentSkuCode: null,
+      orderQuantity: index + 1, shipmentNoRegisteredAt: new Date(date),
+    })));
+    const previousQuery = prisma.$queryRaw.getMockImplementation()!;
+    prisma.$queryRaw.mockImplementation((query: any) => query.sql.includes('FROM amazon_order_records')
+      ? Promise.resolve([]) : previousQuery(query));
+    prisma.amazonFbaOrderItem.groupBy.mockClear();
+    const monthly = await service.getOverviewDashboard({ month: '2024-02', forceRefresh: true }) as any;
+    expect(monthly.period).toEqual({ days: 29, month: '2024-02',
+      start: '2024-01-31T15:00:00.000Z', end: '2024-02-29T15:00:00.000Z' });
+    expect(monthly.demand.rakutenOrderedQty90d).toBe(5);
+    expect(monthly.orders30d.rakutenOrderCount).toBe(2);
+    expect(monthly.demand.topSkus.find((row: any) => row.productId === 'P1').rakutenOrderQty90d).toBe(5);
+    expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ purchaseDate: {
+        gte: new Date('2024-01-31T15:00:00Z'), lt: new Date('2024-02-29T15:00:00Z'),
+      } }),
+    }));
+    expect(prisma.rakutenOrderRecord.findMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ shipmentNoRegisteredAt: { gte: new Date('2024-01-31T15:00:00Z') } }),
+    }));
+    expect(monthly.production.periodDays).toBe(90);
+    expect(monthly.production.periodStart).not.toBe('2024-01-31');
+    const monthlyQueryCount = prisma.amazonFbaOrderItem.groupBy.mock.calls.length;
+    await service.getOverviewDashboard({ month: '2024-02' });
+    expect(prisma.amazonFbaOrderItem.groupBy).toHaveBeenCalledTimes(monthlyQueryCount);
+    await service.getOverviewDashboard({ month: '2024-01' });
+    expect(prisma.amazonFbaOrderItem.groupBy.mock.calls.length).toBeGreaterThan(monthlyQueryCount);
   });
 });

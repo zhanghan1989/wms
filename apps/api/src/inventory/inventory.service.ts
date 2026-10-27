@@ -1,3 +1,5 @@
+import { storeDashboardPeriod } from '../common/store-dashboard-period';
+import { exportOverviewDashboard } from './overview-dashboard-export';
 import { assertBoxUsable, assertBoxUsableById, assertBoxesUsableByIds } from '../common/box-availability';
 import { dashboardCodes, loadDashboardSkus, loadDashboardProducts } from './dashboard-catalog';
 import { DashboardCache } from './dashboard-cache';
@@ -1328,6 +1330,7 @@ export class InventoryService {
       includeFba?: boolean;
       fbaSnapshotId?: string;
       days?: number;
+      month?: string;
       forceRefresh?: boolean;
     } = {},
   ): Promise<unknown> {
@@ -1335,6 +1338,7 @@ export class InventoryService {
     const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
     const cacheKey = [
       days,
+      options.month || '',
       options.includeFba === true ? 'fba' : 'base',
       String(options.fbaSnapshotId || '').trim(),
     ].join(':');
@@ -1342,8 +1346,14 @@ export class InventoryService {
       () => getOverviewDashboardByProduct.call(this, { ...options, days }));
   }
 
+  async buildOverviewDashboardExcel(
+    options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number; month?: string } = {},
+  ): Promise<{ fileName: string; content: Buffer }> {
+    return exportOverviewDashboard(await this.getOverviewDashboard(options));
+  }
+
   async buildProductionRecommendationsExcel(
-    options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number } = {},
+    options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number; month?: string } = {},
   ): Promise<{ fileName: string; content: Buffer }> {
     const dashboard = (await this.getOverviewDashboard({ ...options, forceRefresh: true })) as {
       production?: {
@@ -2702,7 +2712,7 @@ function parseBulkInventoryUpdateRowsByProduct(
 
 async function getOverviewDashboardByProduct(
   this: InventoryService,
-  options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number } = {},
+  options: { includeFba?: boolean; fbaSnapshotId?: string; days?: number; month?: string } = {},
 ): Promise<unknown> {
   const service = this;
   const now = new Date();
@@ -2712,8 +2722,12 @@ async function getOverviewDashboardByProduct(
   const from30d = new Date(now.getTime() - 30 * dayMs);
   const from90d = new Date(now.getTime() - 90 * dayMs);
   const requestedDays = Number(options.days ?? 30);
-  const periodDays = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
-  const fromPeriod = new Date(now.getTime() - periodDays * dayMs);
+  const monthPeriod = options.month ? storeDashboardPeriod(now, undefined, options.month) : null;
+  const periodDays = monthPeriod?.days ?? ([30, 60, 90].includes(requestedDays) ? requestedDays : 30);
+  const fromPeriod = monthPeriod?.start ?? new Date(now.getTime() - periodDays * dayMs);
+  const periodEnd = monthPeriod?.end ?? now;
+  const inSelectedPeriod = (date: Date) => date >= fromPeriod && (!monthPeriod || date < periodEnd);
+  const queryStart = new Date(Math.min(from90d.getTime(), fromPeriod.getTime()));
   const fbaSnapshotIdText = String(options.fbaSnapshotId || '').trim();
   if (fbaSnapshotIdText && !/^\d+$/.test(fbaSnapshotIdText)) {
     throw new BadRequestException('FBA销量快照编号无效');
@@ -2722,7 +2736,7 @@ async function getOverviewDashboardByProduct(
 
   const rakutenShipmentOrderFilter: Prisma.RakutenOrderRecordWhereInput = {
     AND: [{ shipmentNo: { not: null } }, { shipmentNo: { not: '' } }],
-    shipmentNoRegisteredAt: { gte: from90d },
+    shipmentNoRegisteredAt: { gte: queryStart },
   };
   const [
     activeUserCount,
@@ -2832,14 +2846,14 @@ async function getOverviewDashboardByProduct(
     service.prisma.amazonFbaOrderItem.groupBy({
       by: ['connectionId', 'sellerSku'],
       where: {
-        purchaseDate: { gte: fromPeriod },
+        purchaseDate: { gte: fromPeriod, ...(monthPeriod ? { lt: periodEnd } : {}) },
         orderStatus: { in: ['SHIPPED', 'PARTIALLY_SHIPPED'] },
       },
       _sum: {
         quantityShipped: true,
       },
     }),
-    periodDays === 90
+    !monthPeriod && periodDays === 90
       ? Promise.resolve([])
       : service.prisma.amazonFbaOrderItem.groupBy({
           by: ['connectionId', 'sellerSku'],
@@ -2885,7 +2899,7 @@ async function getOverviewDashboardByProduct(
         order_status AS orderStatus, source_kind AS sourceKind
       FROM amazon_order_records
       WHERE source_kind <> 'sp_api' AND shipment_no IS NOT NULL AND shipment_no <> ''
-        AND shipment_no_registered_at >= ${from90d}
+        AND shipment_no_registered_at >= ${queryStart}
         AND (fulfillment_channel IS NULL OR fulfillment_channel <> 'AFN')
       ORDER BY shipment_no_registered_at DESC
     `),
@@ -2926,16 +2940,16 @@ async function getOverviewDashboardByProduct(
     }
   });
   const systemAmazonRows = Array.from(amazonRowsByItem.values());
-  const amazonDemandRows90d = systemAmazonRows.flatMap((row) => {
+  const amazonDemandRowsAll = systemAmazonRows.flatMap((row) => {
     const orderStatus = String(row.orderStatus ?? '').trim().toUpperCase();
     if (orderStatus === 'CANCELLED' || orderStatus === 'UNFULFILLABLE') return [];
     const purchaseDate = row.purchaseDateRaw ? new Date(row.purchaseDateRaw) : null;
     const demandDate = purchaseDate && !Number.isNaN(purchaseDate.getTime())
       ? purchaseDate
       : row.shipmentNoRegisteredAt;
-    return demandDate && demandDate >= from90d ? [{ row, demandDate }] : [];
+    return demandDate && demandDate >= queryStart ? [{ row, demandDate }] : [];
   });
-  const amazonDemandRows = amazonDemandRows90d.filter(({ demandDate }) => demandDate >= fromPeriod);
+  const amazonDemandRows = amazonDemandRowsAll.filter(({ demandDate }) => inSelectedPeriod(demandDate));
 
   const normalizeComboSku = (value: unknown): string => String(value ?? '').trim().toLowerCase();
   const referencedComboSkus = Array.from(
@@ -3132,7 +3146,7 @@ async function getOverviewDashboardByProduct(
         qty,
       );
     }
-    if (registeredAt >= fromPeriod && addDemandQty(outbound90ByProduct, productIdText, qty)) {
+    if (inSelectedPeriod(registeredAt) && addDemandQty(outbound90ByProduct, productIdText, qty)) {
       systemDemandQty90dByChannel[channel] += qty;
       addDemandQty(channel === 'rakuten' ? selectedRakutenOrderByProduct : selectedFbmOrderByProduct, productIdText, qty);
     }
@@ -3184,7 +3198,7 @@ async function getOverviewDashboardByProduct(
     },
   ) => {
     const qty = Number(item.qtyRaw ?? 0);
-    if (!item.registeredAt || item.registeredAt < fromPeriod || !Number.isFinite(qty) || qty <= 0) return;
+    if (!item.registeredAt || !inSelectedPeriod(item.registeredAt) || !Number.isFinite(qty) || qty <= 0) return;
     unmatchedSystemOrders90d.rowCount += 1;
     unmatchedSystemOrders90d.quantity += qty;
     unmatchedSystemOrders90d[`${item.channel}RowCount`] += 1;
@@ -3264,7 +3278,7 @@ async function getOverviewDashboardByProduct(
       });
     });
   });
-  amazonDemandRows90d.forEach(({ row, demandDate }) => {
+  amazonDemandRowsAll.forEach(({ row, demandDate }) => {
     const productId = resolveAmazonLikeDemandProductId(row);
     if (!addSystemOrderDemandQty('amazon', productId, row.quantityPurchased, demandDate)) {
       const productIdOverride = getJsonObjectString(row.rawPayload, '产品ID');
@@ -3351,7 +3365,7 @@ async function getOverviewDashboardByProduct(
     addDemandQty(fbaSales90ByProduct, productId, qty);
     addDemandQty(outbound90ByProduct, productId, qty);
   });
-  const fbaGroupsForProduction = periodDays === 90 ? fbaApiOrderGroups : productionFbaApiOrderGroups;
+  const fbaGroupsForProduction = !monthPeriod && periodDays === 90 ? fbaApiOrderGroups : productionFbaApiOrderGroups;
   const matchedProductionFbaSkus = new Set<string>();
   let unmatchedProductionFbaRowCount = 0;
   let unmatchedProductionFbaQty = 0;
@@ -3673,7 +3687,7 @@ async function getOverviewDashboardByProduct(
     };
   };
   const rakutenOrderStats30d = toOrderStats(
-    systemRakutenRows.filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= fromPeriod).map((row) => ({
+    systemRakutenRows.filter((row) => row.shipmentNoRegisteredAt && inSelectedPeriod(row.shipmentNoRegisteredAt)).map((row) => ({
       id: row.id,
       orderId: row.orderId,
       qty: row.orderQuantity,
@@ -3681,13 +3695,13 @@ async function getOverviewDashboardByProduct(
   );
   const amazonOrderStats30d = toOrderStats(
     amazonDemandRows.flatMap(({ row, demandDate }) => {
-      return demandDate && demandDate >= fromPeriod
+      return demandDate && inSelectedPeriod(demandDate)
         ? [{ id: row.id, orderId: row.orderId, qty: row.quantityPurchased }]
         : [];
     }),
   );
   const manualOrderStats30d = toOrderStats(
-    (systemManualRows as Array<{ id: bigint; orderId: string | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).filter((row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= fromPeriod).map(
+    (systemManualRows as Array<{ id: bigint; orderId: string | null; quantityPurchased: number | null; shipmentNoRegisteredAt: Date | null }>).filter((row) => row.shipmentNoRegisteredAt && inSelectedPeriod(row.shipmentNoRegisteredAt)).map(
       (row) => ({
         id: row.id,
         orderId: row.orderId,
@@ -3701,7 +3715,8 @@ async function getOverviewDashboardByProduct(
     period: {
       days: periodDays,
       start: fromPeriod.toISOString(),
-      end: now.toISOString(),
+      end: periodEnd.toISOString(),
+      month: monthPeriod?.month ?? null,
     },
     dataSources: {
       fba: latestFbaSalesSnapshot
@@ -3711,7 +3726,7 @@ async function getOverviewDashboardByProduct(
             available: true,
             syncedAt: latestFbaSalesSnapshot.createdAt.toISOString(),
             periodStart: fromPeriod.toISOString().slice(0, 10),
-            periodEnd: now.toISOString().slice(0, 10),
+            periodEnd: periodEnd.toISOString().slice(0, 10),
           }
         : {
             mode: 'sp_api',
@@ -3732,7 +3747,7 @@ async function getOverviewDashboardByProduct(
         mode: 'manual_import',
         label: '乐天手动导入订单',
         orderRows90d: systemRakutenRows.filter(
-          (row) => row.shipmentNoRegisteredAt && row.shipmentNoRegisteredAt >= fromPeriod,
+          (row) => row.shipmentNoRegisteredAt && inSelectedPeriod(row.shipmentNoRegisteredAt),
         ).length,
       },
     },

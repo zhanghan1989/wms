@@ -1815,8 +1815,13 @@
                     <option value="30" selected>近30天</option>
                     <option value="60">近60天</option>
                     <option value="90">近90天</option>
+                    <option value="month">按月份</option>
                   </select>
                 </label>
+                <label id="overviewDashboardMonthLabel" class="overview-period-control hidden">月份
+                  <input type="month" id="overviewDashboardMonth" aria-label="系统看板统计月份">
+                </label>
+                <button type="button" id="exportOverviewDashboardBtn">导出Excel</button>
                 <span id="overviewDemandPeriod" class="overview-demand-period">统计周期 30 天</span>
               </div>
             </div>

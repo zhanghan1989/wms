@@ -371,6 +371,7 @@ const state = {
   overviewIncludesFba: false,
   overviewFbaSnapshotId: "",
   overviewDashboardDays: 30,
+  overviewDashboardMonth: "",
   overviewDashboardCache: new Map(),
   overviewDashboardGeneration: 0,
   overviewNeedsRefresh: false,
@@ -1996,9 +1997,14 @@ function renderOverviewDashboard(data) {
   const production = data?.production || {};
   const obsolete = data?.obsolete || {};
   const dataSources = data?.dataSources || {};
-  const periodDays = [30, 60, 90].includes(Number(data?.period?.days)) ? Number(data.period.days) : 30;
-  state.overviewDashboardDays = periodDays;
-  if ($("overviewDashboardDays")) $("overviewDashboardDays").value = String(periodDays);
+  const periodDays = Number(data?.period?.days) || 30;
+  const month = data?.period?.month || "";
+  const periodLabel = month ? `${month}（日本时间）` : `近${periodDays}天`;
+  state.overviewDashboardDays = month ? "month" : periodDays;
+  state.overviewDashboardMonth = month;
+  $("overviewDashboardMonthLabel")?.classList.toggle("hidden", !month);
+  if (month && $("overviewDashboardMonth")) $("overviewDashboardMonth").value = month;
+  if ($("overviewDashboardDays")) $("overviewDashboardDays").value = month ? "month" : String(periodDays);
   const includesFba = production.includesFba === true;
   setOverviewFbaDependentVisibility(includesFba);
 
@@ -2027,19 +2033,19 @@ function renderOverviewDashboard(data) {
   setTextById("overviewOrder30dAmazonCount", formatOverviewNumber(demand.fbaOrderedQty90d));
   setTextById("overviewOrder30dManualCount", formatOverviewNumber(demand.amazonFbmOrderedQty90d));
   setTextById("overviewOrder30dRakutenCount", formatOverviewNumber(demand.rakutenOrderedQty90d));
-  setTextById("overviewFbaQtyLabel", `${periodDays}天FBA商品件数`);
-  setTextById("overviewFbmQtyLabel", `${periodDays}天FBM商品件数`);
-  setTextById("overviewRakutenQtyLabel", `${periodDays}天乐天商品件数`);
-  setTextById("overviewTotalQtyLabel", `${periodDays}天合计商品件数`);
-  setTextById("overviewFbmOrderCountLabel", `${periodDays}天FBM订单数`);
-  setTextById("overviewFbmItemRowsLabel", `${periodDays}天FBM商品明细行`);
-  setTextById("overviewDemandPeriod", `统计周期 ${periodDays} 天`);
+  setTextById("overviewFbaQtyLabel", `${periodLabel}FBA商品件数`);
+  setTextById("overviewFbmQtyLabel", `${periodLabel}FBM商品件数`);
+  setTextById("overviewRakutenQtyLabel", `${periodLabel}乐天商品件数`);
+  setTextById("overviewTotalQtyLabel", `${periodLabel}合计商品件数`);
+  setTextById("overviewFbmOrderCountLabel", `${periodLabel}FBM订单数`);
+  setTextById("overviewFbmItemRowsLabel", `${periodLabel}FBM商品明细行`);
+  setTextById("overviewDemandPeriod", `统计周期 ${periodLabel}`);
   setTextById(
     "overviewDemandDescription",
-    `统一按最近${periodDays}天统计商品件数：API FBA + API为主的FBM + 手动导入的乐天订单。`,
+    `统一按${periodLabel}统计商品件数：API FBA + API为主的FBM + 手动导入的乐天订单。`,
   );
   setTextById("overviewMonthlyAverageHint", `按${periodDays}天数据折算为30天月均`);
-  setTextById("overviewTopDemandHeading", `出单商品件数最高的产品（最近${periodDays}天）`);
+  setTextById("overviewTopDemandHeading", `出单商品件数最高的产品（${periodLabel}）`);
   setTextById("overviewFbaSourceStatus", dataSources.fba?.available ? "API已同步" : "待同步");
   setTextById(
     "overviewFbmSourceStatus",
@@ -2184,9 +2190,16 @@ function loadOverviewDashboard(options = {}) {
           : state.overviewFbaSnapshotId || "",
       ).trim()
     : "";
-  const requestedDays = Number(options.days ?? state.overviewDashboardDays ?? 30);
+  const selection = options.days ?? state.overviewDashboardDays ?? 30;
+  const monthly = selection === "month";
+  const monthInput = $("overviewDashboardMonth");
+  if (monthly && !monthInput.value) monthInput.value = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit" }).format(new Date());
+  const month = monthly ? monthInput.value : "";
+  $("overviewDashboardMonthLabel")?.classList.toggle("hidden", !monthly);
+  if (monthInput) monthInput.max = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit" }).format(new Date());
+  const requestedDays = Number(selection);
   const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
-  const loadKey = `${includeFba ? "fba" : "base"}:${fbaSnapshotId}:${days}`;
+  const loadKey = `${includeFba ? "fba" : "base"}:${fbaSnapshotId}:${monthly ? "month" : days}:${month}`;
   const generation = state.overviewDashboardGeneration;
   const requestKey = `${generation}:${loadKey}`;
   const requestToken = state.token;
@@ -2194,7 +2207,8 @@ function loadOverviewDashboard(options = {}) {
 
   state.overviewIncludesFba = includeFba;
   state.overviewFbaSnapshotId = fbaSnapshotId;
-  state.overviewDashboardDays = days;
+  state.overviewDashboardDays = monthly ? "month" : days;
+  state.overviewDashboardMonth = month;
 
   const cached = state.overviewDashboardCache.get(loadKey);
   if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
@@ -2210,7 +2224,8 @@ function loadOverviewDashboard(options = {}) {
   const query = new URLSearchParams();
   if (includeFba) query.set("includeFba", "true");
   if (fbaSnapshotId) query.set("fbaSnapshotId", fbaSnapshotId);
-  query.set("days", String(days));
+  if (monthly) query.set("month", month);
+  else query.set("days", String(days));
   query.set("paged", "true");
   if (!state.overviewDashboard) {
     const requestToken = state.token;
@@ -2239,7 +2254,7 @@ function loadOverviewDashboard(options = {}) {
       data: data || null,
       expiresAt: Date.now() + 60 * 1000,
     });
-    const currentKey = `${state.overviewIncludesFba ? "fba" : "base"}:${state.overviewFbaSnapshotId || ""}:${state.overviewDashboardDays}`;
+    const currentKey = `${state.overviewIncludesFba ? "fba" : "base"}:${state.overviewFbaSnapshotId || ""}:${state.overviewDashboardDays}:${state.overviewDashboardMonth || ""}`;
     if (currentKey === loadKey) {
       state.overviewDashboard = data || null;
       renderOverviewDashboard(state.overviewDashboard);
@@ -16102,6 +16117,7 @@ async function reloadAll() {
     state.overviewIncludesFba = false;
     state.overviewFbaSnapshotId = "";
     state.overviewDashboardDays = 30;
+    state.overviewDashboardMonth = "";
     state.overviewDashboardCache.clear();
     state.overviewDashboardGeneration += 1;
     state.overviewNeedsRefresh = false;
@@ -22222,14 +22238,31 @@ function bindScrollLoad() {
 }
 
 function bindRefresh() {
-  $("overviewDashboardDays")?.addEventListener("change", (event) => {
-    const days = Number(event.currentTarget.value || 30);
-    state.overviewDashboardDays = [30, 60, 90].includes(days) ? days : 30;
-    withGlobalLoading(
-      `正在切换到最近${state.overviewDashboardDays}天，请稍候...`,
-      () => loadOverviewDashboard({ days: state.overviewDashboardDays }),
-    )
+  const changeOverviewPeriod = () => {
+    const selection = $("overviewDashboardDays").value;
+    const days = selection === "month" ? "month" : Number(selection);
+    withGlobalLoading("正在切换统计周期，请稍候...", () => loadOverviewDashboard({ days }))
       .catch((error) => showToast(error.message, true));
+  };
+  $("overviewDashboardDays")?.addEventListener("change", changeOverviewPeriod);
+  $("overviewDashboardMonth")?.addEventListener("change", changeOverviewPeriod);
+  $("exportOverviewDashboardBtn")?.addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "导出中...", async () => {
+        const data = state.overviewDashboard;
+        if (!data?.period) throw new Error("请先加载系统看板");
+        const expectedMonth = state.overviewDashboardDays === "month" ? state.overviewDashboardMonth : "";
+        if ((data.period.month || "") !== expectedMonth || (!expectedMonth && Number(data.period.days) !== state.overviewDashboardDays)) {
+          throw new Error("请等待所选周期数据加载完成后再导出");
+        }
+        const query = new URLSearchParams();
+        if (data.period.month) query.set("month", data.period.month);
+        else query.set("days", String(data.period.days));
+        if (state.overviewIncludesFba) query.set("includeFba", "true");
+        if (state.overviewFbaSnapshotId) query.set("fbaSnapshotId", state.overviewFbaSnapshotId);
+        await downloadAuthorizedFile(`/inventory/dashboard/export-excel?${query}`, {}, "系统看板.xlsx");
+      });
+    } catch (error) { showToast(error.message, true); }
   });
   $("refreshOverviewDashboard").addEventListener("click", () =>
     withGlobalLoading(
