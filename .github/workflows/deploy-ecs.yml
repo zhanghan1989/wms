@@ -249,6 +249,11 @@ jobs:
             fi
             timed "smoke_download_app_js" curl -fsS http://127.0.0.1:3000/app.js -o /tmp/wms_app.js
             timed "smoke_grep_marker" grep -q "normalizeErrorMessage" /tmp/wms_app.js
+            if command -v systemctl >/dev/null 2>&1; then
+              timed "install_storage_monitor_units" install -m 0644 deploy/systemd/wms-storage-health.service deploy/systemd/wms-storage-health.timer /etc/systemd/system/
+              timed "reload_systemd_units" systemctl daemon-reload
+              timed "enable_storage_monitor" systemctl enable --now wms-storage-health.timer
+            fi
             timed "cleanup_image_tar" rm -f "${IMAGE_TAR}"
             timed "cleanup_old_wms_images" sh -c "docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk -v keep='${IMAGE_TAG}' '\$1 ~ /^wms-api:/ && \$1 != keep {print \$2}' | sort -u | xargs -r docker rmi || true"
             JOB_END_TS="$(date +%s)"

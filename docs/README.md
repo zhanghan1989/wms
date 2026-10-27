@@ -6,6 +6,7 @@
 - 变更记录：`../CHANGELOG.md`
 
 ## 部署
+- 磁盘写入、容量监测和日志维护：[优化说明](storage-optimization-20261028.md)
 - 阿里云部署：`DEPLOY_ALIYUN.md`
 - 本地开发：`LOCAL_DEV.md`
 - 分支与发布流程：见 `LOCAL_DEV.md`

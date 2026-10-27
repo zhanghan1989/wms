@@ -1,0 +1,5 @@
+# Apply only after verifying backup recovery and replication/CDC compatibility.
+# Existing application sessions must reconnect to use a changed row-image mode.
+[mysqld]
+binlog_expire_logs_seconds=604800
+binlog_row_image=MINIMAL

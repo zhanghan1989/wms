@@ -1,3 +1,4 @@
+import { nextTrackingCheck, trackingFactDifferences } from './rakuten-tracking-checks';
 import { rakutenOrderRemarkNeedsConfirmation } from '../common/rakuten-order-remark';
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
 import { basketIdOf, productIdWasManuallyEdited } from '../rakuten-rms-api/rakuten-order-workflow';
@@ -8892,27 +8893,32 @@ export class OrdersService {
     }
     const heartbeat = this.startRakutenTrackingSyncLockHeartbeat(lockToken);
     try {
-      const ignored = await this.prisma.rakutenTrackingQueryIgnore.findMany({
-        where: { isActive: true }, select: { trackingNo: true },
-      });
-      const rows = await this.prisma.rakutenOrderRecord.findMany({
-        where: { deletedAt: null,
-          shipmentNo: { not: null, notIn: ['', ...ignored.map((row) => row.trackingNo)] },
-          OR: [
-            { trackingIsDelivered: false },
-            { trackingHasCustomsClearance: false },
-            { trackingCustomsClearanceDate: null },
-            { trackingError: { not: null } },
-          ],
-          ...this.buildRakutenChinaDispatchWhere(),
-        },
-        orderBy: [
-          { trackingCheckedAt: 'asc' },
-          { shipmentNoRegisteredAt: 'desc' },
-          { id: 'desc' }],
-        distinct: ['shipmentNo'],
-        take: UOF_TRACKING_SYNC_MAX_PER_RUN,
-      });
+      const now = new Date();
+      // Select only due parcels in SQL, before LIMIT, so backoff cannot starve
+      // newer parcels. Never load rawPayload for a routine tracking lookup.
+      const candidates = await this.prisma.$queryRaw<Array<{ id: bigint }>>(Prisma.sql`
+        SELECT MIN(r.id) AS id FROM rakuten_order_records r
+        LEFT JOIN rakuten_tracking_checks c ON c.tracking_no = r.shipment_no
+        WHERE r.deleted_at IS NULL AND r.shipment_no IS NOT NULL AND r.shipment_no <> ''
+          AND r.dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
+          AND NOT EXISTS (SELECT 1 FROM rakuten_tracking_query_ignores i
+            WHERE i.tracking_no = r.shipment_no AND i.is_active = 1)
+          AND (r.tracking_is_delivered = 0 OR r.tracking_has_customs_clearance = 0
+            OR r.tracking_customs_clearance_date IS NULL OR r.tracking_error IS NOT NULL)
+          AND (c.next_check_at IS NULL OR c.next_check_at <= ${now}
+            OR r.tracking_checked_at IS NULL OR c.checked_at < r.shipment_no_registered_at)
+        GROUP BY r.shipment_no
+        ORDER BY MAX(COALESCE(c.checked_at, r.tracking_checked_at)) ASC,
+          MAX(r.shipment_no_registered_at) DESC, MAX(r.id) DESC
+        LIMIT ${UOF_TRACKING_SYNC_MAX_PER_RUN}
+      `);
+      const rows = candidates.length ? await this.prisma.rakutenOrderRecord.findMany({
+        where: { id: { in: candidates.map((row) => row.id) }, deletedAt: null,
+          ...this.buildRakutenChinaDispatchWhere() },
+        select: { shipmentNo: true, trackingStatusLabel: true, trackingHasCustomsClearance: true,
+          trackingIsDelivered: true, trackingCustomsClearanceDate: true, trackingStatusOccurredAt: true,
+          trackingCheckedAt: true, trackingError: true },
+      }) : [];
       const statusByNo = await this.refreshRakutenTrackingStatusesForRows(rows);
       const statuses = Array.from(statusByNo.values());
       const summary = await this.getRakutenTrackingStatusSummary();
@@ -8938,11 +8944,16 @@ export class OrdersService {
     pendingTrackingNoCount: number;
     uncheckedTrackingNoCount: number;
   }> {
-    const [latestRow, pendingCountRows, uncheckedCountRows] = await Promise.all([
+    const [latestChecks, latestRow, pendingCountRows, uncheckedCountRows] = await Promise.all([
+      this.prisma.$queryRaw<Array<{ checkedAt: Date | null }>>(Prisma.sql`
+        SELECT MAX(c.checked_at) AS checkedAt FROM rakuten_tracking_checks c
+        WHERE EXISTS (SELECT 1 FROM rakuten_order_records r
+          WHERE r.shipment_no = c.tracking_no AND r.deleted_at IS NULL
+            AND r.dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK}))
+      `),
       this.prisma.rakutenOrderRecord.findFirst({
         where: { deletedAt: null, trackingCheckedAt: { not: null } },
-        orderBy: { trackingCheckedAt: 'desc' },
-        select: { trackingCheckedAt: true },
+        orderBy: { trackingCheckedAt: 'desc' }, select: { trackingCheckedAt: true },
       }),
       this.prisma.$queryRaw<Array<{ count: bigint }>>(Prisma.sql`
         SELECT COUNT(DISTINCT shipment_no) AS count
@@ -8961,11 +8972,15 @@ export class OrdersService {
           AND NOT EXISTS (SELECT 1 FROM rakuten_tracking_query_ignores i
             WHERE i.tracking_no = rakuten_order_records.shipment_no AND i.is_active = 1)
           AND tracking_checked_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM rakuten_tracking_checks c
+            WHERE c.tracking_no = rakuten_order_records.shipment_no
+              AND c.checked_at >= COALESCE(rakuten_order_records.shipment_no_registered_at, '1000-01-01'))
           AND dispatch_mode IN (${OVERSEAS_DISPATCH_MODE.CHINA_PENDING}, ${OVERSEAS_DISPATCH_MODE.CHINA_NO_STOCK})
       `),
     ]);
+    const checkedDates = [latestChecks[0]?.checkedAt, latestRow?.trackingCheckedAt].filter((date): date is Date => Boolean(date));
     return {
-      latestCheckedAt: latestRow?.trackingCheckedAt?.toISOString() ?? null,
+      latestCheckedAt: checkedDates.length ? new Date(Math.max(...checkedDates.map((date) => date.getTime()))).toISOString() : null,
       pendingTrackingNoCount: Number(pendingCountRows[0]?.count ?? 0),
       uncheckedTrackingNoCount: Number(uncheckedCountRows[0]?.count ?? 0),
     };
@@ -9011,8 +9026,10 @@ export class OrdersService {
       `) : counts;
       total = Number(filteredCounts[0]?.count ?? 0);
       const groups = await this.prisma.$queryRaw<Array<{ trackingNo: string }>>(Prisma.sql`
-        SELECT r.shipment_no AS trackingNo FROM rakuten_order_records r WHERE ${failedWhere} ${searchWhere}
-        GROUP BY r.shipment_no ORDER BY MAX(r.tracking_checked_at) DESC, r.shipment_no ASC
+        SELECT r.shipment_no AS trackingNo FROM rakuten_order_records r
+        LEFT JOIN rakuten_tracking_checks c ON c.tracking_no = r.shipment_no
+        WHERE ${failedWhere} ${searchWhere}
+        GROUP BY r.shipment_no ORDER BY MAX(COALESCE(c.checked_at, r.tracking_checked_at)) DESC, r.shipment_no ASC
         LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
       `);
       trackingNos = groups.map((row) => row.trackingNo);
@@ -9024,6 +9041,7 @@ export class OrdersService {
         rmsConnection: { select: { shop: { select: { name: true } } } } },
       orderBy: [{ trackingCheckedAt: 'desc' }, { id: 'desc' }],
     }) : [];
+    const checkTimes = await this.loadRakutenTrackingCheckTimes(trackingNos);
     return { page, pageSize, total, failedCount: Number(counts[0]?.count ?? 0), ignoredCount: activeIgnores.length,
       items: trackingNos.map((trackingNo) => {
         const details = rows.filter((row) => row.shipmentNo === trackingNo);
@@ -9034,7 +9052,7 @@ export class OrdersService {
           shopNames: unique(details.map((row) => row.shopName || row.rmsConnection?.shop.name)),
           shipmentCompanies: unique(details.map((row) => row.shipmentCompany)),
           error: details.find((row) => row.trackingError)?.trackingError ?? null,
-          checkedAt: details[0]?.trackingCheckedAt?.toISOString() ?? null,
+          checkedAt: checkTimes.get(trackingNo)?.toISOString() ?? details[0]?.trackingCheckedAt?.toISOString() ?? null,
           ignoredAt: ignored?.ignoredAt.toISOString() ?? null, ignoredBy: ignored?.ignoredBy ?? null,
         };
       }),
@@ -9059,6 +9077,10 @@ export class OrdersService {
           const result = await tx.rakutenTrackingQueryIgnore.updateMany({
             where: { trackingNo: { in: trackingNos }, isActive: true },
             data: { isActive: false, restoredAt: new Date(), restoredBy: username },
+          });
+          if (result.count) await tx.rakutenTrackingCheck.updateMany({
+            where: { trackingNo: { in: [...activeNos] } },
+            data: { nextCheckAt: new Date(), consecutiveFailures: 0 },
           });
           return result.count;
         }
@@ -9385,23 +9407,38 @@ export class OrdersService {
     trackingNo: string,
     status: RakutenTrackingClearanceStatus,
   ): Promise<void> {
-    await this.prisma.rakutenOrderRecord.updateMany({
-      where: { deletedAt: null,
-        shipmentNo: trackingNo,
-        ...this.buildRakutenChinaDispatchWhere(),
-      },
-      data: {
-        trackingStatusLabel: status.label,
-        trackingHasCustomsClearance: status.hasCustomsClearance,
-        trackingIsDelivered: status.isDelivered,
-        trackingStatusOccurredAt: this.parseUofTrackingOccurredAt(status.occurredAt),
-        ...(status.customsClearanceDate ? {
-          trackingCustomsClearanceDate: new Date(`${status.customsClearanceDate}T00:00:00.000Z`),
-        } : {}),
-        trackingCheckedAt: new Date(),
-        trackingError: status.error ?? null,
-      },
+    const checkedAt = new Date();
+    const facts = {
+      trackingStatusLabel: status.label,
+      trackingHasCustomsClearance: status.hasCustomsClearance,
+      trackingIsDelivered: status.isDelivered,
+      trackingStatusOccurredAt: this.parseUofTrackingOccurredAt(status.occurredAt),
+      ...(status.customsClearanceDate ? {
+        trackingCustomsClearanceDate: new Date(`${status.customsClearanceDate}T00:00:00.000Z`),
+      } : {}),
+      trackingError: status.error ?? null,
+    };
+    await this.prisma.$transaction(async (tx) => {
+      const previous = await tx.rakutenTrackingCheck.findUnique({ where: { trackingNo } });
+      const consecutiveFailures = status.error ? Math.min(1000, (previous?.consecutiveFailures ?? 0) + 1) : 0;
+      // Initial checks and real business changes still update the order facts
+      // before the coordinator evaluates clearance/shipping/mail conditions.
+      await tx.rakutenOrderRecord.updateMany({
+        where: { deletedAt: null, shipmentNo: trackingNo, ...this.buildRakutenChinaDispatchWhere(),
+          OR: [{ trackingCheckedAt: null }, ...trackingFactDifferences(facts)] },
+        data: { ...facts, trackingCheckedAt: checkedAt },
+      });
+      const observation = { checkedAt, nextCheckAt: nextTrackingCheck(status, consecutiveFailures, checkedAt), consecutiveFailures };
+      await tx.rakutenTrackingCheck.upsert({ where: { trackingNo }, create: { trackingNo, ...observation }, update: observation });
     });
+  }
+
+  private async loadRakutenTrackingCheckTimes(trackingNos: string[]): Promise<Map<string, Date>> {
+    const unique = [...new Set(trackingNos.filter(Boolean))];
+    if (!unique.length) return new Map();
+    const checks = await this.prisma.rakutenTrackingCheck.findMany({ where: { trackingNo: { in: unique } },
+      select: { trackingNo: true, checkedAt: true } });
+    return new Map(checks.map((check) => [check.trackingNo, check.checkedAt]));
   }
 
   private async acquireRakutenTrackingSyncLock(lockToken: string): Promise<boolean> {
@@ -9922,6 +9959,15 @@ export class OrdersService {
     if (!rows.length) {
       return [];
     }
+
+    const checkTimes = await this.loadRakutenTrackingCheckTimes(rows.filter((row) =>
+      ['china_pending', 'china_no_stock'].includes(row.dispatchMode ?? '')).map((row) => row.shipmentNo ?? ''));
+    rows = rows.map((row) => {
+      const checkedAt = checkTimes.get(row.shipmentNo ?? '');
+      if (!checkedAt || row.shipmentNoRegisteredAt && checkedAt < row.shipmentNoRegisteredAt
+        || row.trackingCheckedAt && checkedAt < row.trackingCheckedAt) return row;
+      return { ...row, trackingCheckedAt: checkedAt };
+    });
 
     const lookupProductIds = Array.from(
       new Set(

@@ -55,7 +55,8 @@ describe('Rakuten tracking candidate selection', () => {
 
   it('includes incomplete delivered parcels and errors, deduplicates, and retains bounded oldest-first selection', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
-    const service = new OrdersService({ rakutenOrderRecord: { findMany },
+    const queryRaw = jest.fn().mockResolvedValue([{ id: 1n }]);
+    const service = new OrdersService({ $queryRaw: queryRaw, rakutenOrderRecord: { findMany },
       rakutenTrackingQueryIgnore: { findMany: jest.fn().mockResolvedValue([]) } } as any);
     jest.spyOn(service as any, 'acquireRakutenTrackingSyncLock').mockResolvedValue(true);
     jest.spyOn(service as any, 'startRakutenTrackingSyncLockHeartbeat').mockReturnValue(undefined);
@@ -63,15 +64,15 @@ describe('Rakuten tracking candidate selection', () => {
     jest.spyOn(service as any, 'refreshRakutenTrackingStatusesForRows').mockResolvedValue(new Map());
     jest.spyOn(service, 'getRakutenTrackingStatusSummary').mockResolvedValue({ latestCheckedAt: null, pendingTrackingNoCount: 0, uncheckedTrackingNoCount: 0 });
     await service.syncRakutenTrackingStatuses();
+    const query = queryRaw.mock.calls[0][0];
+    expect(query.sql).toContain('c.next_check_at <=');
+    expect(query.sql).toContain('NOT EXISTS');
+    expect(query.values).toContain(500);
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({
-        shipmentNo: { not: null, notIn: [''] },
-        OR: [ { trackingIsDelivered: false }, { trackingHasCustomsClearance: false },
-          { trackingCustomsClearanceDate: null }, { trackingError: { not: null } } ],
-      }),
-      distinct: ['shipmentNo'], orderBy: [{ trackingCheckedAt: 'asc' }, { shipmentNoRegisteredAt: 'desc' }, { id: 'desc' }],
-      take: 500,
+      where: expect.objectContaining({ id: { in: [1n] }, deletedAt: null }),
+      select: expect.objectContaining({ shipmentNo: true, trackingCheckedAt: true }),
     }));
+    expect(findMany.mock.calls[0][0].select).not.toHaveProperty('rawPayload');
     expect(release).toHaveBeenCalledTimes(1);
   });
   it('does not requery a delivered parcel with complete clearance information', async () => {

@@ -40,6 +40,9 @@ REMOTE_PARTIAL="/tmp/${IMAGE_NAME}.${IMAGE_SHA:0:16}.partial"
 REMOTE_FINAL="/tmp/${IMAGE_NAME}"
 echo "Image archive: ${IMAGE_BYTES} bytes"
 echo 'Checking server resources before upload'
+# Check before sending another archive; allow four compressed archive sizes
+# for transfer/import overhead, in addition to the script's 2GiB reserve.
+remote "bash -s -- /tmp '$((IMAGE_BYTES * 4))'" < scripts/wms-disk-check.sh
 remote "df -h /tmp; free -m; docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}'" </dev/null
 
 (

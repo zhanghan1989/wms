@@ -1090,15 +1090,14 @@ export class RakutenRmsApiService {
             if (plan.action === "manual_action") {
               await this.recordXiyaManualAction(tx, plan, now);
               counters.manualActions += 1;
-            } else if (plan.action === "frozen" && plan.existing?.xiyaExportedAt) {
-              await tx.rakutenOrderRecord.update({
-                where: { deletedAt: null, id: plan.existing.id },
-                data: { rmsLastSyncedAt: now },
-              });
             }
             continue;
           }
           const snapshot = await this.applyOrderPlan(tx, connection, plan, now);
+          if (!snapshot) {
+            counters.unchanged += 1;
+            continue;
+          }
           snapshots.push(snapshot);
           if (plan.action === "create") counters.created += 1;
           else if (plan.action === "update" && plan.changedFields.length === 0) counters.unchanged += 1;
@@ -1708,13 +1707,19 @@ export class RakutenRmsApiService {
     connection: RakutenRmsConnection & { shop: { id: bigint; name: string } },
     plan: SyncPlan,
     syncedAt: Date,
-  ): Promise<SyncChangeSnapshot> {
+  ): Promise<SyncChangeSnapshot | null> {
     const data = await this.buildOrderWriteData(db, connection, plan.item, plan.existing, syncedAt);
     if (plan.existing) {
+      // Keep meaningful payload/identity changes even when no business column
+      // changed. A polling timestamp alone must not rewrite the wide order row
+      // or create a full rollback snapshot.
+      const changed = this.changedOrderFields(plan.existing, data).filter((key) => key !== 'rmsLastSyncedAt');
+      if (!changed.length) return null;
+      const patch = Object.fromEntries(changed.map((key) => [key, data[key as keyof typeof data]]));
       const before = this.snapshotOrderRecord(plan.existing);
       const updated = await db.rakutenOrderRecord.update({
         where: { deletedAt: null, id: plan.existing.id },
-        data,
+        data: { ...patch, rmsLastSyncedAt: syncedAt },
       });
       return {
         action: "updated",
@@ -1786,9 +1791,8 @@ export class RakutenRmsApiService {
           _wmsDeletedItemsAt: (existing!.rawPayload as Prisma.JsonObject)._wmsDeletedItemsAt,
         } : {}),
       }),
-      // csvImportedAt is the first time this record entered WMS. Re-syncing an
-      // existing RMS item must only advance rmsLastSyncedAt; otherwise the UI's
-      // "导入时间" changes whenever Rakuten returns the order again.
+      // The connection holds the latest successful poll. Row-level timestamps
+      // advance only when data is persisted; the first import time is immutable.
       csvImportedAt: existing?.csvImportedAt ?? syncedAt,
       rmsLastSyncedAt: syncedAt,
     };
@@ -1920,10 +1924,6 @@ export class RakutenRmsApiService {
   private async recordXiyaManualAction(db: Prisma.TransactionClient, plan: SyncPlan, detectedAt: Date): Promise<void> {
     if (!plan.existing || !plan.manualActionType || !plan.observedHash) return;
     if (plan.existing.rmsManualActionObservedHash === plan.observedHash) {
-      await db.rakutenOrderRecord.update({
-        where: { deletedAt: null, id: plan.existing.id },
-        data: { rmsLastSyncedAt: detectedAt },
-      });
       return;
     }
     await db.rakutenOrderRecord.update({
@@ -1944,7 +1944,14 @@ export class RakutenRmsApiService {
   private comparableValue(value: unknown): string {
     if (value instanceof Date) return value.toISOString();
     if (typeof value === "bigint") return value.toString();
-    if (value && typeof value === "object") return JSON.stringify(value);
+    if (value && typeof value === "object") return JSON.stringify(value, (_key, item) => {
+      // MySQL normalizes JSON object key order. Compare its content rather than
+      // rewriting a payload just because the API serialized keys differently.
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        return Object.fromEntries(Object.keys(item).sort().map((key) => [key, item[key]]));
+      }
+      return item;
+    });
     return String(value ?? "");
   }
 

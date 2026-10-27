@@ -1,0 +1,10 @@
+[Unit]
+Description=Check WMS storage every hour
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

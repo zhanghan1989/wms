@@ -223,11 +223,17 @@ export class BackupsService implements OnModuleInit {
     const names = await readdir(this.backupDir);
     const zipNames = names.filter((name) => name.toLowerCase().endsWith('.zip'));
     if (!zipNames.length) return;
+    const records = await this.prisma.backupRecord.findMany({
+      where: { fileName: { in: zipNames } }, select: { fileName: true, sizeBytes: true, hasFile: true, fileDeletedAt: true },
+    });
+    const byName = new Map(records.map((record) => [record.fileName, record]));
 
     await Promise.all(
       zipNames.map(async (fileName) => {
         const filePath = join(this.backupDir, fileName);
         const fileStat = await stat(filePath);
+        const existing = byName.get(fileName);
+        if (existing?.hasFile && existing.sizeBytes === BigInt(fileStat.size) && existing.fileDeletedAt === null) return;
         await this.prisma.backupRecord.upsert({
           where: { fileName },
           create: {

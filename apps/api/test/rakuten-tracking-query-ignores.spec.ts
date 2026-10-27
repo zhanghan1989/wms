@@ -20,9 +20,10 @@ function fixture() {
       upsert: jest.fn(async ({ where, create, update }: any) => { const r = ignores.get(where.trackingNo); ignores.set(where.trackingNo, r ? { ...r, ...update } : create); }),
       updateMany: jest.fn(async ({ where, data }: any) => { let count = 0; for (const [no, r] of ignores) if (where.trackingNo.in.includes(no) && r.isActive) { ignores.set(no, { ...r, ...data }); count++; } return { count }; }),
     },
+    rakutenTrackingCheck: { findMany: jest.fn().mockResolvedValue([]), updateMany: jest.fn() },
     rakutenOrderRecord: {
       findMany: jest.fn(async ({ where, distinct }: any) => {
-        let result = rows.filter(r => r.deletedAt === null && (!where.dispatchMode || where.dispatchMode.in.includes(r.dispatchMode))
+        let result = rows.filter(r => r.deletedAt === null && (!where.id?.in || where.id.in.includes(r.id)) && (!where.dispatchMode || where.dispatchMode.in.includes(r.dispatchMode))
           && (!where.trackingError || Boolean(r.trackingError))
           && (!where.shipmentNo?.in || where.shipmentNo.in.includes(r.shipmentNo))
           && (!where.shipmentNo?.notIn || !where.shipmentNo.notIn.includes(r.shipmentNo)));
@@ -31,7 +32,9 @@ function fixture() {
       }),
       updateMany: jest.fn(),
     },
-    $queryRaw: jest.fn(async (sql: any) => sql.sql.includes('GROUP BY')
+    $queryRaw: jest.fn(async (sql: any) => sql.sql.includes('MIN(r.id)')
+      ? [...new Map(eligible().map(r => [r.shipmentNo, r])).values()].map(r => ({ id: r.id }))
+      : sql.sql.includes('GROUP BY')
       ? [...new Set(eligible().map(r => r.shipmentNo))].map(trackingNo => ({ trackingNo }))
       : [{ count: BigInt(new Set(eligible().map(r => r.shipmentNo)).size) }]),
     $transaction: jest.fn(async (work: any) => work(db)),
@@ -70,6 +73,9 @@ describe('Rakuten tracking failure review and ignores', () => {
     expect(ignored.items[0]).toMatchObject({ trackingNo: 'OLD-A', recordCount: 2, error: '跟踪号码不存在', ignoredBy: 'operator' });
     await f.service.updateRakutenTrackingQueryIgnores({ trackingNos: ['OLD-A'], ignored: false }, 'restorer');
     expect(f.ignores.get('OLD-A')).toMatchObject({ isActive: false, restoredBy: 'restorer', restoredAt: expect.any(Date) });
+    expect(f.db.rakutenTrackingCheck.updateMany).toHaveBeenCalledWith({
+      where: { trackingNo: { in: ['OLD-A'] } }, data: { nextCheckAt: expect.any(Date), consecutiveFailures: 0 },
+    });
     expect(await f.service.syncRakutenTrackingStatuses()).toMatchObject({ trackingNoCount: 2, failedCount: 2 });
     expect(f.rows).toEqual(before);
     expect(f.db.rakutenOrderRecord.updateMany).not.toHaveBeenCalled();

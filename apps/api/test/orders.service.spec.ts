@@ -968,7 +968,8 @@ describe('Rakuten customs clearance node date', () => {
 
   it('keeps the clearance date separate from a later delivered status', async () => {
     const updateMany = jest.fn().mockResolvedValue({ count: 1 });
-    const service = new OrdersService({ rakutenOrderRecord: { updateMany } } as any);
+    const tx = { rakutenOrderRecord: { updateMany }, rakutenTrackingCheck: { findUnique: jest.fn().mockResolvedValue(null), upsert: jest.fn() } };
+    const service = new OrdersService({ ...tx, $transaction: (work: any) => work(tx) } as any);
     jest.spyOn(service as any, 'getUofTrackingConfig').mockReturnValue({
       apiUrl: 'https://tracking.example.test', appToken: 'test', appKey: 'test',
     });

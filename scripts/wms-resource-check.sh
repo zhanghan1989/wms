@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+bash "$(dirname "$0")/wms-disk-check.sh" "${WMS_DEPLOY_DISK_PATH:-/var/lib/docker}"
 # Fail before starting another memory-intensive deployment stage.
 available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
 minimum_kib=${WMS_DEPLOY_MIN_AVAILABLE_KIB:-307200}
