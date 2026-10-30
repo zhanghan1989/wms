@@ -272,7 +272,7 @@ describe('Rakuten store dashboard', () => {
         shipmentNo: 'TRACK', trackingIsDelivered: false, salesAmount: 0,
       }],
       inTransit: [
-        { productId: 'RB-1', inTransitQty: 20, expectedArrivalDate: '2026-08-31' },
+        { productId: 'RB-1', orderNo: 'PRE-001', inTransitQty: 20, expectedArrivalDate: '2026-08-31' },
         { productId: 'RB-1', inTransitQty: 10, expectedArrivalDate: '2026-08-31' },
         { productId: 'RB-1', inTransitQty: 10, expectedArrivalDate: '2026-09-30' },
         { productId: 'RB-1', inTransitQty: 7 },
@@ -283,6 +283,7 @@ describe('Rakuten store dashboard', () => {
       inTransitQty: 55, eligibleInTransitQty: 40, unverifiedInTransitQty: 7,
       laterInTransitQty: 8, remainingQtyAtArrival: 5, shortageQtyBeforeArrival: 0,
       expectedStockoutDate: null, suggestedFactoryQty: 0,
+      transitSources: expect.arrayContaining([{ orderNo: 'PRE-001', qty: 20, expectedArrivalDate: '2026-08-31' }]),
     });
   });
 
@@ -398,7 +399,7 @@ describe('Rakuten store dashboard', () => {
           status: { in: ['waiting_upload', 'waiting_inbound'] },
         },
       }),
-      select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true, createdAt: true } } },
+      select: { productId: true, qty: true, order: { select: { orderNo: true, expectedArrivalDate: true, createdAt: true } } },
     }));
     expect(result.sourceSummary.includesLegacyData).toBe(includesLegacyData);
     expect(result.dashboard.factoryRecommendations.rows.find((row: any) => row.productId === 'BODY')).toMatchObject({

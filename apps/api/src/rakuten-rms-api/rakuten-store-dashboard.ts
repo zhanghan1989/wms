@@ -25,6 +25,7 @@ export interface RakutenDashboardComboRow {
 export interface RakutenDashboardInTransitRow extends InboundArrivalDates {
   productId: string;
   inTransitQty: number;
+  orderNo?: string;
 }
 
 const CANCELLED_STATUSES = new Set(['800', '900']);
@@ -248,6 +249,9 @@ export function buildRakutenStoreDashboard(input: {
       reorderPointQty: Math.round(reorderPointQty * 1000) / 1000,
       restockRequired,
       eligibleInTransitQty,
+      transitSources: (inTransitLookup.get(normalize(row.productId)) ?? []).filter((item) => nonNegative(item.inTransitQty) > 0).map((item) => ({
+        orderNo: item.orderNo ?? '', qty: nonNegative(item.inTransitQty), expectedArrivalDate: resolveInboundExpectedArrivalDate(item),
+      })),
       unverifiedInTransitQty,
       overdueInTransitQty,
       requiresTransitVerification,

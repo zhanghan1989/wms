@@ -333,7 +333,7 @@ export class RakutenRmsApiService {
             status: { in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound] },
           },
         },
-        select: { productId: true, qty: true, order: { select: { expectedArrivalDate: true, createdAt: true } } },
+        select: { productId: true, qty: true, order: { select: { orderNo: true, expectedArrivalDate: true, createdAt: true } } },
       })
       : [];
     const preregisteredOrders = planningProductIds.length
@@ -344,7 +344,7 @@ export class RakutenRmsApiService {
           plannedItems: { some: { productId: { in: planningProductIds } } },
         },
         select: {
-          expectedArrivalDate: true, createdAt: true,
+          orderNo: true, expectedArrivalDate: true, createdAt: true,
           plannedItems: { where: { productId: { in: planningProductIds } }, select: { productId: true, qty: true } },
           items: { where: { status: BatchInboundItemStatus.confirmed, productId: { in: planningProductIds } }, select: { productId: true, qty: true } },
         },
@@ -356,7 +356,7 @@ export class RakutenRmsApiService {
       for (const item of order.items) confirmed.set(item.productId, (confirmed.get(item.productId) ?? 0) + item.qty);
       return order.plannedItems.map((item) => ({
         productId: item.productId, qty: Math.max(0, item.qty - (confirmed.get(item.productId) ?? 0)),
-        order: { expectedArrivalDate: order.expectedArrivalDate, createdAt: order.createdAt },
+        order: { orderNo: order.orderNo, expectedArrivalDate: order.expectedArrivalDate, createdAt: order.createdAt },
       }));
     });
     const selectedShop = {
@@ -398,6 +398,7 @@ export class RakutenRmsApiService {
         combos,
         inTransit: [...inTransitRows, ...preregisteredTransit].map((row) => ({
           productId: row.productId,
+          orderNo: row.order.orderNo,
           inTransitQty: Number(row.qty ?? 0),
           registeredAt: row.order.createdAt,
           expectedArrivalDate: row.order.expectedArrivalDate?.toISOString().slice(0, 10) ?? null,

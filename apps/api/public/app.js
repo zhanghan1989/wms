@@ -2987,7 +2987,7 @@ function renderRakutenFactoryRecommendations(rows) {
           ${field('已登记在途', number(row.inTransitQty))}${field('45天内到仓', number(row.eligibleInTransitQty))}
           ${field('待核实在途（含逾期）', number(row.unverifiedInTransitQty))}${field('其中逾期', number(row.overdueInTransitQty))}
           ${field('45天后到仓', number(row.laterInTransitQty))}
-        </dl></section>
+        </dl><div>${(row.transitSources || []).map((source) => `<div>${escapeHtml(source.orderNo || '未提供单号')}：${number(source.qty)} 件，预计 ${escapeHtml(source.expectedArrivalDate || '待核实')}</div>`).join('') || '<span class="muted">暂无在途来源</span>'}</div></section>
         <section><h4>备货测算</h4><dl>
           ${field('备货判断库存（含在途）', number(row.planningStockQty, 3))}
           ${field('补货触发需求（45天）', number(row.reorderPointQty, 3))}
@@ -10709,7 +10709,7 @@ function renderBatchInboundOrders() {
           order.id,
         )}">查看</button>`,
       ];
-      if (order.isPreRegistered && ['waiting_upload', 'waiting_inbound'].includes(order.status)) {
+      if (order.isPreRegistered && order.hasUnpacked && ['waiting_upload', 'waiting_inbound'].includes(order.status)) {
         actions.push(`<button class="tiny-btn danger" data-action="batchInboundCancelPlan" data-order-id="${escapeHtml(order.id)}">取消剩余在途</button>`);
         actions.push(`<button class="tiny-btn" data-action="batchInboundTransferUnpacked" data-order-id="${escapeHtml(order.id)}">未装箱转下一批</button>`);
       }
@@ -20167,19 +20167,31 @@ function bindDelegates() {
           });
         }
       } else if (action === "batchInboundCancelPlan") {
-        const ok = await openActionConfirmModal('取消此批次剩余在途后，将不再抵扣备货需求。已入库库存和历史记录保留。', '取消剩余在途', '确认取消');
+        const detail = await request(`/batch-inbound/orders/${orderId}`);
+        const unpacked = (detail.plannedItems || []).filter((item) => item.unpackedQty > 0);
+        if (!unpacked.length) throw new Error('没有未装箱数量可取消');
+        const quantities = unpacked.map((item) => `${item.productId}：预登记 ${item.qty}，已装箱 ${item.boxedQty}，取消 ${item.unpackedQty}`).join('；');
+        const ok = await openActionConfirmModal(`将取消尚未记入箱号的数量：${quantities}。已记入箱号的数量保留。`, '取消剩余在途', '确认取消');
         if (!ok) return;
-        await request(`/batch-inbound/orders/${orderId}/cancel-plan`, { method: 'POST' });
+        await request(`/batch-inbound/orders/${orderId}/cancel-plan`, { method: 'POST', body: JSON.stringify({ expectedUpdatedAt: detail.updatedAt }) });
         await loadBatchInboundOrders({ refreshDetail: false });
         if (state.selectedBatchInboundOrderId === orderId) await loadBatchInboundOrderDetail(orderId, { silent: true });
-        showToast('剩余在途已取消');
+        showToast('未装箱的在途数量已取消');
       } else if (action === "batchInboundTransferUnpacked") {
-        const ok = await openActionConfirmModal('将此批次各产品尚未填入箱号的数量转入新建的预登记单。已导入箱号及其数量保留在原单，新单预计到仓日期请核对。', '未装箱转下一批', '确认转移');
+        const detail = await request(`/batch-inbound/orders/${orderId}`);
+        const unpacked = (detail.plannedItems || []).filter((item) => item.unpackedQty > 0);
+        if (!unpacked.length) throw new Error('没有未装箱数量可转移');
+        const originalDate = detail.expectedArrivalDate || detail.defaultExpectedArrivalDate || '';
+        const date = window.prompt(`原单预计到仓：${originalDate || '未填写'}。请输入新批次实际预计到仓日期（YYYY-MM-DD）：`, originalDate);
+        if (date === null) return;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) throw new Error('请按 YYYY-MM-DD 格式填写新批次预计到仓日期');
+        const quantities = unpacked.map((item) => `${item.productId}：预登记 ${item.qty}，原单保留 ${item.boxedQty}，转出 ${item.unpackedQty}`).join('；');
+        const ok = await openActionConfirmModal(`新批次预计到仓：${date.trim()}。${quantities}。`, '未装箱转下一批', '确认转移');
         if (!ok) return;
-        const result = await request(`/batch-inbound/orders/${orderId}/transfer-unpacked`, { method: 'POST' });
+        const result = await request(`/batch-inbound/orders/${orderId}/transfer-unpacked`, { method: 'POST', body: JSON.stringify({ expectedArrivalDate: date.trim(), expectedUpdatedAt: detail.updatedAt }) });
         await loadBatchInboundOrders({ refreshDetail: false });
         await loadBatchInboundOrderDetail(result.id);
-        showToast(`已转入新批次 ${result.orderNo}`);
+        await openActionConfirmModal(`已转入 ${result.orderNo}，预计到仓 ${date.trim()}。${quantities}。`, '转移完成', '知道了', { showCancel: false });
       } else if (action === "batchInboundDeleteOrder") {
         const orderNo = button.dataset.orderNo || orderId;
         const ok = await openDeleteConfirmModal(

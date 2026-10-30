@@ -130,10 +130,28 @@ describe('pre-registration quantities', () => {
   it('cancels remaining transit without changing received inventory', async () => {
     const { service, tx } = setup(true);
     const result = await service.cancelPlan('1', 2n);
-    expect(result.status).toBe('void');
+    expect(result.status).toBe('confirmed');
+    expect(result.plannedItems[0]).toMatchObject({ qty: 20, unpackedQty: 0, inTransitQty: 0 });
     expect(result.items[0].status).toBe('confirmed');
     expect(tx.batchInboundItem.deleteMany).not.toHaveBeenCalled();
     expect(tx.masterProductBoxInventory.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('retains packed pending quantities in transit when cancelling unpacked quantities', async () => {
+    const { service, order } = setup(true);
+    order().items[0].status = 'pending';
+    const result = await service.cancelPlan('1', 2n);
+    expect(result.status).toBe('waiting_inbound');
+    expect(result.plannedItems[0]).toMatchObject({ qty: 20, unpackedQty: 0, inTransitQty: 20 });
+    expect(result.items[0].status).toBe('pending');
+  });
+
+  it('voids a wholly unpacked order after cancelling its quantities', async () => {
+    const { service, order } = setup(true);
+    order().items = [];
+    const result = await service.cancelPlan('1', 2n);
+    expect(result.status).toBe('void');
+    expect(result.plannedItems).toEqual([]);
   });
 
   it('moves only unpacked quantities to a new order and keeps received boxes', async () => {
@@ -143,14 +161,22 @@ describe('pre-registration quantities', () => {
       plannedItems: [{ productId: 'P1', qty: 60 }],
       items: [{ id: 10n, productId: 'P1', qty: 20, boxCode: '001', status: 'confirmed' }],
     } : null));
-    const result = await service.transferUnpacked('1', 2n);
+    const result = await service.transferUnpacked('1', 2n, undefined, '2026-12-10');
     expect(result.orderNo).toBe('PRE-PO1-NEXT-1');
+    expect(tx.batchInboundOrder.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ expectedArrivalDate: new Date('2026-12-10T00:00:00.000Z') }) }));
     expect(result.plannedItems[0]).toMatchObject({ qty: 40, inTransitQty: 40 });
     expect(tx.batchInboundOrder.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
       status: 'confirmed', plannedItems: { deleteMany: {}, create: [{ productId: 'P1', qty: 20 }] },
     }) }));
     expect(tx.batchInboundItem.deleteMany).not.toHaveBeenCalled();
     expect(audit.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('requires a valid arrival date before transferring', async () => {
+    const { service, tx } = setup(true);
+    await expect(service.transferUnpacked('1', 2n)).rejects.toThrow('请填写新批次预计到仓日期');
+    await expect(service.transferUnpacked('1', 2n, undefined, '2026-02-30')).rejects.toThrow('预计到仓日期无效');
+    expect(tx.batchInboundOrder.update).not.toHaveBeenCalled();
   });
 
   it('updates the order number and records both values without changing boxes', async () => {
@@ -161,5 +187,21 @@ describe('pre-registration quantities', () => {
     expect(audit.create).toHaveBeenCalledWith(expect.objectContaining({ beforeData: { orderNo: 'PRE-PO1' }, afterData: { orderNo: 'PRE-PO2' } }));
     expect(tx.batchInboundItem.deleteMany).not.toHaveBeenCalled();
     await expect(service.updateOrderNo('1', '   ', 2n)).rejects.toThrow('不能为空');
+  });
+
+  it('removes fully transferred products and deducts partially transferred quantities from the original order', async () => {
+    const { service, tx } = setup(true);
+    tx.batchInboundOrder.findUnique.mockImplementation(({ where }: any) => Promise.resolve(where.id ? {
+      id: 1n, orderNo: 'PRE-PO1', isPreRegistered: true, status: 'waiting_inbound',
+      plannedItems: [{ productId: 'P1', qty: 60 }, { productId: 'P2', qty: 30 }],
+      items: [{ id: 10n, productId: 'P1', qty: 20, boxCode: '001', status: 'pending' }],
+    } : null));
+    const result = await service.transferUnpacked('1', 2n, undefined, '2026-12-10');
+    expect(tx.batchInboundOrder.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      plannedItems: { deleteMany: {}, create: [{ productId: 'P1', qty: 20 }] },
+    }) }));
+    expect(result.plannedItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ productId: 'P1', qty: 40 }), expect.objectContaining({ productId: 'P2', qty: 30 }),
+    ]));
   });
 });

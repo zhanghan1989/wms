@@ -104,19 +104,22 @@ export class BatchInboundController {
   @Post('orders/:id/cancel-plan')
   async cancelPlan(
     @Param('id') id: string,
+    @Body('expectedUpdatedAt') expectedUpdatedAt: string,
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.batchInboundService.cancelPlan(id, user.id, req.requestId);
+    return this.batchInboundService.cancelPlan(id, user.id, req.requestId, expectedUpdatedAt);
   }
 
   @Post('orders/:id/transfer-unpacked')
   async transferUnpacked(
     @Param('id') id: string,
+    @Body('expectedArrivalDate') expectedArrivalDate: string,
+    @Body('expectedUpdatedAt') expectedUpdatedAt: string,
     @CurrentUser() user: AuthUser,
     @Req() req: { requestId?: string },
   ): Promise<unknown> {
-    return this.batchInboundService.transferUnpacked(id, user.id, req.requestId);
+    return this.batchInboundService.transferUnpacked(id, user.id, req.requestId, expectedArrivalDate, expectedUpdatedAt);
   }
 
   @Post('orders/collect')
