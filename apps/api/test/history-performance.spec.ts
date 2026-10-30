@@ -40,6 +40,26 @@ describe('history query optimizations', () => {
     expect(result.pendingCount).toBe(1);
   });
 
+  it('calculates unpacked availability using grouped quantities for active plans', async () => {
+    const base = { status: 'waiting_inbound', isPreRegistered: true, expectedBoxCount: 0,
+      rangeStart: 0, rangeEnd: 0, collectedBoxCodes: [], createdAt: new Date(), updatedAt: new Date(),
+      uploadedFileName: null, creator: { id: 2n, username: 'user' } };
+    const findMany = jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { ...base, id: 1n, orderNo: 'PRE-1' }, { ...base, id: 2n, orderNo: 'PRE-2' },
+    ]);
+    const groupBy = jest.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { orderId: 1n, productId: 'P1', _sum: { qty: 3 } },
+      { orderId: 2n, productId: 'P1', _sum: { qty: 5 } },
+    ]);
+    const service = new BatchInboundService({ batchInboundOrder: { findMany, count: jest.fn().mockResolvedValue(2) },
+      batchInboundItem: { groupBy }, batchInboundPlannedItem: { findMany: jest.fn().mockResolvedValue([
+        { orderId: 1n, productId: 'P1', qty: 5 }, { orderId: 2n, productId: 'P1', qty: 5 },
+      ]) } } as never, {} as never);
+    const result = await service.list('1');
+    expect(result.items.map((item: any) => item.hasUnpacked)).toEqual([true, false]);
+    expect(findMany.mock.calls[0][0].include.items).toBeUndefined();
+  });
+
   it('shares dashboard calculations and invalidates cached results', async () => {
     const service = new AmazonSpApiService({} as never, {} as never, {} as never);
     const build = jest.spyOn(service as any, 'buildStoreDashboard').mockResolvedValue({ dashboard: {} });

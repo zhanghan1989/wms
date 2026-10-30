@@ -108,8 +108,7 @@ export class BatchInboundService {
   async list(pageRaw?: string): Promise<any> {
     const page = Math.max(1, Math.floor(Number(pageRaw)) || 1);
     const active = { status: { in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound] } };
-    const include = { creator: { select: { id: true, username: true } }, plannedItems: true,
-      items: { select: { productId: true, qty: true, boxCode: true, status: true } } };
+    const include = { creator: { select: { id: true, username: true } } };
     const history = await this.prisma.batchInboundOrder.findMany({
       ...(pageRaw ? { where: { NOT: active }, skip: (page - 1) * 30, take: 31 } : {}),
       include, orderBy: { id: 'desc' },
@@ -119,12 +118,19 @@ export class BatchInboundService {
     const counts = rows.length ? await this.prisma.batchInboundItem.groupBy({
       by: ['orderId', 'status'], where: { orderId: { in: rows.map(row => row.id) } }, _count: { _all: true },
     }) : [];
+    const activePlanIds = rows.filter((row) => row.isPreRegistered && (row.status === BatchInboundOrderStatus.waiting_upload || row.status === BatchInboundOrderStatus.waiting_inbound)).map((row) => row.id);
+    const [plans, boxed] = activePlanIds.length ? await Promise.all([
+      this.prisma.batchInboundPlannedItem.findMany({ where: { orderId: { in: activePlanIds } }, select: { orderId: true, productId: true, qty: true } }),
+      this.prisma.batchInboundItem.groupBy({ by: ['orderId', 'productId'], where: { orderId: { in: activePlanIds } }, _sum: { qty: true } }),
+    ]) : [[], []];
+    const boxedByProduct = new Map(boxed.map((item) => [`${item.orderId}:${item.productId}`, item._sum.qty ?? 0]));
+    const hasUnpackedIds = new Set(plans.filter((item) => item.qty > (boxedByProduct.get(`${item.orderId}:${item.productId}`) ?? 0)).map((item) => item.orderId));
     const items = rows.map(order => {
       const groups = counts.filter(row => row.orderId === order.id);
       const itemCount = groups.reduce((sum, row) => sum + row._count._all, 0);
       const pendingCount = groups.find(row => row.status === BatchInboundItemStatus.pending)?._count._all || 0;
       return { ...this.toOrderSummary({ ...order, items: [] }, { itemCount, pendingCount }),
-        hasUnpacked: order.isPreRegistered && summarizeInboundPlan(order.plannedItems, order.items).some((item) => item.unpackedQty > 0) };
+        hasUnpacked: hasUnpackedIds.has(order.id) };
     });
     return pageRaw ? { items, hasMore: history.length > 30, pendingCount: await this.prisma.batchInboundOrder.count({ where: active }) } : items;
   }
