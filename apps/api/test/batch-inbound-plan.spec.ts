@@ -135,4 +135,31 @@ describe('pre-registration quantities', () => {
     expect(tx.batchInboundItem.deleteMany).not.toHaveBeenCalled();
     expect(tx.masterProductBoxInventory.updateMany).not.toHaveBeenCalled();
   });
+
+  it('moves only unpacked quantities to a new order and keeps received boxes', async () => {
+    const { service, tx, audit } = setup(true);
+    tx.batchInboundOrder.findUnique.mockImplementation(({ where }: any) => Promise.resolve(where.id ? {
+      id: 1n, orderNo: 'PRE-PO1', isPreRegistered: true, status: 'waiting_inbound',
+      plannedItems: [{ productId: 'P1', qty: 60 }],
+      items: [{ id: 10n, productId: 'P1', qty: 20, boxCode: '001', status: 'confirmed' }],
+    } : null));
+    const result = await service.transferUnpacked('1', 2n);
+    expect(result.orderNo).toBe('PRE-PO1-NEXT-1');
+    expect(result.plannedItems[0]).toMatchObject({ qty: 40, inTransitQty: 40 });
+    expect(tx.batchInboundOrder.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      status: 'confirmed', plannedItems: { deleteMany: {}, create: [{ productId: 'P1', qty: 20 }] },
+    }) }));
+    expect(tx.batchInboundItem.deleteMany).not.toHaveBeenCalled();
+    expect(audit.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('updates the order number and records both values without changing boxes', async () => {
+    const { service, tx, audit } = setup(true);
+    const result = await service.updateOrderNo('1', '  PRE-PO2  ', 2n);
+    expect(result.orderNo).toBe('PRE-PO2');
+    expect(result.items[0].boxCode).toBe('001');
+    expect(audit.create).toHaveBeenCalledWith(expect.objectContaining({ beforeData: { orderNo: 'PRE-PO1' }, afterData: { orderNo: 'PRE-PO2' } }));
+    expect(tx.batchInboundItem.deleteMany).not.toHaveBeenCalled();
+    await expect(service.updateOrderNo('1', '   ', 2n)).rejects.toThrow('不能为空');
+  });
 });

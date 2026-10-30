@@ -10615,7 +10615,7 @@ function renderBatchInboundOrderNoEditor({ order, kind, value, placeholder }) {
   const safeOrderId = escapeHtml(order.id);
   const inputId = `${kind}OrderNo-${safeOrderId}`;
   const hasValue = Boolean(String(value || "").trim());
-  const saveAction = kind === "domestic" ? "batchInboundSaveDomesticOrderNo" : "batchInboundSaveSeaOrderNo";
+  const saveAction = kind === "inbound" ? "batchInboundSaveOrderNo" : kind === "domestic" ? "batchInboundSaveDomesticOrderNo" : "batchInboundSaveSeaOrderNo";
   return `
     <div class="batch-no-editor">
       <input
@@ -10711,6 +10711,7 @@ function renderBatchInboundOrders() {
       ];
       if (order.isPreRegistered && ['waiting_upload', 'waiting_inbound'].includes(order.status)) {
         actions.push(`<button class="tiny-btn danger" data-action="batchInboundCancelPlan" data-order-id="${escapeHtml(order.id)}">取消剩余在途</button>`);
+        actions.push(`<button class="tiny-btn" data-action="batchInboundTransferUnpacked" data-order-id="${escapeHtml(order.id)}">未装箱转下一批</button>`);
       }
       if (canDeleteBatchInboundOrder(order)) {
         actions.push(`<button class="tiny-btn danger" data-action="batchInboundDeleteOrder" data-order-id="${escapeHtml(
@@ -10719,7 +10720,7 @@ function renderBatchInboundOrders() {
       }
       return `
         <tr>
-          <td>${escapeHtml(order.orderNo)}</td>
+          <td>${renderBatchInboundOrderNoEditor({ order, kind: "inbound", value: order.orderNo, placeholder: "请输入入库单号" })}</td>
           <td>${escapeHtml(getBatchInboundStatusText(order.status, order))}</td>
           <td>${escapeHtml(formatBatchRange(order))}</td>
           <td>
@@ -20144,6 +20145,14 @@ function bindDelegates() {
           await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId, { silent: true,
           });
         }
+      } else if (action === "batchInboundSaveOrderNo") {
+        const input = $(button.dataset.inputId || "");
+        const orderNo = String(input?.value || "").trim();
+        if (!orderNo || orderNo.length > 64) throw new Error("入库单号不能为空且不能超过64个字符");
+        await request(`/batch-inbound/orders/${orderId}/order-no`, { method: 'POST', body: JSON.stringify({ orderNo }) });
+        await loadBatchInboundOrders({ refreshDetail: false });
+        if (String(state.selectedBatchInboundOrderId) === String(orderId)) await loadBatchInboundOrderDetail(orderId, { silent: true });
+        showToast("入库单号已更新");
       } else if (action === "batchInboundSaveSeaOrderNo") {
         const input = $(button.dataset.inputId || "");
         const seaOrderNo = String(input?.value || "").trim();
@@ -20164,6 +20173,13 @@ function bindDelegates() {
         await loadBatchInboundOrders({ refreshDetail: false });
         if (state.selectedBatchInboundOrderId === orderId) await loadBatchInboundOrderDetail(orderId, { silent: true });
         showToast('剩余在途已取消');
+      } else if (action === "batchInboundTransferUnpacked") {
+        const ok = await openActionConfirmModal('将此批次各产品尚未填入箱号的数量转入新建的预登记单。已导入箱号及其数量保留在原单，新单预计到仓日期请核对。', '未装箱转下一批', '确认转移');
+        if (!ok) return;
+        const result = await request(`/batch-inbound/orders/${orderId}/transfer-unpacked`, { method: 'POST' });
+        await loadBatchInboundOrders({ refreshDetail: false });
+        await loadBatchInboundOrderDetail(result.id);
+        showToast(`已转入新批次 ${result.orderNo}`);
       } else if (action === "batchInboundDeleteOrder") {
         const orderNo = button.dataset.orderNo || orderId;
         const ok = await openDeleteConfirmModal(

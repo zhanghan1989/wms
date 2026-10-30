@@ -1,5 +1,11 @@
 import { IsString, Length, Matches } from 'class-validator';
 
+export class UpdateBatchOrderNoDto {
+  @IsString()
+  @Length(1, 64)
+  orderNo!: string;
+}
+
 export class UpdateDomesticOrderNoDto {
   @IsString()
   @Length(1, 128)

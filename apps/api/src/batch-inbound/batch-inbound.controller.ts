@@ -25,6 +25,7 @@ import { CollectBatchInboundDto } from './dto/collect-batch-inbound.dto';
 import { ConfirmBatchInboundDto } from './dto/confirm-batch-inbound.dto';
 import {
   UpdateDomesticOrderNoDto,
+  UpdateBatchOrderNoDto,
   UpdateExpectedArrivalDateDto,
   UpdateSeaOrderNoDto,
 } from './dto/update-logistics-order-no.dto';
@@ -109,6 +110,15 @@ export class BatchInboundController {
     return this.batchInboundService.cancelPlan(id, user.id, req.requestId);
   }
 
+  @Post('orders/:id/transfer-unpacked')
+  async transferUnpacked(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.batchInboundService.transferUnpacked(id, user.id, req.requestId);
+  }
+
   @Post('orders/collect')
   async collect(
     @Body() payload: CollectBatchInboundDto,
@@ -136,6 +146,14 @@ export class BatchInboundController {
       user.id,
       req.requestId,
     );
+  }
+
+  @Post('orders/:id/order-no')
+  async updateOrderNo(
+    @Param('id') id: string, @Body() payload: UpdateBatchOrderNoDto,
+    @CurrentUser() user: AuthUser, @Req() req: { requestId?: string },
+  ): Promise<unknown> {
+    return this.batchInboundService.updateOrderNo(id, payload.orderNo, user.id, req.requestId);
   }
 
   @Post('orders/:id/domestic-order-no')

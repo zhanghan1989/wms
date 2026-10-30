@@ -258,6 +258,69 @@ export class BatchInboundService {
     });
   }
 
+  async updateOrderNo(idRaw: string, orderNoRaw: string, operatorId: bigint, requestId?: string): Promise<BatchInboundOrderDetail> {
+    const id = parseId(idRaw, 'batchInboundOrderId');
+    const orderNo = typeof orderNoRaw === 'string' ? orderNoRaw.trim() : '';
+    if (!orderNo || orderNo.length > 64) throw new BadRequestException('入库单号不能为空且不能超过64个字符');
+    return stockTransaction(this.prisma, async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM batch_inbound_orders WHERE id = ${id} FOR UPDATE`);
+      const order = await tx.batchInboundOrder.findUnique({ where: { id } });
+      if (!order) throw new NotFoundException('批量入库单不存在');
+      let saved;
+      try {
+        saved = await tx.batchInboundOrder.update({ where: { id }, data: { orderNo },
+          include: { plannedItems: true, items: true, creator: { select: { id: true, username: true } } } });
+      } catch (error) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          throw new UnprocessableEntityException('入库单号已存在');
+        }
+        throw error;
+      }
+      if (order.orderNo !== orderNo) await this.auditService.create({ db: tx, entityType: 'batch_inbound_order', entityId: id,
+        action: AuditAction.update, eventType: AuditEventType.INBOUND_ORDER_CREATED,
+        beforeData: { orderNo: order.orderNo }, afterData: { orderNo }, operatorId, requestId, remark: '修改批量入库单号' });
+      return this.toOrderDetail(saved, tx);
+    });
+  }
+
+  async transferUnpacked(idRaw: string, operatorId: bigint, requestId?: string): Promise<BatchInboundOrderDetail> {
+    const id = parseId(idRaw, 'batchInboundOrderId');
+    return stockTransaction(this.prisma, async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM batch_inbound_orders WHERE id = ${id} FOR UPDATE`);
+      const order = await tx.batchInboundOrder.findUnique({ where: { id }, include: { plannedItems: true, items: true } });
+      if (!order) throw new NotFoundException('批量入库单不存在');
+      if (!order.isPreRegistered || (order.status !== BatchInboundOrderStatus.waiting_upload && order.status !== BatchInboundOrderStatus.waiting_inbound)) {
+        throw new UnprocessableEntityException('只能转移尚未完成的预登记批次');
+      }
+      const summary = summarizeInboundPlan(order.plannedItems, order.items);
+      const moved = summary.filter((item) => item.unpackedQty > 0).map((item) => ({ productId: item.productId, qty: item.unpackedQty }));
+      if (!moved.length) throw new UnprocessableEntityException('没有未装箱数量可转移');
+      const remaining = summary.filter((item) => item.boxedQty > 0).map((item) => ({ productId: item.productId, qty: item.boxedQty }));
+      let suffix = 1;
+      let orderNo: string;
+      do {
+        const ending = `-NEXT-${suffix++}`;
+        orderNo = `${order.orderNo.slice(0, 64 - ending.length)}${ending}`;
+      } while (await tx.batchInboundOrder.findUnique({ where: { orderNo }, select: { id: true } }));
+      const sourceStatus = order.items.length === 0 ? BatchInboundOrderStatus.void
+        : order.items.every((item) => item.status === BatchInboundItemStatus.confirmed) ? BatchInboundOrderStatus.confirmed : order.status;
+      await tx.batchInboundOrder.update({ where: { id }, data: { status: sourceStatus, plannedItems: { deleteMany: {}, create: remaining } } });
+      const created = await tx.batchInboundOrder.create({
+        data: { orderNo, isPreRegistered: true, status: BatchInboundOrderStatus.waiting_upload,
+          expectedBoxCount: 0, rangeStart: 0, rangeEnd: 0, collectedBoxCodes: [], createdBy: operatorId,
+          plannedItems: { create: moved } },
+        include: { plannedItems: true, items: true, creator: { select: { id: true, username: true } } },
+      });
+      await this.auditService.create({ db: tx, entityType: 'batch_inbound_order', entityId: id, action: AuditAction.update,
+        eventType: AuditEventType.INBOUND_ORDER_CREATED, beforeData: { plannedItems: order.plannedItems.map(({ productId, qty }) => ({ productId, qty })) },
+        afterData: { status: sourceStatus, plannedItems: remaining, targetOrderNo: orderNo, transferred: moved }, operatorId, requestId, remark: '未装箱数量转入新批次' });
+      await this.auditService.create({ db: tx, entityType: 'batch_inbound_order', entityId: created.id, action: AuditAction.create,
+        eventType: AuditEventType.INBOUND_ORDER_CREATED, beforeData: null,
+        afterData: { orderNo, sourceOrderNo: order.orderNo, plannedItems: moved }, operatorId, requestId, remark: '接收原批次未装箱数量' });
+      return this.toOrderDetail(created, tx);
+    });
+  }
+
   async preregister(
     batchNo: string, buffer: Buffer, operatorId: bigint, requestId?: string, orderIdRaw?: string, expectedUpdatedAt?: string,
   ): Promise<BatchInboundOrderDetail> {
