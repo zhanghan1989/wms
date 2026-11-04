@@ -19,6 +19,11 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="${WMS_BACKUP_ROOT:-$HOME/.wms-pre-migration-backups}/company-isolation-${STAMP}-${DEPLOY_REF:-manual}"
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
+DB_BYTES="$(printf "SELECT COALESCE(SUM(data_length+index_length),0) FROM information_schema.tables WHERE table_schema='wms_v1';\n" | query)"
+[[ "$DB_BYTES" =~ ^[0-9]+$ ]] || { echo 'Unable to estimate database backup space.' >&2; exit 1; }
+# Reserve room for the SQL dump, isolated restore and temporary database files,
+# on top of the deployment's normal free-space reserve, before pausing the API.
+bash scripts/wms-disk-check.sh "$BACKUP_DIR" "$((DB_BYTES * 4 + 536870912))"
 BACKUP_FILE="$BACKUP_DIR/wms_v1-before-company-isolation.sql.gz"
 VERIFY_CONTAINER="wms-company-restore-${STAMP,,}"
 API_WAS_RUNNING="$(docker inspect --format '{{.State.Running}}' wms_api)"
