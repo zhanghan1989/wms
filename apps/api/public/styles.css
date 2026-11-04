@@ -4589,3 +4589,35 @@ body.branding-custom button:not(.ghost):not(.nav-btn) { border-color: var(--acce
 @media (max-width: 600px) {
   #companyCreateForm { grid-template-columns: 1fr; }
 }
+
+/* Keep company scope compact within the account toolbar. */
+.session-main .session-company {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.session-company select {
+  width: 180px;
+  min-width: 0;
+  max-width: 100%;
+  height: 38px;
+  padding: 6px 28px 6px 10px;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+.session-main #topLogoutBtn {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 6px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+@media (max-width: 600px) {
+  .session-main .session-company { flex: 1 1 100%; }
+  .session-company select { flex: 1; width: auto; }
+}

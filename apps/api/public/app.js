@@ -18,22 +18,18 @@ async function loadCompanyUi() {
     ? (activeCompanies.some((company) => String(company.id) === saved) ? saved
       : stored === null && activeCompanies.length === 1 ? String(activeCompanies[0].id) : "")
     : String(state.me.companyId);
-  let selector = document.getElementById("activeCompanySelect");
-  if (!selector) {
-    const label = document.createElement("label");
-    label.textContent = "业务公司 ";
-    selector = document.createElement("select");
-    selector.id = "activeCompanySelect";
-    label.append(selector);
-    document.getElementById("sessionInfo").parentElement.append(label);
+  const selector = document.getElementById("activeCompanySelect");
+  if (!selector.dataset.companyBound) {
+    selector.dataset.companyBound = "true";
     selector.addEventListener("change", () => {
       sessionStorage.setItem(`wms.company.${state.me.id}`, selector.value);
       window.location.reload();
     });
   }
   const options = companyOptions.filter((c) => c.status === 1).map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
-  selector.innerHTML = (crossCompany ? '<option value="">全部公司（处理业务前请选择公司）</option>' : "") + options;
+  selector.innerHTML = (crossCompany ? '<option value="">全部公司</option>' : "") + options;
   selector.value = activeCompanyId;
+  selector.title = activeCompanyId ? companyName(activeCompanyId) : "查看全部公司；处理业务前请选择具体公司";
   selector.disabled = !crossCompany;
   const userCompany = document.getElementById("newUserCompany");
   if (userCompany) {
