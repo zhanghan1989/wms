@@ -1,3 +1,5 @@
+import { companyContext } from '../company-scope/company-context';
+import { CompanyJob } from '../company-scope/company-job';
 import { storeDashboardPeriod } from '../common/store-dashboard-period';
 import {
   BadRequestException,
@@ -634,7 +636,7 @@ export class AmazonSpApiService {
   private invalidateDashboardCache(): void { this.dashboardCache.clear(); }
 
   async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string, month?: string): Promise<unknown> {
-    const key = `${connectionIdRaw || ''}:${daysRaw || '30'}:${month || ''}`;
+    const key = `${companyContext.getStore()?.companyId ?? "all"}:${connectionIdRaw || ''}:${daysRaw || '30'}:${month || ''}`;
     const cached = this.dashboardCache.get(key);
     if (cached && cached.expires > Date.now()) return cached.value;
     if (this.dashboardCache.size >= 60) this.dashboardCache.delete(this.dashboardCache.keys().next().value!);
@@ -961,6 +963,7 @@ export class AmazonSpApiService {
   }
 
   @Cron(AMAZON_SYNC_CRON, { name: 'amazon-sp-api-sync', timeZone: AMAZON_SYNC_TIMEZONE })
+  @CompanyJob()
   async runScheduledSync(): Promise<void> {
     if (!AMAZON_SCHEDULED_SYNC_ENABLED) return;
     try {

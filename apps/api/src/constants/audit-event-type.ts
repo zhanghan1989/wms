@@ -1,4 +1,6 @@
 export const AuditEventType = {
+  COMPANY_CREATED: 'company_created',
+  COMPANY_UPDATED: 'company_updated',
   BOX_CREATED: 'box_created',
   BOX_FIELD_UPDATED: 'box_field_updated',
   BOX_RENAMED: 'box_renamed',

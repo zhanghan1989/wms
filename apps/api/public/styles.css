@@ -4577,3 +4577,15 @@ body.branding-custom button:not(.ghost):not(.nav-btn) { border-color: var(--acce
 .overdue-orders-card [data-orders] { margin-top: 12px; }
 .overdue-order-row { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 14px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .overdue-order-row span { font-size: 13px; color: var(--muted); }
+
+#companyCreateForm {
+  grid-template-columns: minmax(180px, 360px) auto;
+  align-items: end;
+  max-width: 650px;
+}
+#companyCreateForm button { min-height: 40px; }
+#companyList { margin: 16px 0 20px; }
+#companyList .action-row { align-items: center; margin-bottom: 8px; gap: 8px; }
+@media (max-width: 600px) {
+  #companyCreateForm { grid-template-columns: 1fr; }
+}

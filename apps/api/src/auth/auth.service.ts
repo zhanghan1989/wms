@@ -26,7 +26,7 @@ export class AuthService {
   async login(username: string, password: string): Promise<{
     accessToken: string;
     deployVersion: string;
-    user: Pick<User, 'id' | 'username' | 'role' | 'status' | 'department'> & {
+    user: Pick<User, 'id' | 'username' | 'role' | 'status' | 'department' | 'companyId'> & {
     };
   }> {
     const user = await this.prisma.user.findUnique({
@@ -36,6 +36,7 @@ export class AuthService {
         username: true,
         role: true,
         department: true,
+        companyId: true,
         status: true,
         sessionVersion: true,
         passwordHash: true,
@@ -63,12 +64,13 @@ export class AuthService {
         role: user.role,
         department: user.username === this.protectedUsername ? '' : user.department,
         status: user.status,
+        companyId: user.companyId,
       },
     };
   }
 
   async getMe(id: bigint): Promise<
-    Pick<User, 'id' | 'username' | 'role' | 'status' | 'department'> & {
+    Pick<User, 'id' | 'username' | 'role' | 'status' | 'department' | 'companyId'> & {
     }
   > {
     const user = await this.prisma.user.findUnique({
@@ -78,6 +80,7 @@ export class AuthService {
         username: true,
         role: true,
         department: true,
+        companyId: true,
         status: true,
         sessionVersion: true,
         passwordHash: true,
@@ -93,6 +96,7 @@ export class AuthService {
       role: user.role,
       department: user.username === this.protectedUsername ? '' : user.department,
       status: user.status,
+      companyId: user.companyId,
     };
   }
 

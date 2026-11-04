@@ -8,6 +8,7 @@ function fixture() {
   const rows = new Map<string, any>();
   const table = {
     upsert: jest.fn(async ({ where, create, update }) => {
+      where = where.companyId_key ?? where;
       const row = rows.get(where.key) ?? { runToken: null, heartbeatAt: null, startedAt: null, finishedAt: null, lastStatus: null, lastMessage: null, ...create };
       Object.assign(row, rows.has(where.key) ? update : {});
       rows.set(where.key, row);
@@ -109,7 +110,7 @@ describe('independent scheduled stages', () => {
     const api = { runScheduledSync: jest.fn().mockResolvedValue({ results: [] }) };
     const orders = { syncRakutenTrackingStatuses: jest.fn().mockResolvedValue({ failedCount: 0 }) };
     const automation = { runScheduledAutomation: jest.fn().mockResolvedValue({ status: 'completed' }) };
-    await new RakutenOrderSchedulerService(orders as any, automation as any, api as any, f.service).runScheduledOrderProcessing();
+    await new RakutenOrderSchedulerService(orders as any, automation as any, api as any, f.service, { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never).runScheduledOrderProcessing();
     expect(orders.syncRakutenTrackingStatuses).toHaveBeenCalledTimes(enabled === 'tracking' ? 1 : 0);
     expect(api.runScheduledSync).toHaveBeenCalledTimes(enabled === 'import' ? 1 : 0);
     expect(automation.runScheduledAutomation).toHaveBeenCalledTimes(['import', 'tracking'].includes(enabled) ? 0 : 1);
@@ -120,7 +121,7 @@ describe('independent scheduled stages', () => {
     await f.service.update('shipping', true); await f.service.update('mail', true);
     const orders = { syncRakutenTrackingStatuses: jest.fn().mockResolvedValue({ trackingNoCount: 3, failedCount: 1 }) };
     const automation = { runScheduledAutomation: jest.fn().mockResolvedValue({ status: 'completed' }) };
-    const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, {} as any, f.service);
+    const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, {} as any, f.service, { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
     const result = await scheduler.runNow();
     expect(result).toMatchObject({ stages: { tracking: { status: 'partial', errors: ['1 个快递单号查询失败'] } } });
     expect(f.rows.get('tracking')).toMatchObject({ lastStatus: 'partial', lastMessage: '1 个快递单号查询失败', runToken: null });
@@ -130,7 +131,7 @@ describe('independent scheduled stages', () => {
     const f = fixture();
     let finish!: (value: any) => void;
     const orders = { syncRakutenTrackingStatuses: jest.fn(() => new Promise<any>((resolve) => { finish = resolve; })) };
-    const scheduler = new RakutenOrderSchedulerService(orders as any, {} as any, {} as any, f.service);
+    const scheduler = new RakutenOrderSchedulerService(orders as any, {} as any, {} as any, f.service, { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
     const running = scheduler.runNow();
     await new Promise((resolve) => setImmediate(resolve));
     const disabled = await f.service.update('tracking', false);

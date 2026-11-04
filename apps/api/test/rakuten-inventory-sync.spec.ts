@@ -700,7 +700,7 @@ describe('independent daily inventory processing', () => {
       .toMatchObject({ cronTime: '0 10 17 * * *', timeZone: 'Asia/Tokyo', waitForCompletion: true });
     const inventory = { prepareScheduledCatalogs: jest.fn() };
     const schedules = { enabled: jest.fn().mockResolvedValue(false) };
-    const scheduler = new RakutenInventorySchedulerService(inventory as any, schedules as any);
+    const scheduler = new RakutenInventorySchedulerService(inventory as any, schedules as any, { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
     await scheduler.prepareCatalogs();
     expect(inventory.prepareScheduledCatalogs).not.toHaveBeenCalled();
     schedules.enabled.mockResolvedValue(true);
@@ -713,7 +713,7 @@ describe('independent daily inventory processing', () => {
     expect(options).toMatchObject({ cronTime: '0 50 17 * * *', timeZone: 'Asia/Tokyo', waitForCompletion: true });
     const inventory = { hasScheduledRetryWork: jest.fn().mockResolvedValue(false), runScheduled: jest.fn() };
     const schedules = { execute: jest.fn(async (_key, action) => action()) };
-    const scheduler = new RakutenInventorySchedulerService(inventory as any, schedules as any);
+    const scheduler = new RakutenInventorySchedulerService(inventory as any, schedules as any, { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
     await scheduler.retryScheduledInventorySync();
     expect(schedules.execute).not.toHaveBeenCalled();
     inventory.hasScheduledRetryWork.mockResolvedValue(true);
@@ -723,14 +723,14 @@ describe('independent daily inventory processing', () => {
   it('the twenty-minute order flow never triggers inventory, including manual check', async () => {
     const schedules = { enabled: jest.fn().mockResolvedValue(true), execute: jest.fn(async (_key, action) => action()) };
     const scheduler = new RakutenOrderSchedulerService({ syncRakutenTrackingStatuses: async () => ({ failedCount: 0 }) } as any,
-      { runScheduledAutomation: async () => undefined } as any, { runScheduledSync: async () => ({ results: [] }), syncAllConnections: async () => ({ results: [] }) } as any, schedules as any);
+      { runScheduledAutomation: async () => undefined } as any, { runScheduledSync: async () => ({ results: [] }), syncAllConnections: async () => ({ results: [] }) } as any, schedules as any, { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
     await scheduler.runScheduledOrderProcessing(); await scheduler.runNow();
     expect(schedules.execute.mock.calls.map((row) => row[0])).not.toContain('inventory');
   });
   it.each([true, false])('the daily job respects the persisted global switch: %s', async (enabled) => {
     const inventory = { runScheduled: jest.fn().mockResolvedValue({ status: 'success', errors: [] }) };
     const schedules = { execute: jest.fn(async (_key, action) => enabled ? action() : undefined) };
-    await new RakutenInventorySchedulerService(inventory as any, schedules as any).runScheduledInventorySync();
+    await new RakutenInventorySchedulerService(inventory as any, schedules as any, { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never).runScheduledInventorySync();
     expect(inventory.runScheduled).toHaveBeenCalledTimes(enabled ? 1 : 0);
   });
   it('uses the Japanese calendar day for daily full checks, including midnight and first setup', () => {

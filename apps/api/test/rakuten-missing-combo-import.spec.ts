@@ -473,7 +473,7 @@ describe('missing Rakuten combo configuration does not stop other orders', () =>
     const orders = { syncRakutenTrackingStatuses: jest.fn().mockResolvedValue({ failedCount: 0 }) };
     const automation = { runScheduledAutomation: jest.fn().mockResolvedValue({ status: 'completed' }) };
     const controls = { execute: (_key: string, action: () => Promise<unknown>) => action(), enabled: jest.fn().mockResolvedValue(true) };
-    const result = await new RakutenOrderSchedulerService(orders as any, automation as any, f.service, controls as any).runNow();
+    const result = await new RakutenOrderSchedulerService(orders as any, automation as any, f.service, controls as any, { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never).runNow();
     expect(result).toMatchObject({ stages: { import: { status: 'partial', errors: [expect.stringContaining('等待人工')] } } });
     expect(orders.syncRakutenTrackingStatuses).toHaveBeenCalledTimes(1);
     expect(automation.runScheduledAutomation).toHaveBeenCalledTimes(2);

@@ -26,7 +26,7 @@ export class BrandsService {
     if (!name) {
       throw new BadRequestException('品牌名称不能为空');
     }
-    const exists = await this.prisma.brand.findUnique({ where: { name } });
+    const exists = await this.prisma.brand.findFirst({ where: { name } });
     if (exists) {
       throw new BadRequestException('品牌已存在');
     }
@@ -67,14 +67,14 @@ export class BrandsService {
 
     const name = payload.name?.trim();
     if (name && name !== brand.name) {
-      const duplicate = await this.prisma.brand.findUnique({ where: { name } });
+      const duplicate = await this.prisma.brand.findFirst({ where: { name } });
       if (duplicate) {
         throw new BadRequestException('品牌已存在');
       }
     }
 
     return this.prisma.$transaction(async (tx) => {
-      const affectedSkuCount = 0;
+      let affectedSkuCount = 0;
 
       const updated = await tx.brand.update({
         where: { id },
@@ -83,6 +83,13 @@ export class BrandsService {
           ...(payload.status === undefined ? {} : { status: payload.status }),
         },
       });
+      if (name && name !== brand.name) {
+        const affected = await tx.masterProduct.updateMany({
+          where: { companyId: brand.companyId, bagBrand: brand.name },
+          data: { bagBrand: name },
+        });
+        affectedSkuCount = affected.count;
+      }
       await this.auditService.create({
         db: tx,
         entityType: 'brand',
@@ -109,6 +116,8 @@ export class BrandsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      const used = await tx.masterProduct.count({ where: { companyId: brand.companyId, bagBrand: brand.name } });
+      if (used) throw new BadRequestException('品牌下仍有产品，请先调整产品品牌或禁用品牌');
       await tx.brand.delete({ where: { id } });
       await this.auditService.create({
         db: tx,

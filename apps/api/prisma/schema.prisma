@@ -94,6 +94,8 @@ enum AuditAction {
 }
 
 enum AuditEventType {
+  company_created
+  company_updated
   box_created
   box_field_updated
   box_renamed
@@ -226,6 +228,9 @@ model AuthSession {
 }
 
 model User {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   sessionVersion Int @default(0) @map("session_version")
   sessions AuthSession[]
   id                             BigInt                       @id @default(autoincrement()) @db.UnsignedBigInt
@@ -287,6 +292,9 @@ model RoleOption {
 }
 
 model BatchInboundOrder {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
   orderNo           String                  @unique @map("order_no") @db.VarChar(64)
   status            BatchInboundOrderStatus
@@ -311,6 +319,9 @@ model BatchInboundOrder {
 }
 
 model BatchInboundPlannedItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt            @id @default(autoincrement()) @db.UnsignedBigInt
   orderId   BigInt            @map("order_id") @db.UnsignedBigInt
   productId String            @map("product_id") @db.VarChar(128)
@@ -322,6 +333,9 @@ model BatchInboundPlannedItem {
 }
 
 model BatchInboundItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id          BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   orderId     BigInt                 @map("order_id") @db.UnsignedBigInt
   boxCode     String                 @map("box_code") @db.VarChar(128)
@@ -343,6 +357,9 @@ model BatchInboundItem {
 }
 
 model Sku {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                  BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
   productId           String?                    @map("product_id") @db.VarChar(128)
   sku                 String                     @db.VarChar(128)
@@ -370,16 +387,23 @@ model Sku {
 }
 
 model Brand {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
-  name      String   @unique @db.VarChar(128)
+  name      String   @db.VarChar(128)
   status    Int      @default(1) @db.TinyInt
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  @@unique([companyId, name])
   @@map("brands")
 }
 
 model SkuType {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   name      String   @unique @db.VarChar(128)
   status    Int      @default(1) @db.TinyInt
@@ -400,6 +424,9 @@ model ShopPlatformDefinition {
 }
 
 model Shop {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                     BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
   name                   String                  @unique @db.VarChar(128)
   platform               String                  @default("amazon") @db.VarChar(64)
@@ -416,6 +443,9 @@ model Shop {
 }
 
 model RakutenRmsConnection {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                       BigInt                       @id @default(autoincrement()) @db.UnsignedBigInt
   shopId                   BigInt                       @unique @map("shop_id") @db.UnsignedBigInt
   encryptedServiceSecret   String                       @map("encrypted_service_secret") @db.Text
@@ -483,6 +513,9 @@ model RakutenRmsConnection {
 // Financial facts belong to the original customer order, never a warehouse parcel.
 // items contains only purchase SKU/name/quantity and allocated net sales, no buyer data.
 model RakutenSalesSnapshot {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id             BigInt @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId   BigInt @map("connection_id") @db.UnsignedBigInt
   orderId        String @map("order_id") @db.VarChar(128)
@@ -501,6 +534,9 @@ model RakutenSalesSnapshot {
 }
 
 model RakutenOrderImportIssue {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId BigInt   @map("connection_id") @db.UnsignedBigInt
   orderId      String   @map("order_id") @db.VarChar(64)
@@ -518,7 +554,11 @@ model RakutenOrderImportIssue {
 }
 
 model RakutenScheduleControl {
-  key           String    @id @db.VarChar(32)
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
+  key           String    @db.VarChar(32)
+  @@id([companyId, key])
   enabled       Boolean
   runToken      String?   @map("run_token") @db.VarChar(64)
   heartbeatAt   DateTime? @map("heartbeat_at")
@@ -532,6 +572,9 @@ model RakutenScheduleControl {
 }
 
 model RakutenAutomationRun {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id              BigInt                      @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId    BigInt                      @map("connection_id") @db.UnsignedBigInt
   trigger         RakutenAutomationRunTrigger
@@ -553,6 +596,9 @@ model RakutenAutomationRun {
 }
 
 model RakutenMailTemplateVersion {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id              BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId    BigInt                @map("connection_id") @db.UnsignedBigInt
   event           RakutenOrderMailEvent
@@ -572,6 +618,9 @@ model RakutenMailTemplateVersion {
 }
 
 model RakutenOrderMail {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id              BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId    BigInt                  @map("connection_id") @db.UnsignedBigInt
   orderId         String                  @map("order_id") @db.VarChar(64)
@@ -602,6 +651,9 @@ model RakutenOrderMail {
 }
 
 model RakutenOrderShippingReport {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id              BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId    BigInt                  @map("connection_id") @db.UnsignedBigInt
   orderId         String                  @map("order_id") @db.VarChar(64)
@@ -625,6 +677,9 @@ model RakutenOrderShippingReport {
 }
 
 model RakutenRmsSyncRun {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId      BigInt               @map("connection_id") @db.UnsignedBigInt
   status            RakutenRmsSyncStatus @default(running)
@@ -646,6 +701,9 @@ model RakutenRmsSyncRun {
 }
 
 model RakutenRmsSyncPreview {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   token        String               @id @db.Char(64)
   connectionId BigInt               @map("connection_id") @db.UnsignedBigInt
   expiresAt    DateTime             @map("expires_at")
@@ -660,6 +718,9 @@ model RakutenRmsSyncPreview {
 }
 
 model RakutenOrderSyncExclusion {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id              BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   rmsConnectionId BigInt?  @map("rms_connection_id") @db.UnsignedBigInt
   shopName        String?  @map("shop_name") @db.VarChar(128)
@@ -675,6 +736,9 @@ model RakutenOrderSyncExclusion {
 }
 
 model AmazonSpApiConnection {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                     BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
   shopId                 BigInt                   @unique @map("shop_id") @db.UnsignedBigInt
   sellerId               String                   @map("seller_id") @db.VarChar(64)
@@ -714,6 +778,9 @@ model AmazonSpApiConnection {
 }
 
 model AmazonSpApiOAuthState {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
   stateHash        String    @unique @map("state_hash") @db.Char(64)
   shopId           BigInt    @map("shop_id") @db.UnsignedBigInt
@@ -737,6 +804,9 @@ model AmazonSpApiOAuthState {
 }
 
 model AmazonSpApiSyncRun {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id             BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId   BigInt                @map("connection_id") @db.UnsignedBigInt
   syncType       AmazonSpApiSyncType   @map("sync_type")
@@ -761,6 +831,9 @@ model AmazonSpApiSyncRun {
 }
 
 model AmazonFbaOrderItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                 BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId       BigInt                @map("connection_id") @db.UnsignedBigInt
   amazonOrderId      String                @map("amazon_order_id") @db.VarChar(64)
@@ -792,6 +865,9 @@ model AmazonFbaOrderItem {
 }
 
 model AmazonFbmOrderItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                  BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId        BigInt                @map("connection_id") @db.UnsignedBigInt
   amazonOrderId       String                @map("amazon_order_id") @db.VarChar(64)
@@ -819,6 +895,9 @@ model AmazonFbmOrderItem {
 }
 
 model AmazonFbaInventoryItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                  BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId        BigInt                @map("connection_id") @db.UnsignedBigInt
   marketplaceId       String                @map("marketplace_id") @db.VarChar(32)
@@ -859,6 +938,9 @@ model Shelf {
 }
 
 model Box {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                       BigInt                      @id @default(autoincrement()) @db.UnsignedBigInt
   boxCode                  String                      @unique @map("box_code") @db.VarChar(128)
   shelfId                  BigInt                      @map("shelf_id") @db.UnsignedBigInt
@@ -880,6 +962,9 @@ model Box {
 }
 
 model ItemCode {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
   barcode   String         @unique @db.VarChar(128)
   skuId     BigInt         @map("sku_id") @db.UnsignedBigInt
@@ -895,6 +980,9 @@ model ItemCode {
 }
 
 model MasterProductBoxInventory {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
   boxId     BigInt        @map("box_id") @db.UnsignedBigInt
   productId String        @map("product_id") @db.VarChar(128)
@@ -909,6 +997,9 @@ model MasterProductBoxInventory {
 }
 
 model InboundOrder {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
   orderNo   String             @unique @map("order_no") @db.VarChar(64)
   orderType InboundOrderType   @map("order_type")
@@ -924,6 +1015,9 @@ model InboundOrder {
 }
 
 model InboundOrderItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id          BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
   orderId     BigInt        @map("order_id") @db.UnsignedBigInt
   boxId       BigInt        @map("box_id") @db.UnsignedBigInt
@@ -939,6 +1033,9 @@ model InboundOrderItem {
 }
 
 model OutboundOrder {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
   orderNo   String              @unique @map("order_no") @db.VarChar(64)
   status    OrderStatus
@@ -953,6 +1050,9 @@ model OutboundOrder {
 }
 
 model OutboundOrderItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
   orderId   BigInt        @map("order_id") @db.UnsignedBigInt
   boxId     BigInt        @map("box_id") @db.UnsignedBigInt
@@ -967,6 +1067,9 @@ model OutboundOrderItem {
 }
 
 model StocktakeTask {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
   taskNo    String              @unique @map("task_no") @db.VarChar(64)
   scopeType StocktakeScopeType  @map("scope_type")
@@ -981,6 +1084,9 @@ model StocktakeTask {
 }
 
 model StocktakePlannerTask {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id          BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
   taskNo      String                     @unique @map("task_no") @db.VarChar(64)
   plannedDate DateTime                   @map("planned_date") @db.Date
@@ -1001,6 +1107,9 @@ model StocktakePlannerTask {
 }
 
 model StocktakeRecord {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id         BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
   taskId     BigInt        @map("task_id") @db.UnsignedBigInt
   boxId      BigInt        @map("box_id") @db.UnsignedBigInt
@@ -1017,6 +1126,9 @@ model StocktakeRecord {
 }
 
 model StockMovement {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   operationKey String? @unique @map("operation_key") @db.VarChar(191)
   id           BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
   movementType MovementType   @map("movement_type")
@@ -1040,6 +1152,9 @@ model StockMovement {
 }
 
 model InventoryAdjustOrder {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
   adjustNo  String                     @unique @map("adjust_no") @db.VarChar(64)
   status    OrderStatus
@@ -1054,6 +1169,9 @@ model InventoryAdjustOrder {
 }
 
 model InventoryAdjustOrderItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
   orderId   BigInt               @map("order_id") @db.UnsignedBigInt
   boxId     BigInt               @map("box_id") @db.UnsignedBigInt
@@ -1070,6 +1188,9 @@ model InventoryAdjustOrderItem {
 }
 
 model FbaReplenishment {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id           BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   requestNo    String                 @unique @map("request_no") @db.VarChar(64)
   status       FbaReplenishmentStatus @default(pending_confirm)
@@ -1102,6 +1223,9 @@ model FbaReplenishment {
 }
 
 model FbaSalesSnapshot {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                    BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   fileName              String                 @map("file_name") @db.VarChar(255)
   inventoryFileName     String?                @map("inventory_file_name") @db.VarChar(255)
@@ -1129,6 +1253,9 @@ model FbaSalesSnapshot {
 }
 
 model FbaSalesSnapshotItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                  BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
   snapshotId          BigInt           @map("snapshot_id") @db.UnsignedBigInt
   sellerSku           String           @map("seller_sku") @db.VarChar(128)
@@ -1152,6 +1279,9 @@ model FbaSalesSnapshotItem {
 }
 
 model AmazonReplenishmentSnapshot {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   businessFileName  String   @map("business_file_name") @db.VarChar(255)
   inventoryFileName String   @map("inventory_file_name") @db.VarChar(255)
@@ -1170,6 +1300,9 @@ model AmazonReplenishmentSnapshot {
 }
 
 model ProductEditRequest {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id            BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
   skuId         BigInt                   @map("sku_id") @db.UnsignedBigInt
   status        ProductEditRequestStatus @default(pending)
@@ -1204,6 +1337,9 @@ model BackupRecord {
 }
 
 model RakutenOrderRecord {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                             BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
   rmsConnectionId                BigInt?               @map("rms_connection_id") @db.UnsignedBigInt
   rmsItemKey                     String?               @map("rms_item_key") @db.VarChar(191)
@@ -1296,6 +1432,9 @@ model RakutenOrderRecord {
 
 // Polling metadata is kept off the wide order rows to avoid FULL binlog amplification.
 model RakutenTrackingCheck {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   trackingNo          String   @id @map("tracking_no") @db.VarChar(128)
   checkedAt           DateTime @map("checked_at") @db.DateTime(3)
   nextCheckAt         DateTime @map("next_check_at") @db.DateTime(3)
@@ -1314,6 +1453,9 @@ model RakutenTrackingSyncLock {
 }
 
 model RakutenTrackingQueryIgnore {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   trackingNo String    @id @map("tracking_no") @db.VarChar(128)
   isActive   Boolean   @default(true) @map("is_active")
   ignoredAt  DateTime  @default(now()) @map("ignored_at")
@@ -1326,6 +1468,9 @@ model RakutenTrackingQueryIgnore {
 }
 
 model AmazonOrderRecord {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                      BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
   rowHash                 String                 @unique @map("row_hash") @db.Char(40)
   orderId                 String?                @map("order_id") @db.VarChar(64)
@@ -1395,6 +1540,9 @@ model AmazonOrderRecord {
 }
 
 model AmazonOrderSyncExclusion {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
   spApiConnectionId BigInt?   @map("sp_api_connection_id") @db.UnsignedBigInt
   orderId           String    @map("order_id") @db.VarChar(64)
@@ -1411,6 +1559,9 @@ model AmazonOrderSyncExclusion {
 }
 
 model AmazonOrderSyncObservation {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   spApiConnectionId BigInt   @map("sp_api_connection_id") @db.UnsignedBigInt
   orderId           String   @map("order_id") @db.VarChar(64)
@@ -1431,6 +1582,9 @@ model AmazonOrderSyncObservation {
 }
 
 model ManualOrderRecord {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                     BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
   rowHash                String    @unique @map("row_hash") @db.Char(40)
   orderId                String?   @map("order_id") @db.VarChar(64)
@@ -1498,6 +1652,9 @@ model ManualOrderRecord {
 }
 
 model OverseasPickingBatch {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id          BigInt                     @id @default(autoincrement()) @db.UnsignedBigInt
   batchNo     String                     @unique @map("batch_no") @db.VarChar(64)
   status      String                     @default("created") @db.VarChar(32)
@@ -1527,6 +1684,9 @@ model PickingBatchGenerationLock {
 }
 
 model OverseasPickingBatchItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                         BigInt               @id @default(autoincrement()) @db.UnsignedBigInt
   batchId                    BigInt               @map("batch_id") @db.UnsignedBigInt
   source                     String               @db.VarChar(16)
@@ -1559,6 +1719,9 @@ model OverseasPickingBatchItem {
 }
 
 model PickingItemComponentRef {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   itemId             BigInt                   @map("item_id") @db.UnsignedBigInt
   componentProductId String                   @map("component_product_id") @db.VarChar(128)
   item               OverseasPickingBatchItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
@@ -1569,6 +1732,9 @@ model PickingItemComponentRef {
 }
 
 model YamatoShipmentBatch {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id               BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
   pickingBatchId   BigInt?                   @unique @map("picking_batch_id") @db.UnsignedBigInt
   exportedFileName String?                   @map("exported_file_name") @db.VarChar(255)
@@ -1587,6 +1753,9 @@ model YamatoShipmentBatch {
 }
 
 model YamatoShipmentBatchPage {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id               BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
   batchId          BigInt              @map("batch_id") @db.UnsignedBigInt
   pageNo           Int                 @map("page_no")
@@ -1613,6 +1782,9 @@ model YamatoShipmentBatchPage {
 }
 
 model MasterProduct {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                BigInt                      @id @default(autoincrement()) @db.UnsignedBigInt
   productId         String                      @unique @map("product_id") @db.VarChar(128)
   productName       String?                     @map("product_name") @db.VarChar(255)
@@ -1651,6 +1823,9 @@ model MasterProduct {
 }
 
 model MasterProductBomItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id                 BigInt        @id @default(autoincrement()) @db.UnsignedBigInt
   parentProductId    String        @map("parent_product_id") @db.VarChar(128)
   componentProductId String        @map("component_product_id") @db.VarChar(128)
@@ -1668,6 +1843,9 @@ model MasterProductBomItem {
 }
 
 model RakutenComboProduct {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt                    @id @default(autoincrement()) @db.UnsignedBigInt
   comboName String                    @unique @map("combo_name") @db.VarChar(255)
   createdAt DateTime                  @default(now()) @map("created_at")
@@ -1679,6 +1857,9 @@ model RakutenComboProduct {
 }
 
 model RakutenComboProductItem {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id        BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
   comboId   BigInt              @map("combo_id") @db.UnsignedBigInt
   productId String              @map("product_id") @db.VarChar(128)
@@ -1694,6 +1875,9 @@ model RakutenComboProductItem {
 }
 
 model ReturnRecord {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id             BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
   senderName     String?  @map("sender_name") @db.VarChar(255)
   carrierName    String?  @map("carrier_name") @db.VarChar(128)
@@ -1721,6 +1905,9 @@ model ReturnRecord {
 }
 
 model PrintJob {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   confirmationSnapshot Json? @map("confirmation_snapshot")
   id           BigInt                   @id @default(autoincrement()) @db.UnsignedBigInt
   jobType      String                   @default("yamato_label") @map("job_type") @db.VarChar(32)
@@ -1752,6 +1939,9 @@ model PrintJob {
 }
 
 model MasterProductSyncRecord {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id             BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
   operationType  String                  @map("operation_type") @db.VarChar(32)
   productId      String?                 @map("product_id") @db.VarChar(128)
@@ -1776,6 +1966,9 @@ model MasterProductSyncRecord {
 }
 
 model OperationAuditLog {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id            BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
   entityType    String         @map("entity_type") @db.VarChar(64)
   entityId      BigInt         @map("entity_id") @db.UnsignedBigInt
@@ -1797,6 +1990,9 @@ model OperationAuditLog {
 }
 
 model RakutenInventoryMapping {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id           BigInt @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId BigInt @map("connection_id") @db.UnsignedBigInt
   productId    String @map("product_id") @db.VarChar(128)
@@ -1819,6 +2015,9 @@ model RakutenInventoryMapping {
 }
 
 model RakutenInventoryRun {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id           String @id @db.VarChar(36)
   connectionId BigInt @map("connection_id") @db.UnsignedBigInt
   trigger      String @db.VarChar(16)
@@ -1840,6 +2039,9 @@ model RakutenInventoryRun {
 }
 
 model RakutenInventoryCatalog {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id           BigInt @id @default(autoincrement()) @db.UnsignedBigInt
   connectionId BigInt @map("connection_id") @db.UnsignedBigInt
   version      String @db.VarChar(36)
@@ -1863,6 +2065,9 @@ model RakutenInventoryCatalog {
 }
 
 model RakutenInventoryCatalogJob {
+  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@index([companyId])
   id           String @id @db.VarChar(36)
   connectionId BigInt @map("connection_id") @db.UnsignedBigInt
   status       String @db.VarChar(24)
@@ -1886,4 +2091,80 @@ model SiteBranding {
   themeColor   String @default("#0f8a5f") @map("theme_color") @db.VarChar(7)
 
   @@map("site_branding")
+}
+
+model Company {
+  id BigInt @id @default(autoincrement()) @db.UnsignedBigInt
+  name String @unique @db.VarChar(128)
+  status Int @default(1) @db.TinyInt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  recordsUser User[]
+  recordsBatchInboundOrder BatchInboundOrder[]
+  recordsBatchInboundPlannedItem BatchInboundPlannedItem[]
+  recordsBatchInboundItem BatchInboundItem[]
+  recordsSku Sku[]
+  recordsBrand Brand[]
+  recordsSkuType SkuType[]
+  recordsShop Shop[]
+  recordsRakutenRmsConnection RakutenRmsConnection[]
+  recordsRakutenSalesSnapshot RakutenSalesSnapshot[]
+  recordsRakutenOrderImportIssue RakutenOrderImportIssue[]
+  recordsRakutenScheduleControl RakutenScheduleControl[]
+  recordsRakutenAutomationRun RakutenAutomationRun[]
+  recordsRakutenMailTemplateVersion RakutenMailTemplateVersion[]
+  recordsRakutenOrderMail RakutenOrderMail[]
+  recordsRakutenOrderShippingReport RakutenOrderShippingReport[]
+  recordsRakutenRmsSyncRun RakutenRmsSyncRun[]
+  recordsRakutenRmsSyncPreview RakutenRmsSyncPreview[]
+  recordsRakutenOrderSyncExclusion RakutenOrderSyncExclusion[]
+  recordsAmazonSpApiConnection AmazonSpApiConnection[]
+  recordsAmazonSpApiOAuthState AmazonSpApiOAuthState[]
+  recordsAmazonSpApiSyncRun AmazonSpApiSyncRun[]
+  recordsAmazonFbaOrderItem AmazonFbaOrderItem[]
+  recordsAmazonFbmOrderItem AmazonFbmOrderItem[]
+  recordsAmazonFbaInventoryItem AmazonFbaInventoryItem[]
+  recordsBox Box[]
+  recordsItemCode ItemCode[]
+  recordsMasterProductBoxInventory MasterProductBoxInventory[]
+  recordsInboundOrder InboundOrder[]
+  recordsInboundOrderItem InboundOrderItem[]
+  recordsOutboundOrder OutboundOrder[]
+  recordsOutboundOrderItem OutboundOrderItem[]
+  recordsStocktakeTask StocktakeTask[]
+  recordsStocktakePlannerTask StocktakePlannerTask[]
+  recordsStocktakeRecord StocktakeRecord[]
+  recordsStockMovement StockMovement[]
+  recordsInventoryAdjustOrder InventoryAdjustOrder[]
+  recordsInventoryAdjustOrderItem InventoryAdjustOrderItem[]
+  recordsFbaReplenishment FbaReplenishment[]
+  recordsFbaSalesSnapshot FbaSalesSnapshot[]
+  recordsFbaSalesSnapshotItem FbaSalesSnapshotItem[]
+  recordsAmazonReplenishmentSnapshot AmazonReplenishmentSnapshot[]
+  recordsProductEditRequest ProductEditRequest[]
+  recordsRakutenOrderRecord RakutenOrderRecord[]
+  recordsRakutenTrackingCheck RakutenTrackingCheck[]
+  recordsRakutenTrackingQueryIgnore RakutenTrackingQueryIgnore[]
+  recordsAmazonOrderRecord AmazonOrderRecord[]
+  recordsAmazonOrderSyncExclusion AmazonOrderSyncExclusion[]
+  recordsAmazonOrderSyncObservation AmazonOrderSyncObservation[]
+  recordsManualOrderRecord ManualOrderRecord[]
+  recordsOverseasPickingBatch OverseasPickingBatch[]
+  recordsOverseasPickingBatchItem OverseasPickingBatchItem[]
+  recordsPickingItemComponentRef PickingItemComponentRef[]
+  recordsYamatoShipmentBatch YamatoShipmentBatch[]
+  recordsYamatoShipmentBatchPage YamatoShipmentBatchPage[]
+  recordsMasterProduct MasterProduct[]
+  recordsMasterProductBomItem MasterProductBomItem[]
+  recordsRakutenComboProduct RakutenComboProduct[]
+  recordsRakutenComboProductItem RakutenComboProductItem[]
+  recordsReturnRecord ReturnRecord[]
+  recordsPrintJob PrintJob[]
+  recordsMasterProductSyncRecord MasterProductSyncRecord[]
+  recordsOperationAuditLog OperationAuditLog[]
+  recordsRakutenInventoryMapping RakutenInventoryMapping[]
+  recordsRakutenInventoryRun RakutenInventoryRun[]
+  recordsRakutenInventoryCatalog RakutenInventoryCatalog[]
+  recordsRakutenInventoryCatalogJob RakutenInventoryCatalogJob[]
+  @@map("companies")
 }

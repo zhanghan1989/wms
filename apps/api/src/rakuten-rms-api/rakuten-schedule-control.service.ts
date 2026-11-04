@@ -1,3 +1,4 @@
+import { companyScheduleWhere } from '../company-scope/company-job';
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { randomUUID } from 'crypto';
@@ -25,7 +26,7 @@ export class RakutenScheduleControlService {
   private ensure(key: RakutenScheduleKey) {
     // Environment flags seed the initial setting; subsequent UI changes persist across restarts.
     return this.prisma.rakutenScheduleControl.upsert({
-      where: { key }, create: { key, enabled: this.defaultEnabled(key) }, update: {},
+      where: companyScheduleWhere(key), create: { key, enabled: this.defaultEnabled(key) }, update: {},
     });
   }
 
@@ -35,7 +36,7 @@ export class RakutenScheduleControlService {
     if (!RAKUTEN_SCHEDULE_KEYS.includes(keyRaw as RakutenScheduleKey)) throw new BadRequestException('不支持的定时任务');
     if (typeof enabled !== 'boolean') throw new BadRequestException('定时开关必须为开启或关闭');
     const key = keyRaw as RakutenScheduleKey;
-    await this.prisma.rakutenScheduleControl.upsert({ where: { key }, create: { key, enabled }, update: { enabled } });
+    await this.prisma.rakutenScheduleControl.upsert({ where: companyScheduleWhere(key), create: { key, enabled }, update: { enabled } });
     return this.status();
   }
 

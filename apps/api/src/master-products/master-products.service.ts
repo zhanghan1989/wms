@@ -1,3 +1,4 @@
+import { companyContext } from '../company-scope/company-context';
 import { assertBoxUsable } from '../common/box-availability';
 import { randomUUID } from 'crypto';
 import { recordStockAdjustment } from '../inventory/stock-ledger';
@@ -73,6 +74,7 @@ type MasterProductSyncRecordListResult = {
 };
 
 type MasterProductImportRow = {
+  companyId?: bigint;
   productId: string;
   productName: string | null;
   productType: string | null;
@@ -93,7 +95,7 @@ type MasterProductImportRow = {
   stockQty: number | null;
 };
 
-type ImportedMasterProductField = Exclude<keyof MasterProductImportRow, 'productId'>;
+type ImportedMasterProductField = Exclude<keyof MasterProductImportRow, 'productId' | 'companyId'>;
 
 type ParsedMasterProductImport = {
   rows: MasterProductImportRow[];
@@ -148,7 +150,7 @@ const XIYA_COMPANY_NAME = process.env.XIYA_COMPANY_NAME || 'XYJG';
 const XIYA_SUCCESS_CODES = new Set([0, 200]);
 const MASTER_PRODUCT_SYNC_CRON = '0 0 0 * * 1';
 
-const MASTER_PRODUCT_EXPORT_COLUMNS: Array<[keyof MasterProductImportRow, string]> = [
+const MASTER_PRODUCT_EXPORT_COLUMNS: Array<[Exclude<keyof MasterProductImportRow, 'companyId'>, string]> = [
   ['productId', '产品ID'],
   ['productName', '产品名称'],
   ['productType', '产品类型'],
@@ -826,6 +828,7 @@ export class MasterProductsService {
   }
 
   async getExportFilterOptions(): Promise<Record<MasterProductExportFilterKey, string[]>> {
+    if (companyContext.getStore()?.companyId !== undefined) return this.loadExportFilterOptions();
     const now = Date.now();
     if (
       this.masterProductExportFilterCache &&
@@ -973,6 +976,11 @@ export class MasterProductsService {
     updatedCount: number;
     days: number;
   }> {
+    // Xiya is a shared, authenticated integration for all companies. Keep its
+    // upstream contract while preserving each existing product's local owner.
+    if (companyContext.getStore()) {
+      return companyContext.run(undefined, () => this.performXiyaSync(days));
+    }
     const rows = await this.fetchXiyaImportRows(days);
     if (!rows.length) {
       return {
@@ -984,7 +992,7 @@ export class MasterProductsService {
       };
     }
 
-    const result = await this.upsertImportRows(rows, XIYA_SYNC_UPDATE_FIELDS);
+    const result = await this.upsertImportRows(rows, XIYA_SYNC_UPDATE_FIELDS, true);
     return {
       totalRows: rows.length,
       importedCount: rows.length,
@@ -2341,8 +2349,40 @@ export class MasterProductsService {
   private async upsertImportRows(
     rows: MasterProductImportRow[],
     presentFields: Set<ImportedMasterProductField>,
+    sharedXiya = false,
   ): Promise<{ createdCount: number; updatedCount: number }> {
     const existingRows = await this.loadExistingMasterProducts(rows.map((row) => row.productId));
+    if (companyContext.getStore()?.companyId !== undefined && presentFields.has('bagBrand')) {
+      const names = [...new Set(rows.map((row) => row.bagBrand?.trim()).filter((name): name is string => Boolean(name)))];
+      if (names.length) {
+        const brands = await this.prisma.brand.findMany({ where: { name: { in: names } }, select: { name: true } });
+        const allowed = new Set(brands.map((brand) => brand.name.toLowerCase()));
+        if (names.some((name) => !allowed.has(name.toLowerCase()))) {
+          throw new BadRequestException('导入文件包含不属于当前公司的品牌，请先在当前公司新增品牌');
+        }
+      }
+    }
+    if (sharedXiya) {
+      const assignedBrands = new Set<string>();
+      for (const row of rows) {
+        row.companyId = existingRows.get(row.productId)?.companyId;
+        if (!row.companyId && row.bagBrand) {
+          const brands = await this.prisma.brand.findMany({ where: { name: row.bagBrand }, select: { companyId: true } });
+          const owners = [...new Set(brands.map((brand) => brand.companyId))];
+          if (owners.length > 1) throw new BadRequestException(`产品 ${row.productId} 的品牌属于多家公司，请先在 WMS 中明确产品归属`);
+          row.companyId = owners[0];
+        }
+        row.companyId ??= 1n;
+        const brandKey = `${row.companyId}:${row.bagBrand}`;
+        if (row.bagBrand && !assignedBrands.has(brandKey)) {
+          await this.prisma.brand.upsert({
+          where: { companyId_name: { companyId: row.companyId, name: row.bagBrand } },
+          create: { companyId: row.companyId, name: row.bagBrand }, update: {},
+          });
+          assignedBrands.add(brandKey);
+        }
+      }
+    }
     const createRows: MasterProductImportRow[] = [];
     const updateRows: MasterProductImportRow[] = [];
 
@@ -2499,6 +2539,7 @@ export class MasterProductsService {
       const rows = await this.prisma.masterProduct.findMany({
         where: { productId: { in: chunk } },
         select: {
+          companyId: true,
           productId: true,
           productName: true,
           productType: true,
@@ -2521,6 +2562,7 @@ export class MasterProductsService {
       });
       rows.forEach((row) =>
         result.set(row.productId, {
+          companyId: row.companyId,
           productId: row.productId,
           productName: row.productName,
           productType: row.productType,
@@ -2580,6 +2622,7 @@ export class MasterProductsService {
 
   private toCreateInput(row: MasterProductImportRow): Prisma.MasterProductCreateManyInput {
     return {
+      ...(row.companyId ? { companyId: row.companyId } : {}),
       productId: row.productId,
       productName: row.productName,
       productType: row.productType,

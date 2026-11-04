@@ -114,11 +114,23 @@ jobs:
           port: ${{ secrets.ECS_PORT }}
           username: ${{ secrets.ECS_USER }}
           key: ${{ secrets.ECS_SSH_KEY }}
-          command_timeout: 30m
+          command_timeout: 45m
           script_stop: true
           envs: DEPLOY_REF,RUN_MIGRATIONS,RAKUTEN_RMS_API_ENCRYPTION_KEY,RAKUTEN_RMS_API_PROXY_URL,RAKUTEN_RMS_EXIT_NODE_IP
           script: |
-            set -eu
+            set -euo pipefail
+            COMPANY_ROLLBACK_ENABLED=0
+            rollback_company_release() {
+              result=$?
+              trap - EXIT
+              if [ "$result" -ne 0 ] && [ "$COMPANY_ROLLBACK_ENABLED" = 1 ]; then
+                echo "Company release failed; restoring the previous API image. The verified database backup is retained."
+                export DEPLOY_SESSION_VERSION="$OLD_API_DEPLOY_VERSION"
+                docker compose -f docker-compose.yml -f /tmp/wms-api-rollback-compose.yml --profile rakuten-egress up -d --no-deps api || true
+              fi
+              exit "$result"
+            }
+            trap rollback_company_release EXIT
             JOB_START_TS="$(date +%s)"
             retry() {
               max_attempts="$1"
@@ -199,8 +211,19 @@ jobs:
             timed_retry "compose_up_db" 3 docker compose up -d db
             if [ "${RUN_MIGRATIONS}" = "true" ]; then
               timed "resource_check_before_migration" bash scripts/wms-resource-check.sh
+              OLD_API_IMAGE="$(docker inspect --format '{{.Config.Image}}' wms_api)"
+              OLD_API_DEPLOY_VERSION="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' wms_api | sed -n 's/^DEPLOY_SESSION_VERSION=//p')"
+              {
+                printf '%s\n' 'services:' '  api:'
+                printf '    image: %s\n' "$OLD_API_IMAGE"
+                printf '%s\n' '    build: null'
+              } > /tmp/wms-api-rollback-compose.yml
+              timed "company_database_backup_and_restore_verify" bash scripts/wms-company-backup.sh /tmp/wms-company-backup-receipt.env
+              . /tmp/wms-company-backup-receipt.env
+              if [ "$COMPANY_BACKUP_PENDING" = 1 ]; then COMPANY_ROLLBACK_ENABLED=1; fi
               echo "Running prisma migrate deploy..."
-              timed "prisma_migrate_deploy" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml run --rm --no-deps api timeout -k 30 300 npm run -w api prisma:migrate:deploy
+              timed "prisma_migrate_deploy" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml run --rm --no-deps api timeout -k 30 1200 npm run -w api prisma:migrate:deploy
+              timed "company_migration_data_verify" bash scripts/wms-company-verify.sh /tmp/wms-company-backup-receipt.env
             else
               echo "Skipping prisma migrate deploy."
             fi
@@ -254,6 +277,7 @@ jobs:
               timed "reload_systemd_units" systemctl daemon-reload
               timed "enable_storage_monitor" systemctl enable --now wms-storage-health.timer
             fi
+            COMPANY_ROLLBACK_ENABLED=0
             timed "cleanup_image_tar" rm -f "${IMAGE_TAR}"
             timed "cleanup_old_wms_images" sh -c "docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk -v keep='${IMAGE_TAG}' '\$1 ~ /^wms-api:/ && \$1 != keep {print \$2}' | sort -u | xargs -r docker rmi || true"
             JOB_END_TS="$(date +%s)"

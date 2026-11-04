@@ -1,3 +1,4 @@
+import { companyContext } from '../company-scope/company-context';
 import {
   BadRequestException,
   Injectable,
@@ -63,6 +64,7 @@ export class UsersService {
         username: true,
         role: true,
         department: true,
+        companyId: true,
         status: true,
         createdAt: true,
         updatedAt: true,
@@ -77,6 +79,7 @@ export class UsersService {
       id: user.id,
       username: user.username,
       role: user.role,
+      companyId: user.companyId,
       department: user.username === this.protectedUsername ? '' : user.department,
       status: user.status,
       createdAt: user.createdAt,
@@ -92,10 +95,12 @@ export class UsersService {
   ): Promise<unknown> {
     const nextRole = payload.role ?? Role.employee;
     const nextDepartment = String(payload.department ?? 'china_warehouse').trim();
-    await Promise.all([
-      this.userOptionsService.assertRoleEnabled(nextRole),
-      this.userOptionsService.assertDepartmentEnabled(nextDepartment),
-    ]);
+    const scope = companyContext.getStore();
+    if (scope && !scope.systemAdmin && nextDepartment === 'overseas_warehouse') {
+      throw new ForbiddenException('只有系统管理员可以授予跨公司权限');
+    }
+    await this.userOptionsService.assertRoleEnabled(nextRole);
+    await this.userOptionsService.assertDepartmentEnabled(nextDepartment);
 
     const exists = await this.prisma.user.findUnique({
       where: { username: payload.username },
@@ -108,6 +113,7 @@ export class UsersService {
       const user = await tx.user.create({
         data: {
           username: payload.username,
+          ...(payload.companyId ? { companyId: BigInt(payload.companyId) } : {}),
           passwordHash: null,
           role: nextRole,
           department: nextDepartment,
@@ -124,6 +130,7 @@ export class UsersService {
         afterData: {
           username: user.username,
           role: user.role,
+          companyId: user.companyId,
           department: user.department,
           status: user.status,
         },
@@ -137,6 +144,7 @@ export class UsersService {
       id: created.id,
       username: created.username,
       role: created.role,
+      companyId: created.companyId,
       department: created.department,
       status: created.status,
       createdAt: created.createdAt,
@@ -160,6 +168,7 @@ export class UsersService {
     }
 
     const data: {
+      companyId?: bigint;
       username?: string;
       role?: Role;
       department?: string;
@@ -177,6 +186,9 @@ export class UsersService {
       data.username = username;
     }
 
+    if (payload.companyId && BigInt(payload.companyId) !== user.companyId) {
+      throw new BadRequestException('已有员工不能直接转移公司，请禁用原账号并为新公司创建账号');
+    }
     if (payload.role) data.role = payload.role;
     if (payload.department) data.department = String(payload.department).trim();
     if (typeof payload.status === 'number') data.status = payload.status;
@@ -204,6 +216,7 @@ export class UsersService {
         beforeData: {
           username: user.username,
           role: user.role,
+          companyId: user.companyId,
           department: user.department,
           status: user.status,
         },
@@ -223,6 +236,7 @@ export class UsersService {
       id: updated.id,
       username: updated.username,
       role: updated.role,
+      companyId: updated.companyId,
       department: updated.department,
       status: updated.status,
       createdAt: updated.createdAt,
@@ -260,6 +274,7 @@ export class UsersService {
           beforeData: {
             username: user.username,
             role: user.role,
+            companyId: user.companyId,
             department: user.department,
             status: user.status,
           },
@@ -376,6 +391,7 @@ export class UsersService {
         beforeData: {
           username: user.username,
           role: user.role,
+          companyId: user.companyId,
           department: user.department,
           status: user.status,
           passwordReset: false,
@@ -383,6 +399,7 @@ export class UsersService {
         afterData: {
           username: user.username,
           role: user.role,
+          companyId: user.companyId,
           department: user.department,
           status: 1,
           passwordReset: true,

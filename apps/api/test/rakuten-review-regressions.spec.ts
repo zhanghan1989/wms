@@ -199,7 +199,7 @@ describe('review fixes: stage outcomes', () => {
   const summary = { trackingNoCount: 2, customsClearanceCount: 1, failedCount: 0 };
   function scheduler(tracking: any, automation: any) {
     return new RakutenOrderSchedulerService({ syncRakutenTrackingStatuses: tracking } as any,
-      { runScheduledAutomation: automation } as any, { syncAllConnections: jest.fn().mockResolvedValue({ results: [] }) } as any, scheduleControl());
+      { runScheduledAutomation: automation } as any, { syncAllConnections: jest.fn().mockResolvedValue({ results: [] }) } as any, scheduleControl(), { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
   }
   it('returns both stage failures instead of success, and still runs the later stage', async () => {
     const automation = jest.fn().mockResolvedValue({ status: 'failed', error: 'processing outage' });

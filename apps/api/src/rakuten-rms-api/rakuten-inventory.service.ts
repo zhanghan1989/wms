@@ -1,3 +1,4 @@
+import { companyScheduleWhere } from '../company-scope/company-job';
 import { inventoryPlanEquals, encodeInventoryPlan, inventoryPlanPage } from './rakuten-inventory-plan';
 import { inventoryCombos, isInventoryCombo, validInventoryCombo } from './rakuten-inventory-combos';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
@@ -52,14 +53,14 @@ export class RakutenInventoryService {
   }
 
   private async locked<T>(action: (renew: () => Promise<void>) => Promise<T>, label = '库存任务正在执行'): Promise<T> {
-    await this.prisma.rakutenScheduleControl.upsert({ where: { key: LOCK_KEY }, create: { key: LOCK_KEY, enabled: false }, update: {} });
+    await this.prisma.rakutenScheduleControl.upsert({ where: companyScheduleWhere(LOCK_KEY), create: { key: LOCK_KEY, enabled: false }, update: {} });
     const token = randomUUID();
     const acquired = await this.prisma.rakutenScheduleControl.updateMany({
       where: { key: LOCK_KEY, OR: [{ runToken: null }, { heartbeatAt: { lt: new Date(Date.now() - LEASE_MS) } }] },
       data: { runToken: token, startedAt: new Date(), heartbeatAt: new Date(), lastMessage: label },
     });
     if (acquired.count !== 1) {
-      const owner = await this.prisma.rakutenScheduleControl.findUnique({ where: { key: LOCK_KEY }, select: { lastMessage: true, startedAt: true, heartbeatAt: true } });
+      const owner = await this.prisma.rakutenScheduleControl.findUnique({ where: companyScheduleWhere(LOCK_KEY), select: { lastMessage: true, startedAt: true, heartbeatAt: true } });
       throw new ConflictException(`库存同步或配置正在处理，请稍后重试${owner?.lastMessage ? `：${owner.lastMessage}` : ''}${owner?.heartbeatAt ? `；最近心跳 ${owner.heartbeatAt.toISOString()}` : ''}`);
     }
     const startedAt = Date.now();
@@ -96,7 +97,7 @@ export class RakutenInventoryService {
     const runs = await this.prisma.rakutenInventoryRun.findMany({ where: { connectionId: connection.id }, orderBy: { startedAt: 'desc' }, take: 20,
       select: { id: true, trigger: true, status: true, actorId: true, expiresAt: true, message: true, result: true, planPurgedAt: true, startedAt: true, finishedAt: true } });
     return {
-      lock: await this.prisma.rakutenScheduleControl.findUnique({ where: { key: LOCK_KEY },
+      lock: await this.prisma.rakutenScheduleControl.findUnique({ where: companyScheduleWhere(LOCK_KEY),
         select: { lastMessage: true, heartbeatAt: true, startedAt: true } }),
       enabled: connection.inventorySyncEnabled, lastFullSyncedAt: connection.inventoryLastFullSyncedAt, pauseReason: connection.inventoryPauseReason, failureCount: connection.inventoryFailureCount, mappingCount, catalog: await this.catalog.summary(connection),
       mappings: mappings.map((row) => ({ ...row, id: row.id.toString(), connectionId: row.connectionId.toString() })),
@@ -573,7 +574,7 @@ export class RakutenInventoryService {
       where: { ...where, status: 'preview' }, select: { plan: true },
     }) : null;
     const lease = ['planning', 'checking', 'running'].includes(run.status) ? await this.prisma.rakutenScheduleControl.findUnique({
-      where: { key: LOCK_KEY }, select: { heartbeatAt: true },
+      where: companyScheduleWhere(LOCK_KEY), select: { heartbeatAt: true },
     }) : null;
     const details = await inventoryPlanPage(snapshot?.plan ?? [], page, filter);
     return { detailsPurged: Boolean(run.planPurgedAt), ...details, filter, jobId: run.id, previewId: run.id, status: run.status, message: run.message, result: run.result,

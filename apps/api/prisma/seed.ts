@@ -4,6 +4,7 @@ import { PrismaClient, Role } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {
+  await prisma.company.upsert({ where: { id: 1n }, create: { id: 1n, name: 'XYJG' }, update: {} });
   const adminPassword = await hash(process.env.SEED_ADMIN_PASSWORD ?? 'Admin@123', 10);
   const employeePassword = await hash(process.env.SEED_EMPLOYEE_PASSWORD ?? 'Employee@123', 10);
 

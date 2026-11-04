@@ -16,7 +16,7 @@ describe('Rakuten twenty-minute order scheduler', () => {
     let finishTracking!: (value: typeof summary) => void;
     const orders = { syncRakutenTrackingStatuses: jest.fn(() => new Promise<typeof summary>((resolve) => { finishTracking = resolve; })) };
     const automation = { runScheduledAutomation: jest.fn().mockResolvedValue(undefined) };
-    const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, { runScheduledSync: jest.fn().mockResolvedValue(undefined) } as any, scheduleControl());
+    const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, { runScheduledSync: jest.fn().mockResolvedValue(undefined) } as any, scheduleControl(), { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
     const running = scheduler.runScheduledOrderProcessing();
     await new Promise((resolve) => setImmediate(resolve));
     expect(orders.syncRakutenTrackingStatuses).toHaveBeenCalledTimes(1);
@@ -29,7 +29,7 @@ describe('Rakuten twenty-minute order scheduler', () => {
     'continues order processing using saved data after a tracking failure: %s', async (error) => {
       const orders = { syncRakutenTrackingStatuses: jest.fn().mockRejectedValue(error) };
       const automation = { runScheduledAutomation: jest.fn().mockResolvedValue(undefined) };
-      const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, { runScheduledSync: jest.fn().mockResolvedValue(undefined) } as any, scheduleControl());
+      const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, { runScheduledSync: jest.fn().mockResolvedValue(undefined) } as any, scheduleControl(), { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
       await expect(scheduler.runScheduledOrderProcessing()).resolves.toBeUndefined();
       expect(automation.runScheduledAutomation).toHaveBeenCalledTimes(2);
     },
@@ -38,7 +38,7 @@ describe('Rakuten twenty-minute order scheduler', () => {
     const orders = { syncRakutenTrackingStatuses: jest.fn().mockResolvedValue(summary) };
     const automation = new RakutenRmsAutomationService({} as any, {} as any, {} as any);
     const runAutomation = jest.spyOn(automation, 'runAutomation');
-    await new RakutenOrderSchedulerService(orders as any, automation, { runScheduledSync: jest.fn().mockResolvedValue(undefined) } as any, scheduleControl(false)).runScheduledOrderProcessing();
+    await new RakutenOrderSchedulerService(orders as any, automation, { runScheduledSync: jest.fn().mockResolvedValue(undefined) } as any, scheduleControl(false), { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never).runScheduledOrderProcessing();
     expect(orders.syncRakutenTrackingStatuses).toHaveBeenCalledTimes(1);
     expect(runAutomation).not.toHaveBeenCalled();
   });

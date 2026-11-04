@@ -1,7 +1,12 @@
 import { Role } from '@prisma/client';
-import { IsEnum, IsOptional, IsString, Length, Max, Min } from 'class-validator';
+import { IsEnum, Matches, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 
 export class CreateUserDto {
+  @IsOptional()
+  @IsString()
+  @Matches(/^[1-9]\d*$/)
+  companyId?: string;
+
   @IsString()
   @Length(3, 64)
   username!: string;

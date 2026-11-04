@@ -1,3 +1,5 @@
+import { companyContext } from '../company-scope/company-context';
+import { CompanyJob } from '../company-scope/company-job';
 import { nextTrackingCheck, trackingFactDifferences } from './rakuten-tracking-checks';
 import { rakutenOrderRemarkNeedsConfirmation } from '../common/rakuten-order-remark';
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
@@ -2861,6 +2863,7 @@ export class OrdersService {
   }
 
   async getOverdueOrders(refresh = false) {
+    if (companyContext.getStore()?.companyId !== undefined) return this.buildOverdueOrders();
     if (!refresh && this.overdueSnapshot) return this.overdueSnapshot;
     if (this.overdueSnapshotPending) return this.overdueSnapshotPending;
     const pending = this.buildOverdueOrders().then((result) => {
@@ -8864,6 +8867,7 @@ export class OrdersService {
     name: 'daily-xiya-tracking-sync',
     timeZone: APP_TIMEZONE,
   })
+  @CompanyJob()
   async runScheduledXiyaTrackingSync(): Promise<void> {
     try {
       const result = await this.syncXiyaTrackingNumbers();

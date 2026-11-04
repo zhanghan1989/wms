@@ -1,3 +1,6 @@
+import { APP_INTERCEPTOR } from '@nestjs/core';
+import { CompanyScopeInterceptor } from './company-scope/company-scope.interceptor';
+import { CompaniesModule } from './companies/companies.module';
 import { BrandingModule } from './branding/branding.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -28,7 +31,9 @@ import { UserOptionsModule } from './user-options/user-options.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
+  providers: [{ provide: APP_INTERCEPTOR, useClass: CompanyScopeInterceptor }],
   imports: [
+    CompaniesModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),

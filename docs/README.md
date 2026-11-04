@@ -12,6 +12,7 @@
 - 分支与发布流程：见 `LOCAL_DEV.md`
 
 ## 设计与规范
+- [多中国公司、品牌与日本海外仓权限](MULTI_COMPANY.md)
 - `AI_DEV_SPEC.md`
 - `UTF8_TEXT_COMMANDS.md`
 

@@ -1,3 +1,4 @@
+import { companyContext } from '../company-scope/company-context';
 import { storeDashboardPeriod } from '../common/store-dashboard-period';
 import { exportOverviewDashboard } from './overview-dashboard-export';
 import { assertBoxUsable, assertBoxUsableById, assertBoxesUsableByIds } from '../common/box-availability';
@@ -1337,6 +1338,7 @@ export class InventoryService {
     const requestedDays = Number(options.days ?? 30);
     const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
     const cacheKey = [
+      String(companyContext.getStore()?.companyId ?? "all"),
       days,
       options.month || '',
       options.includeFba === true ? 'fba' : 'base',

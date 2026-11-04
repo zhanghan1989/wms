@@ -1,3 +1,52 @@
+let activeCompanyId = "";
+let companyOptions = [];
+function companyHeaders() {
+  return activeCompanyId ? { "X-Company-Id": activeCompanyId } : {};
+}
+function getUserByIdForCompany(id) { return state.users.find((user) => String(user.id) === String(id)); }
+function companyName(id) {
+  return companyOptions.find((company) => String(company.id) === String(id))?.name || String(id || "未分配");
+}
+async function loadCompanyUi() {
+  companyOptions = await request("/companies");
+  const crossCompany = state.me.role === "system_admin" || state.me.department === "overseas_warehouse";
+  const storageKey = `wms.company.${state.me.id}`;
+  const stored = sessionStorage.getItem(storageKey);
+  const saved = stored || "";
+  const activeCompanies = companyOptions.filter((company) => company.status === 1);
+  activeCompanyId = crossCompany
+    ? (activeCompanies.some((company) => String(company.id) === saved) ? saved
+      : stored === null && activeCompanies.length === 1 ? String(activeCompanies[0].id) : "")
+    : String(state.me.companyId);
+  let selector = document.getElementById("activeCompanySelect");
+  if (!selector) {
+    const label = document.createElement("label");
+    label.textContent = "业务公司 ";
+    selector = document.createElement("select");
+    selector.id = "activeCompanySelect";
+    label.append(selector);
+    document.getElementById("sessionInfo").parentElement.append(label);
+    selector.addEventListener("change", () => {
+      sessionStorage.setItem(`wms.company.${state.me.id}`, selector.value);
+      window.location.reload();
+    });
+  }
+  const options = companyOptions.filter((c) => c.status === 1).map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
+  selector.innerHTML = (crossCompany ? '<option value="">全部公司（处理业务前请选择公司）</option>' : "") + options;
+  selector.value = activeCompanyId;
+  selector.disabled = !crossCompany;
+  const userCompany = document.getElementById("newUserCompany");
+  if (userCompany) {
+    userCompany.innerHTML = options;
+    userCompany.value = activeCompanyId || String(state.me.companyId);
+    userCompany.disabled = !crossCompany;
+  }
+  const form = document.getElementById("companyCreateForm");
+  form?.classList.toggle("hidden", state.me.role !== "system_admin");
+  const list = document.getElementById("companyList");
+  if (list) list.innerHTML = companyOptions.map((c) => `<div class="action-row"><span>${escapeHtml(c.name)}${c.status === 1 ? "" : "（已禁用）"}</span>${state.me.role === "system_admin" ? `<button type="button" class="tiny-btn" data-company-edit="${escapeHtml(c.id)}">修改名称</button><button type="button" class="tiny-btn" data-company-toggle="${escapeHtml(c.id)}">${c.status === 1 ? "禁用" : "启用"}</button>` : ""}</div>`).join("");
+}
+
 const AUTH_STORAGE_KEY = "wms_token";
 const AUTH_COOKIE_KEY = "wms_token";
 const AUTH_SESSION_STORAGE_KEY = "wms_token_session";
@@ -469,6 +518,8 @@ const AUDIT_EVENT_TEXT_MAP = {
   shelf_field_updated: "货架信息更新",
   shelf_disabled: "禁用货架",
   shelf_deleted: "删除货架",
+  company_created: "新增中国公司",
+  company_updated: "更新中国公司",
   brand_created: "新增品牌",
   brand_updated: "更新品牌",
   brand_deleted: "删除品牌",
@@ -1454,6 +1505,7 @@ async function downloadFbaOutboundExcel() {
     response = await fetch("/api/inventory/fba-replenishments/outbound-excel", {
       headers: {
         Authorization: `Bearer ${state.token}`,
+        ...companyHeaders(),
       },
     });
   } catch (error) {
@@ -1505,6 +1557,7 @@ async function downloadBatchInboundTemplate() {
     response = await fetch("/api/batch-inbound/upload-template", {
       headers: {
         Authorization: `Bearer ${state.token}`,
+        ...companyHeaders(),
       },
     });
   } catch (error) {
@@ -1556,6 +1609,7 @@ async function downloadSkuUploadTemplate() {
     response = await fetch("/api/skus/upload-template", {
       headers: {
         Authorization: `Bearer ${state.token}`,
+        ...companyHeaders(),
       },
     });
   } catch (error) {
@@ -1607,6 +1661,7 @@ async function downloadInventoryUpdateTemplate() {
     response = await fetch("/api/inventory/bulk-update-template", {
       headers: {
         Authorization: `Bearer ${state.token}`,
+        ...companyHeaders(),
       },
     });
   } catch (error) {
@@ -1672,11 +1727,9 @@ function isCurrentUserSystemAdmin() {
 function getDepartmentText(department) {
   const code = String(department || "");
   if (!code) return "";
-  const item = state.departmentOptions.find((option) => option.code === code);
-  if (item?.name) return item.name;
-  if (code === "factory") return "工厂";
-  if (code === "overseas_warehouse") return "海外仓";
-  return "中国仓";
+  if (code === "overseas_warehouse") return "日本海外仓";
+  if (code === "factory") return "工厂作业";
+  return "中国公司人员";
 }
 
 function sortUserOptions(options) {
@@ -2376,6 +2429,7 @@ async function downloadDataBackup(fileName) {
     response = await fetch(`/api/backups/${encodeURIComponent(normalizedFileName)}/download`, {
       headers: {
         Authorization: `Bearer ${state.token}`,
+        ...companyHeaders(),
       },
     });
   } catch (error) {
@@ -3125,6 +3179,12 @@ function applyRoleView() {
   const isLoggedIn = Boolean(state.me);
   const isEmployee = Boolean(state.me?.role === "employee");
   const canEditOrders = canCurrentUserEditOrders();
+  const warehouseOnly = state.me?.department === "overseas_warehouse" && !isCurrentUserSystemAdmin();
+  document.querySelector('.nav-btn[data-target="users"]')?.classList.toggle("hidden", warehouseOnly);
+  $("openDataBackupPanel")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
+  $("openAmazonDashboardPanel")?.classList.toggle("hidden", warehouseOnly);
+  $("openRakutenDashboardPanel")?.classList.toggle("hidden", warehouseOnly);
+  $("openDepartmentManageModal")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
 
   if (layout) {
     layout.classList.toggle("no-sidebar", isEmployee);
@@ -3878,7 +3938,7 @@ async function request(path, options = {}) {
     await ensureAuthDeployVersion();
   }
 
-  const headers = { ...(options.headers || {}) };
+  const headers = { ...(!normalizedPath.startsWith("/auth/") && normalizedPath !== "/companies" ? companyHeaders() : {}), ...(options.headers || {}) };
   const isFormData = options.body instanceof FormData;
 
   if (!isFormData && !headers["Content-Type"]) {
@@ -3941,7 +4001,7 @@ async function fetchAuthorizedResponse(path, options = {}) {
     await ensureAuthDeployVersion();
   }
 
-  const headers = { ...(options.headers || {}) };
+  const headers = { ...companyHeaders(), ...(options.headers || {}) };
   const isFormData = options.body instanceof FormData;
   if (!isFormData && options.body !== undefined && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
@@ -4119,6 +4179,7 @@ async function loadMe() {
   try {
     await ensureAuthDeployVersion();
     state.me = await request("/auth/me", { skipDeployVersionCheck: true });
+    await loadCompanyUi();
     void loadOverdueOrderSummary();
     $("sessionInfo").textContent = `${state.me.username}`;
     setAuthGate(true);
@@ -4269,9 +4330,9 @@ function renderUserSelectOptions() {
 
   if (newDepartmentEl) {
     const selected = newDepartmentEl.value || "china_warehouse";
-    const options = getDepartmentOptionsWithFallback().filter((item) => Number(item.status) === 1);
+    const options = getDepartmentOptionsWithFallback().filter((item) => ["factory", "overseas_warehouse", "china_warehouse"].includes(item.code) && Number(item.status) === 1 && (isCurrentUserSystemAdmin() || item.code !== "overseas_warehouse"));
     newDepartmentEl.innerHTML = options
-      .map((item) => `<option value="${escapeHtml(item.code)}">${escapeHtml(item.name || item.code)}</option>`)
+      .map((item) => `<option value="${escapeHtml(item.code)}">${escapeHtml(getDepartmentText(item.code))}</option>`)
       .join("");
     if (!newDepartmentEl.value && options.length) {
       newDepartmentEl.value = options[0].code;
@@ -4297,12 +4358,12 @@ function renderUserSelectOptions() {
 
   if (editDepartmentEl) {
     const selected = editDepartmentEl.value || "china_warehouse";
-    const options = getDepartmentOptionsWithFallback().filter((item) => Number(item.status) === 1 || item.code === selected,
+    const options = getDepartmentOptionsWithFallback().filter((item) => ["factory", "overseas_warehouse", "china_warehouse"].includes(item.code) && (Number(item.status) === 1 || item.code === selected) && (isCurrentUserSystemAdmin() || item.code !== "overseas_warehouse"),
     );
     editDepartmentEl.innerHTML = options
       .map((item) => {
         const suffix = Number(item.status) === 1 ? "" : "（禁用）";
-        return `<option value="${escapeHtml(item.code)}">${escapeHtml((item.name || item.code) + suffix)}</option>`;
+        return `<option value="${escapeHtml(item.code)}">${escapeHtml(getDepartmentText(item.code) + suffix)}</option>`;
       })
       .join("");
     if (selected && options.some((item) => item.code === selected)) {
@@ -4405,6 +4466,7 @@ function renderUsersTable() {
         return `
       <tr>
         <td>${escapeHtml(user.username)}</td>
+        <td>${escapeHtml(companyName(user.companyId))}</td>
         <td>${escapeHtml(getDepartmentText(user.department))}</td>
         <td>${escapeHtml(getRoleText(user.role))}</td>
         <td>${getStatusText(user.status)}</td>
@@ -4544,6 +4606,7 @@ async function removeUser(userId, username) {
 }
 
 function openEditUserModal(userId, username, role, department, status = 1) {
+  $("editUserCompany").value = companyName(getUserByIdForCompany(userId)?.companyId);
   state.selectedEditUserId = String(userId);
   $("editUserId").value = String(userId);
   $("editUsername").value = String(username || "");
@@ -5481,7 +5544,7 @@ function renderInventoryTable() {
         const productId = String(item?.productId || "").trim();
         return `
           <tr class="inventory-main-row">
-            <td>${escapeHtml(displayText(productId))}</td>
+            <td>${escapeHtml(displayText(productId))}${item.companyId ? `<br><small class="muted">${escapeHtml(companyName(item.companyId))}</small>` : ""}</td>
             <td>${escapeHtml(displayText(item?.productName))}</td>
             <td class="master-product-current-cell">${escapeHtml(displayText(item?.stockQty ?? 0))}</td>
             <td>
@@ -6705,6 +6768,7 @@ function renderBrandsTable() {
           <input
             id="brandName-${escapeHtml(item.id)}"
             value="${escapeHtml(item.name)}"
+            title="所属公司：${escapeHtml(companyName(item.companyId))}"
             maxlength="128"
             ${editing ? "" : "readonly"}
             data-original-name="${escapeHtml(item.name)}"
@@ -9446,7 +9510,7 @@ function renderMasterProductTable() {
         const productId = String(item?.productId || "").trim();
         return `
           <tr>
-            <td>${escapeHtml(displayText(productId))}</td>
+            <td>${escapeHtml(displayText(productId))}${item.companyId ? `<br><small class="muted">${escapeHtml(companyName(item.companyId))}</small>` : ""}</td>
             <td>${escapeHtml(displayText(item?.productName))}</td>
             <td>${escapeHtml(displayText(item?.productType))}</td>
             <td>${escapeHtml(displayText(item?.bagBrand))}</td>
@@ -9804,7 +9868,7 @@ function renderShoulderStrapProductTable() {
           .map((value) => String(value || "").trim()).filter(Boolean).join(" × ");
         const assemblable = escapeHtml(displayText(item?.assemblableStock ?? 0));
         return `<tr>
-          <td>${escapeHtml(displayText(productId))}</td><td>${escapeHtml(displayText(item?.productName))}</td>
+          <td>${escapeHtml(displayText(productId))}${item.companyId ? `<br><small class="muted">${escapeHtml(companyName(item.companyId))}</small>` : ""}</td><td>${escapeHtml(displayText(item?.productName))}</td>
           <td>${escapeHtml(displayText(item?.color))}</td><td>${escapeHtml(displayText(item?.style))}</td>
           <td>${escapeHtml(displayText(size))}</td>
           <td class="master-product-current-cell">${escapeHtml(displayText(item?.stockQty ?? 0))}</td>
@@ -17049,9 +17113,11 @@ function bindForms() {
       await withBusyButton(submitButton, "提交中...", async () => {
         const username = $("newUsername").value.trim();
         await request("/users", {
+          headers: { "X-Company-Id": $("newUserCompany").value },
           method: "POST",
           body: JSON.stringify({
             username,
+            companyId: $("newUserCompany").value,
             department: $("newDepartment").value,
             role: $("newRole").value,
           }),
@@ -19145,11 +19211,9 @@ function bindForms() {
 
   $("openDepartmentManageModal").addEventListener("click", async () => {
     try {
-      state.departmentOptionEditingCodes = new Set();
-      await loadUserOptions();
-      $("departmentOptionCreateForm")?.reset();
-      renderDepartmentOptionCreateForm();
-      openModal("departmentManageModal");
+      if (!isCurrentUserSystemAdmin()) return;
+      await loadCompanyUi();
+      openModal("companyManageModal");
     } catch (error) {
       showToast(error.message, true);
     }
@@ -22549,3 +22613,29 @@ void (async function initializeBranding() {
     if (!dialog.open) apply(saved);
   } catch (error) { console.warn(error.message); }
 })();
+
+document.getElementById("companyCreateForm")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await request("/companies", { method: "POST", body: JSON.stringify({ name: document.getElementById("companyNameInput").value.trim() }) });
+    document.getElementById("companyNameInput").value = "";
+    await loadCompanyUi();
+    showToast("中国公司已新增，请选择公司后配置品牌和员工");
+  } catch (error) { showToast(error.message, true); }
+});
+
+document.getElementById("companyList")?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-company-edit], [data-company-toggle]");
+  if (!button) return;
+  const company = companyOptions.find((c) => String(c.id) === String(button.dataset.companyEdit || button.dataset.companyToggle));
+  if (!company) return;
+  const name = button.dataset.companyEdit ? window.prompt("中国公司名称", company.name) : company.name;
+  if (!name?.trim()) return;
+  try {
+    await request(`/companies/${encodeURIComponent(company.id)}`, { method: "PUT", body: JSON.stringify({ name: name.trim(), status: button.dataset.companyToggle ? (company.status === 1 ? 0 : 1) : company.status }) });
+    await loadCompanyUi();
+    showToast("公司已更新");
+  } catch (error) { showToast(error.message, true); }
+});
+
+document.querySelector('[data-action="closeCompanyManageModal"]')?.addEventListener("click", () => closeModal("companyManageModal"));

@@ -1,3 +1,5 @@
+import { PrismaService } from '../prisma/prisma.service';
+import { CompanyJob } from '../company-scope/company-job';
 import { ConflictException, Injectable, Logger } from '@nestjs/common';
 import { RakutenAutomationRunTrigger } from '@prisma/client';
 import { Cron } from '@nestjs/schedule';
@@ -17,6 +19,7 @@ export class RakutenOrderSchedulerService {
     private readonly automation: RakutenRmsAutomationService,
     private readonly api: RakutenRmsApiService,
     private readonly schedules: RakutenScheduleControlService,
+    readonly companyPrisma?: PrismaService,
   ) {}
 
   private running = false;
@@ -26,6 +29,7 @@ export class RakutenOrderSchedulerService {
     timeZone: 'Asia/Tokyo',
     waitForCompletion: true,
   })
+  @CompanyJob()
   async runScheduledOrderProcessing(): Promise<void> {
     await this.runRound(false);
   }

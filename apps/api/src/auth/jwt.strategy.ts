@@ -28,11 +28,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
     const session = await this.prisma.authSession.findUnique({
       where: { id: payload.jti },
-      include: { user: true },
+      include: { user: { include: { company: true } } },
     });
     const user = session?.user;
     if (!session || session.expiresAt <= new Date() || !user || user.status !== 1
-      || !user.passwordHash || user.id.toString() !== payload.sub
+      || !user.passwordHash || (user.role !== 'system_admin' && user.department !== 'overseas_warehouse' && user.company?.status === 0) || user.id.toString() !== payload.sub
       || user.sessionVersion !== payload.sessionVersion) {
       throw new UnauthorizedException('登录已失效，请重新登录');
     }
@@ -40,6 +40,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       id: user.id,
       username: user.username,
       role: user.role,
+      companyId: user.companyId,
+      department: user.department,
       sessionId: session.id,
     };
   }

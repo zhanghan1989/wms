@@ -35,8 +35,9 @@ describe('unified import and new-order mail flow', () => {
     const api = { runScheduledSync: jest.fn(() => new Promise<void>((resolve) => { commit = () => { calls.push('import'); calls.push('new_order'); resolve(); }; })) };
     const orders = { syncRakutenTrackingStatuses: jest.fn(async () => { calls.push('tracking'); return {}; }) };
     const automation = { runScheduledAutomation: jest.fn(async () => { calls.push('outbound'); }) };
-    const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, api as any, scheduleControl());
+    const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, api as any, scheduleControl(), { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
     const running = scheduler.runScheduledOrderProcessing();
+    await Promise.resolve();
     expect(orders.syncRakutenTrackingStatuses).not.toHaveBeenCalled();
     await expect(scheduler.runNow()).rejects.toThrow('正在执行');
     commit(); await running;
@@ -47,7 +48,7 @@ describe('unified import and new-order mail flow', () => {
     const api = { syncAllConnections: jest.fn().mockRejectedValue(new Error('unavailable')) };
     const orders = { syncRakutenTrackingStatuses: jest.fn().mockResolvedValue({}) };
     const automation = { runScheduledAutomation: jest.fn().mockResolvedValue(undefined) };
-    const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, api as any, scheduleControl());
+    const scheduler = new RakutenOrderSchedulerService(orders as any, automation as any, api as any, scheduleControl(), { company: { findMany: jest.fn().mockResolvedValue([{ id: 1n }]) } } as never);
     const result = await scheduler.runNow();
     expect(result).toMatchObject({ imported: { error: 'unavailable' }, checked: false, stages: { import: { status: 'failed' } } });
     expect(orders.syncRakutenTrackingStatuses).toHaveBeenCalledTimes(1);

@@ -21,7 +21,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     const isHttpException = exception instanceof HttpException;
     const isPrismaKnown = exception instanceof Prisma.PrismaClientKnownRequestError;
-    const status = isHttpException ? exception.getStatus() : HttpStatus.INTERNAL_SERVER_ERROR;
+    const status = isHttpException ? exception.getStatus()
+      : isPrismaKnown && exception.code === 'P2025' ? HttpStatus.NOT_FOUND
+        : isPrismaKnown && exception.code === 'P2002' ? HttpStatus.CONFLICT
+          : HttpStatus.INTERNAL_SERVER_ERROR;
 
     const message = isHttpException
       ? this.localizeMessage(this.extractHttpMessage(exception))
@@ -66,6 +69,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (exception.code === 'P2021' || exception.code === 'P2022') {
       return '数据库结构未更新，请先执行 prisma migrate deploy。';
     }
+    if (exception.code === 'P2025') return '记录不存在或无权访问';
+    if (exception.code === 'P2002') return '编号或名称已存在';
     if (exception.code === 'P2003') {
       return '存在关联数据，无法删除或修改。请先处理关联记录。';
     }
