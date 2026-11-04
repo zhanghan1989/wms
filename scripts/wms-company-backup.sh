@@ -61,7 +61,7 @@ docker run --detach --rm --network none --memory 512m --pids-limit 128 --name "$
   "$MYSQL_IMAGE" --innodb-buffer-pool-size=64M --performance-schema=OFF --max-connections=10 --skip-log-bin >/dev/null
 READY=0
 for _ in $(seq 1 90); do
-  if docker exec "$VERIFY_CONTAINER" mysql -uroot -N -e 'SELECT 1' wms_v1 >/dev/null 2>&1; then READY=1; break; fi
+  if docker exec "$VERIFY_CONTAINER" mysql --protocol=tcp -h127.0.0.1 -uroot -N -e 'SELECT 1' wms_v1 >/dev/null 2>&1; then READY=1; break; fi
   sleep 2
 done
 [[ "$READY" == 1 ]] || { echo 'Isolated restore database did not become ready.' >&2; exit 1; }
