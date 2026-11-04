@@ -20,7 +20,7 @@ export class CompanyScopeInterceptor implements NestInterceptor {
     if (selected !== undefined && (typeof selected !== 'string' || !/^[1-9]\d*$/.test(selected))) {
       throw new BadRequestException('公司编号无效');
     }
-    let companyId = systemAdmin || warehouse ? undefined : user.companyId;
+    let companyId = systemAdmin || warehouse ? undefined : user.companyId ?? undefined;
     if (selected) {
       if (!systemAdmin && !warehouse && selected !== String(user.companyId)) {
         throw new ForbiddenException('无权访问其他公司');
@@ -29,8 +29,10 @@ export class CompanyScopeInterceptor implements NestInterceptor {
     }
     if (!systemAdmin && !warehouse && !companyId) throw new ForbiddenException('账号尚未分配公司');
     const path = req.originalUrl.split('?')[0].replace(/^\/api\//, '');
-    const globalAdminPath = systemAdmin && /^(auth|companies|backups|branding|user-options)(\/|$)/.test(path);
-    if (globalAdminPath) companyId = undefined;
+    const globalAdminPath = systemAdmin && /^(auth|companies|users|backups|branding|user-options)(\/|$)/.test(path);
+    // Shared warehouse accounts have no business-company owner; self-service
+    // authentication must not inherit the company selected for warehouse work.
+    if (globalAdminPath || (warehouse && /^auth(\/|$)/.test(path))) companyId = undefined;
     if ((warehouse || systemAdmin) && !globalAdminPath && !companyId && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)
       && !/^(auth|companies)(\/|$)/.test(path)) {
       throw new BadRequestException('请先选择所属中国公司，再处理业务');

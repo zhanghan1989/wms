@@ -30,7 +30,7 @@ suite('company isolation against MySQL', () => {
     shelf = (await base.shelf.create({ data: { shelfCode: `QA-${tag}` } })).id;
     boxA = (await scope(a, () => db.box.create({ data: { boxCode: `QA-A-${tag}`, shelfId: shelf } }))).id;
     boxB = (await scope(b, () => db.box.create({ data: { boxCode: `QA-B-${tag}`, shelfId: shelf } }))).id;
-    warehouseUser = (await base.user.create({ data: { username: `QA-warehouse-${tag}`, companyId: a, department: 'overseas_warehouse', role: 'employee' } })).id;
+    warehouseUser = (await base.user.create({ data: { username: `QA-warehouse-${tag}`, companyId: null, department: 'overseas_warehouse', role: 'employee' } })).id;
     productA = `QA-A-${tag}`; productB = `QA-B-${tag}`;
     for (const [companyId, productId] of [[a, productA], [b, productB]] as const) {
       await scope(companyId, async () => {
@@ -41,6 +41,10 @@ suite('company isolation against MySQL', () => {
   });
   afterAll(async () => {
     if (!base) return;
+    if (warehouseUser) {
+      await base.operationAuditLog.deleteMany({ where: { entityType: 'user', entityId: warehouseUser } });
+      await base.user.delete({ where: { id: warehouseUser } });
+    }
     for (const companyId of [a,b]) {
       if (!companyId) continue;
       await base.manualOrderRecord.deleteMany({ where: { companyId } });
@@ -77,6 +81,14 @@ suite('company isolation against MySQL', () => {
     await expect(db.user.update({ where: { id: warehouseUser }, data: { passwordHash: 'replacement' } })).rejects.toThrow();
     expect((await db.user.updateMany({ where: { id: warehouseUser }, data: { status: 0 } })).count).toBe(0);
   }));
+  it('preserves global account affiliation during self-service password and audit writes', async () => scope(undefined, async () => {
+    await db.user.update({ where: { id: warehouseUser }, data: { passwordHash: 'test-only-hash' } });
+    expect((await base.user.findUniqueOrThrow({ where: { id: warehouseUser } })).companyId).toBeNull();
+    await scope(undefined, async () => {
+      await db.operationAuditLog.create({ data: { entityType: 'user', entityId: warehouseUser, action: 'update', eventType: 'user_updated', operatorId: warehouseUser } });
+      expect((await base.operationAuditLog.findFirstOrThrow({ where: { entityType: 'user', entityId: warehouseUser } })).companyId).toBeNull();
+    }, { systemAdmin: true });
+  }, { warehouse: true, userId: warehouseUser }));
   it('scopes raw reports, joins, UNIONs and locking reads with bound values', async () => scope(a, async () => {
     const rows = await db.$queryRaw<Array<{ id: bigint }>>`SELECT id FROM boxes WHERE id IN (${boxA}, ${boxB}) UNION SELECT id FROM boxes WHERE id = ${boxB}`;
     expect(rows.map((r) => r.id)).toEqual([boxA]);

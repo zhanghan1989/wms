@@ -39,6 +39,10 @@ describe('company request boundaries', () => {
     const read = fixture({ user: warehouse });
     expect((await firstValueFrom(await read.interceptor.intercept(read.context,read.next)) as CompanyScope)?.companyId).toBeUndefined();
   });
+  it('keeps warehouse self-service authentication global with a selected business company', async () => {
+    const f = fixture({ user: { id: 3n, role: 'employee', department: 'overseas_warehouse', companyId: null }, method: 'POST', originalUrl: '/api/auth/change-password', headers: { 'x-company-id': '2' } });
+    expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next))).toMatchObject({ companyId: undefined, warehouse: true });
+  });
   it.each(['employee', 'admin'] as const)('allows warehouse %s to read manual-order shop/platform options with or without a company selection', async (role) => {
     const warehouse = { id: 3n, role, department: 'overseas_warehouse', companyId: 1n };
     for (const originalUrl of ['/api/shops', '/api/shops?q=shop', '/api/shops/platforms']) {

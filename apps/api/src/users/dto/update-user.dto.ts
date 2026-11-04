@@ -5,7 +5,7 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   @Matches(/^[1-9]\d*$/)
-  companyId?: string;
+  companyId?: string | null;
 
   @IsOptional()
   @IsString()

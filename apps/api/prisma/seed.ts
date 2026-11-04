@@ -11,6 +11,7 @@ async function main(): Promise<void> {
   await prisma.user.upsert({
     where: { username: 'admin' },
     update: {
+      companyId: null,
       role: Role.system_admin,
       department: '',
       status: 1,
@@ -18,6 +19,7 @@ async function main(): Promise<void> {
     },
     create: {
       username: 'admin',
+      companyId: null,
       role: Role.system_admin,
       department: '',
       status: 1,
@@ -28,6 +30,7 @@ async function main(): Promise<void> {
   await prisma.user.upsert({
     where: { username: 'employee' },
     update: {
+      companyId: 1n,
       role: Role.employee,
       department: 'china_warehouse',
       status: 1,
@@ -35,6 +38,7 @@ async function main(): Promise<void> {
     },
     create: {
       username: 'employee',
+      companyId: 1n,
       role: Role.employee,
       department: 'china_warehouse',
       status: 1,

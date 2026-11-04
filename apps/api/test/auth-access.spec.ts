@@ -10,13 +10,14 @@ describe('revocable sessions and privilege boundaries', () => {
 
   function fixture() {
     const users: any[] = [
-      { id: 1n, username: 'root', role: 'system_admin', status: 1, sessionVersion: 0 },
-      { id: 2n, username: 'manager', role: 'admin', department: 'china_warehouse', status: 1, sessionVersion: 0, passwordHash: 'hash' },
-      { id: 3n, username: 'employee', role: 'employee', department: 'factory', status: 1, sessionVersion: 0 },
+      { id: 1n, username: 'root', companyId: null, role: 'system_admin', status: 1, sessionVersion: 0 },
+      { id: 2n, username: 'manager', companyId: 1n, role: 'admin', department: 'china_warehouse', status: 1, sessionVersion: 0, passwordHash: 'hash' },
+      { id: 3n, username: 'employee', companyId: 1n, role: 'employee', department: 'factory', status: 1, sessionVersion: 0 },
     ];
     let session: any = { id: 'session-1', user: users[1], expiresAt: new Date(Date.now() + 60000) };
     const tx: any = {
       $queryRaw: jest.fn().mockResolvedValue([]),
+      company: { findUnique: jest.fn(async ({ where }) => ({ id: where.id, name: 'XYJG', status: 1 })) },
       user: {
         findUnique: jest.fn(async ({ where }) => users.find(u => u.id === where.id) ?? null),
         update: jest.fn(async ({ where, data }) => Object.assign(users.find(u => u.id === where.id), data)),
@@ -80,4 +81,32 @@ describe('revocable sessions and privilege boundaries', () => {
     await service.update('3', { status: 0 }, 2n);
     expect(tx.user.update).toHaveBeenCalled();
   });
+  it('assigns warehouse membership without a Chinese company and revokes sessions', async () => {
+    const { service, tx } = fixture();
+    await service.update('3', { companyId: null }, 1n);
+    expect(tx.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ companyId: null, department: 'overseas_warehouse', sessionVersion: { increment: 1 } }),
+    }));
+  });
+  it('removes company affiliation when granting system administrator', async () => {
+    const { service, tx } = fixture();
+    await service.update('3', { role: 'system_admin' }, 1n);
+    expect(tx.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ companyId: null, department: '', role: 'system_admin' }),
+    }));
+  });
+  it('lets only system administrators move employees to another company', async () => {
+    const { service, tx } = fixture();
+    await expect(service.update('3', { companyId: '2' }, 2n)).rejects.toBeInstanceOf(ForbiddenException);
+    await service.update('3', { companyId: '2' }, 1n);
+    expect(tx.user.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ companyId: 2n, department: 'factory' }),
+    }));
+  });
+  it('rejects warehouse assignment by a company administrator even without request context', async () => {
+    const { service, tx } = fixture();
+    await expect(service.update('3', { companyId: null }, 2n)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+
 });

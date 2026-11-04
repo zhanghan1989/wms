@@ -4,7 +4,7 @@ export interface AuthUser {
   id: bigint;
   username: string;
   role: Role;
-  companyId?: bigint;
+  companyId?: bigint | null;
   department?: string;
   sessionId?: string;
 }

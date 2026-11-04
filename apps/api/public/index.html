@@ -2096,7 +2096,7 @@
           </div>
           <div id="usersTableWrap" class="master-product-table-wrap">
             <table>
-              <thead><tr><th>用户名</th><th>所属公司</th><th>作业身份</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+              <thead><tr><th>用户名</th><th>所属公司</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
               <tbody id="usersBody"></tbody>
             </table>
             <div id="usersLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
@@ -3212,9 +3212,6 @@
       <form id="createUserForm" class="form-grid modal-grid">
         <label>用户名<input id="newUsername" required /></label>
         <label>所属公司<select id="newUserCompany" required></select></label>
-        <label>作业身份
-          <select id="newDepartment"></select>
-        </label>
         <label>角色
           <select id="newRole"></select>
         </label>
@@ -3233,15 +3230,8 @@
       </div>
       <form id="editUserForm" class="form-grid modal-grid">
         <input id="editUserId" type="hidden" />
-        <label>所属公司<input id="editUserCompany" readonly /></label>
+        <label>所属公司<select id="editUserCompany" required></select></label>
         <label>用户名<input id="editUsername" required minlength="3" maxlength="64" /></label>
-        <label>作业身份
-          <select id="editUserDepartment" required>
-            <option value="factory">工厂</option>
-            <option value="overseas_warehouse">海外仓</option>
-            <option value="china_warehouse">中国仓</option>
-          </select>
-        </label>
         <label>角色
           <select id="editUserRole" required>
             <option value="employee">员工</option>

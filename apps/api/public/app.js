@@ -7,6 +7,29 @@ function getUserByIdForCompany(id) { return state.users.find((user) => String(us
 function companyName(id) {
   return companyOptions.find((company) => String(company.id) === String(id))?.name || String(id || "未分配");
 }
+function userAffiliation(user) {
+  if (user?.role === "system_admin") return "—";
+  if (user?.department === "overseas_warehouse") return "日本海外仓";
+  return companyName(user?.companyId);
+}
+function affiliationValue(user) {
+  return user?.role === "system_admin" ? "" : user?.department === "overseas_warehouse" ? "warehouse" : String(user?.companyId || "");
+}
+function renderUserAffiliationOptions(select, selected, systemAdmin = false) {
+  if (!select) return;
+  select.innerHTML = (systemAdmin ? '<option value="">—</option>' : '')
+    + companyOptions.filter((company) => company.status === 1 || String(company.id) === String(selected))
+      .map((company) => `<option value="${escapeHtml(company.id)}">${escapeHtml(company.name)}</option>`).join("")
+    + (isCurrentUserSystemAdmin() ? '<option value="warehouse">日本海外仓</option>' : '');
+  select.value = selected;
+  select.disabled = systemAdmin || !isCurrentUserSystemAdmin();
+}
+function syncUserAffiliationForRole(roleId, companyId) {
+  const select = $(companyId);
+  if (select.value) select.dataset.previousAffiliation = select.value;
+  const systemAdmin = $(roleId).value === "system_admin";
+  renderUserAffiliationOptions(select, systemAdmin ? "" : select.dataset.previousAffiliation || activeCompanyId || String(companyOptions[0]?.id || ""), systemAdmin);
+}
 async function loadCompanyUi() {
   companyOptions = await request("/companies");
   const crossCompany = state.me.role === "system_admin" || state.me.department === "overseas_warehouse";
@@ -33,14 +56,12 @@ async function loadCompanyUi() {
   selector.disabled = !crossCompany;
   const userCompany = document.getElementById("newUserCompany");
   if (userCompany) {
-    userCompany.innerHTML = options;
-    userCompany.value = activeCompanyId || String(state.me.companyId);
-    userCompany.disabled = !crossCompany;
+    renderUserAffiliationOptions(userCompany, activeCompanyId || String(state.me.companyId || companyOptions[0]?.id || ""));
   }
   const form = document.getElementById("companyCreateForm");
   form?.classList.toggle("hidden", state.me.role !== "system_admin");
   const list = document.getElementById("companyList");
-  if (list) list.innerHTML = companyOptions.map((c) => `<div class="action-row"><span>${escapeHtml(c.name)}${c.status === 1 ? "" : "（已禁用）"}</span>${state.me.role === "system_admin" ? `<button type="button" class="tiny-btn" data-company-edit="${escapeHtml(c.id)}">修改名称</button><button type="button" class="tiny-btn" data-company-toggle="${escapeHtml(c.id)}">${c.status === 1 ? "禁用" : "启用"}</button>` : ""}</div>`).join("");
+  if (list) list.innerHTML = '<div class="action-row"><span>日本海外仓</span><small class="muted">共享仓储组织</small></div>' + companyOptions.map((c) => `<div class="action-row"><span>${escapeHtml(c.name)}${c.status === 1 ? "" : "（已禁用）"}</span>${state.me.role === "system_admin" ? `<button type="button" class="tiny-btn" data-company-edit="${escapeHtml(c.id)}">修改名称</button><button type="button" class="tiny-btn" data-company-toggle="${escapeHtml(c.id)}">${c.status === 1 ? "禁用" : "启用"}</button>` : ""}</div>`).join("");
 }
 
 const AUTH_STORAGE_KEY = "wms_token";
@@ -4469,8 +4490,7 @@ function renderUsersTable() {
         return `
       <tr>
         <td>${escapeHtml(user.username)}</td>
-        <td>${escapeHtml(companyName(user.companyId))}</td>
-        <td>${escapeHtml(getDepartmentText(user.department))}</td>
+        <td>${escapeHtml(userAffiliation(user))}</td>
         <td>${escapeHtml(getRoleText(user.role))}</td>
         <td>${getStatusText(user.status)}</td>
         <td>${formatDate(user.updatedAt)}</td>
@@ -4609,19 +4629,18 @@ async function removeUser(userId, username) {
 }
 
 function openEditUserModal(userId, username, role, department, status = 1) {
-  $("editUserCompany").value = companyName(getUserByIdForCompany(userId)?.companyId);
+  const user = getUserByIdForCompany(userId);
+  $("editUserCompany").dataset.previousAffiliation = affiliationValue(user);
+  renderUserAffiliationOptions($("editUserCompany"), affiliationValue(user), role === "system_admin");
   state.selectedEditUserId = String(userId);
   $("editUserId").value = String(userId);
   $("editUsername").value = String(username || "");
   $("editUserRole").value = String(role || "employee");
-  $("editUserDepartment").value = department || "china_warehouse";
   renderUserSelectOptions();
   $("editUserRole").value = String(role || "employee");
   const ownAdmin = !isCurrentUserSystemAdmin() && String(userId) === String(state.me?.id)
     && String(role) === "admin";
   $("editUserRole").disabled = ownAdmin;
-  $("editUserDepartment").disabled = ownAdmin;
-  $("editUserDepartment").value = department || "china_warehouse";
   syncEditUserActionButtons(userId, status, username);
   openModal("editUserModal");
 }
@@ -17103,13 +17122,18 @@ function bindForms() {
     try {
       await loadUserOptions();
       $("createUserForm").reset();
+      renderUserAffiliationOptions($("newUserCompany"), activeCompanyId || String(state.me.companyId || companyOptions[0]?.id || ""));
       renderUserSelectOptions();
+      $("newUserCompany").dataset.previousAffiliation = $("newUserCompany").value;
+      syncUserAffiliationForRole("newRole", "newUserCompany");
       openModal("createUserModal");
     } catch (error) {
       showToast(error.message, true);
     }
   });
 
+  $("newRole").addEventListener("change", () => syncUserAffiliationForRole("newRole", "newUserCompany"));
+  $("editUserRole").addEventListener("change", () => syncUserAffiliationForRole("editUserRole", "editUserCompany"));
   $("createUserForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const submitButton = getSubmitButton(event.currentTarget, event);
@@ -17117,12 +17141,10 @@ function bindForms() {
       await withBusyButton(submitButton, "提交中...", async () => {
         const username = $("newUsername").value.trim();
         await request("/users", {
-          headers: { "X-Company-Id": $("newUserCompany").value },
           method: "POST",
           body: JSON.stringify({
             username,
-            companyId: $("newUserCompany").value,
-            department: $("newDepartment").value,
+            companyId: $("newRole").value === "system_admin" || $("newUserCompany").value === "warehouse" ? null : $("newUserCompany").value,
             role: $("newRole").value,
           }),
         });
@@ -17148,14 +17170,14 @@ function bindForms() {
 
         const username = $("editUsername").value.trim();
         const role = $("editUserRole").value;
-        const department = $("editUserDepartment").value;
+        const affiliation = $("editUserCompany").value;
         if (!username) {
           throw new Error("请输入用户名");
         }
 
         const payload = {
           username,
-          department,
+          companyId: affiliation === "warehouse" || role === "system_admin" ? null : affiliation,
           role,
         };
 

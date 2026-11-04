@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Runs on ECS immediately before the first company-isolation migration.
+# Runs on ECS before the account-affiliation migration, with a verified full backup.
 set -euo pipefail
 umask 077
 RECEIPT="${1:?Usage: wms-company-backup.sh RECEIPT_FILE}"
-MIGRATION=20261104100000_company_isolation
+MIGRATION=20261104110000_user_company_affiliation
 query() {
   docker exec -i wms_db sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql -uroot --batch --raw --skip-column-names wms_v1'
 }
 PENDING="$(printf "SELECT COUNT(*) FROM _prisma_migrations WHERE migration_name='%s' AND finished_at IS NOT NULL AND rolled_back_at IS NULL;\n" "$MIGRATION" | query)"
 printf 'COMPANY_BACKUP_PENDING=0\n' > "$RECEIPT"
 if [[ "$PENDING" == 1 ]]; then
-  echo 'Company isolation migration is already applied.'
+  echo 'Account affiliation migration is already applied.'
   exit 0
 fi
 FAILED="$(printf 'SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL;\n' | query)"
 [[ "$FAILED" == 0 ]] || { echo 'An unresolved migration exists; database was not changed.' >&2; exit 1; }
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP_DIR="${WMS_BACKUP_ROOT:-$HOME/.wms-pre-migration-backups}/company-isolation-${STAMP}-${DEPLOY_REF:-manual}"
+BACKUP_DIR="${WMS_BACKUP_ROOT:-$HOME/.wms-pre-migration-backups}/company-affiliation-${STAMP}-${DEPLOY_REF:-manual}"
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 DB_BYTES="$(printf "SELECT COALESCE(SUM(data_length+index_length),0) FROM information_schema.tables WHERE table_schema='wms_v1';\n" | query)"
@@ -24,7 +24,7 @@ DB_BYTES="$(printf "SELECT COALESCE(SUM(data_length+index_length),0) FROM inform
 # Reserve room for the SQL dump, isolated restore and temporary database files,
 # on top of the deployment's normal free-space reserve, before pausing the API.
 bash scripts/wms-disk-check.sh "$BACKUP_DIR" "$((DB_BYTES * 4 + 536870912))"
-BACKUP_FILE="$BACKUP_DIR/wms_v1-before-company-isolation.sql.gz"
+BACKUP_FILE="$BACKUP_DIR/wms_v1-before-company-affiliation.sql.gz"
 VERIFY_CONTAINER="wms-company-restore-${STAMP,,}"
 API_WAS_RUNNING="$(docker inspect --format '{{.State.Running}}' wms_api)"
 SUCCESS=0
@@ -49,6 +49,18 @@ while IFS= read -r table; do
   printf "SELECT '%s',COUNT(*) FROM \`%s\`;\n" "$table" "$table"
 done < "$BACKUP_DIR/tables.txt" > "$BACKUP_DIR/counts.sql"
 query < "$BACKUP_DIR/counts.sql" > "$BACKUP_DIR/counts.before.tsv"
+printf 'SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name;\n' | query | sort > "$BACKUP_DIR/applied-migrations.txt"
+for file in apps/api/prisma/migrations/*/migration.sql; do basename "$(dirname "$file")"; done | sort > "$BACKUP_DIR/repository-migrations.txt"
+comm -23 "$BACKUP_DIR/repository-migrations.txt" "$BACKUP_DIR/applied-migrations.txt" > "$BACKUP_DIR/pending-migrations.txt"
+EXPECTED_PENDING="$(wc -l < "$BACKUP_DIR/pending-migrations.txt" | tr -d ' ')"
+printf "SELECT id,company_id FROM users WHERE role<>'system_admin' AND department<>'overseas_warehouse' ORDER BY id;\n" | query > "$BACKUP_DIR/business-users.before.tsv"
+printf "SELECT TABLE_NAME FROM information_schema.columns WHERE table_schema='wms_v1' AND COLUMN_NAME='company_id' AND TABLE_NAME<>'users' ORDER BY TABLE_NAME;\n" | query > "$BACKUP_DIR/scoped-tables.before.txt"
+: > "$BACKUP_DIR/ownership.before.tsv"
+while IFS= read -r table; do
+  [[ "$table" =~ ^[A-Za-z0-9_]+$ ]] || exit 1
+  printf "SELECT '%s',company_id,COUNT(*) FROM \`%s\` GROUP BY company_id ORDER BY company_id;\n" "$table" "$table" | query >> "$BACKUP_DIR/ownership.before.tsv"
+done < "$BACKUP_DIR/scoped-tables.before.txt"
+
 printf 'SELECT COALESCE(SUM(stock_qty),0) FROM master_products;\n' | query > "$BACKUP_DIR/stock.before.txt"
 while IFS= read -r table; do printf 'CHECKSUM TABLE `%s` EXTENDED;\n' "$table"; done < "$BACKUP_DIR/tables.txt" > "$BACKUP_DIR/checksums.sql"
 query < "$BACKUP_DIR/checksums.sql" > "$BACKUP_DIR/checksums.before.tsv"
@@ -78,6 +90,7 @@ cmp "$BACKUP_DIR/checksums.before.tsv" "$BACKUP_DIR/checksums.restored.tsv"
 # Metadata only: never upload the SQL dump or production row data to CI artifacts.
 {
   printf 'COMPANY_BACKUP_PENDING=1\n'
+  printf 'COMPANY_PENDING_MIGRATIONS=%q\n' "$EXPECTED_PENDING"
   printf 'COMPANY_BACKUP_DIR=%q\n' "$BACKUP_DIR"
   printf 'COMPANY_BACKUP_FILE=%q\n' "$BACKUP_FILE"
   printf 'COMPANY_BACKUP_API_WAS_RUNNING=%q\n' "$API_WAS_RUNNING"

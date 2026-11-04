@@ -12,7 +12,7 @@ while IFS=$'\t' read -r table before; do
   [[ "$table" =~ ^[A-Za-z0-9_]+$ && "$before" =~ ^[0-9]+$ ]] || exit 1
   after="$(printf 'SELECT COUNT(*) FROM `%s`;\n' "$table" | query)"
   if [[ "$table" == _prisma_migrations ]]; then
-    [[ "$after" -eq "$((before + 1))" ]]
+    [[ "$after" -eq "$((before + COMPANY_PENDING_MIGRATIONS))" ]]
   elif [[ "$table" == brands || "$table" == department_options ]]; then
     [[ "$after" -ge "$before" ]]
   else
@@ -21,12 +21,16 @@ while IFS=$'\t' read -r table before; do
 done < "$COMPANY_BACKUP_DIR/counts.before.tsv"
 NAME="$(printf 'SELECT name FROM companies WHERE id=1 AND status=1;\n' | query)"
 [[ "$NAME" == XYJG ]] || { echo 'Company 1 is not active XYJG.' >&2; exit 1; }
-printf "SELECT TABLE_NAME FROM information_schema.columns WHERE table_schema='wms_v1' AND COLUMN_NAME='company_id' ORDER BY TABLE_NAME;\n" | query > "$COMPANY_BACKUP_DIR/scoped-tables.txt"
+invalid_accounts="$(printf "SELECT COUNT(*) FROM users WHERE ((role='system_admin' OR department='overseas_warehouse') AND company_id IS NOT NULL) OR (role<>'system_admin' AND department<>'overseas_warehouse' AND company_id IS NULL);\n" | query)"
+[[ "$invalid_accounts" == 0 ]] || { echo 'Account affiliation verification failed.' >&2; exit 1; }
+printf "SELECT id,company_id FROM users WHERE role<>'system_admin' AND department<>'overseas_warehouse' ORDER BY id;\n" | query > "$COMPANY_BACKUP_DIR/business-users.after.tsv"
+cmp "$COMPANY_BACKUP_DIR/business-users.before.tsv" "$COMPANY_BACKUP_DIR/business-users.after.tsv"
+: > "$COMPANY_BACKUP_DIR/ownership.after.tsv"
 while IFS= read -r table; do
   [[ "$table" =~ ^[A-Za-z0-9_]+$ ]] || exit 1
-  wrong="$(printf 'SELECT COUNT(*) FROM `%s` WHERE company_id IS NULL OR company_id<>1;\n' "$table" | query)"
-  [[ "$wrong" == 0 ]] || { echo "Historical company ownership mismatch: $table" >&2; exit 1; }
-done < "$COMPANY_BACKUP_DIR/scoped-tables.txt"
+  printf "SELECT '%s',company_id,COUNT(*) FROM \`%s\` GROUP BY company_id ORDER BY company_id;\n" "$table" "$table" | query >> "$COMPANY_BACKUP_DIR/ownership.after.tsv"
+done < "$COMPANY_BACKUP_DIR/scoped-tables.before.txt"
+cmp "$COMPANY_BACKUP_DIR/ownership.before.tsv" "$COMPANY_BACKUP_DIR/ownership.after.tsv"
 printf 'SELECT COALESCE(SUM(stock_qty),0) FROM master_products;\n' | query > "$COMPANY_BACKUP_DIR/stock.after.txt"
 cmp "$COMPANY_BACKUP_DIR/stock.before.txt" "$COMPANY_BACKUP_DIR/stock.after.txt"
-printf 'Verified: historical rows retained, stock totals unchanged, all existing business data belongs to XYJG.\n' | tee "$COMPANY_BACKUP_DIR/migration-verification.txt"
+printf 'Verified: historical rows retained, stock totals unchanged, business ownership retained, warehouse accounts are shared and system administrators have no company.\n' | tee "$COMPANY_BACKUP_DIR/migration-verification.txt"

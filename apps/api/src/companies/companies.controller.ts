@@ -24,6 +24,7 @@ export class CompaniesController {
   @Post() @Roles(Role.system_admin)
   async create(@Body() dto: CompanyDto, @CurrentUser() user: AuthUser): Promise<unknown> {
     if (!dto.name.trim()) throw new BadRequestException('公司名称不能为空');
+    if (dto.name.trim() === '日本海外仓') throw new BadRequestException('日本海外仓为系统保留的共享仓储组织');
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.company.create({ data: { name: dto.name.trim(), status: dto.status ?? 1 } });
       await companyContext.run({ companyId: created.id, systemAdmin: true, warehouse: false, userId: user.id }, async () => {
@@ -37,6 +38,7 @@ export class CompaniesController {
   @Put(':id') @Roles(Role.system_admin)
   async update(@Param('id') id: string, @Body() dto: CompanyDto, @CurrentUser() user: AuthUser): Promise<unknown> {
     if (!dto.name.trim()) throw new BadRequestException('公司名称不能为空');
+    if (dto.name.trim() === '日本海外仓') throw new BadRequestException('日本海外仓为系统保留的共享仓储组织');
     return this.prisma.$transaction(async (tx) => {
       const before = await tx.company.findUniqueOrThrow({ where: { id: parseId(id, 'companyId') } });
       const updated = await tx.company.update({ where: { id: before.id }, data: { name: dto.name.trim(), status: dto.status } });

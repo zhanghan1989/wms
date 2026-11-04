@@ -228,8 +228,8 @@ model AuthSession {
 }
 
 model User {
-  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  companyId BigInt? @map("company_id") @db.UnsignedBigInt
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Restrict)
   @@index([companyId])
   sessionVersion Int @default(0) @map("session_version")
   sessions AuthSession[]
@@ -1966,8 +1966,8 @@ model MasterProductSyncRecord {
 }
 
 model OperationAuditLog {
-  companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
-  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  companyId BigInt? @map("company_id") @db.UnsignedBigInt
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Restrict)
   @@index([companyId])
   id            BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
   entityType    String         @map("entity_type") @db.VarChar(64)

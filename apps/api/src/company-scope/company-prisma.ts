@@ -56,6 +56,15 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     if (!data || typeof data !== 'object') return initial;
     const context = companyContext.getStore();
     let owner = initial;
+    // Account affiliation is validated by UsersService; global warehouse/system
+    // accounts must not inherit the currently selected business company.
+    if (model === 'User') {
+      if (context && !context.systemAdmin && (data.department === 'overseas_warehouse' || data.role === 'system_admin'
+        || (data.companyId !== undefined && data.companyId !== context.companyId))) {
+        throw new ForbiddenException('只有系统管理员可以修改跨公司归属');
+      }
+      return owner;
+    }
     const accept = (value: unknown): void => {
       if (value === undefined || value === null) return;
       const id = BigInt(String(value));
@@ -103,15 +112,16 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
       }
     }
     if (scoped.has(model)) {
+      if (owner === undefined && model === 'OperationAuditLog' && data.entityType === 'user') {
+        data.companyId = null;
+        return undefined;
+      }
       if (owner === undefined && !context) owner = 1n;
       if (owner === undefined) throw new BadRequestException('请先选择所属中国公司');
       const company = await lookup('Company', { id: owner, ...(model === 'OperationAuditLog' ? {} : { status: 1 }) });
       if (!company) throw new BadRequestException('公司不存在或已禁用');
       data.companyId = owner;
       if (data.company) throw new ForbiddenException('请通过公司编号指定归属');
-      if (model === 'User' && !context?.systemAdmin && context && (data.department === 'overseas_warehouse' || data.role === 'system_admin')) {
-        throw new ForbiddenException('只有系统管理员可以授予跨公司权限');
-      }
       if (model === 'MasterProduct' && data.bagBrand) {
         const brand = await lookup('Brand', { companyId: owner, name: data.bagBrand });
         if (!brand) throw new BadRequestException('产品品牌不属于当前公司，请先新增品牌');

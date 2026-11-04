@@ -5,7 +5,7 @@ export class CreateUserDto {
   @IsOptional()
   @IsString()
   @Matches(/^[1-9]\d*$/)
-  companyId?: string;
+  companyId?: string | null;
 
   @IsString()
   @Length(3, 64)
@@ -18,7 +18,7 @@ export class CreateUserDto {
   @IsOptional()
   @IsString()
   @Length(1, 64)
-  department = 'china_warehouse';
+  department?: string;
 
   @IsOptional()
   @Min(0)
