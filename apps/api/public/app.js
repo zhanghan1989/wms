@@ -17467,6 +17467,16 @@ function bindForms() {
     openModal("bulkRakutenComboProductUploadModal");
   });
 
+  $("downloadRakutenComboProductsBtn").addEventListener("click", async (event) => {
+    try {
+      await withBusyButton(event.currentTarget, "下载中...", async () => {
+        await downloadAuthorizedFile("/rakuten-combo-products/export-excel", {}, "乐天组合产品.xlsx");
+      });
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+
   $("refreshRakutenComboProducts").addEventListener("click", async () => {
     try {
       await loadRakutenComboProducts({ reset: true });

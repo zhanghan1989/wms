@@ -145,6 +145,23 @@ export class RakutenComboProductsService {
     return this.serializeCombo(updated);
   }
 
+  async exportExcel(): Promise<{ fileName: string; content: Buffer }> {
+    const combos = await this.prisma.rakutenComboProduct.findMany({
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      include: { items: { orderBy: { position: 'asc' } } },
+    });
+    const headers = ['组合名', ...Array.from({ length: MAX_COMBO_ITEM_COUNT }, (_, idx) => `产品ID${idx + 1}`)];
+    const rows = combos.map((combo) => [
+      combo.comboName,
+      ...Array.from({ length: MAX_COMBO_ITEM_COUNT }, (_, idx) => combo.items[idx]?.productId ?? ''),
+    ]);
+    const sheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    sheet['!cols'] = headers.map((_, idx) => ({ wch: idx === 0 ? 32 : 22 }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, '组合产品');
+    return { fileName: '乐天组合产品.xlsx', content: XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) };
+  }
+
   getUploadTemplate(): { fileName: string; content: Buffer } {
     const headers = ['组合名', ...Array.from({ length: MAX_COMBO_ITEM_COUNT }, (_, idx) => `产品ID${idx + 1}`)];
     const rows = [

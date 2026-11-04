@@ -49,6 +49,16 @@ export class RakutenComboProductsController {
     res.status(200).send(file.content);
   }
 
+  @Get('export-excel')
+  async exportExcel(@Res() res: Response): Promise<void> {
+    const file = await this.service.exportExcel();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.fileName)}`);
+    res.setHeader('Content-Length', String(file.content.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).send(file.content);
+  }
+
   @Post()
   async create(@Body() payload: CreateRakutenComboProductDto): Promise<unknown> {
     return this.service.create(payload);
