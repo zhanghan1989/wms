@@ -2761,6 +2761,15 @@ td {
   color: var(--muted);
 }
 
+#rakutenRmsMailSignature {
+  font: inherit;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
 .rakuten-rms-preview-summary {
   margin-bottom: 8px;
 }

@@ -8465,6 +8465,7 @@ function openRakutenRmsConnectionModal(shopId) {
   $("rakutenRmsSmtpFromAddress").value = connection?.smtpFromAddress || "dgaz@createbetter.co.jp";
   $("rakutenRmsSmtpFromName").value = connection?.smtpFromName || "DGAZ楽天市場店";
   $("rakutenRmsSmtpBccAddresses").value = connection?.smtpBccAddresses || "";
+  $("rakutenRmsMailSignature").value = connection?.mailSignature ?? "";
   $("rakutenRmsStatus").value = String(connection?.status ?? 1);
   $("rakutenRmsSyncOrders").checked = connection?.syncOrders !== false;
   $("rakutenRmsAutoShippingEnabled").checked = connection?.autoShippingEnabled === true;
@@ -20382,6 +20383,7 @@ function bindDelegates() {
       ...(smtpFromAddress ? { smtpFromAddress } : {}),
       ...(smtpFromName ? { smtpFromName } : {}),
       smtpBccAddresses,
+      mailSignature: $("rakutenRmsMailSignature").value,
       status: Number($("rakutenRmsStatus").value),
       syncOrders: $("rakutenRmsSyncOrders").checked,
       autoShippingEnabled: $("rakutenRmsAutoShippingEnabled").checked,

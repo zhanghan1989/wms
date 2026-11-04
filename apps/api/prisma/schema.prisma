@@ -431,6 +431,7 @@ model RakutenRmsConnection {
   smtpFromAddress          String?                      @map("smtp_from_address") @db.VarChar(255)
   smtpFromName             String?                      @map("smtp_from_name") @db.VarChar(128)
   smtpBccAddresses         String?                      @map("smtp_bcc_addresses") @db.VarChar(1000)
+  mailSignature            String?                      @map("mail_signature") @db.Text
   mailNotificationsEnabled Boolean                      @default(false) @map("mail_notifications_enabled")
   autoShippingEnabled      Boolean                      @default(false) @map("auto_shipping_enabled")
   automationLockToken      String?                      @map("automation_lock_token") @db.VarChar(64)

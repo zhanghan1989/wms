@@ -939,6 +939,53 @@ describe('Rakuten RMS shipping and mail automation', () => {
     expect(detail.body).not.toContain('古い商品名');
   });
 
+  it.each(['新しい署名\n店舗A', '', null])('uses the same shop signature in draft previews and both send renderers: %s', async (mailSignature) => {
+    const template = {
+      subjectTemplate: '注文 {{order_number}}', bodyTemplate: '{{signature}}', isActive: true,
+      connection: { mailSignature },
+    };
+    const prisma = {
+      rakutenRmsConnection: {
+        findUnique: jest.fn().mockResolvedValue({ id: 7n }),
+        findUniqueOrThrow: jest.fn().mockResolvedValue({ mailSignature }),
+      },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([makeRow()]) },
+      rakutenMailTemplateVersion: {
+        findFirst: jest.fn().mockResolvedValue(template),
+        findUnique: jest.fn().mockResolvedValue(template),
+      },
+    } as any;
+    const scoped = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    const preview = await scoped.previewMailTemplate('7', 'new_order', {
+      orderId: '421951-ORDER', subjectTemplate: template.subjectTemplate, bodyTemplate: template.bodyTemplate,
+    }) as any;
+    const scheduled = await (scoped as any).renderConfiguredMail(7n, 'new_order', [makeRow()]);
+    const manual = await (scoped as any).renderMailTemplateVersion(7n, 'new_order', 3, [makeRow()]);
+    expect(preview.body).toEqual(mailSignature ?? expect.stringContaining('CreateBetter'));
+    expect(scheduled).toEqual({ subject: preview.subject, body: preview.body });
+    expect(manual).toEqual(scheduled);
+    expect(prisma.rakutenMailTemplateVersion.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { connectionId: 7n, event: 'new_order', isActive: true },
+      select: expect.objectContaining({ connection: { select: { mailSignature: true } } }),
+    }));
+  });
+
+  it('keeps shop signatures independent and reads changes without restarting', async () => {
+    const signatures = new Map([[7n, '店舗A'], [8n, '店舗B']]);
+    const prisma = { rakutenMailTemplateVersion: {
+      findFirst: jest.fn(async ({ where }) => ({
+        subjectTemplate: '注文', bodyTemplate: '{{signature}}',
+        connection: { mailSignature: signatures.get(where.connectionId) },
+      })),
+    } } as any;
+    const scoped = new RakutenRmsAutomationService(prisma, {} as any, {} as any) as any;
+    expect((await scoped.renderConfiguredMail(7n, 'new_order', [makeRow()])).body).toBe('店舗A');
+    expect((await scoped.renderConfiguredMail(8n, 'new_order', [makeRow()])).body).toBe('店舗B');
+    signatures.set(7n, '店舗A 新署名');
+    expect((await scoped.renderConfiguredMail(7n, 'new_order', [makeRow()])).body).toBe('店舗A 新署名');
+    expect((await scoped.renderConfiguredMail(8n, 'new_order', [makeRow()])).body).toBe('店舗B');
+  });
+
   it('renders the active shop template with order variables', async () => {
     const prisma = {
       rakutenMailTemplateVersion: {
@@ -967,7 +1014,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
   });
 
   it('previews a manual mail with the exact active shop template version', async () => {
-    const connection = { id: 7n, shop: { id: 3n, name: '乐天店' } };
+    const connection = { mailSignature: '店舗の新署名', id: 7n, shop: { id: 3n, name: '乐天店' } };
     const prisma = {
       rakutenOrderMail: {
         findUnique: jest.fn().mockResolvedValue({
@@ -983,7 +1030,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
         findUnique: jest.fn().mockResolvedValue({
           version: 3,
           subjectTemplate: '注文 {{order_number}}',
-          bodyTemplate: '{{buyer_name}}様',
+          bodyTemplate: '{{buyer_name}}様\n{{signature}}',
           isActive: true,
         }),
       },
@@ -997,6 +1044,7 @@ describe('Rakuten RMS shipping and mail automation', () => {
 
     const preview = await scopedService.previewManualMailAction('92', 3) as any;
 
+    expect(preview.body).toContain('店舗の新署名');
     expect(prisma.rakutenMailTemplateVersion.findUnique).toHaveBeenCalledWith(expect.objectContaining({
       where: { connectionId_event_version: { connectionId: 7n, event: RakutenOrderMailEvent.new_order, version: 3 } },
     }));
@@ -1258,6 +1306,40 @@ describe('Rakuten RMS shipping and mail automation', () => {
         nextAttemptAt: null,
       }),
     }));
+  });
+
+  it('sends and records the current signature rather than the queued connection snapshot', async () => {
+    const mail = {
+      id: 81n, connectionId: 7n, orderId: '421951-ORDER',
+      event: RakutenOrderMailEvent.new_order, attempts: 0,
+      connection: { mailSignature: '古い署名' },
+    };
+    const update = jest.fn().mockResolvedValue({});
+    const prisma = {
+      rakutenOrderMail: {
+        findMany: jest.fn().mockResolvedValue([mail]),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }), update,
+      },
+      rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([makeRow()]) },
+      rakutenMailTemplateVersion: { findFirst: jest.fn().mockResolvedValue({
+        subjectTemplate: '注文', bodyTemplate: '{{buyer_name}}様\n{{signature}}',
+        connection: { mailSignature: '最新の署名\n連絡先' },
+      }) },
+    } as any;
+    const scoped = new RakutenRmsAutomationService(prisma, {} as any, {} as any);
+    jest.spyOn(scoped as any, 'decryptSmtpCredentials').mockReturnValue({
+      fromAddress: 'shop@example.jp', fromName: '店舗', bccAddresses: [],
+    });
+    jest.spyOn(scoped as any, 'liveMailBlockReason').mockResolvedValue(null);
+    const sendMail = jest.fn().mockResolvedValue({ accepted: ['masked@pc.fw.rakuten.ne.jp'] });
+    jest.spyOn(scoped as any, 'createSmtpTransport').mockReturnValue({ sendMail, close: jest.fn() });
+    expect(await (scoped as any).processMails(7n)).toEqual({ sent: 1, failed: 0, blocked: 0 });
+    const body = sendMail.mock.calls[0][0].text;
+    expect(body).toContain('最新の署名\n連絡先');
+    expect(body).not.toContain('古い署名');
+    expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      status: RakutenAutomationStatus.sent, body,
+    }) }));
   });
 
   it('marks delivery uncertain when SMTP accepts but the sent-state write fails', async () => {

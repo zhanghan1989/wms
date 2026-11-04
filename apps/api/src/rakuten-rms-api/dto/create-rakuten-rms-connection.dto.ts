@@ -43,6 +43,11 @@ export class CreateRakutenRmsConnectionDto {
   smtpBccAddresses?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  mailSignature?: string;
+
+  @IsOptional()
   @Type(() => Boolean)
   @IsBoolean()
   mailNotificationsEnabled?: boolean;

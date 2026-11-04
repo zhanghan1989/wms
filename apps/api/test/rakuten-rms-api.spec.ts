@@ -77,6 +77,25 @@ describe("Rakuten RMS API integration", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain('private database details');
   });
 
+  it.each(['店舗の新署名\n連絡先', ''])('saves and returns a shop signature verbatim, including an explicit empty value: %s', async (mailSignature) => {
+    const row = {
+      id: 7n, shopId: 3n, shop: { id: 3n, name: '店舗A' },
+      mailSignature: '以前の署名', createdAt: new Date(), updatedAt: new Date(),
+    };
+    const update = jest.fn(async ({ data }) => ({ ...row, ...data }));
+    const prisma = { rakutenRmsConnection: {
+      findUnique: jest.fn().mockResolvedValue(row), update,
+    } } as any;
+    const service = new RakutenRmsApiService(prisma, {} as any, {} as any);
+    const result = await service.updateConnection('7', { mailSignature }) as any;
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 7n }, data: expect.objectContaining({ mailSignature }),
+    }));
+    expect(result.mailSignature).toBe(mailSignature);
+    await service.updateConnection('7', { status: 1 });
+    expect(update.mock.calls[1][0].data).not.toHaveProperty('mailSignature');
+  });
+
   it("encrypts the RMS credentials with authenticated encryption", () => {
     process.env.RAKUTEN_RMS_API_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString("base64");
     const crypto = new RakutenRmsApiCryptoService();

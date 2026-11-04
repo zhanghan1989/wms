@@ -1,3 +1,4 @@
+import { DEFAULT_RAKUTEN_MAIL_SIGNATURE } from './rakuten-mail-signature';
 import { storeDashboardPeriod } from '../common/store-dashboard-period';
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
@@ -521,6 +522,7 @@ export class RakutenRmsApiService {
         smtpFromAddress: this.optionalText(payload.smtpFromAddress),
         smtpFromName: this.optionalText(payload.smtpFromName),
         smtpBccAddresses,
+        mailSignature: payload.mailSignature,
         mailNotificationsEnabled: payload.mailNotificationsEnabled ?? false,
         autoShippingEnabled: payload.autoShippingEnabled ?? false,
         licenseExpiresAt: this.parseOptionalDate(payload.licenseExpiresAt),
@@ -586,6 +588,7 @@ export class RakutenRmsApiService {
           : {}),
         ...(payload.smtpFromName !== undefined ? { smtpFromName: this.optionalText(payload.smtpFromName) } : {}),
         ...(smtpBccAddresses !== undefined ? { smtpBccAddresses } : {}),
+        ...(payload.mailSignature !== undefined ? { mailSignature: payload.mailSignature } : {}),
         ...(payload.smtpAuthId !== undefined || smtpPassword || payload.smtpFromAddress !== undefined || smtpBccAddresses !== undefined
           ? { mailCircuitOpenedAt: null, mailCircuitReason: null }
           : {}),
@@ -2114,6 +2117,7 @@ export class RakutenRmsApiService {
       smtpFromAddress: row.smtpFromAddress,
       smtpFromName: row.smtpFromName,
       smtpBccAddresses: row.smtpBccAddresses,
+      mailSignature: row.mailSignature ?? DEFAULT_RAKUTEN_MAIL_SIGNATURE,
       mailNotificationsEnabled: row.mailNotificationsEnabled,
       autoShippingEnabled: row.autoShippingEnabled,
       licenseExpiresAt: row.licenseExpiresAt?.toISOString() ?? null,

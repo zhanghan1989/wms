@@ -1,3 +1,4 @@
+import { DEFAULT_RAKUTEN_MAIL_SIGNATURE } from './rakuten-mail-signature';
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
 import { rakutenDeliveryCompanyCode } from '../common/rakuten-delivery-company';
 import { createHash, randomUUID } from 'crypto';
@@ -1036,7 +1037,12 @@ export class RakutenRmsAutomationService {
     if (!orderId) throw new BadRequestException('该店铺没有可用于预览的订单，请输入订单号');
     const rows = await this.loadOrderRows(connectionId, orderId);
     if (!rows.length) throw new NotFoundException('该店铺下未找到预览订单');
-    const rendered = template ? this.renderTemplate(template, rows, event) : this.renderMail(event, rows);
+    const connection = await this.prisma.rakutenRmsConnection.findUniqueOrThrow({
+      where: { id: connectionId }, select: { mailSignature: true },
+    });
+    const rendered = template
+      ? this.renderTemplate(template, rows, event, connection.mailSignature)
+      : this.renderMail(event, rows, connection.mailSignature);
     return {
       orderId,
       recipient: this.resolveRecipient(rows),
@@ -1347,7 +1353,7 @@ export class RakutenRmsAutomationService {
     const recipient = this.resolveRecipient(rows);
     if (!recipient) throw new BadRequestException('乐天订单没有返回可用的买家匿名邮箱');
     const smtp = this.decryptSmtpCredentials(mail.connection);
-    const rendered = this.renderTemplate(template, rows, mail.event);
+    const rendered = this.renderTemplate(template, rows, mail.event, mail.connection.mailSignature);
     const manualReviewReason = this.manualMailReviewReason(mail.event, rows);
     return this.serializeMail({
       id: mail.id,
@@ -2886,6 +2892,7 @@ export class RakutenRmsAutomationService {
     template: MailTemplateDefinition,
     rows: RakutenOrderRecord[],
     event?: RakutenOrderMailEvent,
+    signature: string | null = null,
   ): { subject: string; body: string } {
     this.validateMailTemplate(template, event);
     const first = rows[0];
@@ -2901,7 +2908,7 @@ export class RakutenRmsAutomationService {
       japan_items: () => this.renderDispatchItems(japanRows),
       china_items: () => this.renderDispatchItems(chinaRows),
       japan_tracking: () => this.renderCompactTrackingLines(japanRows),
-      signature: () => this.renderSignature(),
+      signature: () => signature ?? DEFAULT_RAKUTEN_MAIL_SIGNATURE,
     };
     const renderedValues = new Map<string, string>();
     const replace = (source: string) => source.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_match, key: string) => {
@@ -2920,11 +2927,11 @@ export class RakutenRmsAutomationService {
   private async resolveActiveMailTemplate(
     connectionId: bigint,
     event: RakutenOrderMailEvent,
-  ): Promise<MailTemplateDefinition | null> {
+  ): Promise<(MailTemplateDefinition & { connection: { mailSignature: string | null } }) | null> {
     return this.prisma.rakutenMailTemplateVersion.findFirst({
       where: { connectionId, event, isActive: true },
       orderBy: { version: 'desc' },
-      select: { subjectTemplate: true, bodyTemplate: true },
+      select: { subjectTemplate: true, bodyTemplate: true, connection: { select: { mailSignature: true } } },
     });
   }
 
@@ -2935,7 +2942,7 @@ export class RakutenRmsAutomationService {
   ): Promise<{ subject: string; body: string }> {
     const template = await this.resolveActiveMailTemplate(connectionId, event);
     if (!template) throw new Error('请配置并启用邮件模板');
-    return this.renderTemplate(template, rows, event);
+    return this.renderTemplate(template, rows, event, template.connection?.mailSignature);
   }
 
   private async renderMailTemplateVersion(
@@ -2946,17 +2953,18 @@ export class RakutenRmsAutomationService {
   ): Promise<{ subject: string; body: string }> {
     const template = await this.prisma.rakutenMailTemplateVersion.findUnique({
       where: { connectionId_event_version: { connectionId, event, version } },
-      select: { subjectTemplate: true, bodyTemplate: true, isActive: true },
+      select: { subjectTemplate: true, bodyTemplate: true, isActive: true, connection: { select: { mailSignature: true } } },
     });
     if (!template?.isActive) throw new Error('邮件模板已变化或未启用，请重新整理清单');
-    return this.renderTemplate(template, rows, event);
+    return this.renderTemplate(template, rows, event, template.connection?.mailSignature);
   }
 
   private renderMail(
     event: RakutenOrderMailEvent,
     rows: RakutenOrderRecord[],
+    signature: string | null = null,
   ): { subject: string; body: string } {
-    return this.renderTemplate(this.defaultMailTemplate(event), rows, event);
+    return this.renderTemplate(this.defaultMailTemplate(event), rows, event, signature);
   }
 
   private renderOrderSummary(rows: RakutenOrderRecord[]): string {
@@ -3206,18 +3214,6 @@ export class RakutenRmsAutomationService {
     const iso = this.formatShippingDate(value);
     const [year, month, day] = iso.split('-');
     return `${year}年${month}月${day}日`;
-  }
-
-  private renderSignature(): string {
-    return [
-      '    -------------------------------------------------------',
-      '    株式会社Ｃｒｅａｔｅ　Ｂｅｔｔｅｒ',
-      '    CreateBetter',
-      '    2702222 千葉県松戸市高塚新田２１５－１６',
-      '    (TEL) 0477277616',
-      '    (URL) http://www.rakuten.co.jp/createbetter/',
-      '    中野 優(info@createbetter.co.jp)',
-    ].join('\n');
   }
 
   private buildShippingBaskets(rows: RakutenOrderRecord[]): ShippingBasket[] {
