@@ -117,12 +117,26 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
         if (product) accept(product.companyId);
       }
     }
+    if (context?.warehouse && owner === undefined && model === 'RakutenComboProduct') {
+      const items = data.items?.create ?? data.items?.createMany?.data ?? [];
+      for (const item of Array.isArray(items) ? items : [items]) {
+        if (item.productId) {
+          const product = await lookup('MasterProduct', { productId: item.productId });
+          if (product) accept(product.companyId);
+        }
+      }
+    }
+    if (context?.warehouse && owner === undefined && model === 'MasterProduct' && data.bagBrand) {
+      const brands = await delegate((transactionContext.getStore() ?? client) as PrismaClient, 'Brand').findMany({ where: { name: data.bagBrand }, select: { companyId: true }, take: 2 });
+      if (brands.length > 1) throw new BadRequestException('品牌对应多个公司，请使用唯一的品牌名称');
+      if (brands.length === 1) accept(brands[0].companyId);
+    }
     if (scoped.has(model)) {
       if (owner === undefined && model === 'OperationAuditLog' && data.entityType === 'user') {
         data.companyId = null;
         return undefined;
       }
-      if (owner === undefined && !context) owner = 1n;
+      if (owner === undefined && (!context || context.warehouse)) owner = 1n;
       if (owner === undefined) throw new BadRequestException('请先选择所属中国公司');
       const company = await lookup('Company', { id: owner, ...(model === 'OperationAuditLog' ? {} : { status: 1 }) });
       if (!company) throw new BadRequestException('公司不存在或已禁用');
@@ -172,7 +186,7 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     if (context?.bypass) return next(params);
     const args = params.model ? copyArgs(params.args ?? {}) : Array.isArray(params.args) ? [...params.args] : params.args;
     params.args = args;
-    const companyId = context?.companyId;
+    const companyId = context?.warehouse && !context.systemAdmin ? undefined : context?.companyId;
     if (!params.model) {
       if (companyId !== undefined && /Raw/.test(params.action)) {
         if (Array.isArray(args)) {
@@ -199,13 +213,6 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
         if (args.update) await prepareData(model, args.update, companyId);
       }
       return next(params);
-    }
-    if (model === 'OperationAuditLog' && context?.warehouse && !context.systemAdmin
-      && ['findMany','findFirst','findUnique','count','aggregate','groupBy'].includes(params.action)) {
-      args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []), { entityType: { in: [
-        'box','sku','master_product','shelf','inbound_order','outbound_order','inventory_adjust_order',
-        'stocktake_task','fba_replenishment','batch_inbound_order','batch_inbound_item','return_record',
-      ] } }] };
     }
     const ownUserRead = model === 'User' && args.where?.id === context?.userId
       && ['findUnique','findFirst'].includes(params.action);

@@ -1,3 +1,4 @@
+import { warehouseCompanyData } from '../company-scope/warehouse-company';
 import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
 import {
   BadRequestException,
@@ -484,8 +485,10 @@ export class InboundService {
         throw new UnprocessableEntityException('没有可用货架，无法创建入库单');
       }
 
+      const ownership = await warehouseCompanyData(tx, { productIds: lines.map(line => line.productId) });
       const order = await tx.inboundOrder.create({
         data: {
+          ...ownership,
           orderNo: generateOrderNo('INB'),
           orderType: InboundOrderType.pending_batch,
           status: OrderStatus.draft,
@@ -516,6 +519,7 @@ export class InboundService {
       for (const boxCode of boxCodes) {
         const createdBox = await tx.box.create({
           data: {
+            ...ownership,
             boxCode,
             shelfId: shelf.id,
             status: 1,

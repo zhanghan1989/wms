@@ -1,3 +1,4 @@
+import { warehouseCompanyData } from '../src/company-scope/warehouse-company';
 import { MasterProductsService } from '../src/master-products/master-products.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AuditService } from '../src/audit/audit.service';
@@ -138,8 +139,30 @@ suite('company isolation against MySQL', () => {
     const rows = await scope(undefined, () => db.box.findMany({ where: { id: { in: [boxA,boxB] } } }), { warehouse: true });
     expect(rows).toHaveLength(2);
     await scope(b, () => db.box.update({ where: { id: boxB }, data: { status: 1 } }), { warehouse: true });
-    await expect(scope(undefined, () => db.box.create({ data: { boxCode: 'no-owner', shelfId: shelf } }), { warehouse: true })).rejects.toThrow('选择所属');
+    const box = await scope(undefined, () => db.box.create({ data: { boxCode: `QA-no-selector-${Date.now()}`, shelfId: shelf } }), { warehouse: true });
+    expect(box.companyId).toBe(1n);
+    await base.box.delete({ where: { id: box.id } });
   });
+  it('infers warehouse document ownership from goods without narrowing reads', async () => scope(undefined, async () => {
+    expect(await warehouseCompanyData(db, { productIds: [productB] })).toEqual({ companyId: b });
+    expect(await warehouseCompanyData(db, { boxIds: [boxA] })).toEqual({ companyId: a });
+    await expect(warehouseCompanyData(db, { productIds: [productA, productB] })).rejects.toThrow('同一单据');
+    const data = await warehouseCompanyData(db, { productIds: [productB] });
+    const order = await db.inboundOrder.create({ data: { ...data, orderNo: `QA-warehouse-${Date.now()}`, orderType: 'pending_batch', status: 'draft', createdBy: warehouseUser } });
+    expect(order.companyId).toBe(b);
+    await db.inboundOrder.delete({ where: { id: order.id } });
+    expect((await db.box.findMany({ where: { id: { in: [boxA, boxB] } } })).length).toBe(2);
+  }, { warehouse: true }));
+  it('lets warehouse staff create combinations for either company without a selector and preserves Chinese ownership', async () => scope(undefined, async () => {
+    for (const [companyId, productId] of [[a, productA], [b, productB]] as const) {
+      const combo = await db.rakutenComboProduct.create({ data: { comboName: `QA-combo-${productId}`, items: { create: [{ productId, position: 1 }] } } });
+      expect(combo.companyId).toBe(companyId);
+      expect((await base.rakutenComboProductItem.findFirstOrThrow({ where: { comboId: combo.id } })).companyId).toBe(companyId);
+      expect(await scope(companyId === a ? b : a, () => db.rakutenComboProduct.findUnique({ where: { id: combo.id } }))).toBeNull();
+      await db.rakutenComboProductItem.deleteMany({ where: { comboId: combo.id } });
+      await db.rakutenComboProduct.delete({ where: { id: combo.id } });
+    }
+  }, { warehouse: true }));
   it('lets the shared Xiya channel see all companies and infer incoming order ownership', async () => {
     const products = await db.masterProduct.findMany({ where: { productId: { in: [productA,productB] } } });
     expect(products).toHaveLength(2);

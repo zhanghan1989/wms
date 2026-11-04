@@ -30,12 +30,12 @@ describe('company request boundaries', () => {
       await expect(f.interceptor.intercept(f.context,f.next)).rejects.toBeInstanceOf(value === '3' ? ForbiddenException : BadRequestException);
     }
   });
-  it('requires warehouse users to choose a company before business writes and denies employee user administration', async () => {
+  it('leaves warehouse business writes unscoped while existing role guards protect user administration', async () => {
     const warehouse = { id: 3n, role: 'admin', department: 'overseas_warehouse', companyId: 1n };
     const write = fixture({ user: warehouse, method: 'POST' });
-    await expect(write.interceptor.intercept(write.context,write.next)).rejects.toThrow('选择所属');
+    expect(await firstValueFrom(await write.interceptor.intercept(write.context,write.next))).toMatchObject({ companyId: undefined, warehouse: true });
     const admin = fixture({ user: { ...warehouse, role: 'employee' }, originalUrl: '/api/users', headers: { 'x-company-id': '2' } });
-    await expect(admin.interceptor.intercept(admin.context,admin.next)).rejects.toThrow('仅允许访问仓储业务');
+    expect(await firstValueFrom(await admin.interceptor.intercept(admin.context,admin.next))).toMatchObject({ companyId: undefined, warehouse: true });
     const read = fixture({ user: warehouse });
     expect((await firstValueFrom(await read.interceptor.intercept(read.context,read.next)) as CompanyScope)?.companyId).toBeUndefined();
   });
@@ -47,7 +47,7 @@ describe('company request boundaries', () => {
     }
   });
   it('keeps warehouse self-service authentication global with a selected business company', async () => {
-    const f = fixture({ user: { id: 3n, role: 'employee', department: 'overseas_warehouse', companyId: null }, method: 'POST', originalUrl: '/api/auth/change-password', headers: { 'x-company-id': '2' } });
+    const f = fixture({ user: { id: 3n, role: 'employee', department: 'overseas_warehouse', companyId: null }, method: 'POST', originalUrl: '/api/auth/me/password', headers: { 'x-company-id': '2' } });
     expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next))).toMatchObject({ companyId: undefined, warehouse: true });
   });
   it.each(['employee', 'admin'] as const)('allows warehouse %s to read manual-order shop/platform options with or without a company selection', async (role) => {
@@ -56,54 +56,33 @@ describe('company request boundaries', () => {
       for (const headers of [{}, { 'x-company-id': '2' }]) {
         const f = fixture({ user: warehouse, originalUrl, method: 'GET', headers });
         const scope = await firstValueFrom(await f.interceptor.intercept(f.context, f.next)) as CompanyScope;
-        expect(scope.companyId).toBe(headers['x-company-id'] ? 2n : undefined);
+        expect(scope.companyId).toBeUndefined();
         expect(scope.warehouse).toBe(true);
       }
     }
   });
-  it('allows warehouse processing-center business routes without opening connection administration', async () => {
-    const user = { id: 3n, role: 'admin', department: 'overseas_warehouse', companyId: 1n };
+  it.each(['employee', 'admin'] as const)('restores warehouse %s routes without company selection or a warehouse-only allowlist', async (role) => {
+    const user = { id: 3n, role, department: 'overseas_warehouse', companyId: null };
     const routes = [
-      ['GET','warehouse/connections'], ['GET','automation/schedules'], ['GET','automation/health'],
-      ['GET','automation/import-issues'], ['GET','automation/order-workflows'], ['GET','automation/runs'],
-      ['GET','automation/shipping-reports'], ['GET','mails'], ['GET','mails/12'],
-      ['GET','connections/3/automation/status'], ['GET','connections/3/inventory'],
-      ['GET','connections/3/inventory/catalog'], ['GET','connections/3/inventory/jobs/4'],
-      ['GET','connections/3/inventory/runs/4/changes'], ['POST','processing/check'],
-      ['POST','automation/tasks/prepare'], ['POST','automation/manual-actions/execute'],
-      ['POST','automation/manual-actions/mails/12/preview'], ['POST','automation/manual-actions/shipping/12/verify-completed'],
-      ['POST','automation/order-workflows/3/order-1/missing-mail'], ['POST','mails/12/retry'],
-      ['POST','connections/3/automation/retry'], ['POST','connections/3/inventory/preview'],
-      ['POST','connections/3/inventory/execute'], ['PUT','automation/schedules/shipping'],
-      ['PUT','connections/3/inventory/mappings'],
+      ['GET', '/api/rakuten-combo-products'], ['POST', '/api/rakuten-combo-products'],
+      ['PUT', '/api/rakuten-combo-products/4'], ['POST', '/api/rakuten-combo-products/import-excel'],
+      ['GET', '/api/rakuten-combo-products/export-excel'], ['POST', '/api/shops'], ['PUT', '/api/shops/4'],
+      ['POST', '/api/brands'], ['GET', '/api/amazon-sp-api/connections'],
+      ['GET', '/api/rakuten-rms-api/connections'], ['PUT', '/api/rakuten-rms-api/connections/4'],
+      ['GET', '/api/rakuten-rms-api/store-dashboard'], ['GET', '/api/rakuten-rms-api/connections/4/mail-templates'],
+      ['POST', '/api/rakuten-rms-api/processing/check'], ['GET', '/api/backups'], ['POST', '/api/backups/run'],
     ];
-    for (const [method, route] of routes) {
-      const f = fixture({ user, method, originalUrl: `/api/rakuten-rms-api/${route}`, headers: { 'x-company-id': '2' } });
-      expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next))).toMatchObject({ companyId: 2n, warehouse: true });
+    for (const headers of [{}, { 'x-company-id': '2' }]) {
+      for (const [method, originalUrl] of routes) {
+        const f = fixture({ user, method, originalUrl, headers });
+        expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next))).toMatchObject({ companyId: undefined, warehouse: true });
+        expect(f.prisma.company.findUnique).not.toHaveBeenCalled();
+      }
     }
-    const unselected = fixture({ user, method: 'POST', originalUrl: '/api/rakuten-rms-api/processing/check' });
-    await expect(unselected.interceptor.intercept(unselected.context, unselected.next)).rejects.toThrow('选择所属');
   });
-  it('keeps warehouse reference-data writes and unrelated administrative routes forbidden', async () => {
-    const warehouse = { id: 3n, role: 'admin', department: 'overseas_warehouse', companyId: 1n };
-    const forbidden = [
-      ...['POST','PUT','PATCH','DELETE'].flatMap((method) =>
-        ['/api/shops','/api/shops/platforms','/api/shops/1','/api/brands','/api/sku-types'].map((originalUrl) => ({ method, originalUrl }))),
-      ...['/api/users/not-an-account','/api/backups','/api/amazon-sp-api/connections','/api/rakuten-rms-api/connections',
-        '/api/shops/platforms/private','/api/shops/platforms-extra',
-        '/api/rakuten-rms-api/connections/3/mail-templates', '/api/rakuten-rms-api/store-dashboard'].map((originalUrl) => ({ method: 'GET', originalUrl })),
-    ];
-    forbidden.push(...[
-      ['POST','connections'], ['PUT','connections/3'], ['POST','connections/3/test'],
-      ['POST','connections/3/smtp/test'], ['POST','connections/3/mail-templates/new_order'],
-      ['POST','connections/3/mail-templates/new_order/versions/2/activate'],
-      ['POST','warehouse/connections'], ['PUT','automation/schedules/not-a-task'],
-      ['POST','automation/manual-actions/execute/extra'],
-    ].map(([method, path]) => ({ method, originalUrl: `/api/rakuten-rms-api/${path}` })));
-    for (const route of forbidden) {
-      const f = fixture({ user: warehouse, headers: { 'x-company-id': '2' }, ...route });
-      await expect(f.interceptor.intercept(f.context, f.next)).rejects.toBeInstanceOf(ForbiddenException);
-    }
+  it('still requires a system administrator to select a company for business writes', async () => {
+    const f = fixture({ user: { id: 1n, role: 'system_admin', companyId: null }, method: 'POST' });
+    await expect(f.interceptor.intercept(f.context, f.next)).rejects.toThrow('选择所属');
   });
   it('prevents access to disabled companies and global backups', async () => {
     const disabled = fixture(); disabled.prisma.company.findUnique.mockResolvedValue({ id: 2n,status: 0 });

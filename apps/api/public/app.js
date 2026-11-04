@@ -1,7 +1,7 @@
 let activeCompanyId = "";
 let companyOptions = [];
 function companyHeaders() {
-  return activeCompanyId ? { "X-Company-Id": activeCompanyId } : {};
+  return activeCompanyId && !isWarehouseOnlyAccount() ? { "X-Company-Id": activeCompanyId } : {};
 }
 function getUserByIdForCompany(id) { return state.users.find((user) => String(user.id) === String(id)); }
 function companyName(id) {
@@ -37,8 +37,9 @@ async function loadCompanyUi() {
   const storageKey = `wms.company.${state.me.id}`;
   const stored = sessionStorage.getItem(storageKey);
   const saved = stored || "";
+  const warehouseAccount = isWarehouseOnlyAccount();
   const activeCompanies = companyOptions.filter((company) => company.status === 1);
-  activeCompanyId = crossCompany
+  activeCompanyId = warehouseAccount ? "" : crossCompany
     ? (activeCompanies.some((company) => String(company.id) === saved) ? saved
       : stored === null && activeCompanies.length === 1 ? String(activeCompanies[0].id) : "")
     : String(state.me.companyId);
@@ -55,6 +56,7 @@ async function loadCompanyUi() {
   selector.value = activeCompanyId;
   selector.title = activeCompanyId ? companyName(activeCompanyId) : "查看全部公司；处理业务前请选择具体公司";
   selector.disabled = !crossCompany;
+  selector.closest(".session-company")?.classList.toggle("hidden", warehouseAccount);
   const userCompany = document.getElementById("newUserCompany");
   if (userCompany) {
     renderUserAffiliationOptions(userCompany, activeCompanyId || String(state.me.companyId || companyOptions[0]?.id || ""));
@@ -3201,14 +3203,13 @@ function applyRoleView() {
   const isLoggedIn = Boolean(state.me);
   const isEmployee = Boolean(state.me?.role === "employee");
   const canEditOrders = canCurrentUserEditOrders();
-  const warehouseOnly = state.me?.department === "overseas_warehouse" && !isCurrentUserSystemAdmin();
   document.querySelector('.nav-btn[data-target="users"]')?.classList.toggle("hidden", !hasAdminAccess(state.me?.role));
-  $("openDataBackupPanel")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
-  $("openAmazonDashboardPanel")?.classList.toggle("hidden", warehouseOnly);
-  $("openRakutenDashboardPanel")?.classList.toggle("hidden", warehouseOnly);
+  $("openDataBackupPanel")?.classList.toggle("hidden", !isCurrentUserSystemAdmin() && !isWarehouseOnlyAccount());
+  $("openAmazonDashboardPanel")?.classList.remove("hidden");
+  $("openRakutenDashboardPanel")?.classList.remove("hidden");
   $("openDepartmentManageModal")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
   document.querySelectorAll('[data-center-view="settings"], [data-center-view="templates"]').forEach((tab) => {
-    tab.classList.toggle("hidden", warehouseOnly);
+    tab.classList.remove("hidden");
   });
 
   if (layout) {
@@ -6943,8 +6944,7 @@ async function loadAmazonSpApiConnections() {
 }
 
 async function loadRakutenRmsConnections() {
-  const endpoint = isWarehouseOnlyAccount() ? "/rakuten-rms-api/warehouse/connections" : "/rakuten-rms-api/connections";
-  state.rakutenRmsConnections = (await request(endpoint)) || [];
+  state.rakutenRmsConnections = (await request("/rakuten-rms-api/connections")) || [];
   renderShopsTable();
   renderRakutenMailConnectionFilter();
   return state.rakutenRmsConnections;

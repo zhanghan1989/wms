@@ -1,3 +1,4 @@
+import { warehouseCompanyData } from '../company-scope/warehouse-company';
 import { companyContext } from '../company-scope/company-context';
 import { storeDashboardPeriod } from '../common/store-dashboard-period';
 import { exportOverviewDashboard } from './overview-dashboard-export';
@@ -478,8 +479,10 @@ export class InventoryService {
     return stockTransaction(this.prisma, async (tx) => {
       await this.ensureReferences(tx, normalizedItems);
 
+      const ownership = await warehouseCompanyData(tx, { boxIds: normalizedItems.map(item => item.boxId) });
       const order = await tx.inventoryAdjustOrder.create({
         data: {
+          ...ownership,
           adjustNo: generateOrderNo('ADJ'),
           status: OrderStatus.draft,
           remark: payload.remark ?? null,
@@ -4226,6 +4229,7 @@ async function manualAdjustByProduct(
       where: { productId },
       select: {
         id: true,
+        companyId: true,
         productId: true,
         productName: true,
         stockQty: true,
@@ -4249,6 +4253,7 @@ async function manualAdjustByProduct(
 
     const adjustOrder = await tx.inventoryAdjustOrder.create({
       data: {
+        ...(companyContext.getStore()?.warehouse ? { companyId: product.companyId } : {}),
         adjustNo: generateOrderNo('ADJ'),
         status: OrderStatus.confirmed,
         remark: payload.reason ?? 'manual-adjust',
