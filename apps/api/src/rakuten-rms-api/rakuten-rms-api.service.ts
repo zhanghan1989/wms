@@ -154,6 +154,16 @@ export class RakutenRmsApiService {
     @Optional() private readonly sales?: RakutenSalesService,
   ) {}
 
+  async listWarehouseConnections(): Promise<unknown[]> {
+    return this.prisma.rakutenRmsConnection.findMany({
+      select: {
+        id: true, shopId: true, shop: { select: { id: true, name: true } },
+        status: true, syncOrders: true, autoShippingEnabled: true, mailNotificationsEnabled: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+  }
+
   async listConnections(): Promise<unknown[]> {
     const rows = await this.prisma.rakutenRmsConnection.findMany({
       include: { shop: { select: { id: true, name: true } } },

@@ -1,3 +1,4 @@
+import { isWarehouseRakutenRoute } from './warehouse-rakuten-routes';
 import { PrismaService } from '../prisma/prisma.service';
 import { BadRequestException, CallHandler, ExecutionContext, ForbiddenException, Injectable, NestInterceptor } from '@nestjs/common';
 import { Observable } from 'rxjs';
@@ -38,8 +39,11 @@ export class CompanyScopeInterceptor implements NestInterceptor {
       const company = await this.prisma.company.findUnique({ where: { id: companyId } });
       if (!company || company.status !== 1) throw new ForbiddenException('公司不存在或已禁用');
     }
+    // Manual orders need shop/platform names, not connection credentials or write access.
+    const warehouseOrderReferenceRead = req.method === 'GET'
+      && (path === 'shops' || path === 'shops/platforms');
     // Warehouse authority is limited to warehouse operations, never global administration.
-    if (!systemAdmin && warehouse && !/^(auth(?:\/|$)|companies$|user-options$|skus(?:\/|$)|sku-edit-requests(?:\/|$)|master-products(?:\/|$)|inventory(?:\/|$)|boxes(?:\/|$)|shelves(?:\/|$)|inbound(?:\/|$)|batch-inbound(?:\/|$)|orders(?:\/|$)|stocktake-planner(?:\/|$)|return-records(?:\/|$)|print-agent(?:\/|$)|audit-logs(?:\/|$)|brands$|shops$|sku-types$)/.test(path)) {
+    if (!systemAdmin && warehouse && !warehouseOrderReferenceRead && !isWarehouseRakutenRoute(req.method, path) && !/^(auth(?:\/|$)|companies$|user-options$|skus(?:\/|$)|sku-edit-requests(?:\/|$)|master-products(?:\/|$)|inventory(?:\/|$)|boxes(?:\/|$)|shelves(?:\/|$)|inbound(?:\/|$)|batch-inbound(?:\/|$)|orders(?:\/|$)|stocktake-planner(?:\/|$)|return-records(?:\/|$)|print-agent(?:\/|$)|audit-logs(?:\/|$)|brands$|shops$|sku-types$)/.test(path)) {
       throw new ForbiddenException('海外仓账号仅允许访问仓储业务');
     }
     if (!systemAdmin && warehouse && /^(brands|shops|sku-types)$/.test(path) && req.method !== 'GET') {

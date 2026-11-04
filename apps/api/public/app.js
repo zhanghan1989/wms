@@ -1716,6 +1716,10 @@ function hasAdminAccess(role) {
   return ["admin", "system_admin"].includes(String(role || ""));
 }
 
+function isWarehouseOnlyAccount() {
+  return state.me?.department === "overseas_warehouse" && !isCurrentUserSystemAdmin();
+}
+
 function isCurrentUserSystemAdmin() {
   return String(state.me?.role || "") === "system_admin" && Number(state.me?.status ?? 0) === 1;
 }
@@ -3181,6 +3185,9 @@ function applyRoleView() {
   $("openAmazonDashboardPanel")?.classList.toggle("hidden", warehouseOnly);
   $("openRakutenDashboardPanel")?.classList.toggle("hidden", warehouseOnly);
   $("openDepartmentManageModal")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
+  document.querySelectorAll('[data-center-view="settings"], [data-center-view="templates"]').forEach((tab) => {
+    tab.classList.toggle("hidden", warehouseOnly);
+  });
 
   if (layout) {
     layout.classList.toggle("no-sidebar", isEmployee);
@@ -6916,7 +6923,8 @@ async function loadAmazonSpApiConnections() {
 }
 
 async function loadRakutenRmsConnections() {
-  state.rakutenRmsConnections = (await request("/rakuten-rms-api/connections")) || [];
+  const endpoint = isWarehouseOnlyAccount() ? "/rakuten-rms-api/warehouse/connections" : "/rakuten-rms-api/connections";
+  state.rakutenRmsConnections = (await request(endpoint)) || [];
   renderShopsTable();
   renderRakutenMailConnectionFilter();
   return state.rakutenRmsConnections;

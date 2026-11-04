@@ -17,6 +17,18 @@ describe("Rakuten RMS API integration", () => {
     else process.env.RAKUTEN_RMS_API_PROXY_URL = originalProxyUrl;
   });
 
+  it("reads only business option fields for warehouse connection lists", async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const service = new RakutenRmsApiService({ rakutenRmsConnection: { findMany } } as unknown as PrismaService,
+      {} as RakutenRmsApiClient, {} as RakutenRmsApiCryptoService);
+    await service.listWarehouseConnections();
+    const query = findMany.mock.calls[0][0];
+    const allowed = new Set(['id', 'shopId', 'shop', 'status', 'syncOrders', 'autoShippingEnabled', 'mailNotificationsEnabled']);
+    expect(query.include).toBeUndefined();
+    expect(Object.keys(query.select).every((field) => allowed.has(field))).toBe(true);
+    expect(query.select.shop).toEqual({ select: { id: true, name: true } });
+  });
+
   it("does not role-restrict any Rakuten RMS API operation", () => {
     const unrestrictedHandlers = [
       RakutenRmsApiController.prototype.listConnections,

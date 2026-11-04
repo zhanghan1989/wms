@@ -43,6 +43,11 @@ export class RakutenRmsApiController {
     return this.scheduler.runNow();
   }
 
+  @Get('warehouse/connections')
+  async listWarehouseConnections(): Promise<unknown[]> {
+    return this.service.listWarehouseConnections();
+  }
+
   @Get('connections')
   async listConnections(): Promise<unknown[]> {
     return this.service.listConnections();
