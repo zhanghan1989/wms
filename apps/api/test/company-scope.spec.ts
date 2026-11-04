@@ -30,14 +30,21 @@ describe('company request boundaries', () => {
       await expect(f.interceptor.intercept(f.context,f.next)).rejects.toBeInstanceOf(value === '3' ? ForbiddenException : BadRequestException);
     }
   });
-  it('requires warehouse users to choose a company before writing and denies user administration', async () => {
+  it('requires warehouse users to choose a company before business writes and denies employee user administration', async () => {
     const warehouse = { id: 3n, role: 'admin', department: 'overseas_warehouse', companyId: 1n };
     const write = fixture({ user: warehouse, method: 'POST' });
     await expect(write.interceptor.intercept(write.context,write.next)).rejects.toThrow('选择所属');
-    const admin = fixture({ user: warehouse, originalUrl: '/api/users', headers: { 'x-company-id': '2' } });
+    const admin = fixture({ user: { ...warehouse, role: 'employee' }, originalUrl: '/api/users', headers: { 'x-company-id': '2' } });
     await expect(admin.interceptor.intercept(admin.context,admin.next)).rejects.toThrow('仅允许访问仓储业务');
     const read = fixture({ user: warehouse });
     expect((await firstValueFrom(await read.interceptor.intercept(read.context,read.next)) as CompanyScope)?.companyId).toBeUndefined();
+  });
+  it.each([{}, { 'x-company-id': '2' }])('allows warehouse administrators to manage accounts independently of business selection %j', async (headers) => {
+    const user = { id: 3n, role: 'admin', department: 'overseas_warehouse', companyId: null };
+    for (const [method, originalUrl] of [['GET', '/api/users'], ['POST', '/api/users'], ['PUT', '/api/users/4'], ['DELETE', '/api/users/4'], ['POST', '/api/users/4/reset-password']]) {
+      const f = fixture({ user, headers, method, originalUrl });
+      expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next))).toMatchObject({ companyId: undefined, warehouse: true });
+    }
   });
   it('keeps warehouse self-service authentication global with a selected business company', async () => {
     const f = fixture({ user: { id: 3n, role: 'employee', department: 'overseas_warehouse', companyId: null }, method: 'POST', originalUrl: '/api/auth/change-password', headers: { 'x-company-id': '2' } });
@@ -82,7 +89,7 @@ describe('company request boundaries', () => {
     const forbidden = [
       ...['POST','PUT','PATCH','DELETE'].flatMap((method) =>
         ['/api/shops','/api/shops/platforms','/api/shops/1','/api/brands','/api/sku-types'].map((originalUrl) => ({ method, originalUrl }))),
-      ...['/api/users','/api/backups','/api/amazon-sp-api/connections','/api/rakuten-rms-api/connections',
+      ...['/api/users/not-an-account','/api/backups','/api/amazon-sp-api/connections','/api/rakuten-rms-api/connections',
         '/api/shops/platforms/private','/api/shops/platforms-extra',
         '/api/rakuten-rms-api/connections/3/mail-templates', '/api/rakuten-rms-api/store-dashboard'].map((originalUrl) => ({ method: 'GET', originalUrl })),
     ];

@@ -12,6 +12,8 @@ describe('revocable sessions and privilege boundaries', () => {
     const users: any[] = [
       { id: 1n, username: 'root', companyId: null, role: 'system_admin', status: 1, sessionVersion: 0 },
       { id: 2n, username: 'manager', companyId: 1n, role: 'admin', department: 'china_warehouse', status: 1, sessionVersion: 0, passwordHash: 'hash' },
+      { id: 4n, username: 'warehouse-manager', companyId: null, role: 'admin', department: 'overseas_warehouse', status: 1, sessionVersion: 0 },
+      { id: 5n, username: 'warehouse-employee', companyId: null, role: 'employee', department: 'overseas_warehouse', status: 1, sessionVersion: 0 },
       { id: 3n, username: 'employee', companyId: 1n, role: 'employee', department: 'factory', status: 1, sessionVersion: 0 },
     ];
     let session: any = { id: 'session-1', user: users[1], expiresAt: new Date(Date.now() + 60000) };
@@ -21,7 +23,7 @@ describe('revocable sessions and privilege boundaries', () => {
       user: {
         findUnique: jest.fn(async ({ where }) => users.find(u => u.id === where.id) ?? null),
         update: jest.fn(async ({ where, data }) => Object.assign(users.find(u => u.id === where.id), data)),
-        create: jest.fn(async ({ data }) => ({ id: 4n, ...data })),
+        create: jest.fn(async ({ data }) => ({ id: 6n, ...data })),
       },
       authSession: {
         findUnique: jest.fn(async () => session),
@@ -106,6 +108,31 @@ describe('revocable sessions and privilege boundaries', () => {
   it('rejects warehouse assignment by a company administrator even without request context', async () => {
     const { service, tx } = fixture();
     await expect(service.update('3', { companyId: null }, 2n)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+
+  it('allows a warehouse administrator to create and edit only warehouse employees', async () => {
+    const { service, tx } = fixture();
+    await service.create({ username: 'new-warehouse', companyId: null, role: 'employee' }, 4n);
+    expect(tx.user.create).toHaveBeenCalledWith({ data: expect.objectContaining({ companyId: null, department: 'overseas_warehouse', role: 'employee' }) });
+    await service.update('5', { companyId: null, role: 'employee', username: 'renamed-warehouse' }, 4n);
+    expect(tx.user.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ companyId: null, department: 'overseas_warehouse' }) }));
+  });
+  it('rejects cross-company account updates and password resets without relying on request scope', async () => {
+    const { service, tx } = fixture();
+    for (const [operator, target] of [[4n, '3'], [2n, '5']] as const) {
+      await expect(service.update(target, { status: 0 }, operator)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.resetPassword(target, 'ValidPassword@123', operator)).rejects.toBeInstanceOf(ForbiddenException);
+    }
+    expect(tx.user.update).not.toHaveBeenCalled();
+  });
+  it('rejects warehouse administrators transferring staff or granting administrator authority', async () => {
+    const { service, tx } = fixture();
+    await expect(service.update('5', { companyId: '1' }, 4n)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.update('5', { role: 'admin' }, 4n)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.create({ username: 'bad-transfer', companyId: '1', role: 'employee' }, 4n)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.create({ username: 'bad-authority', companyId: null, role: 'admin' }, 4n)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tx.user.create).not.toHaveBeenCalled();
     expect(tx.user.update).not.toHaveBeenCalled();
   });
 

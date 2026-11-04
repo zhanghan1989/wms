@@ -81,6 +81,17 @@ suite('company isolation against MySQL', () => {
     await expect(db.user.update({ where: { id: warehouseUser }, data: { passwordHash: 'replacement' } })).rejects.toThrow();
     expect((await db.user.updateMany({ where: { id: warehouseUser }, data: { status: 0 } })).count).toBe(0);
   }));
+  it('limits warehouse account queries and writes to its own affiliation even with a business selection', async () => scope(a, async () => {
+    const users = await db.user.findMany();
+    expect(users.some(user => user.id === warehouseUser)).toBe(true);
+    expect(users.every(user => user.companyId === null && user.department === 'overseas_warehouse' && user.role !== 'system_admin')).toBe(true);
+    await db.user.update({ where: { id: warehouseUser }, data: { status: 1 } });
+    await expect(db.user.update({ where: { id: warehouseUser }, data: { companyId: a } })).rejects.toThrow('跨公司');
+    await expect(db.user.update({ where: { id: warehouseUser }, data: { department: 'factory' } })).rejects.toThrow('跨公司');
+    const created = await db.user.create({ data: { username: `QA-new-warehouse-${Date.now()}`, companyId: null, department: 'overseas_warehouse', role: 'employee' } });
+    expect(created.companyId).toBeNull();
+    await db.user.delete({ where: { id: created.id } });
+  }, { warehouse: true, userId: warehouseUser }));
   it('preserves global account affiliation during self-service password and audit writes', async () => scope(undefined, async () => {
     await db.user.update({ where: { id: warehouseUser }, data: { passwordHash: 'test-only-hash' } });
     expect((await base.user.findUniqueOrThrow({ where: { id: warehouseUser } })).companyId).toBeNull();

@@ -29,11 +29,16 @@ export class CompanyScopeInterceptor implements NestInterceptor {
     }
     if (!systemAdmin && !warehouse && !companyId) throw new ForbiddenException('账号尚未分配公司');
     const path = req.originalUrl.split('?')[0].replace(/^\/api\//, '');
+    const warehouseUserManagement = warehouse && user.role === 'admin' && (
+      (path === 'users' && ['GET', 'POST'].includes(req.method))
+      || (/^users\/[1-9]\d*$/.test(path) && ['PUT', 'DELETE'].includes(req.method))
+      || (/^users\/[1-9]\d*\/reset-password$/.test(path) && req.method === 'POST')
+    );
     const globalAdminPath = systemAdmin && /^(auth|companies|users|backups|branding|user-options)(\/|$)/.test(path);
     // Shared warehouse accounts have no business-company owner; self-service
     // authentication must not inherit the company selected for warehouse work.
-    if (globalAdminPath || (warehouse && /^auth(\/|$)/.test(path))) companyId = undefined;
-    if ((warehouse || systemAdmin) && !globalAdminPath && !companyId && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)
+    if (globalAdminPath || warehouseUserManagement || (warehouse && /^auth(\/|$)/.test(path))) companyId = undefined;
+    if ((warehouse || systemAdmin) && !globalAdminPath && !warehouseUserManagement && !companyId && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)
       && !/^(auth|companies)(\/|$)/.test(path)) {
       throw new BadRequestException('请先选择所属中国公司，再处理业务');
     }
@@ -45,7 +50,7 @@ export class CompanyScopeInterceptor implements NestInterceptor {
     const warehouseOrderReferenceRead = req.method === 'GET'
       && (path === 'shops' || path === 'shops/platforms');
     // Warehouse authority is limited to warehouse operations, never global administration.
-    if (!systemAdmin && warehouse && !warehouseOrderReferenceRead && !isWarehouseRakutenRoute(req.method, path) && !/^(auth(?:\/|$)|companies$|user-options$|skus(?:\/|$)|sku-edit-requests(?:\/|$)|master-products(?:\/|$)|inventory(?:\/|$)|boxes(?:\/|$)|shelves(?:\/|$)|inbound(?:\/|$)|batch-inbound(?:\/|$)|orders(?:\/|$)|stocktake-planner(?:\/|$)|return-records(?:\/|$)|print-agent(?:\/|$)|audit-logs(?:\/|$)|brands$|shops$|sku-types$)/.test(path)) {
+    if (!systemAdmin && warehouse && !warehouseUserManagement && !warehouseOrderReferenceRead && !isWarehouseRakutenRoute(req.method, path) && !/^(auth(?:\/|$)|companies$|user-options$|skus(?:\/|$)|sku-edit-requests(?:\/|$)|master-products(?:\/|$)|inventory(?:\/|$)|boxes(?:\/|$)|shelves(?:\/|$)|inbound(?:\/|$)|batch-inbound(?:\/|$)|orders(?:\/|$)|stocktake-planner(?:\/|$)|return-records(?:\/|$)|print-agent(?:\/|$)|audit-logs(?:\/|$)|brands$|shops$|sku-types$)/.test(path)) {
       throw new ForbiddenException('海外仓账号仅允许访问仓储业务');
     }
     if (!systemAdmin && warehouse && /^(brands|shops|sku-types)$/.test(path) && req.method !== 'GET') {

@@ -17,10 +17,11 @@ function affiliationValue(user) {
 }
 function renderUserAffiliationOptions(select, selected, systemAdmin = false) {
   if (!select) return;
+  if (!isCurrentUserSystemAdmin()) selected = affiliationValue(state.me);
   select.innerHTML = (systemAdmin ? '<option value="">—</option>' : '')
     + companyOptions.filter((company) => company.status === 1 || String(company.id) === String(selected))
       .map((company) => `<option value="${escapeHtml(company.id)}">${escapeHtml(company.name)}</option>`).join("")
-    + (isCurrentUserSystemAdmin() ? '<option value="warehouse">日本海外仓</option>' : '');
+    + (isCurrentUserSystemAdmin() || isWarehouseOnlyAccount() ? '<option value="warehouse">日本海外仓</option>' : '');
   select.value = selected;
   select.disabled = systemAdmin || !isCurrentUserSystemAdmin();
 }
@@ -3201,7 +3202,7 @@ function applyRoleView() {
   const isEmployee = Boolean(state.me?.role === "employee");
   const canEditOrders = canCurrentUserEditOrders();
   const warehouseOnly = state.me?.department === "overseas_warehouse" && !isCurrentUserSystemAdmin();
-  document.querySelector('.nav-btn[data-target="users"]')?.classList.toggle("hidden", warehouseOnly);
+  document.querySelector('.nav-btn[data-target="users"]')?.classList.toggle("hidden", !hasAdminAccess(state.me?.role));
   $("openDataBackupPanel")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
   $("openAmazonDashboardPanel")?.classList.toggle("hidden", warehouseOnly);
   $("openRakutenDashboardPanel")?.classList.toggle("hidden", warehouseOnly);

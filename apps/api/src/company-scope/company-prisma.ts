@@ -59,9 +59,15 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     // Account affiliation is validated by UsersService; global warehouse/system
     // accounts must not inherit the currently selected business company.
     if (model === 'User') {
-      if (context && !context.systemAdmin && (data.department === 'overseas_warehouse' || data.role === 'system_admin'
-        || (data.companyId !== undefined && data.companyId !== context.companyId))) {
-        throw new ForbiddenException('只有系统管理员可以修改跨公司归属');
+      if (context && !context.systemAdmin) {
+        const expectedCompanyId = context.warehouse ? null : context.companyId;
+        if (data.company || data.role === 'system_admin'
+          || (data.companyId !== undefined && data.companyId !== expectedCompanyId)
+          || (context.warehouse
+            ? data.department !== undefined && data.department !== 'overseas_warehouse'
+            : data.department === 'overseas_warehouse')) {
+          throw new ForbiddenException('只有系统管理员可以修改跨公司归属');
+        }
       }
       return owner;
     }
@@ -203,10 +209,16 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     }
     const ownUserRead = model === 'User' && args.where?.id === context?.userId
       && ['findUnique','findFirst'].includes(params.action);
+    // Warehouse business access spans companies, but account management is
+    // restricted to the Japan warehouse's own affiliation, regardless of selector.
+    const warehouseUser = model === 'User' && context?.warehouse && !context.systemAdmin;
+    if (warehouseUser && !['create', 'createMany'].includes(params.action)) {
+      args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []), { companyId: null, department: 'overseas_warehouse', role: { not: 'system_admin' } }] };
+    }
     if (model === 'User' && !['create','createMany'].includes(params.action) && context && !context.systemAdmin && !context.warehouse && !ownUserRead) {
       args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []), { department: { not: 'overseas_warehouse' }, role: { not: 'system_admin' } }] };
     }
-    if (companyId !== undefined && !ownUserRead && !['create','createMany'].includes(params.action)) {
+    if (companyId !== undefined && !ownUserRead && !warehouseUser && !['create','createMany'].includes(params.action)) {
       // Prisma extendedWhereUnique requires unique fields at the top level.
       args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []), { companyId }] };
     }

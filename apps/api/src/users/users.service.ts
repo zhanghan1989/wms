@@ -29,11 +29,26 @@ export class UsersService {
   private async membership(
     payload: { role?: Role; department?: string; companyId?: string | null },
     current: Pick<User, 'role' | 'department' | 'companyId'> | undefined,
-    operatorRole: Role,
+    operator: Pick<User, 'role' | 'companyId' | 'department'>,
   ): Promise<{ companyId: bigint | null; department: string }> {
     const scope = companyContext.getStore();
-    const systemAdmin = operatorRole === Role.system_admin;
+    const systemAdmin = operator.role === Role.system_admin;
     const role = payload.role ?? current?.role ?? Role.employee;
+    if (!systemAdmin) {
+      const warehouse = operator.department === 'overseas_warehouse' && operator.companyId === null;
+      const companyId = warehouse ? null : operator.companyId;
+      if ((payload.companyId !== undefined && (payload.companyId === null ? null : BigInt(payload.companyId)) !== companyId)
+        || (payload.department !== undefined && (payload.department === 'overseas_warehouse') !== warehouse)) {
+        throw new ForbiddenException('只有系统管理员可以调整公司归属');
+      }
+      if (role === Role.system_admin) throw new ForbiddenException('只有系统管理员可以设置系统管理员角色');
+      if (warehouse) return { companyId: null, department: 'overseas_warehouse' };
+      if (!companyId) throw new BadRequestException('请选择所属公司');
+      const company = await this.prisma.company.findUnique({ where: { id: companyId } });
+      if (!company || company.status !== 1) throw new BadRequestException('公司不存在或已禁用');
+      return { companyId, department: current?.department === 'china_warehouse' ? 'china_warehouse' : 'factory' };
+    }
+
     const department = payload.companyId === null ? 'overseas_warehouse'
       : payload.companyId !== undefined && payload.department === undefined
         ? (current?.department === 'china_warehouse' ? 'china_warehouse' : 'factory')
@@ -59,7 +74,7 @@ export class UsersService {
     operatorId: bigint,
     targetId?: bigint,
     changes?: { role?: Role; department?: string; status?: number },
-  ): Promise<Role> {
+  ): Promise<User> {
     const ids = [...new Set([operatorId, ...(targetId ? [targetId] : [])])].sort((a, b) => a < b ? -1 : 1);
     await tx.$queryRaw(Prisma.sql`SELECT id FROM users WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`);
     const operator = await tx.user.findUnique({ where: { id: operatorId } });
@@ -69,7 +84,13 @@ export class UsersService {
     const target = targetId ? await tx.user.findUnique({ where: { id: targetId } }) : null;
     if (targetId && !target) throw new NotFoundException('用户不存在');
     if (target?.username === this.protectedUsername) throw new ForbiddenException('保留管理员账号不能通过用户管理修改');
-    if (operator.role === Role.system_admin) return operator.role;
+    if (operator.role === Role.system_admin) return operator;
+    if (target) {
+      const sameCompany = operator.department === 'overseas_warehouse'
+        ? operator.companyId === null && target.companyId === null && target.department === 'overseas_warehouse'
+        : operator.companyId !== null && operator.companyId === target.companyId && target.department !== 'overseas_warehouse';
+      if (!sameCompany) throw new ForbiddenException('只能管理本公司的员工');
+    }
     if (changes?.role && changes.role !== Role.employee && !(targetId === operatorId && changes.role === operator.role)) {
       throw new ForbiddenException('只有系统管理员可以授予管理员权限');
     }
@@ -83,7 +104,7 @@ export class UsersService {
         throw new ForbiddenException('不能修改自己的角色、部门或启用状态');
       }
     }
-    return operator.role;
+    return operator;
   }
 
   async findAll(): Promise<unknown[]> {
@@ -123,11 +144,6 @@ export class UsersService {
     requestId?: string,
   ): Promise<unknown> {
     const nextRole = payload.role ?? Role.employee;
-    const nextDepartment = String(payload.department ?? (payload.companyId === null ? 'overseas_warehouse' : 'factory')).trim();
-    const scope = companyContext.getStore();
-    if (scope && !scope.systemAdmin && nextDepartment === 'overseas_warehouse') {
-      throw new ForbiddenException('只有系统管理员可以授予跨公司权限');
-    }
     await this.userOptionsService.assertRoleEnabled(nextRole);
 
     const exists = await this.prisma.user.findUnique({
@@ -137,8 +153,8 @@ export class UsersService {
       throw new BadRequestException('用户名已存在');
     }
     const created = await this.prisma.$transaction(async (tx) => {
-      const operatorRole = await this.assertCanManage(tx, operatorId, undefined, { role: nextRole });
-      const membership = await this.membership({ ...payload, role: nextRole }, undefined, operatorRole);
+      const operator = await this.assertCanManage(tx, operatorId, undefined, { role: nextRole });
+      const membership = await this.membership({ ...payload, role: nextRole }, undefined, operator);
       const user = await tx.user.create({
         data: {
           username: payload.username,
@@ -227,9 +243,9 @@ export class UsersService {
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const operatorRole = await this.assertCanManage(tx, operatorId, id, data);
+      const operator = await this.assertCanManage(tx, operatorId, id, data);
       if (payload.companyId !== undefined || payload.department !== undefined || payload.role !== undefined) {
-        const membership = await this.membership(payload, user, operatorRole);
+        const membership = await this.membership(payload, user, operator);
         if (companyContext.getStore() && !companyContext.getStore()!.systemAdmin && membership.companyId !== user.companyId) {
           throw new ForbiddenException('只有系统管理员可以调整公司归属');
         }
