@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { companyContext } from '../company-scope/company-context';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditAction, Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { parseId } from '../common/utils';
@@ -15,11 +16,20 @@ export class ShopsService {
     private readonly auditService: AuditService,
   ) {}
 
+  private isChineseCompanyAccount(): boolean {
+    const scope = companyContext.getStore();
+    return Boolean(scope && !scope.systemAdmin && !scope.warehouse);
+  }
+
   async listPlatforms(): Promise<unknown[]> {
-    return this.prisma.shopPlatformDefinition.findMany({ orderBy: { id: 'asc' } });
+    return this.prisma.shopPlatformDefinition.findMany({
+      ...(this.isChineseCompanyAccount() ? { where: { key: 'amazon' } } : {}),
+      orderBy: { id: 'asc' },
+    });
   }
 
   async createPlatform(payload: CreateShopPlatformDto, operatorId: bigint, requestId?: string): Promise<unknown> {
+    if (this.isChineseCompanyAccount()) throw new ForbiddenException('中国公司仅可管理本公司的 Amazon 店铺');
     const name = payload.name.trim();
     if (!name) throw new BadRequestException('平台名称不能为空');
     try {
@@ -48,12 +58,17 @@ export class ShopsService {
 
   async list(q?: string): Promise<unknown[]> {
     return this.prisma.shop.findMany({
-      where: q ? { name: { contains: q } } : undefined,
+      where: this.isChineseCompanyAccount()
+        ? { platform: 'amazon', ...(q ? { name: { contains: q } } : {}) }
+        : q ? { name: { contains: q } } : undefined,
       orderBy: [{ status: 'desc' }, { id: 'desc' }],
     });
   }
 
   async create(payload: CreateShopDto, operatorId: bigint, requestId?: string): Promise<unknown> {
+    if (this.isChineseCompanyAccount() && payload.platform !== 'amazon') {
+      throw new ForbiddenException('中国公司仅可管理本公司的 Amazon 店铺');
+    }
     const name = payload.name.trim();
     if (!name) {
       throw new BadRequestException('店铺名称不能为空');
@@ -96,7 +111,7 @@ export class ShopsService {
   ): Promise<unknown> {
     const id = parseId(idParam, 'shopId');
     const shop = await this.prisma.shop.findUnique({ where: { id } });
-    if (!shop) {
+    if (!shop || (this.isChineseCompanyAccount() && shop.platform !== 'amazon')) {
       throw new NotFoundException('店铺不存在');
     }
 
@@ -147,7 +162,7 @@ export class ShopsService {
   async remove(idParam: string, operatorId: bigint, requestId?: string): Promise<{ success: boolean }> {
     const id = parseId(idParam, 'shopId');
     const shop = await this.prisma.shop.findUnique({ where: { id } });
-    if (!shop) {
+    if (!shop || (this.isChineseCompanyAccount() && shop.platform !== 'amazon')) {
       throw new NotFoundException('店铺不存在');
     }
 

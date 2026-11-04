@@ -1,3 +1,5 @@
+import { ShopsService } from '../src/shops/shops.service';
+import { AmazonSpApiService } from '../src/amazon-sp-api/amazon-sp-api.service';
 import { warehouseCompanyData } from '../src/company-scope/warehouse-company';
 import { MasterProductsService } from '../src/master-products/master-products.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -20,12 +22,17 @@ suite('company isolation against MySQL', () => {
   let productA: string;
   let productB: string;
   let warehouseUser: bigint;
+  let platformKey: string;
+  const amazonRows: Array<{ companyId: bigint; shopId: bigint; connectionId: bigint; orderId: bigint }> = [];
   const scope = <T>(companyId: bigint | undefined, fn: () => T | PromiseLike<T>, extra: Partial<CompanyScope> = {}): Promise<T> =>
     companyContext.run({ companyId, systemAdmin: false, warehouse: false, userId: 0n, ...extra }, async () => await fn());
   beforeAll(async () => {
     base = new PrismaClient({ datasourceUrl: url });
     db = installCompanyIsolation(base);
     const tag = Date.now().toString();
+    await base.company.upsert({ where: { id: 1n }, create: { id: 1n, name: 'QA-default-XYJG' }, update: {} });
+    platformKey = 'amazon';
+    await base.shopPlatformDefinition.upsert({ where: { key: platformKey }, create: { key: platformKey, name: 'Amazon' }, update: {} });
     a = (await base.company.create({ data: { name: `QA-A-${tag}` } })).id;
     b = (await base.company.create({ data: { name: `QA-B-${tag}` } })).id;
     shelf = (await base.shelf.create({ data: { shelfCode: `QA-${tag}` } })).id;
@@ -37,6 +44,16 @@ suite('company isolation against MySQL', () => {
       await scope(companyId, async () => {
         await db.brand.create({ data: { name: `same-brand-${tag}` } });
         await db.masterProduct.create({ data: { productId, bagBrand: `same-brand-${tag}` } });
+        const shop = await db.shop.create({ data: { name: `QA-shop-${productId}`, platform: platformKey } });
+        const connection = await db.amazonSpApiConnection.create({ data: {
+          shopId: shop.id, sellerId: `QA-seller-${productId}`, marketplaceIds: ['QA'],
+          encryptedRefreshToken: 'test-only', tokenIv: 'test-only', tokenAuthTag: 'test-only',
+        } });
+        const order = await db.amazonOrderRecord.create({ data: {
+          rowHash: `${productId}-amazon`.padEnd(40, '0').slice(0, 40),
+          orderId: `${productId}-amazon`, shopName: shop.name, spApiConnectionId: connection.id,
+        } });
+        amazonRows.push({ companyId, shopId: shop.id, connectionId: connection.id, orderId: order.id });
       });
     }
   });
@@ -48,6 +65,9 @@ suite('company isolation against MySQL', () => {
     }
     for (const companyId of [a,b]) {
       if (!companyId) continue;
+      await base.amazonOrderRecord.deleteMany({ where: { companyId } });
+      await base.amazonSpApiConnection.deleteMany({ where: { companyId } });
+      await base.shop.deleteMany({ where: { companyId } });
       await base.manualOrderRecord.deleteMany({ where: { companyId } });
       await base.masterProductBoxInventory.deleteMany({ where: { companyId } });
       await base.sku.deleteMany({ where: { companyId } });
@@ -69,6 +89,55 @@ suite('company isolation against MySQL', () => {
     expect(result.boxes.map((r) => r.id)).toEqual([boxA]);
     expect(result._count.boxes).toBe(1);
   }));
+  it('hides the other company shops, Amazon connections, products and orders in both directions', async () => {
+    for (const own of amazonRows) {
+      const foreign = amazonRows.find(row => row.companyId !== own.companyId)!;
+      await scope(own.companyId, async () => {
+        const shops = new ShopsService(db as PrismaService, {} as AuditService);
+        const amazon = new AmazonSpApiService(db as PrismaService, {} as any, {} as any);
+        expect((await shops.list() as Array<{ id: bigint }>).map(row => row.id)).toEqual([own.shopId]);
+        const connections = await amazon.listConnections() as Array<{ id: string; companyId: string }>;
+        expect(connections).toEqual([expect.objectContaining({ id: String(own.connectionId), companyId: String(own.companyId) })]);
+        expect(await db.shop.findUnique({ where: { id: foreign.shopId } })).toBeNull();
+        expect(await db.amazonSpApiConnection.findUnique({ where: { id: foreign.connectionId } })).toBeNull();
+        expect(await db.masterProduct.findUnique({ where: { productId: own.companyId === a ? productB : productA } })).toBeNull();
+        expect(await db.amazonOrderRecord.findUnique({ where: { id: foreign.orderId } })).toBeNull();
+        expect((await db.amazonOrderRecord.findMany()).map(row => row.id)).toEqual([own.orderId]);
+        expect(await db.amazonOrderRecord.count()).toBe(1);
+        await expect(db.amazonOrderRecord.create({ data: {
+          rowHash: `${own.companyId}-cross-shop`.padEnd(40, '0'), spApiConnectionId: foreign.connectionId,
+        } })).rejects.toThrow('其他公司');
+      });
+    }
+  });
+  it('shows only Amazon in Chinese shop management while the warehouse retains other platforms', async () => {
+    const key = `qa-other-${Date.now()}`;
+    const platform = await base.shopPlatformDefinition.create({ data: { key, name: key } });
+    const other = await scope(a, () => db.shop.create({ data: { name: key, platform: key } }));
+    try {
+      const shops = new ShopsService(db as PrismaService, {} as AuditService);
+      await scope(a, async () => {
+        expect((await shops.listPlatforms() as Array<{ key: string }>).map(row => row.key)).toEqual(['amazon']);
+        expect((await shops.list() as Array<{ id: bigint }>).map(row => row.id)).toEqual([amazonRows[0].shopId]);
+        await expect(shops.update(String(other.id), { name: `${key}-renamed` }, warehouseUser)).rejects.toThrow('不存在');
+        await expect(shops.remove(String(other.id), warehouseUser)).rejects.toThrow('不存在');
+      });
+      await scope(undefined, async () => {
+        expect((await shops.list() as Array<{ id: bigint }>).some(row => row.id === other.id)).toBe(true);
+        expect((await shops.listPlatforms() as Array<{ key: string }>).some(row => row.key === key)).toBe(true);
+      }, { warehouse: true, userId: warehouseUser });
+    } finally {
+      await base.shop.delete({ where: { id: other.id } });
+      await base.shopPlatformDefinition.delete({ where: { id: platform.id } });
+    }
+  });
+  it('keeps all shops, Amazon connections, products and orders visible to overseas warehouse management', async () => scope(undefined, async () => {
+    const companyIds = [a, b];
+    expect(await db.shop.count({ where: { companyId: { in: companyIds } } })).toBe(2);
+    expect(await db.amazonSpApiConnection.count({ where: { companyId: { in: companyIds } } })).toBe(2);
+    expect(await db.masterProduct.count({ where: { productId: { in: [productA, productB] } } })).toBe(2);
+    expect(await db.amazonOrderRecord.count({ where: { companyId: { in: companyIds } } })).toBe(2);
+  }, { warehouse: true, userId: warehouseUser }));
   it('blocks ID-based updates, mass updates, ownership changes and foreign associations', async () => scope(a, async () => {
     await expect(db.box.update({ where: { id: boxB }, data: { status: 0 } })).rejects.toThrow();
     expect((await db.box.updateMany({ where: { id: boxB }, data: { status: 0 } })).count).toBe(0);

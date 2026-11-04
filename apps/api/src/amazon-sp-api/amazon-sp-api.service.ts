@@ -1742,6 +1742,7 @@ export class AmazonSpApiService {
   private serializeConnection(row: AmazonSpApiConnection & { shop: { id: bigint; name: string; status: number } }): unknown {
     return {
       id: row.id.toString(),
+      companyId: row.companyId.toString(),
       shop: { id: row.shop.id.toString(), name: row.shop.name, status: row.shop.status },
       sellerId: row.sellerId,
       region: row.region,

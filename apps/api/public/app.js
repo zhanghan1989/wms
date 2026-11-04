@@ -6846,7 +6846,10 @@ function renderShopsTable() {
   const body = $("shopsBody");
   const head = $("shopsHead");
   if (!body || !head) return;
-  const platforms = Array.isArray(state.shopPlatforms) ? state.shopPlatforms : [];
+  const chineseCompanyAccount = !isCurrentUserSystemAdmin() && !isWarehouseOnlyAccount();
+  const platforms = (Array.isArray(state.shopPlatforms) ? state.shopPlatforms : [])
+    .filter((item) => !chineseCompanyAccount || item.key === "amazon");
+  $("shopPlatformForm")?.classList.toggle("hidden", chineseCompanyAccount);
   if (!platforms.some((item) => item.key === state.shopManagePlatform)) {
     state.shopManagePlatform = platforms[0]?.key || "";
   }
@@ -6865,7 +6868,7 @@ function renderShopsTable() {
   }).join("");
   $("shopNameInput").disabled = !platform;
   $("shopForm").querySelector('button[type="submit"]').disabled = !platform;
-  head.innerHTML = `<tr><th>店铺</th>${hasConnection ? `<th>${platform === "amazon" ? "Amazon SP-API连接" : "乐天 RMS API连接"}</th>` : ""}<th>操作</th></tr>`;
+  head.innerHTML = `<tr><th>店铺</th><th>所属公司</th>${hasConnection ? `<th>${platform === "amazon" ? "Amazon SP-API连接" : "乐天 RMS API连接"}</th>` : ""}<th>操作</th></tr>`;
 
   body.innerHTML =
     rows
@@ -6913,11 +6916,13 @@ function renderShopsTable() {
             data-original-name="${escapeHtml(item.name)}"
           />
         </td>
+        <td data-label="所属公司">${escapeHtml(companyName(item.companyId))}</td>
         ${hasConnection ? `
         <td data-label="${escapeHtml(platform === "amazon" ? "Amazon连接" : "乐天连接")}">
           <button class="tiny-btn ghost" data-action="${connectionAction}" data-id="${escapeHtml(item.id)}">
             ${connectionLabel}
           </button>
+          ${platform === "amazon" && connection ? `<br><small class="muted">所属公司：${escapeHtml(companyName(connection.companyId))}</small>` : ""}
           ${connection?.lastSyncError ? '<span class="muted">同步异常</span>' : ""}
         </td>
         ` : ""}
@@ -6934,7 +6939,7 @@ function renderShopsTable() {
       </tr>
     `;
       })
-      .join("") || `<tr><td colspan="${hasConnection ? 3 : 2}" class="muted">${platform ? `暂无 ${escapeHtml(platformName)} 店铺` : "请先新增平台"}</td></tr>`;
+      .join("") || `<tr><td colspan="${hasConnection ? 4 : 3}" class="muted">${platform ? `暂无 ${escapeHtml(platformName)} 店铺` : "请先新增平台"}</td></tr>`;
 }
 
 async function loadAmazonSpApiConnections() {

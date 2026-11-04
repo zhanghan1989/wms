@@ -1,9 +1,30 @@
+import { companyContext } from '../src/company-scope/company-context';
 import { Prisma } from '@prisma/client';
 import { AuditService } from '../src/audit/audit.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { ShopsService } from '../src/shops/shops.service';
 
 describe('ShopsService', () => {
+  it('restricts Chinese company shop queries to Amazon and rejects creating other platforms', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const platforms = jest.fn().mockResolvedValue([]);
+    const service = new ShopsService({ shop: { findMany }, shopPlatformDefinition: { findMany: platforms } } as any, {} as any);
+    await companyContext.run({ companyId: 2n, systemAdmin: false, warehouse: false, userId: 8n }, async () => {
+      await service.list('Store');
+      expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { platform: 'amazon', name: { contains: 'Store' } } }));
+      await service.listPlatforms();
+      expect(platforms).toHaveBeenCalledWith(expect.objectContaining({ where: { key: 'amazon' } }));
+      await expect(service.createPlatform({ name: 'Other' }, 8n)).rejects.toThrow('仅可管理');
+      await expect(service.create({ name: 'Other', platform: 'rakuten' }, 8n)).rejects.toThrow('仅可管理');
+    });
+    await companyContext.run({ systemAdmin: false, warehouse: true, userId: 9n }, async () => {
+      await service.list();
+      expect(findMany).toHaveBeenLastCalledWith(expect.objectContaining({ where: undefined }));
+      await service.listPlatforms();
+      expect(platforms).toHaveBeenLastCalledWith({ orderBy: { id: 'asc' } });
+    });
+  });
+
   it('creates a named platform and records its audit log atomically', async () => {
     const created = { id: 3n, key: 'custom-platform', name: 'Yahoo' };
     const create = jest.fn().mockResolvedValue(created);
