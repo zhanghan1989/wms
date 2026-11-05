@@ -1,3 +1,4 @@
+import { resolveXiyaCompany, setXiyaCompanyParams, XiyaCompany, xiyaSyncDays } from '../common/xiya-company';
 import { companyContext } from '../company-scope/company-context';
 import { CompanyJob } from '../company-scope/company-job';
 import { nextTrackingCheck, trackingFactDifferences } from './rakuten-tracking-checks';
@@ -859,7 +860,6 @@ const XIYA_LOGISTICS_EXPORT_URL =
 const XIYA_LOGISTICS_API_KEY = process.env.XIYA_EXPORT_API_KEY || '';
 const XIYA_COMPANY_NAME = process.env.XIYA_COMPANY_NAME || 'XYJG';
 const XIYA_SUCCESS_CODES = new Set([0, 200]);
-const XIYA_LOGISTICS_SYNC_DAYS = 5;
 const XIYA_TRACKING_SYNC_CRON = '0 0 17 * * *';
 const UOF_TRACKING_API_URL =
   process.env.UOF_TRACKING_API_URL || 'http://oms.uofexp.com/webservice/PublicService.asmx/ServiceInterfaceUTF8';
@@ -8810,7 +8810,7 @@ export class OrdersService {
     };
   }
 
-  async syncXiyaTrackingNumbers(): Promise<{
+  async syncXiyaTrackingNumbers(daysRaw?: string | number): Promise<{
     syncedAt: string;
     days: number;
     fetchedCount: number;
@@ -8821,6 +8821,12 @@ export class OrdersService {
     skippedUnmatchedCount: number;
     manualUpdatedCount: number;
   }> {
+    const company = await resolveXiyaCompany(this.prisma);
+    if (companyContext.getStore()?.companyId === undefined) {
+      return companyContext.run({ ...companyContext.getStore()!, companyId: company.companyId },
+        () => this.syncXiyaTrackingNumbers(daysRaw));
+    }
+    const days = xiyaSyncDays(daysRaw, company.logisticsDays);
     if (this.xiyaTrackingSyncRunning) {
       throw new ConflictException('当前已有 Xiya 运单号同步任务正在执行，请稍后再试');
     }
@@ -8828,8 +8834,8 @@ export class OrdersService {
     this.xiyaTrackingSyncRunning = true;
     try {
       // Read once per run so the request and response use the same current shop snapshot.
-      const storeSources = await this.loadXiyaLogisticsStoreSources();
-      const fetchedRows = await this.fetchXiyaLogisticsRows(storeSources);
+      const storeSources = await this.loadXiyaLogisticsStoreSources(company);
+      const fetchedRows = await this.fetchXiyaLogisticsRows(storeSources, company, days);
       const candidates = this.normalizeXiyaTrackingCandidates(fetchedRows, storeSources);
       const deduplicatedCandidates = this.deduplicateXiyaTrackingCandidates(candidates);
       const [rakutenResult, amazonResult, manualResult] = await Promise.all([
@@ -8843,12 +8849,12 @@ export class OrdersService {
         ),
         this.applyXiyaTrackingCandidates(
           'manual',
-          deduplicatedCandidates),
+          deduplicatedCandidates, company.syncBloggerStatus),
       ]);
 
       return {
         syncedAt: new Date().toISOString(),
-        days: XIYA_LOGISTICS_SYNC_DAYS,
+        days,
         fetchedCount: fetchedRows.length,
         validCount: candidates.length,
         deduplicatedCount: deduplicatedCandidates.length,
@@ -9143,7 +9149,7 @@ export class OrdersService {
         continue;
       }
       const orderId = String(row.orderId ?? '').trim() || row.id.toString();
-      const key = `${bloggerCooperationId}\u001f${orderId}`;
+      const key = `${row.companyId ?? companyContext.getStore()?.companyId ?? ""}\u001f${bloggerCooperationId}\u001f${orderId}`;
       rowsByOrder.set(key, [...(rowsByOrder.get(key) ?? []), row]);
     }
 
@@ -9161,10 +9167,17 @@ export class OrdersService {
     if (!bloggerCooperationId) {
       return;
     }
+    // Qilin blogger cooperation status is explicitly outside this integration.
+    // Check the record owner as warehouse operations may span companies.
+    const ownerId = row.companyId ?? companyContext.getStore()?.companyId;
+    if (ownerId !== undefined) {
+      const owner = await this.prisma.company.findUnique({ where: { id: ownerId } });
+      if (owner?.name === (process.env.XIYA_QILIN_WMS_COMPANY_NAME || '祈麟双子')) return;
+    }
     const orderId = String(row.orderId ?? '').trim();
     const orderRows = orderId
       ? ((await (this.prisma as any).manualOrderRecord.findMany({
-          where: { orderId },
+          where: { orderId, ...(ownerId !== undefined ? { companyId: ownerId } : {}) },
         })) as ManualOrderRecordLike[]).filter(
           (candidate) => this.resolveManualOrderBloggerCooperationId(candidate) === bloggerCooperationId)
       : rows;
@@ -9608,7 +9621,7 @@ export class OrdersService {
     return { apiUrl, appToken, appKey };
   }
 
-  private async loadXiyaLogisticsStoreSources(): Promise<Map<string, ThirdPartyExportSource>> {
+  private async loadXiyaLogisticsStoreSources(company: XiyaCompany): Promise<Map<string, ThirdPartyExportSource>> {
     const shops = await this.prisma.shop.findMany({
       select: { name: true, platform: true, status: true },
       orderBy: { id: 'asc' },
@@ -9624,7 +9637,11 @@ export class OrdersService {
 
     const activeSources = new Set(storeSources.values());
     const configuredNames = new Set(shops.map((shop) => shop.name.trim()));
-    for (const [storeName, source] of Object.entries(XIYA_LEGACY_LOGISTICS_STORE_SOURCE)) {
+    for (const [upstream, local] of Object.entries(company.storeAliases)) {
+      const source = storeSources.get(local);
+      if (source) storeSources.set(upstream, source);
+    }
+    for (const [storeName, source] of Object.entries(company.allStores ? {} : XIYA_LEGACY_LOGISTICS_STORE_SOURCE)) {
       if (activeSources.has(source) && !configuredNames.has(storeName)) {
         storeSources.set(storeName, source);
       }
@@ -9634,13 +9651,16 @@ export class OrdersService {
 
   private async fetchXiyaLogisticsRows(
     storeSources: ReadonlyMap<string, ThirdPartyExportSource>,
+    company: XiyaCompany,
+    days: number,
   ): Promise<XiyaLogisticsRow[]> {
     // An omitted/empty storeName makes Xiya query its default shop, so skip when none are enabled.
     if (!storeSources.size) return [];
     const url = new URL(XIYA_LOGISTICS_EXPORT_URL);
-    url.searchParams.set('company_name', XIYA_COMPANY_NAME);
-    url.searchParams.set('storeName', Array.from(storeSources.keys()).join(','));
-    url.searchParams.set('days', String(XIYA_LOGISTICS_SYNC_DAYS));
+    setXiyaCompanyParams(url, company);
+    url.searchParams.delete('hasTracking');
+    url.searchParams.set('storeName', company.allStores ? 'all' : Array.from(storeSources.keys()).join(','));
+    url.searchParams.set('days', String(days));
 
     let payload: unknown;
     try {
@@ -9748,6 +9768,7 @@ export class OrdersService {
   private async applyXiyaTrackingCandidates(
     source: ThirdPartyExportSource,
     candidates: XiyaTrackingCandidate[],
+    syncManualFeedback = true,
   ): Promise<{ updatedCount: number; skippedUnmatchedCount: number }> {
     if (!candidates.length) {
       return { updatedCount: 0, skippedUnmatchedCount: 0 };
@@ -9867,7 +9888,7 @@ export class OrdersService {
       }
     }
 
-    if (source === 'manual') {
+    if (source === 'manual' && syncManualFeedback) {
       await this.syncManualOrderIdsToXyjgBestEffort(updatedManualIds);
     }
     const matchedOrderIds = new Set(eligibleRows.map((row) => String(row.orderId ?? '').trim()).filter(Boolean));

@@ -359,8 +359,8 @@ export class OrdersController {
 
   @Post('china-orders/sync-xiya-tracking')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  async syncXiyaTrackingNumbers(): Promise<unknown> {
-    return this.ordersService.syncXiyaTrackingNumbers();
+  async syncXiyaTrackingNumbers(@Query('days') days?: string): Promise<unknown> {
+    return this.ordersService.syncXiyaTrackingNumbers(days);
   }
 
   @Get('overseas-warehouse/picking-batches')

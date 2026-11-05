@@ -59,6 +59,7 @@ jobs:
       name: production
     env:
       DEPLOY_REF: ${{ github.sha }}
+      DEPLOY_GITHUB_TOKEN: ${{ github.token }}
       RUN_MIGRATIONS: ${{ github.event.inputs.run_migrations || 'true' }}
       RAKUTEN_RMS_API_ENCRYPTION_KEY: ${{ secrets.RAKUTEN_RMS_API_ENCRYPTION_KEY }}
       RAKUTEN_RMS_API_PROXY_URL: http://rakuten-egress:1055
@@ -116,7 +117,7 @@ jobs:
           key: ${{ secrets.ECS_SSH_KEY }}
           command_timeout: 45m
           script_stop: true
-          envs: DEPLOY_REF,RUN_MIGRATIONS,RAKUTEN_RMS_API_ENCRYPTION_KEY,RAKUTEN_RMS_API_PROXY_URL,RAKUTEN_RMS_EXIT_NODE_IP
+          envs: DEPLOY_REF,DEPLOY_GITHUB_TOKEN,RUN_MIGRATIONS,RAKUTEN_RMS_API_ENCRYPTION_KEY,RAKUTEN_RMS_API_PROXY_URL,RAKUTEN_RMS_EXIT_NODE_IP
           script: |
             set -euo pipefail
             COMPANY_ROLLBACK_ENABLED=0
@@ -175,7 +176,10 @@ jobs:
               echo "<<< [done] ${label} (${elapsed}s)"
             }
             cd ~/wms
-            timed "git_fetch" git fetch --all --prune
+            # Use the job-scoped read token; the ECS GitHub deploy key may be expired.
+            # Credential configuration exists only for this command, never in .git/config.
+            timed "git_fetch" git -c 'url.https://github.com/.insteadOf=git@github.com:' -c credential.helper= -c 'credential.helper=!f() { printf "%s\n" "username=x-access-token" "password=$DEPLOY_GITHUB_TOKEN"; }; f' fetch origin --prune
+            unset DEPLOY_GITHUB_TOKEN
             timed "git_checkout_main" git checkout main
             timed "git_reset_deploy_ref" git reset --hard "${DEPLOY_REF}"
             DEPLOY_SESSION_VERSION="$(git rev-parse HEAD)"
@@ -280,6 +284,7 @@ jobs:
               timed "reload_systemd_units" systemctl daemon-reload
               timed "enable_storage_monitor" systemctl enable --now wms-storage-health.timer
             fi
+            timed "verify_xiya_company_sync_readonly" timeout --kill-after=10s 180s docker exec -i wms_api node < scripts/verify-xiya-sync.cjs
             COMPANY_ROLLBACK_ENABLED=0
             timed "cleanup_image_tar" rm -f "${IMAGE_TAR}"
             timed "cleanup_old_wms_images" sh -c "docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk -v keep='${IMAGE_TAG}' '\$1 ~ /^wms-api:/ && \$1 != keep {print \$2}' | sort -u | xargs -r docker rmi || true"

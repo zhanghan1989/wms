@@ -1,7 +1,11 @@
+import { companyContext } from '../src/company-scope/company-context';
 import { OrdersService } from '../src/orders/orders.service';
 
 describe('Xiya tracking sync with current shop settings', () => {
   let fetchMock: jest.SpyInstance;
+  const sync = (service: OrdersService, days?: number) => companyContext.run(
+    { companyId: 1n, systemAdmin: true, warehouse: false, userId: 0n }, () => service.syncXiyaTrackingNumbers(days));
+  const company = { findUnique: jest.fn().mockResolvedValue({ id: 1n, name: 'XYJG', status: 1 }) };
 
   beforeEach(() => {
     fetchMock = jest.spyOn(global, 'fetch');
@@ -52,6 +56,7 @@ describe('Xiya tracking sync with current shop settings', () => {
     const manualRows = [orderRow(486n, 'tk0000003'), orderRow(487n, 'tk0000003')];
     const rakutenRows = [orderRow(1n, 'RAKUTEN-1')];
     const prisma = {
+      company,
       shop: { findMany: jest.fn().mockResolvedValue([
         { name: 'DGAZ Store亚马逊日本', platform: 'amazon', status: 1 },
         { name: 'DGAZ Tiktok日本', platform: 'custom-tiktok-key', status: 1 },
@@ -75,7 +80,7 @@ describe('Xiya tracking sync with current shop settings', () => {
       logisticsRow('停用店铺', '503-7162883-7862238', 'WRONG-NUMBER'),
     ]));
 
-    await expect(service.syncXiyaTrackingNumbers()).resolves.toMatchObject({
+    await expect(sync(service)).resolves.toMatchObject({
       fetchedCount: 4,
       validCount: 3,
       amazonUpdatedCount: 1,
@@ -101,7 +106,7 @@ describe('Xiya tracking sync with current shop settings', () => {
     expect(manualPush).toHaveBeenCalledWith([486n, 487n]);
 
     // A repeat run must preserve already registered numbers and update no rows.
-    await expect(service.syncXiyaTrackingNumbers()).resolves.toMatchObject({
+    await expect(sync(service)).resolves.toMatchObject({
       amazonUpdatedCount: 0, manualUpdatedCount: 0, rakutenUpdatedCount: 0,
     });
     expect(prisma.amazonOrderRecord.updateMany).toHaveBeenCalledTimes(1);
@@ -116,7 +121,7 @@ describe('Xiya tracking sync with current shop settings', () => {
         { name: '新店铺名', platform: 'amazon', status: 1 },
         { name: '新增店铺', platform: 'another-custom-platform', status: 1 },
       ]);
-    const service = new OrdersService({ shop: { findMany: shopFindMany } } as any);
+    const service = new OrdersService({ company, shop: { findMany: shopFindMany } } as any);
     const apply = jest.spyOn(service as any, 'applyXiyaTrackingCandidates')
       .mockResolvedValue({ updatedCount: 0, skippedUnmatchedCount: 0 });
     fetchMock.mockResolvedValueOnce(response([logisticsRow('原店铺', 'A-1', 'T-1')]))
@@ -126,9 +131,9 @@ describe('Xiya tracking sync with current shop settings', () => {
         logisticsRow('原店铺', 'A-1', 'STALE-NUMBER'),
       ]));
 
-    await expect(service.syncXiyaTrackingNumbers()).resolves.toMatchObject({ validCount: 1 });
+    await expect(sync(service)).resolves.toMatchObject({ validCount: 1 });
     apply.mockClear();
-    await expect(service.syncXiyaTrackingNumbers()).resolves.toMatchObject({ validCount: 2 });
+    await expect(sync(service)).resolves.toMatchObject({ validCount: 2 });
 
     const firstNames = new URL(fetchMock.mock.calls[0][0]).searchParams.get('storeName')!.split(',');
     const secondNames = new URL(fetchMock.mock.calls[1][0]).searchParams.get('storeName')!.split(',');
@@ -141,11 +146,11 @@ describe('Xiya tracking sync with current shop settings', () => {
     })]);
     expect(apply).toHaveBeenCalledWith('manual', expect.arrayContaining([
       expect.objectContaining({ storeName: '新增店铺', source: 'manual', orderId: 'CUSTOM-1' }),
-    ]));
+    ]), true);
   });
 
   it('excludes explicitly disabled legacy names and cannot treat object property names as shops', async () => {
-    const service = new OrdersService({ shop: { findMany: jest.fn().mockResolvedValue([
+    const service = new OrdersService({ company, shop: { findMany: jest.fn().mockResolvedValue([
       { name: '当前店铺', platform: 'amazon', status: 1 },
       { name: 'DGAZ亚马逊日本站', platform: 'amazon', status: 0 },
     ]) } } as any);
@@ -156,7 +161,7 @@ describe('Xiya tracking sync with current shop settings', () => {
       logisticsRow('toString', 'A-2', 'T-2'),
     ]));
 
-    await expect(service.syncXiyaTrackingNumbers()).resolves.toMatchObject({ validCount: 0 });
+    await expect(sync(service)).resolves.toMatchObject({ validCount: 0 });
     const names = new URL(fetchMock.mock.calls[0][0]).searchParams.get('storeName')!.split(',');
     expect(names).not.toContain('DGAZ亚马逊日本站');
   });
@@ -165,9 +170,9 @@ describe('Xiya tracking sync with current shop settings', () => {
     { shops: [] },
     { shops: [{ name: 'DGAZ亚马逊日本站', platform: 'amazon', status: 0 }] },
   ])('does not query the Xiya default shop when no shops are enabled ($shops)', async ({ shops }) => {
-    const service = new OrdersService({ shop: { findMany: jest.fn().mockResolvedValue(shops) } } as any);
+    const service = new OrdersService({ company, shop: { findMany: jest.fn().mockResolvedValue(shops) } } as any);
 
-    await expect(service.syncXiyaTrackingNumbers()).resolves.toMatchObject({
+    await expect(sync(service)).resolves.toMatchObject({
       fetchedCount: 0, validCount: 0, amazonUpdatedCount: 0, manualUpdatedCount: 0, rakutenUpdatedCount: 0,
     });
     expect(fetchMock).not.toHaveBeenCalled();

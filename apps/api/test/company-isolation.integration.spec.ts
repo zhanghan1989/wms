@@ -241,13 +241,15 @@ suite('company isolation against MySQL', () => {
     expect(order.companyId).toBe(b);
     expect(await scope(a, () => db.manualOrderRecord.findUnique({ where: { id: order.id } }))).toBeNull();
   });
-  it('preserves both companies when importing a shared Xiya product response', async () => {
+  it('skips conflicting globally unique product IDs from another company', async () => {
     const service = new MasterProductsService(db as PrismaService, {} as AuditService);
     const source = await base.masterProduct.findMany({ where: { productId: { in: [productA,productB] } } });
     jest.spyOn(service as any, 'fetchXiyaImportRows').mockResolvedValue(source.map((row) => ({ ...row, productName: 'shared-xiya-update' })));
-    await scope(a, () => (service as any).performXiyaSync(10));
+    const result = await scope(a, () => (service as any).performXiyaSync(10));
+    expect(result.conflictIds).toEqual([productB]);
     const updated = await base.masterProduct.findMany({ where: { productId: { in: [productA,productB] } } });
-    expect(updated.every((row) => row.productName === 'shared-xiya-update')).toBe(true);
+    expect(updated.find((row) => row.productId === productA)?.productName).toBe('shared-xiya-update');
+    expect(updated.find((row) => row.productId === productB)?.productName).toBe(source.find((row) => row.productId === productB)?.productName);
     expect(updated.find((row) => row.productId === productA)?.companyId).toBe(a);
     expect(updated.find((row) => row.productId === productB)?.companyId).toBe(b);
   });

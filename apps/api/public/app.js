@@ -17495,14 +17495,14 @@ function bindForms() {
   $("triggerMasterProductSyncBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      const daysText = window.prompt("输入要同步最近几天更新的主商品数据", "10");
+      const daysText = window.prompt("输入同步天数（留空使用公司默认：XYJG 10 天，祈麟双子 30 天）", "");
       if (daysText === null) return;
-      const days = Number(daysText);
-      if (!Number.isInteger(days) || days <= 0) {
-        throw new Error("同步天数必须是大于 0 的整数");
+      const days = daysText.trim() ? Number(daysText) : undefined;
+      if (days !== undefined && (!Number.isInteger(days) || days <= 0 || days > 365)) {
+        throw new Error("同步天数必须是 1 到 365 的整数");
       }
       await withBusyButton(button, "同步中...", async () => {
-        const result = await request(`/master-products/sync-xiya?days=${days}`, {
+        const result = await request(`/master-products/sync-xiya${days === undefined ? "" : `?days=${days}`}`, {
           method: "POST",
         });
         showToast(result?.message || `已启动同步任务，正在拉取最近 ${days} 天数据`);
@@ -18391,7 +18391,13 @@ function bindForms() {
   $("syncXiyaTrackingNumbers")?.addEventListener("click", (event) =>
     withBusyButton(event.currentTarget, "同步中...", async () => {
       try {
-        const result = await request("/orders/china-orders/sync-xiya-tracking", { method: "POST" });
+        const daysText = window.prompt("输入同步天数（留空使用公司默认：XYJG 5 天，祈麟双子 30 天）", "");
+        if (daysText === null) return;
+        const days = daysText.trim() ? Number(daysText) : undefined;
+        if (days !== undefined && (!Number.isInteger(days) || days < 1 || days > 365)) {
+          throw new Error("同步天数必须是 1 到 365 的整数");
+        }
+        const result = await request(`/orders/china-orders/sync-xiya-tracking${days === undefined ? "" : `?days=${days}`}`, { method: "POST" });
         await Promise.all([
           loadChinaOrderProcessingOrders(),
           loadOrders(),

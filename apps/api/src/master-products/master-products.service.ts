@@ -1,3 +1,5 @@
+import { CompanyJob } from '../company-scope/company-job';
+import { resolveXiyaCompany, setXiyaCompanyParams, xiyaSyncDays } from '../common/xiya-company';
 import { companyContext } from '../company-scope/company-context';
 import { assertBoxUsable } from '../common/box-availability';
 import { randomUUID } from 'crypto';
@@ -146,7 +148,6 @@ const MASTER_PRODUCT_EXPORT_FILTER_CACHE_TTL_MS = 15 * 60 * 1000;
 const MASTER_PRODUCT_TEMPLATE_FILE = '产品列表.xlsx';
 const XIYA_EXPORT_URL = process.env.XIYA_EXPORT_URL || 'http://103.236.55.93/api/external/products';
 const XIYA_EXPORT_API_KEY = process.env.XIYA_EXPORT_API_KEY || '';
-const XIYA_COMPANY_NAME = process.env.XIYA_COMPANY_NAME || 'XYJG';
 const XIYA_SUCCESS_CODES = new Set([0, 200]);
 const MASTER_PRODUCT_SYNC_CRON = '0 0 0 * * 1';
 
@@ -533,11 +534,12 @@ export class MasterProductsService {
     name: 'weekly-master-product-sync-from-xiya',
     timeZone: APP_TIMEZONE,
   })
+  @CompanyJob()
   async runScheduledMasterProductSync(): Promise<void> {
     try {
       await this.triggerXiyaSync(undefined, {
         operationType: 'scheduled_sync',
-      });
+      }, true);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`master product scheduled sync failed: ${message}`);
@@ -547,13 +549,19 @@ export class MasterProductsService {
   async triggerXiyaSync(
     daysRaw?: string | number,
     context?: MasterProductSyncContext,
+    waitForCompletion = false,
   ): Promise<{
     recordId: string;
     status: MasterProductSyncStatus;
     message: string;
     days: number;
   }> {
-    const days = Math.min(this.normalizePositiveInt(daysRaw, 10), 365);
+    const company = await resolveXiyaCompany(this.prisma);
+    if (companyContext.getStore()?.companyId === undefined) {
+      return companyContext.run({ ...companyContext.getStore()!, companyId: company.companyId },
+        () => this.triggerXiyaSync(daysRaw, context, waitForCompletion));
+    }
+    const days = xiyaSyncDays(daysRaw, company.productDays);
 
     if (this.xiyaSyncStarting || this.masterProductSyncRunning) {
       throw new ConflictException('当前已有产品主表同步任务正在启动，请稍后再试');
@@ -574,7 +582,8 @@ export class MasterProductsService {
       });
 
       this.masterProductSyncRunning = true;
-      setTimeout(() => {
+      if (waitForCompletion) await this.runXiyaSyncJob(recordId, days);
+      else setTimeout(() => {
         void this.runXiyaSyncJob(recordId, days);
       }, 0);
 
@@ -956,6 +965,7 @@ export class MasterProductsService {
         fetchedCount: result.totalRows,
         createdCount: result.createdCount,
         updatedCount: result.updatedCount,
+        errorMessage: result.conflictIds.length ? `跨公司产品 ID 冲突，已跳过 ${result.conflictIds.length} 条：${result.conflictIds.join(',')}`.slice(0, 255) : null,
       });
     } catch (error) {
       await this.finishSyncRecord(recordId, {
@@ -975,30 +985,41 @@ export class MasterProductsService {
     createdCount: number;
     updatedCount: number;
     days: number;
+    conflictIds: string[];
   }> {
-    // Xiya is a shared, authenticated integration for all companies. Keep its
-    // upstream contract while preserving each existing product's local owner.
-    if (companyContext.getStore()) {
-      return companyContext.run(undefined, () => this.performXiyaSync(days));
-    }
-    const rows = await this.fetchXiyaImportRows(days);
+    const companyId = companyContext.getStore()?.companyId;
+    if (companyId === undefined) throw new BadRequestException('请先选择同步所属公司');
+    const fetchedRows = await this.fetchXiyaImportRows(days);
+    // Only this ownership lookup bypasses the current tenant filter.
+    const owners = await companyContext.run({ ...companyContext.getStore()!, bypass: true }, () =>
+      this.loadExistingMasterProducts(fetchedRows.map((row) => row.productId)));
+    const conflictIds = fetchedRows.filter((row) => {
+      const owner = owners.get(row.productId)?.companyId;
+      return owner !== undefined && owner !== companyId;
+    }).map((row) => row.productId);
+    const conflicts = new Set(conflictIds);
+    const rows = fetchedRows.filter((row) => !conflicts.has(row.productId));
+    rows.forEach((row) => { row.companyId = companyId; });
+    if (conflictIds.length) this.logger.warn(`Xiya company=${companyId}: skipped conflicting product IDs: ${conflictIds.join(',')}`);
     if (!rows.length) {
       return {
-        totalRows: 0,
+        totalRows: fetchedRows.length,
         importedCount: 0,
         createdCount: 0,
         updatedCount: 0,
         days,
+        conflictIds,
       };
     }
 
     const result = await this.upsertImportRows(rows, XIYA_SYNC_UPDATE_FIELDS, true);
     return {
-      totalRows: rows.length,
+      totalRows: fetchedRows.length,
       importedCount: rows.length,
       createdCount: result.createdCount,
       updatedCount: result.updatedCount,
       days,
+      conflictIds,
     };
   }
 
@@ -2238,8 +2259,7 @@ export class MasterProductsService {
 
   private async fetchXiyaImportRows(days: number): Promise<MasterProductImportRow[]> {
     const url = new URL(XIYA_EXPORT_URL);
-    url.searchParams.set('company_name', XIYA_COMPANY_NAME);
-    url.searchParams.set('apiKey', XIYA_EXPORT_API_KEY);
+    setXiyaCompanyParams(url, await resolveXiyaCompany(this.prisma));
     url.searchParams.set('days', String(days));
 
     let payload: unknown;
@@ -2349,10 +2369,10 @@ export class MasterProductsService {
   private async upsertImportRows(
     rows: MasterProductImportRow[],
     presentFields: Set<ImportedMasterProductField>,
-    sharedXiya = false,
+    xiyaSync = false,
   ): Promise<{ createdCount: number; updatedCount: number }> {
     const existingRows = await this.loadExistingMasterProducts(rows.map((row) => row.productId));
-    if (companyContext.getStore()?.companyId !== undefined && presentFields.has('bagBrand')) {
+    if (!xiyaSync && companyContext.getStore()?.companyId !== undefined && presentFields.has('bagBrand')) {
       const names = [...new Set(rows.map((row) => row.bagBrand?.trim()).filter((name): name is string => Boolean(name)))];
       if (names.length) {
         const brands = await this.prisma.brand.findMany({ where: { name: { in: names } }, select: { name: true } });
@@ -2362,17 +2382,11 @@ export class MasterProductsService {
         }
       }
     }
-    if (sharedXiya) {
+    if (xiyaSync) {
       const assignedBrands = new Set<string>();
       for (const row of rows) {
-        row.companyId = existingRows.get(row.productId)?.companyId;
-        if (!row.companyId && row.bagBrand) {
-          const brands = await this.prisma.brand.findMany({ where: { name: row.bagBrand }, select: { companyId: true } });
-          const owners = [...new Set(brands.map((brand) => brand.companyId))];
-          if (owners.length > 1) throw new BadRequestException(`产品 ${row.productId} 的品牌属于多家公司，请先在 WMS 中明确产品归属`);
-          row.companyId = owners[0];
-        }
-        row.companyId ??= 1n;
+        row.companyId = companyContext.getStore()?.companyId;
+        if (row.companyId === undefined) throw new BadRequestException('请先选择同步所属公司');
         const brandKey = `${row.companyId}:${row.bagBrand}`;
         if (row.bagBrand && !assignedBrands.has(brandKey)) {
           await this.prisma.brand.upsert({
