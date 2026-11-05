@@ -55,6 +55,7 @@ async function loadCompanyUi() {
     if (!selector.dataset.companyBound) {
       selector.dataset.companyBound = "true";
       selector.addEventListener("change", () => {
+        if (isWarehouseOnlyAccount()) return switchWarehouseDashboardCompany(selector.value);
         sessionStorage.setItem(`wms.company.${state.me.id}`, selector.value);
         window.location.reload();
       });
@@ -74,6 +75,44 @@ async function loadCompanyUi() {
   form?.classList.toggle("hidden", state.me.role !== "system_admin");
   const list = document.getElementById("companyList");
   if (list) list.innerHTML = '<div class="action-row"><span>日本海外仓</span><small class="muted">共享仓储组织</small></div>' + companyOptions.map((c) => `<div class="action-row"><span>${escapeHtml(c.name)}${c.status === 1 ? "" : "（已禁用）"}</span>${state.me.role === "system_admin" ? `<button type="button" class="tiny-btn" data-company-edit="${escapeHtml(c.id)}">修改名称</button><button type="button" class="tiny-btn" data-company-toggle="${escapeHtml(c.id)}">${c.status === 1 ? "禁用" : "启用"}</button>` : ""}</div>`).join("");
+}
+
+async function switchWarehouseDashboardCompany(companyId) {
+  if (companyId === activeCompanyId) return;
+  activeCompanyId = companyId;
+  sessionStorage.setItem(`wms.company.${state.me.id}`, companyId);
+  for (const id of ["activeCompanySelect", "rakutenDashboardCompanySelect", "overviewDashboardCompanySelect"]) {
+    const selector = $(id);
+    if (!selector) continue;
+    selector.value = companyId;
+    selector.title = `看板查看公司：${companyName(companyId)}`;
+  }
+  // Invalidate both dashboards before loading so late responses and pagination
+  // from the previous company cannot restore its data.
+  const generation = ++state.overviewDashboardGeneration;
+  state.overviewDashboardCache.clear();
+  state.overviewFbaSnapshotId = "";
+  state.overviewNeedsRefresh = true;
+  clearOverviewDashboard();
+  state.rakutenStoreDashboardRequestId = (state.rakutenStoreDashboardRequestId || 0) + 1;
+  state.rakutenStoreDashboard = null;
+  state.rakutenStoreDashboardLoading = false;
+  $("rakutenStoreDashboardResult")?.classList.add("hidden");
+  $("rakutenStoreDashboardEmpty")?.classList.add("hidden");
+  $("rakutenStoreDashboardIssue")?.classList.add("hidden");
+  setTextById("overviewSnapshotMeta", "公司已切换，正在加载统计...");
+  setTextById("rakutenStoreDashboardMeta", "公司已切换，正在加载看板...");
+  try {
+    // The other dashboard loads on entry; keep the current panel and filters.
+    if ($("overview")?.classList.contains("active")) await loadOverviewDashboard();
+    else if ($("rakutenDashboard")?.classList.contains("active")) await loadRakutenStoreDashboard();
+  } catch (error) {
+    if (state.overviewDashboardGeneration !== generation) return;
+    const message = `公司看板读取失败：${error.message}`;
+    setTextById("overviewSnapshotMeta", message);
+    setTextById("rakutenStoreDashboardMeta", message);
+    showToast(message, true);
+  }
 }
 
 const AUTH_STORAGE_KEY = "wms_token";
