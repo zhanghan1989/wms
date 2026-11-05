@@ -5,6 +5,11 @@ import { RakutenRmsApiService } from '../src/rakuten-rms-api/rakuten-rms-api.ser
 
 const current = new Date('2026-11-04T03:00:00Z');
 const previous = new Date('2026-10-26T03:00:00Z');
+// Prisma queries execute when awaited, rather than when constructed. Keep this
+// behavior in the shared-store mocks to catch an ALS scope ending too early.
+function lazyRead<T>(read: () => T): Promise<T> {
+  return { then: (resolve: any, reject: any) => Promise.resolve().then(read).then(resolve, reject) } as Promise<T>;
+}
 function fixture() {
   const products = [
     { productId: 'A1', productName: 'Company A product', companyId: 1n, stockQty: 20, bomComponents: [] },
@@ -32,18 +37,18 @@ function fixture() {
     lastOrdersSyncedAt: null, lastSuccessfulSyncAt: null, licenseExpiresAt: null,
     lastSyncError: 'PRIVATE_OTHER_COMPANY_OPERATION_ERROR' }));
   const prisma: any = {
-    rakutenRmsConnection: { findMany: jest.fn(async () => {
+    rakutenRmsConnection: { findMany: jest.fn(() => lazyRead(() => {
       if (companyContext.getStore()?.systemAdmin === false && companyContext.getStore()?.warehouse === false) throw new Error('Shared store lookup was company-scoped');
       return connections;
-    }) },
+    })) },
     $queryRaw: jest.fn().mockResolvedValue([]),
     rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue([]) },
     rakutenRmsSyncRun: { findFirst: jest.fn().mockResolvedValue({ status: 'success', startedAt: current, finishedAt: current,
       fetchedCount: 123456, errorMessage: 'PRIVATE_OTHER_COMPANY_SYNC_DATA' }) },
-    rakutenComboProduct: { findMany: jest.fn(async () => {
+    rakutenComboProduct: { findMany: jest.fn(() => lazyRead(() => {
       expect(companyContext.getStore()?.warehouse).toBe(true);
       return combos;
-    }) },
+    })) },
     masterProduct: { findMany: jest.fn(async ({ where }) => products.filter(product => where.productId.in.includes(product.productId)
       && (where.companyId === undefined || product.companyId === where.companyId))) },
     batchInboundItem: { findMany: jest.fn().mockResolvedValue([]) },

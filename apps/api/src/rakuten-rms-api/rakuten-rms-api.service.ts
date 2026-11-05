@@ -200,8 +200,9 @@ export class RakutenRmsApiService {
     if (companySalesOnly && !scope?.companyId) throw new ForbiddenException('账号尚未分配公司');
     // Japan owns the store and financial facts. Chinese accounts may read only
     // the product-filtered aggregates assembled below, never connection APIs.
+    // Await inside the scope: Prisma promises do not execute when constructed.
     const readSharedSales = <T>(read: () => Promise<T>): Promise<T> => companySalesOnly
-      ? companyContext.run({ ...scope!, companyId: undefined, warehouse: true, japanOperations: true }, read) : read();
+      ? companyContext.run({ ...scope!, companyId: undefined, warehouse: true, japanOperations: true }, async () => await read()) : read();
     const minimumAverageDailySalesExclusive = minimumDailySalesRaw === undefined ? 0.05 : Number(minimumDailySalesRaw);
     if (minimumDailySalesRaw?.trim() === "" || !Number.isFinite(minimumAverageDailySalesExclusive) || minimumAverageDailySalesExclusive < 0) {
       throw new BadRequestException("日均需求门槛须为大于或等于0的数字");
