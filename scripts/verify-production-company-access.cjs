@@ -75,6 +75,14 @@ async function main() {
         for (const row of rows) ownerByRef.set(`${source}:${row.id}`, row[ownerField]);
       }
     }
+    const inconsistentOwners = warehouseRows.filter(row => {
+      const owner = productOwners.get(row.resolvedProductId);
+      return owner !== undefined && ownerByRef.get(key(row)) !== owner;
+    });
+    report.orderProductOwnership = { checked: warehouseRows.length, mismatched: inconsistentOwners.length };
+    if (inconsistentOwners.length) note('ORDER_PRODUCT_COMPANY_MISMATCH', {
+      count: inconsistentOwners.length, sampleReferences: inconsistentOwners.slice(0, 5).map(key),
+    });
     const japanShopNames = (await tx.shop.findMany({ where: { platform: { not: 'amazon' } }, select: { name: true } })).map(row => row.name);
     const companyResults = [];
     for (const company of companies) {
