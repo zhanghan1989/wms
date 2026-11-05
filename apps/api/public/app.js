@@ -3219,8 +3219,9 @@ function applyRoleView() {
     $(id)?.classList.toggle("hidden", !canDownloadXyjgRbLinkStock());
   });
   $("openAmazonDashboardPanel")?.classList.remove("hidden");
-  ["openRakutenDashboardPanel", "openFbaReplenishmentPanel", "openRakutenOrderImportPanel",
-    "openRakutenComboProductManagementPanel", "openOverseasOrderProcessingPanel"].forEach((id) => {
+  $("openRakutenOrderImportPanel")?.classList.toggle("hidden", !isLoggedIn);
+  ["openRakutenDashboardPanel", "openFbaReplenishmentPanel", "openRakutenApiImportModal", "openRakutenWorkflowModal",
+    "rakutenBatchChangeOrderIdBtn", "rakutenBatchDeleteBtn", "openRakutenComboProductManagementPanel", "openOverseasOrderProcessingPanel"].forEach((id) => {
     $(id)?.classList.toggle("hidden", !canManageJapanOperations());
   });
   document.querySelectorAll('.warehouse-operation-only').forEach((node) => node.classList.toggle("hidden", !canManageJapanOperations()));
@@ -11592,6 +11593,7 @@ function renderOrdersTable() {
   if (!tbody) return;
   syncSelectedRakutenOrderIds();
   const canEdit = canCurrentUserEditOrders();
+  const canManageJapan = canManageJapanOperations();
   const visibleCount = Math.max(state.inventoryPageSize, Number(state.ordersVisibleCount || 0));
   const list = state.orders.slice(0, visibleCount);
 
@@ -11620,7 +11622,7 @@ function renderOrdersTable() {
             : "编辑订单";
         return `
       <tr>
-        <td><input type="checkbox" data-action="rakutenOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
+        <td class="${canManageJapan ? "" : "hidden"}"><input type="checkbox" data-action="rakutenOrderToggleRow" data-id="${escapeHtml(item.id)}" ${
           state.selectedRakutenOrderIds.has(String(item.id)) ? "checked" : ""
         } ${canDeleteRow ? "" : 'disabled title="订单已删除"'} /></td>
         <td>${escapeHtml(formatDate(item.csvImportedAt || item.createdAt))}</td>
@@ -12760,7 +12762,11 @@ async function loadOrders() {
     state.ordersHasMore = state.orders.length >= pageSize;
     state.ordersVisibleCount = state.orders.length;
     renderOrdersTable();
-    await loadRakutenTrackingStatusSummary();
+    if (canManageJapanOperations()) {
+      await loadRakutenTrackingStatusSummary();
+    } else {
+      renderRakutenTrackingStatusSummary(null);
+    }
     setTimeout(() => maybeAutoLoadOrders(), 0);
   } finally {
     state.ordersLoading = false;

@@ -32,6 +32,7 @@ export class CompanyScopeInterceptor implements NestInterceptor {
     try { path = decodeURIComponent(req.originalUrl.split('?')[0]).replace(/^\/api\//, ''); }
     catch { throw new BadRequestException('请求路径无效'); }
     const japanOperations = isJapanManagementPath(path) || /^orders\/overseas-warehouse(\/|$)/.test(path)
+      || ((systemAdmin || warehouse) && path === 'orders')
       || (systemAdmin && /^orders\/(detail\/rakuten|rakuten\/[^/]+)(\/|$)/.test(path));
     if (!systemAdmin && !warehouse && (isJapanManagementPath(path) || isWarehouseWorkPath(path, req.method))) {
       throw new ForbiddenException('此功能由日本海外仓或系统管理员处理');

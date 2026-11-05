@@ -2,7 +2,6 @@
  * stores and their assigned China-fulfillment lines. */
 export function isJapanManagementPath(path: string): boolean {
   return /^(rakuten-rms-api|rakuten-combo-products)(\/|$)/.test(path)
-    || path === 'orders'
     || /^orders\/(rakuten\/(tracking-status-summary|tracking-query-failures|change-order-id-batch)|delete-batch)(\/|$)/.test(path);
 }
 

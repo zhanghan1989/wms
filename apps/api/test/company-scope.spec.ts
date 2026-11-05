@@ -19,10 +19,26 @@ function fixture(options: Record<string, unknown> = {}) {
   return { request, context, prisma, interceptor, next };
 }
 describe('company request boundaries', () => {
+  it.each([
+    ['employee', 1n], ['admin', 1n], ['employee', 2n], ['admin', 2n],
+  ])('opens the Rakuten entry with the Chinese %s account company scope (case %#)', async (role, companyId) => {
+    const f = fixture({ user: { id: 5n, role, companyId }, originalUrl: '/api/orders?limit=30&offset=0' });
+    expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
+      .toMatchObject({ companyId, warehouse: false, systemAdmin: false, japanOperations: false });
+    const forged = fixture({ user: { id: 5n, role, companyId }, originalUrl: '/api/orders',
+      headers: { 'x-company-id': String(companyId === 1n ? 2n : 1n) } });
+    await expect(forged.interceptor.intercept(forged.context, forged.next)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+  it('keeps the administrator Rakuten order entry global when a Chinese company is selected', async () => {
+    const f = fixture({ user: { id: 1n, role: 'system_admin', companyId: null },
+      headers: { 'x-company-id': '2' }, originalUrl: '/api/orders' });
+    expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
+      .toMatchObject({ companyId: undefined, systemAdmin: true, japanOperations: true });
+  });
   it.each(['employee', 'admin'])('blocks Chinese %s warehouse work and Japan sales management at the API boundary', async role => {
     const routes = [
       ['GET', '/api/rakuten-rms-api/connections'], ['PUT', '/api/rakuten-rms-api/automation/schedules/import'],
-      ['GET', '/api/rakuten-combo-products'], ['GET', '/api/orders'], ['GET', '/api/orders/overseas-warehouse'],
+      ['GET', '/api/rakuten-combo-products'], ['GET', '/api/orders/overseas-warehouse'],
       ['POST', '/api/orders/overseas-warehouse/picking-batches'], ['POST', '/api/inventory/manual-adjust'],
       ['POST', '/api/master-products/B/box-inventories/outbound-one'], ['POST', '/api/master-products/B/fba-replenishments'],
       ['GET', '/api/batch-inbound/orders'], ['POST', '/api/inbound'], ['POST', '/api/boxes'],
@@ -38,7 +54,7 @@ describe('company request boundaries', () => {
     for (const [method, originalUrl] of [
       ['GET', '/api/master-products/B/detail'], ['GET', '/api/skus/export-unmatched-excel'], ['POST', '/api/skus/import-excel'],
       ['POST', '/api/orders/amazon/import-txt'], ['POST', '/api/orders/manual/import-excel'], ['POST', '/api/orders/manual'],
-      ['GET', '/api/orders/china-orders'], ['GET', '/api/orders/detail/rakuten/2'],
+      ['GET', '/api/orders'], ['GET', '/api/orders/china-orders'], ['GET', '/api/orders/detail/rakuten/2'],
       ['POST', '/api/orders/china-orders/rakuten/2/switch-to-japan'], ['POST', '/api/orders/china-orders/sync-xiya-tracking'],
       ['GET', '/api/inventory/fba-replenishments/pending-summary'],
     ]) {
