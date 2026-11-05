@@ -54,7 +54,7 @@ jobs:
     needs: validate
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 165
     environment:
       name: production
     env:
@@ -100,7 +100,7 @@ jobs:
           ls -lh "wms-api-${DEPLOY_REF}.tar.gz"
 
       - name: Copy API image to ECS
-        timeout-minutes: 30
+        timeout-minutes: 110
         env:
           ECS_HOST: ${{ secrets.ECS_HOST }}
           ECS_PORT: ${{ secrets.ECS_PORT }}
