@@ -2459,8 +2459,9 @@ td {
 }
 
 .order-search-row input {
-  flex: 1 1 360px;
-  min-width: 240px;
+  flex: 0 1 420px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .order-search-result-title {
