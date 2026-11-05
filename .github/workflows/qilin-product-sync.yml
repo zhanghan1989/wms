@@ -23,9 +23,9 @@ jobs:
       - name: Prepare read-only audit
         run: |
           set -euo pipefail
-          node --check scripts/verify-production-order-search.cjs
-          printf 'COMPANY_ACCESS_AUDIT_B64=%s\n' "$(base64 -w0 scripts/verify-production-order-search.cjs)" >> "$GITHUB_ENV"
-      - name: Verify production order search isolation
+          node --check scripts/verify-production-rakuten-dashboard.cjs
+          printf 'COMPANY_ACCESS_AUDIT_B64=%s\n' "$(base64 -w0 scripts/verify-production-rakuten-dashboard.cjs)" >> "$GITHUB_ENV"
+      - name: Verify production Rakuten dashboard isolation
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.ECS_HOST }}
