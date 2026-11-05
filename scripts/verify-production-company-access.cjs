@@ -62,6 +62,18 @@ async function main() {
     report.rakutenAssignments = { total: assignments.length, unassigned: assignments.filter(row => row.fulfillmentCompanyId === null).length,
       byCompany: companies.map(company => ({ company: company.name, count: assignments.filter(row => row.fulfillmentCompanyId === company.id).length })), mismatched: mismatched.length };
     console.log(JSON.stringify({ stage: 'assignment-audit', ...report.rakutenAssignments }));
+    const entryRows = user => asUser(tx, user, 'orders', async () => {
+      const result = [];
+      for (let offset = 0; ; offset += 1000) {
+        const rows = await orders.list('1000', String(offset));
+        result.push(...rows);
+        if (rows.length < 1000) break;
+      }
+      return result;
+    });
+    const warehouseEntry = await entryRows(warehouse);
+    if (warehouseEntry.length !== assignments.length) note('WAREHOUSE_RAKUTEN_ENTRY_INCOMPLETE');
+    report.warehouseRakutenEntryCount = warehouseEntry.length;
     const warehouseRows = await asUser(tx, warehouse, 'orders/china-orders', () => orders.listChinaOrderProcessing(undefined, 'all', undefined, true));
     const warehouseKeys = new Set(warehouseRows.map(key));
     assert.equal(warehouseKeys.size, warehouseRows.length, 'Duplicate warehouse China order references');
@@ -105,6 +117,14 @@ async function main() {
         note('ACCOUNT_PERMISSION_FAILURE', { company: company.name });
       }
       const user = accounts.find(row => row.role === 'employee') || accounts[0];
+      const entry = await entryRows(user);
+      const expectedEntry = new Set(assignments.filter(row => row.fulfillmentCompanyId === company.id).map(row => String(row.id)));
+      const actualEntry = new Set(entry.map(row => String(row.id)));
+      const entryLeaked = entry.filter(row => row.fulfillmentCompanyId !== company.id).length;
+      const entryMissing = [...expectedEntry].filter(id => !actualEntry.has(id)).length;
+      const entryExtra = [...actualEntry].filter(id => !expectedEntry.has(id)).length;
+      if (entryLeaked || entryMissing || entryExtra) note('RAKUTEN_ENTRY_COMPANY_SCOPE_FAILURE', { company: company.name });
+      if (!await denied(tx, user, 'orders', { 'x-company-id': String(other.id) })) note('RAKUTEN_ENTRY_FORGED_HEADER_ALLOWED');
       const actual = await asUser(tx, user, 'orders/china-orders', () => orders.listChinaOrderProcessing(undefined, 'all', undefined, true));
       const actualKeys = new Set(actual.map(key));
       const expected = new Set(warehouseRows.filter(row => ownerByRef.get(key(row)) === company.id).map(key));
@@ -134,6 +154,7 @@ async function main() {
         exports[method] = rows.length;
       }
       const result = { company: company.name, companyId: String(company.id), activeAccounts: accounts.length,
+        rakutenEntry: { count: entry.length, expected: expectedEntry.size, leaked: entryLeaked, missing: entryMissing, extra: entryExtra },
         roles: [...new Set(accounts.map(row => row.role))], accountScopeChecks: permittedAccounts, forgedCompanyHeaderBlocked: blockedCompanyHeaders,
         restrictedRouteChecks: blockedWarehouseRoutes, chinaOrders: counts(actual), expectedFromWarehouse: expected.size,
         leaked: leaked.length, missing: missing.length, extra: extra.length, foreignDetailCheck,
