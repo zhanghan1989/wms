@@ -1,8 +1,13 @@
 /** Japan operates one Rakuten center; Chinese companies operate their Amazon
  * stores and their assigned China-fulfillment lines. */
 export function isJapanManagementPath(path: string): boolean {
+  if (isCompanySalesDashboardPath(path)) return false;
   return /^(rakuten-rms-api|rakuten-combo-products)(\/|$)/.test(path)
     || /^orders\/(rakuten\/(tracking-status-summary|tracking-query-failures|change-order-id-batch)|delete-batch)(\/|$)/.test(path);
+}
+
+export function isCompanySalesDashboardPath(path: string): boolean {
+  return path === 'rakuten-rms-api/store-dashboard' || path === 'rakuten-rms-api/store-dashboard/export-excel';
 }
 
 export function isWarehouseWorkPath(path: string, method: string): boolean {

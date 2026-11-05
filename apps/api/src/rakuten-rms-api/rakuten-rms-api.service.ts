@@ -1,7 +1,8 @@
 import { DEFAULT_RAKUTEN_MAIL_SIGNATURE } from './rakuten-mail-signature';
 import { storeDashboardPeriod } from '../common/store-dashboard-period';
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from "@nestjs/common";
+import { companyContext } from '../company-scope/company-context';
 import {
   BatchInboundItemStatus,
   BatchInboundOrderStatus,
@@ -194,6 +195,13 @@ export class RakutenRmsApiService {
   }
 
   async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string, minimumDailySalesRaw?: string, month?: string): Promise<unknown> {
+    const scope = companyContext.getStore();
+    const companySalesOnly = Boolean(scope && !scope.systemAdmin && !scope.warehouse);
+    if (companySalesOnly && !scope?.companyId) throw new ForbiddenException('账号尚未分配公司');
+    // Japan owns the store and financial facts. Chinese accounts may read only
+    // the product-filtered aggregates assembled below, never connection APIs.
+    const readSharedSales = <T>(read: () => Promise<T>): Promise<T> => companySalesOnly
+      ? companyContext.run({ ...scope!, companyId: undefined, warehouse: true, japanOperations: true }, read) : read();
     const minimumAverageDailySalesExclusive = minimumDailySalesRaw === undefined ? 0.05 : Number(minimumDailySalesRaw);
     if (minimumDailySalesRaw?.trim() === "" || !Number.isFinite(minimumAverageDailySalesExclusive) || minimumAverageDailySalesExclusive < 0) {
       throw new BadRequestException("日均需求门槛须为大于或等于0的数字");
@@ -205,11 +213,11 @@ export class RakutenRmsApiService {
       period.start = new Date(new Date(`${today}T00:00:00+09:00`).getTime() - (days - 1) * 86400000);
       period.previousStart = new Date(period.start.getTime() - days * 86400000);
     }
-    const connections = await this.prisma.rakutenRmsConnection.findMany({
+    const connections = await readSharedSales(() => this.prisma.rakutenRmsConnection.findMany({
       where: { status: 1, syncOrders: true },
       include: { shop: { select: { id: true, name: true } } },
       orderBy: { id: "asc" },
-    });
+    }));
     const requestedId = connectionIdRaw ? parseId(connectionIdRaw, "connectionId") : null;
     const selected = requestedId ? connections.find((row) => row.id === requestedId) : connections[0];
     if (requestedId && !selected) throw new NotFoundException("所选乐天店铺连接不存在或已停用");
@@ -221,7 +229,7 @@ export class RakutenRmsApiService {
       hasSyncError: Boolean(row.lastSyncError),
     }));
     if (!selected) {
-      return { generatedAt: new Date().toISOString(), days, shops, selectedShop: null, dashboard: null };
+      return { generatedAt: new Date().toISOString(), days, shops, selectedShop: null, dashboard: null, salesOnly: companySalesOnly };
     }
     const includesLegacyData = selected.shop.name === LEGACY_RAKUTEN_DEFAULT_SHOP_NAME;
     const now = new Date();
@@ -231,7 +239,7 @@ export class RakutenRmsApiService {
     const orderScope = includesLegacyData
       ? Prisma.sql`(rms_connection_id = ${selected.id} OR rms_connection_id IS NULL)`
       : Prisma.sql`rms_connection_id = ${selected.id}`;
-    const latestSyncRunPromise = this.prisma.rakutenRmsSyncRun.findFirst({
+    const latestSyncRunPromise = companySalesOnly ? Promise.resolve(null) : this.prisma.rakutenRmsSyncRun.findFirst({
       where: { connectionId: selected.id },
       orderBy: { startedAt: "desc" },
       select: {
@@ -262,7 +270,7 @@ export class RakutenRmsApiService {
           AND order_imported_date >= ${this.formatTokyoDateKey(analysisStart, "-")}
           AND order_imported_date < ${this.formatTokyoDateKey(analysisEndDay, "-")}
       `),
-      this.prisma.rakutenOrderRecord.findMany({
+      companySalesOnly ? Promise.resolve([]) : this.prisma.rakutenOrderRecord.findMany({
         where: { deletedAt: null,
           OR: [
             { rmsConnectionId: { in: activeConnectionIds } },
@@ -284,36 +292,34 @@ export class RakutenRmsApiService {
         },
       }),
     ]);
-    const orders = orderRows.map((row) => ({
+    let orders = orderRows.map((row) => ({
       ...row,
       trackingIsDelivered: Boolean(row.trackingIsDelivered),
       salesAmount: Number(row.salesAmount ?? 0),
     }));
-    const factoryOrders = factoryOrderRows.map((row) => ({
+    let factoryOrders = factoryOrderRows.map((row) => ({
       ...row,
       orderId: originalRakutenOrderId(row),
       orderImportedAtRaw: row.orderImportedDate,
       salesAmount: 0,
     }));
-    const financial = this.sales ? await this.sales.read(selected.id, period.previousStart, period.end) : null;
-    const financialRows = financial?.rows;
-    const shippedOrderIds = new Set(orders.filter((row) => row.shipmentNo).map((row) => row.orderId));
-    for (const row of financialRows ?? []) if (shippedOrderIds.has(row.orderId)) row.shipmentNo = '已登记';
+    const financial = this.sales ? await readSharedSales(() => this.sales!.read(selected.id, period.previousStart, period.end)) : null;
+    let financialRows = financial?.rows;
     const productIds = Array.from(new Set(
       [...orders, ...factoryOrders, ...(financialRows ?? [])]
         .map((row) => String(row.skuCode ?? "").trim())
         .filter(Boolean),
     ));
     const comboSkus = productIds.filter((sku) => /^zh-/i.test(sku));
-    const combos = comboSkus.length ? await this.prisma.rakutenComboProduct.findMany({
+    let combos = comboSkus.length ? await readSharedSales(() => this.prisma.rakutenComboProduct.findMany({
       where: { comboName: { in: comboSkus } },
       select: { comboName: true, items: { orderBy: { position: 'asc' }, select: { productId: true } } },
-    }) : [];
+    })) : [];
     const dashboardProductIds = [...new Set([...productIds, ...combos.flatMap((combo) => combo.items.map((item) => item.productId))])];
     const [salesProducts, latestSyncRun] = await Promise.all([
       dashboardProductIds.length
         ? this.prisma.masterProduct.findMany({
-          where: { productId: { in: dashboardProductIds } },
+          where: { productId: { in: dashboardProductIds }, ...(companySalesOnly ? { companyId: scope!.companyId } : {}) },
           select: {
             productId: true, productName: true, productType: true, stockQty: true,
             bomComponents: { select: {
@@ -327,12 +333,27 @@ export class RakutenRmsApiService {
         : Promise.resolve([]),
       latestSyncRunPromise,
     ]);
+    if (companySalesOnly) {
+      const normalizeSku = (value: string | null | undefined) => String(value ?? '').trim().toLowerCase();
+      const ownProducts = new Set(salesProducts.map(product => normalizeSku(product.productId)));
+      // A bundle is attributable only when every component belongs to this
+      // company. Unknown or mixed-company bundles never expose another owner.
+      combos = combos.filter(combo => combo.items.length > 0 && combo.items.every(item => ownProducts.has(normalizeSku(item.productId))));
+      const ownCombos = new Set(combos.map(combo => normalizeSku(combo.comboName)));
+      const visible = (row: { skuCode: string | null }) => /^zh-/i.test(String(row.skuCode ?? '').trim())
+        ? ownCombos.has(normalizeSku(row.skuCode)) : ownProducts.has(normalizeSku(row.skuCode));
+      orders = orders.filter(visible);
+      factoryOrders = factoryOrders.filter(visible);
+      financialRows = financialRows?.filter(visible);
+    }
+    const shippedOrderIds = new Set(orders.filter(row => row.shipmentNo).map(row => row.orderId));
+    financialRows = financialRows?.map(row => shippedOrderIds.has(row.orderId) ? { ...row, shipmentNo: '已登记' } : row);
     // Include material stocks and arrivals even when materials have no direct sales.
     const products = Array.from(new Map([
       ...salesProducts.flatMap((product) => (product.bomComponents ?? []).map((item) => item.componentProduct)),
       ...salesProducts,
     ].map((product) => [product.productId, product])).values());
-    const planningProductIds = products.map((product) => product.productId);
+    const planningProductIds = companySalesOnly ? [] : products.map((product) => product.productId);
     const inTransitRows = planningProductIds.length
       ? await this.prisma.batchInboundItem.findMany({
         where: {
@@ -376,12 +397,13 @@ export class RakutenRmsApiService {
       shopName: selected.shop.name,
       lastOrdersSyncedAt: selected.lastOrdersSyncedAt?.toISOString() ?? null,
       lastSuccessfulSyncAt: selected.lastSuccessfulSyncAt?.toISOString() ?? null,
-      licenseExpiresAt: selected.licenseExpiresAt?.toISOString() ?? null,
-      syncIssue: selected.lastSyncError ? { message: selected.lastSyncError } : null,
+      licenseExpiresAt: companySalesOnly ? null : selected.licenseExpiresAt?.toISOString() ?? null,
+      syncIssue: !companySalesOnly && selected.lastSyncError ? { message: selected.lastSyncError } : null,
       includesLegacyData,
     };
     return {
       generatedAt: new Date().toISOString(),
+      salesOnly: companySalesOnly,
       days,
       shops,
       selectedShop,
@@ -395,7 +417,8 @@ export class RakutenRmsApiService {
         legacyItemCount: orders.filter((row) => row.rmsConnectionId === null).length,
         includesLegacyData,
         sales: financial ? { ready: financial.ready, coverageStart: financial.coverageStart,
-          coverageEnd: financial.coverageEnd, syncedAt: financial.syncedAt, error: financial.error } : null,
+          coverageEnd: financial.coverageEnd, syncedAt: financial.syncedAt,
+          error: companySalesOnly && financial.error ? '销售数据同步异常，请联系日本海外仓' : financial.error } : null,
       },
       dashboard: buildRakutenStoreDashboard({
         period,

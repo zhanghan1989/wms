@@ -239,10 +239,11 @@ describe('account UI boundaries', () => {
       + source.slice(source.indexOf('function applyRoleView('), source.indexOf('function setAuthGate(')), context);
     context.applyRoleView();
     for (const id of ['openOverseasWarehousePanel', 'openBatchInboundModal', 'openFbaReplenishmentPanel',
-      'openRakutenDashboardPanel', 'openRakutenApiImportModal', 'openRakutenWorkflowModal', 'rakutenBatchChangeOrderIdBtn',
+      'openRakutenApiImportModal', 'openRakutenWorkflowModal', 'rakutenBatchChangeOrderIdBtn',
       'rakutenBatchDeleteBtn', 'openRakutenComboProductManagementPanel', 'openOverseasOrderProcessingPanel']) {
       expect(!$(id).classList.contains('hidden')).toBe(expected);
     }
     expect(!$('openRakutenOrderImportPanel').classList.contains('hidden')).toBe(true);
+    expect(!$('openRakutenDashboardPanel').classList.contains('hidden')).toBe(true);
   });
 });

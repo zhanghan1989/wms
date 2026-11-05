@@ -35,9 +35,20 @@ describe('company request boundaries', () => {
     expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
       .toMatchObject({ companyId: undefined, systemAdmin: true, japanOperations: true });
   });
+  it.each(['/api/rakuten-rms-api/store-dashboard', '/api/rakuten-rms-api/store-dashboard/export-excel'])('allows the company-filtered Rakuten dashboard: %s', async originalUrl => {
+    const f = fixture({ originalUrl });
+    expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
+      .toMatchObject({ companyId: 2n, warehouse: false, japanOperations: false });
+    const forged = fixture({ originalUrl, headers: { 'x-company-id': '1' } });
+    await expect(forged.interceptor.intercept(forged.context, forged.next)).rejects.toBeInstanceOf(ForbiddenException);
+    const admin = fixture({ originalUrl, user: { id: 1n, role: 'system_admin' }, headers: { 'x-company-id': '2' } });
+    expect(await firstValueFrom(await admin.interceptor.intercept(admin.context, admin.next)))
+      .toMatchObject({ companyId: undefined, japanOperations: true });
+  });
   it.each(['employee', 'admin'])('blocks Chinese %s warehouse work and Japan sales management at the API boundary', async role => {
     const routes = [
       ['GET', '/api/rakuten-rms-api/connections'], ['PUT', '/api/rakuten-rms-api/automation/schedules/import'],
+      ['GET', '/api/rakuten-rms-api/store-dashboard/factory-recommendations-excel'],
       ['GET', '/api/rakuten-combo-products'], ['GET', '/api/orders/overseas-warehouse'],
       ['POST', '/api/orders/overseas-warehouse/picking-batches'], ['POST', '/api/inventory/manual-adjust'],
       ['POST', '/api/master-products/B/box-inventories/outbound-one'], ['POST', '/api/master-products/B/fba-replenishments'],

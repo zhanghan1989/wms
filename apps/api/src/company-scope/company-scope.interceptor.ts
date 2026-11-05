@@ -3,7 +3,7 @@ import { BadRequestException, CallHandler, ExecutionContext, ForbiddenException,
 import { Observable } from 'rxjs';
 import { AuthUser } from '../common/types/auth-user.type';
 import { companyContext } from './company-context';
-import { isJapanManagementPath, isWarehouseWorkPath } from './business-access';
+import { isCompanySalesDashboardPath, isJapanManagementPath, isWarehouseWorkPath } from './business-access';
 
 @Injectable()
 export class CompanyScopeInterceptor implements NestInterceptor {
@@ -33,6 +33,7 @@ export class CompanyScopeInterceptor implements NestInterceptor {
     catch { throw new BadRequestException('请求路径无效'); }
     const japanOperations = isJapanManagementPath(path) || /^orders\/overseas-warehouse(\/|$)/.test(path)
       || ((systemAdmin || warehouse) && path === 'orders')
+      || ((systemAdmin || warehouse) && isCompanySalesDashboardPath(path))
       || (systemAdmin && /^orders\/(detail\/rakuten|rakuten\/[^/]+)(\/|$)/.test(path));
     if (!systemAdmin && !warehouse && (isJapanManagementPath(path) || isWarehouseWorkPath(path, req.method))) {
       throw new ForbiddenException('此功能由日本海外仓或系统管理员处理');

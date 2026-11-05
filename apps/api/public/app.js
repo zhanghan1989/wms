@@ -2906,7 +2906,7 @@ function renderRakutenStoreDashboard(payload) {
   const topProducts = Array.isArray(dashboard.topProducts) ? dashboard.topProducts : [];
   const sourceSummary = payload.sourceSummary || {};
   const lastOrdersSync = selectedShop.lastOrdersSyncedAt ? formatDate(selectedShop.lastOrdersSyncedAt) : "尚未同步";
-  $("rakutenStoreDashboardMeta").textContent = `${selectedShop.shopName} / ${period.month ? `${period.month}（日本时间）` : `近${period.days || payload.days || 30}天`} / 订单同步 ${lastOrdersSync} / 看板生成 ${payload.generatedAt ? formatDate(payload.generatedAt) : "-"}`;
+  $("rakutenStoreDashboardMeta").textContent = `${selectedShop.shopName}${canManageJapanOperations() ? "" : " / 仅本公司产品"} / ${period.month ? `${period.month}（日本时间）` : `近${period.days || payload.days || 30}天`} / 订单同步 ${lastOrdersSync} / 看板生成 ${payload.generatedAt ? formatDate(payload.generatedAt) : "-"}`;
   const issueBox = $("rakutenStoreDashboardIssue");
   if (issueBox) {
     issueBox.classList.toggle("hidden", !selectedShop.syncIssue);
@@ -2983,7 +2983,9 @@ function renderRakutenStoreDashboard(payload) {
     { label: "中国仓出库", value: `${formatMetricNumber(fulfillment.chinaUnitCount)} 件` },
   ]);
   const latestRun = payload.latestSyncRun;
-  $("rakutenStoreDashboardSyncStatus").textContent = latestRun ? `最近任务：${displayText(latestRun.status)} / 读取 ${formatMetricNumber(latestRun.fetchedCount)} 条` : "尚无同步任务";
+  $("rakutenStoreDashboardSyncStatus").textContent = canManageJapanOperations()
+    ? latestRun ? `最近任务：${displayText(latestRun.status)} / 读取 ${formatMetricNumber(latestRun.fetchedCount)} 条` : "尚无同步任务"
+    : "仅统计本公司产品";
   const sourceText = sourceSummary.includesLegacyData
     ? `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细 + 历史手动导入 ${formatMetricNumber(sourceSummary.legacyItemCount)} 条明细。`
     : `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细。`;
@@ -3219,8 +3221,9 @@ function applyRoleView() {
     $(id)?.classList.toggle("hidden", !canDownloadXyjgRbLinkStock());
   });
   $("openAmazonDashboardPanel")?.classList.remove("hidden");
+  $("openRakutenDashboardPanel")?.classList.toggle("hidden", !isLoggedIn);
   $("openRakutenOrderImportPanel")?.classList.toggle("hidden", !isLoggedIn);
-  ["openRakutenDashboardPanel", "openFbaReplenishmentPanel", "openRakutenApiImportModal", "openRakutenWorkflowModal",
+  ["openFbaReplenishmentPanel", "openRakutenApiImportModal", "openRakutenWorkflowModal",
     "rakutenBatchChangeOrderIdBtn", "rakutenBatchDeleteBtn", "openRakutenComboProductManagementPanel", "openOverseasOrderProcessingPanel"].forEach((id) => {
     $(id)?.classList.toggle("hidden", !canManageJapanOperations());
   });
