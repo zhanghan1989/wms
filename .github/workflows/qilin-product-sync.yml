@@ -1,0 +1,52 @@
+name: Qilin initial product sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Inspect local products or import the last 30 days for Qilin only
+        required: true
+        default: inspect
+        type: choice
+        options:
+          - inspect
+          - import
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate and prepare scoped operation
+        env:
+          SYNC_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          case "$SYNC_MODE" in inspect|import) ;; *) exit 1 ;; esac
+          node --check scripts/sync-qilin-products.cjs
+          printf 'QILIN_SYNC_SCRIPT_B64=%s\n' "$(base64 -w0 scripts/sync-qilin-products.cjs)" >> "$GITHUB_ENV"
+      - name: Run in existing API container
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          QILIN_PRODUCT_SYNC_MODE: ${{ inputs.mode }}
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          port: ${{ secrets.ECS_PORT }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          command_timeout: 8m
+          script_stop: true
+          envs: QILIN_SYNC_SCRIPT_B64,QILIN_PRODUCT_SYNC_MODE
+          script: |
+            set -euo pipefail
+            case "$QILIN_PRODUCT_SYNC_MODE" in inspect|import) ;; *) exit 1 ;; esac
+            printf '%s' "$QILIN_SYNC_SCRIPT_B64" | base64 -d | timeout --kill-after=10s 420s docker exec -i -e QILIN_PRODUCT_SYNC_MODE="$QILIN_PRODUCT_SYNC_MODE" wms_api node
