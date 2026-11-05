@@ -53,10 +53,10 @@ export class RakutenInventoryService {
   }
 
   private async locked<T>(action: (renew: () => Promise<void>) => Promise<T>, label = '库存任务正在执行'): Promise<T> {
-    await this.prisma.rakutenScheduleControl.upsert({ where: companyScheduleWhere(LOCK_KEY), create: { key: LOCK_KEY, enabled: false }, update: {} });
+    await this.prisma.rakutenScheduleControl.upsert({ where: companyScheduleWhere(LOCK_KEY), create: { companyId: 1n, key: LOCK_KEY, enabled: false }, update: {} });
     const token = randomUUID();
     const acquired = await this.prisma.rakutenScheduleControl.updateMany({
-      where: { key: LOCK_KEY, OR: [{ runToken: null }, { heartbeatAt: { lt: new Date(Date.now() - LEASE_MS) } }] },
+      where: { companyId: 1n, key: LOCK_KEY, OR: [{ runToken: null }, { heartbeatAt: { lt: new Date(Date.now() - LEASE_MS) } }] },
       data: { runToken: token, startedAt: new Date(), heartbeatAt: new Date(), lastMessage: label },
     });
     if (acquired.count !== 1) {
@@ -67,7 +67,7 @@ export class RakutenInventoryService {
     let lastLoggedAt = 0;
     const renew = async () => {
       const result = await this.prisma.rakutenScheduleControl.updateMany({
-        where: { key: LOCK_KEY, runToken: token, heartbeatAt: { gte: new Date(Date.now() - LEASE_MS) } },
+        where: { companyId: 1n, key: LOCK_KEY, runToken: token, heartbeatAt: { gte: new Date(Date.now() - LEASE_MS) } },
         data: { heartbeatAt: new Date() },
       });
       if (result.count !== 1) throw new ConflictException('库存同步锁已失效，本轮已停止，请重新预览');
@@ -87,7 +87,7 @@ export class RakutenInventoryService {
         data: { status: 'interrupted', finishedAt: new Date(), message: '服务重启或执行中断，请检查乐天库存并重新预览；未自动重试', result: { requiresReview: true } } });
       return await action(renew);
     }
-    finally { this.progressTimes.clear(); await this.prisma.rakutenScheduleControl.updateMany({ where: { key: LOCK_KEY, runToken: token }, data: { runToken: null, heartbeatAt: null } }); }
+    finally { this.progressTimes.clear(); await this.prisma.rakutenScheduleControl.updateMany({ where: { companyId: 1n, key: LOCK_KEY, runToken: token }, data: { runToken: null, heartbeatAt: null } }); }
   }
 
   async status(connectionId: string, actorId?: bigint) {
@@ -519,7 +519,7 @@ export class RakutenInventoryService {
     this.logger.log(`Inventory run=${runId} connection=${connectionId} stepMs=${now - (this.progressTimes.get(runId) ?? now)} rssBytes=${memory.rss} heapBytes=${memory.heapUsed} stage=${message}`);
     this.progressTimes.set(runId, now);
     await this.prisma.rakutenInventoryRun.update({ select: { id: true }, where: { id: runId }, data: { message } });
-    await this.prisma.rakutenScheduleControl.updateMany({ where: { key: LOCK_KEY, runToken: { not: null } },
+    await this.prisma.rakutenScheduleControl.updateMany({ where: { companyId: 1n, key: LOCK_KEY, runToken: { not: null } },
       data: { lastMessage: `店铺连接 ${connectionId}：${message}` } });
   }
 

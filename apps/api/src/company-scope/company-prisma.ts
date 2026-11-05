@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { companyContext } from './company-context';
 import { scopeCompanySql } from './company-sql';
+import { isJapanSalesModel } from './business-access';
 
 const models = new Map(Prisma.dmmf.datamodel.models.map((m) => [m.name, m]));
 const scoped = new Set([...models.values()].filter((m) => m.fields.some((f) => f.name === 'companyId')).map((m) => m.name));
@@ -33,29 +34,57 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     return companyContext.run({ systemAdmin: false, warehouse: false, userId: 0n, ...context, bypass: true },
       () => delegate((transactionContext.getStore() ?? client) as PrismaClient, model).findFirst({ where: expandWhere(model, where) }));
   };
-  const nestedReads = (model: string, args: Args, companyId: bigint): void => {
+  const nestedReads = (model: string, args: Args, companyId: bigint, japanShops: string[] = []): void => {
     for (const container of [args.include, args.select]) {
       if (!container) continue;
       for (const field of models.get(model)?.fields ?? []) {
         if (field.kind !== 'object' || !container[field.name]) continue;
         if (container[field.name] === true) container[field.name] = {};
         const child = container[field.name];
-        if (field.isList && scoped.has(field.type)) child.where = { AND: [child.where ?? {}, { companyId }] };
-        nestedReads(field.type, child, companyId);
+        if (field.isList && scoped.has(field.type)) child.where = { AND: [child.where ?? {}, field.type === 'RakutenOrderRecord' ? { fulfillmentCompanyId: companyId } : { companyId }] };
+        if (field.isList && field.type === 'Sku' && japanShops.length) child.where = { AND: [child.where ?? {}, { shop: { notIn: japanShops } }] };
+        nestedReads(field.type, child, companyId, japanShops);
       }
       if (container._count?.select) {
         for (const [name, value] of Object.entries(container._count.select)) {
           const field = models.get(model)?.fields.find((f) => f.name === name);
-          if (value && field && scoped.has(field.type)) container._count.select[name] = { where: { AND: [(value as Args).where ?? {}, { companyId }] } };
+          if (value && field && scoped.has(field.type)) container._count.select[name] = { where: { AND: [(value as Args).where ?? {}, field.type === 'RakutenOrderRecord' ? { fulfillmentCompanyId: companyId } : { companyId },
+            ...(field.type === 'Sku' && japanShops.length ? [{ shop: { notIn: japanShops } }] : [])] } };
         }
       }
     }
   };
 
-  const prepareData = async (model: string, data: Args, initial?: bigint): Promise<bigint | undefined> => {
+  const prepareData = async (model: string, data: Args, initial?: bigint, existing?: Args): Promise<bigint | undefined> => {
     if (!data || typeof data !== 'object') return initial;
     const context = companyContext.getStore();
     let owner = initial;
+    const japanSales = isJapanSalesModel(model) && Boolean(context?.warehouse || context?.japanOperations);
+    let sharedStorage = japanSales;
+    if (model === 'Shop' && (data.platform ?? existing?.platform) && (data.platform ?? existing?.platform) !== 'amazon' && (context?.systemAdmin || context?.warehouse)) {
+      owner = existing?.companyId ?? 1n;
+      sharedStorage = true;
+    }
+    if (model === 'Sku') {
+      const shopName = data.shop !== undefined ? data.shop : existing?.shop;
+      const shop = shopName ? await lookup('Shop', { name: shopName }) : null;
+      if (shop && shop.platform !== 'amazon') {
+        if (context && !context.systemAdmin && !context.warehouse) throw new ForbiddenException('中国公司仅可管理本公司的亚马逊SKU');
+        const productId = data.productId !== undefined ? data.productId : existing?.productId;
+        const product = productId ? await lookup('MasterProduct', { productId }) : null;
+        owner = product?.companyId ?? shop.companyId;
+        sharedStorage = !product;
+      }
+    }
+    if (model === 'RakutenOrderRecord' && (data.skuCode !== undefined || data.setComponentSkuCode !== undefined || existing)) {
+      const code = String(data.skuCode !== undefined ? data.skuCode ?? '' : existing?.skuCode ?? '').trim()
+        || String(data.setComponentSkuCode !== undefined ? data.setComponentSkuCode ?? '' : existing?.setComponentSkuCode ?? '').trim();
+      const product = code ? await lookup('MasterProduct', { productId: code }) : null;
+      if (context && !context.systemAdmin && !context.warehouse && product?.companyId !== context.companyId) {
+        throw new ForbiddenException('不能关联其他公司的产品或未匹配产品');
+      }
+      data.fulfillmentCompanyId = product?.companyId ?? null;
+    }
     // Account affiliation is validated by UsersService; global warehouse/system
     // accounts must not inherit the currently selected business company.
     if (model === 'User') {
@@ -100,7 +129,8 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
       if (where) {
         const row = await lookup(field.type, where);
         if (!row) throw new BadRequestException('关联数据不存在');
-        accept(row.companyId);
+        if (!japanSales && !isJapanSalesModel(field.type)
+          && !(model === 'OverseasPickingBatchItem' && field.type === 'OverseasPickingBatch')) accept(row.companyId);
       }
     }
     // Some legacy integrations use scalar keys instead of Prisma relations.
@@ -108,22 +138,17 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
       if (data[key] === undefined || data[key] === null || data[key] === '' || typeof data[key] === 'object') continue;
       if (!models.get(model)?.fields.some((f) => f.name === key)) continue;
       const row = await lookup(target, { [targetKey]: data[key] });
-      if (row) accept(row.companyId);
+      if (row && model === 'Sku' && target === 'Shop' && row.platform !== 'amazon') {
+        if (context && !context.systemAdmin && !context.warehouse) throw new ForbiddenException('中国公司仅可管理本公司的亚马逊SKU');
+        continue;
+      }
+      if (row && !japanSales && !isJapanSalesModel(target)) accept(row.companyId);
     }
     if (model === 'ManualOrderRecord' && data.rawPayload && typeof data.rawPayload === 'object') {
       const productId = data.rawPayload['产品ID'];
       if (typeof productId === 'string' && productId) {
         const product = await lookup('MasterProduct', { productId });
         if (product) accept(product.companyId);
-      }
-    }
-    if (context?.warehouse && owner === undefined && model === 'RakutenComboProduct') {
-      const items = data.items?.create ?? data.items?.createMany?.data ?? [];
-      for (const item of Array.isArray(items) ? items : [items]) {
-        if (item.productId) {
-          const product = await lookup('MasterProduct', { productId: item.productId });
-          if (product) accept(product.companyId);
-        }
       }
     }
     if (context?.warehouse && owner === undefined && model === 'MasterProduct' && data.bagBrand) {
@@ -136,9 +161,9 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
         data.companyId = null;
         return undefined;
       }
-      if (owner === undefined && (!context || context.warehouse)) owner = 1n;
+      if (owner === undefined && (!context || context.warehouse || context.japanOperations)) owner = 1n;
       if (owner === undefined) throw new BadRequestException('请先选择所属中国公司');
-      const company = await lookup('Company', { id: owner, ...(model === 'OperationAuditLog' ? {} : { status: 1 }) });
+      const company = await lookup('Company', { id: owner, ...(model === 'OperationAuditLog' || sharedStorage ? {} : { status: 1 }) });
       if (!company) throw new BadRequestException('公司不存在或已禁用');
       data.companyId = owner;
       if (data.company) throw new ForbiddenException('请通过公司编号指定归属');
@@ -174,7 +199,7 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
           if (typeof where !== 'object') continue;
           const rows = await companyContext.run({ systemAdmin: false, warehouse: false, userId: 0n, ...context, bypass: true },
             () => delegate((transactionContext.getStore() ?? client) as PrismaClient, field.type).findMany({ where, select: { companyId: true } }));
-          if (rows.some((r: any) => r.companyId !== owner)) throw new ForbiddenException('不能操作其他公司的关联数据');
+          if (!japanSales && !isJapanSalesModel(field.type) && rows.some((r: any) => r.companyId !== owner)) throw new ForbiddenException('不能操作其他公司的关联数据');
         }
       }
     }
@@ -190,17 +215,38 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     if (!params.model) {
       if (companyId !== undefined && /Raw/.test(params.action)) {
         if (Array.isArray(args)) {
-          args[0] = scopeCompanySql(args[0], companyId, tables, /execute/i.test(params.action));
+          args[0] = scopeCompanySql(args[0], companyId, tables, /execute/i.test(params.action), !context?.systemAdmin && !context?.warehouse);
         } else {
           const marker = '__WMS_BOUND_VALUE__';
-          const sql = scopeCompanySql(args.strings.join(marker), companyId, tables, /execute/i.test(params.action));
+          const sql = scopeCompanySql(args.strings.join(marker), companyId, tables, /execute/i.test(params.action), !context?.systemAdmin && !context?.warehouse);
           params.args = Prisma.sql(sql.split(marker), ...args.values);
         }
       }
       return next(params);
     }
     const model = params.model;
-    if (companyId !== undefined) nestedReads(model, args, companyId);
+    const chineseAccount = Boolean(context && !context.systemAdmin && !context.warehouse);
+    let japanShops: string[] = [];
+    if (chineseAccount || (context?.amazonSkuOnly && model === 'Sku') || (context?.systemAdmin && companyId !== undefined && model === 'Sku')) {
+      const names = () => companyContext.run({ ...context!, bypass: true }, async () => (await client.shop.findMany({
+        where: { platform: { not: 'amazon' } }, select: { name: true },
+      })).map(shop => shop.name));
+      if (chineseAccount) context!.japanShopNames ??= names();
+      japanShops = await (chineseAccount ? context!.japanShopNames! : names());
+    }
+    if ((chineseAccount || context?.amazonSkuOnly) && model === 'Sku' && !['create', 'createMany'].includes(params.action) && japanShops.length) {
+      args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []),
+        { shop: { notIn: japanShops } }] };
+    }
+    const adminSharedSales = context?.systemAdmin && companyId !== undefined && (model === 'Shop' || model === 'Sku');
+    if (adminSharedSales && !['create', 'createMany'].includes(params.action)) args.where = { ...args.where,
+      AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []),
+        { OR: [{ companyId }, model === 'Shop' ? { platform: { not: 'amazon' } } : { shop: { in: japanShops } }] }] };
+    if (companyId !== undefined && model === 'RakutenOrderRecord' && !['create', 'createMany'].includes(params.action)) {
+      args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []),
+        { fulfillmentCompanyId: companyId }] };
+    }
+    if (companyId !== undefined) nestedReads(model, args, companyId, chineseAccount ? japanShops : []);
     if (model === 'Company' && context && !context.systemAdmin) {
       if (!['findMany','findFirst','findUnique','count'].includes(params.action)) throw new ForbiddenException('只有系统管理员可以管理公司');
       if (!context.warehouse) args.where = { ...args.where, id: companyId };
@@ -225,17 +271,18 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     if (model === 'User' && !['create','createMany'].includes(params.action) && context && !context.systemAdmin && !context.warehouse && !ownUserRead) {
       args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []), { department: { not: 'overseas_warehouse' }, role: { not: 'system_admin' } }] };
     }
-    if (companyId !== undefined && !ownUserRead && !warehouseUser && !['create','createMany'].includes(params.action)) {
+    if (companyId !== undefined && !ownUserRead && !warehouseUser && !adminSharedSales && model !== 'RakutenOrderRecord' && !['create','createMany'].includes(params.action)) {
       // Prisma extendedWhereUnique requires unique fields at the top level.
       args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []), { companyId }] };
     }
     if (['create','createMany','update','updateMany','upsert'].includes(params.action)) {
       let owner = companyId;
+      let existing: Args | undefined;
       if (['update','upsert'].includes(params.action)) {
         const row = await lookup(model, args.where);
-        if (row) owner = row.companyId;
+        if (row) { owner = row.companyId; existing = row; }
       }
-      if (params.action === 'updateMany' && owner === undefined) {
+      if (params.action === 'updateMany' && (owner === undefined || model === 'RakutenOrderRecord')) {
         const rows = await delegate((transactionContext.getStore() ?? client) as PrismaClient, model).findMany({ where: args.where, select: { companyId: true } });
         for (const id of new Set<bigint>(rows.map((r: any) => r.companyId))) {
           await prepareData(model, { ...args.data }, id);
@@ -249,7 +296,7 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
       } else {
         for (const row of Array.isArray(args.data) ? args.data : [args.data]) {
           // Background legacy creates remain in company 1 only when no association supplies ownership.
-          await prepareData(model, row, owner);
+          await prepareData(model, row, owner, existing);
         }
       }
     }

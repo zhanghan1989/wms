@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# Runs on ECS before the account-affiliation migration, with a verified full backup.
+# Runs on ECS before the company/fulfillment migration, with a verified full backup.
 set -euo pipefail
 umask 077
 RECEIPT="${1:?Usage: wms-company-backup.sh RECEIPT_FILE}"
-MIGRATION=20261104110000_user_company_affiliation
+MIGRATION=20261105120000_rakuten_fulfillment_company
 query() {
   docker exec -i wms_db sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql -uroot --batch --raw --skip-column-names wms_v1'
 }
 PENDING="$(printf "SELECT COUNT(*) FROM _prisma_migrations WHERE migration_name='%s' AND finished_at IS NOT NULL AND rolled_back_at IS NULL;\n" "$MIGRATION" | query)"
 printf 'COMPANY_BACKUP_PENDING=0\n' > "$RECEIPT"
 if [[ "$PENDING" == 1 ]]; then
-  echo 'Account affiliation migration is already applied.'
+  echo 'Rakuten fulfillment migration is already applied.'
   exit 0
 fi
 FAILED="$(printf 'SELECT COUNT(*) FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL;\n' | query)"
 [[ "$FAILED" == 0 ]] || { echo 'An unresolved migration exists; database was not changed.' >&2; exit 1; }
+AFFILIATION_APPLIED="$(printf "SELECT COUNT(*) FROM _prisma_migrations WHERE migration_name='20261104110000_user_company_affiliation' AND finished_at IS NOT NULL AND rolled_back_at IS NULL;\n" | query)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP_DIR="${WMS_BACKUP_ROOT:-$HOME/.wms-pre-migration-backups}/company-affiliation-${STAMP}-${DEPLOY_REF:-manual}"
 mkdir -p "$BACKUP_DIR"
@@ -90,6 +91,7 @@ cmp "$BACKUP_DIR/checksums.before.tsv" "$BACKUP_DIR/checksums.restored.tsv"
 # Metadata only: never upload the SQL dump or production row data to CI artifacts.
 {
   printf 'COMPANY_BACKUP_PENDING=1\n'
+  printf 'COMPANY_AFFILIATION_PENDING=%s\n' "$((1 - AFFILIATION_APPLIED))"
   printf 'COMPANY_PENDING_MIGRATIONS=%q\n' "$EXPECTED_PENDING"
   printf 'COMPANY_BACKUP_DIR=%q\n' "$BACKUP_DIR"
   printf 'COMPANY_BACKUP_FILE=%q\n' "$BACKUP_FILE"

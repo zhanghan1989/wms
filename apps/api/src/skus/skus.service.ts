@@ -14,6 +14,7 @@ import { AuditService } from '../audit/audit.service';
 import { normalizeNullableText, parseId } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
+import { companyContext } from '../company-scope/company-context';
 import { CreateSkuDto } from './dto/create-sku.dto';
 import { UpdateSkuDto } from './dto/update-sku.dto';
 
@@ -217,9 +218,19 @@ export class SkusService {
     throw new NotFoundException(`找不到模板文件：${SKU_UPLOAD_TEMPLATE_FILE}`);
   }
 
+  private skuExportCompanyWhere(): Prisma.SkuWhereInput {
+    const scope = companyContext.getStore();
+    if (!scope || (!scope.systemAdmin && !scope.warehouse && !scope.companyId)) {
+      throw new ForbiddenException('账号尚未分配公司，无法下载SKU');
+    }
+    // Unmatched SKUs also have their own company; do not rely on a product relation.
+    return !scope.warehouse && scope.companyId ? { companyId: scope.companyId } : {};
+  }
+
   async exportExcel(): Promise<SkuExportFile> {
     const rows = await this.prisma.sku.findMany({
       where: {
+        ...this.skuExportCompanyWhere(),
         status: 1,
       },
       include: {
@@ -250,6 +261,7 @@ export class SkusService {
         },
       },
       where: {
+        ...this.skuExportCompanyWhere(),
         status: 1,
         OR: [{ productId: null }, { productId: '' }, { masterProduct: null }],
       },
@@ -263,6 +275,10 @@ export class SkusService {
   }
 
   async exportAmazonRbLinkStockExcel(templateKey: string): Promise<SkuExportFile> {
+    const scope = companyContext.getStore();
+    if (scope && !scope.systemAdmin && !scope.warehouse && scope.companyId !== 1n) {
+      throw new ForbiddenException('这些店铺的rb链接库存下载仅供XYJG公司、日本海外仓及系统管理员使用');
+    }
     const selectedTemplate = AMAZON_RB_LINK_STOCK_TEMPLATES.find(
       (templateConfig) => templateConfig.key === templateKey,
     );
@@ -270,8 +286,10 @@ export class SkusService {
       throw new BadRequestException('亚马逊店铺参数无效');
     }
 
-    const rows = await this.prisma.sku.findMany({
+    // These account templates belong to the original XYJG company (ID 1).
+    const rows = await companyContext.run(scope ? { ...scope, companyId: 1n, amazonSkuOnly: true } : undefined, () => this.prisma.sku.findMany({
       where: {
+        companyId: 1n,
         status: 1,
         rbSku: {
           not: null,
@@ -293,7 +311,7 @@ export class SkusService {
         },
       },
       orderBy: [{ rbSku: 'asc' }, { productId: 'asc' }, { id: 'asc' }],
-    });
+    }));
 
     const bodyRows = rows
       .map((row) => ({

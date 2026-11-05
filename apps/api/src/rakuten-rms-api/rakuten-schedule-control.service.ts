@@ -26,7 +26,7 @@ export class RakutenScheduleControlService {
   private ensure(key: RakutenScheduleKey) {
     // Environment flags seed the initial setting; subsequent UI changes persist across restarts.
     return this.prisma.rakutenScheduleControl.upsert({
-      where: companyScheduleWhere(key), create: { key, enabled: this.defaultEnabled(key) }, update: {},
+      where: companyScheduleWhere(key), create: { companyId: 1n, key, enabled: this.defaultEnabled(key) }, update: {},
     });
   }
 
@@ -36,7 +36,7 @@ export class RakutenScheduleControlService {
     if (!RAKUTEN_SCHEDULE_KEYS.includes(keyRaw as RakutenScheduleKey)) throw new BadRequestException('不支持的定时任务');
     if (typeof enabled !== 'boolean') throw new BadRequestException('定时开关必须为开启或关闭');
     const key = keyRaw as RakutenScheduleKey;
-    await this.prisma.rakutenScheduleControl.upsert({ where: companyScheduleWhere(key), create: { key, enabled }, update: { enabled } });
+    await this.prisma.rakutenScheduleControl.upsert({ where: companyScheduleWhere(key), create: { companyId: 1n, key, enabled }, update: { enabled } });
     return this.status();
   }
 
@@ -76,12 +76,12 @@ export class RakutenScheduleControlService {
     if (!row.enabled) return undefined;
     const token = randomUUID();
     const acquired = await this.prisma.rakutenScheduleControl.updateMany({
-      where: { key, enabled: true, OR: [{ runToken: null }, { heartbeatAt: { lt: new Date(Date.now() - STALE_MS) } }] },
+      where: { companyId: 1n, key, enabled: true, OR: [{ runToken: null }, { heartbeatAt: { lt: new Date(Date.now() - STALE_MS) } }] },
       data: { runToken: token, startedAt: new Date(), heartbeatAt: new Date() },
     });
     if (acquired.count !== 1) return undefined;
     const heartbeat = setInterval(() => {
-      void this.prisma.rakutenScheduleControl.updateMany({ where: { key, runToken: token }, data: { heartbeatAt: new Date() } })
+      void this.prisma.rakutenScheduleControl.updateMany({ where: { companyId: 1n, key, runToken: token }, data: { heartbeatAt: new Date() } })
         .catch((error: unknown) => this.logger.error(`定时任务状态更新失败：${String(error)}`));
     }, 60_000);
     try {
@@ -96,7 +96,7 @@ export class RakutenScheduleControlService {
   }
 
   private async finish(key: RakutenScheduleKey, token: string, result: ScheduleOutcome) {
-    await this.prisma.rakutenScheduleControl.updateMany({ where: { key, runToken: token }, data: {
+    await this.prisma.rakutenScheduleControl.updateMany({ where: { companyId: 1n, key, runToken: token }, data: {
       runToken: null, heartbeatAt: null, finishedAt: new Date(), lastStatus: result.status,
       lastMessage: result.errors.length ? result.errors.join('；') : '本轮检查完成',
     } });

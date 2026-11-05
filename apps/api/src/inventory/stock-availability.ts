@@ -1,6 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { normalizeBoxCode } from '../common/box-code';
+import { companyContext } from '../company-scope/company-context';
 
 const boxKey = (code: string) => normalizeBoxCode(code) || String(code).trim().toUpperCase();
 
@@ -50,6 +51,17 @@ function objects(value: unknown): Record<string, unknown>[] {
 export async function availableStock(
   tx: Prisma.TransactionClient, productIds: string[], options: ReservationOptions = {},
 ): Promise<StockRow[]> {
+  const scope = companyContext.getStore();
+  if (scope && !scope.systemAdmin && !scope.warehouse) {
+    // Authorize product IDs before reading shared Japan picking claims. Return
+    // only this company's stock quantities, never the underlying order details.
+    const own = await tx.masterProduct.findMany({
+      where: { productId: { in: [...new Set(productIds.filter(Boolean))] }, companyId: scope.companyId },
+      select: { productId: true },
+    });
+    return companyContext.run({ ...scope, companyId: undefined, warehouse: true },
+      () => availableStock(tx, own.map(product => product.productId), options));
+  }
   const ids = [...new Set(productIds.filter(Boolean))];
   if (!ids.length) return [];
   // Historical items without a BOM snapshot use the current BOM definition.

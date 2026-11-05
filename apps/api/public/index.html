@@ -184,7 +184,7 @@
       <div class="session-actions hidden" id="employeeQuickActions">
         <button type="button" id="openInventoryHome">首页</button>
         <button type="button" id="openOrderProcessingPanel">订单处理</button>
-        <button type="button" id="openOverseasWarehousePanel">海外仓管理</button>
+        <button type="button" id="openOverseasWarehousePanel" class="hidden">海外仓管理</button>
         <button type="button" id="openProductManagementPanel" class="btn-with-badge">
           产品管理
           <span id="productEditPendingBadge" class="quick-badge hidden">0</span>
@@ -195,7 +195,7 @@
           FBA补货
           <span id="fbaPendingBadge" class="quick-badge hidden">0</span>
         </button>
-        <button type="button" id="openBatchInboundModal">批量入库</button>
+        <button type="button" id="openBatchInboundModal" class="hidden">批量入库</button>
         <button type="button" id="openDataBackupPanel">数据备份</button>
         <button type="button" id="openSystemDashboardPanel">系统看板</button>
         <div class="session-personal-actions">
@@ -954,7 +954,7 @@
             <div id="masterProductDetailMeta" class="master-product-summary-grid"></div>
 
             <div class="master-product-detail-layout">
-              <article class="card master-product-detail-card">
+              <article class="card master-product-detail-card warehouse-operation-only hidden">
                 <h4>主商品操作</h4>
                 <form id="masterProductPrintSettingsForm" class="form-grid">
                   <label>

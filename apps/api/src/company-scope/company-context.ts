@@ -6,5 +6,8 @@ export interface CompanyScope {
   warehouse: boolean;
   userId: bigint;
   bypass?: boolean;
+  japanOperations?: boolean;
+  japanShopNames?: Promise<string[]>;
+  amazonSkuOnly?: boolean;
 }
 export const companyContext = new AsyncLocalStorage<CompanyScope | undefined>();

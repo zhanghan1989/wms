@@ -1,9 +1,10 @@
 import { resolveXiyaCompany, setXiyaCompanyParams, xiyaSyncDays } from '../common/xiya-company';
+import { OrdersService } from '../orders/orders.service';
 import { companyContext } from '../company-scope/company-context';
 import { assertBoxUsable } from '../common/box-availability';
 import { randomUUID } from 'crypto';
 import { recordStockAdjustment } from '../inventory/stock-ledger';
-import { assertStockAvailable } from '../inventory/stock-availability';
+import { assertStockAvailable, availableStock } from '../inventory/stock-availability';
 import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
 import {
   BadRequestException,
@@ -304,6 +305,7 @@ export class MasterProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly orders?: OrdersService,
   ) {}
 
   async list(
@@ -1272,8 +1274,21 @@ export class MasterProductsService {
         });
       });
 
+    let stockSummary: { reservedQty: number; availableQty: number } | undefined;
+    if (this.orders) {
+      const scope = companyContext.getStore();
+      const [available, pending] = await Promise.all([
+        availableStock(this.prisma, [productId]),
+        companyContext.run({ systemAdmin: scope?.systemAdmin ?? false, warehouse: true, userId: scope?.userId ?? 0n },
+          () => this.orders!.inventorySyncPendingDemands(this.prisma, [productId])),
+      ]);
+      const physicalQty = boxes.reduce((sum, box) => sum + box.qty, 0);
+      const pendingQty = pending.filter(item => item.productId === productId).reduce((sum, item) => sum + item.quantity, 0);
+      const availableQty = Math.max(0, available.reduce((sum, row) => sum + row.qty, 0) - pendingQty);
+      stockSummary = { reservedQty: Math.max(0, physicalQty - availableQty), availableQty };
+    }
     return {
-      product,
+      product: { ...product, ...stockSummary },
       skus: skuItems,
       boxes,
     };

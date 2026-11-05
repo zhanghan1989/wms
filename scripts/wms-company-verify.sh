@@ -33,4 +33,7 @@ done < "$COMPANY_BACKUP_DIR/scoped-tables.before.txt"
 cmp "$COMPANY_BACKUP_DIR/ownership.before.tsv" "$COMPANY_BACKUP_DIR/ownership.after.tsv"
 printf 'SELECT COALESCE(SUM(stock_qty),0) FROM master_products;\n' | query > "$COMPANY_BACKUP_DIR/stock.after.txt"
 cmp "$COMPANY_BACKUP_DIR/stock.before.txt" "$COMPANY_BACKUP_DIR/stock.after.txt"
+invalid_fulfillment="$(printf "SELECT COUNT(*) FROM rakuten_order_records r LEFT JOIN master_products p ON p.product_id=COALESCE(NULLIF(TRIM(r.sku_code),''),NULLIF(TRIM(r.set_component_sku_code),'')) WHERE NOT (r.fulfillment_company_id <=> p.company_id);\n" | query)"
+[[ "$invalid_fulfillment" == 0 ]] || { echo 'Rakuten fulfillment assignment verification failed.' >&2; exit 1; }
+printf 'Verified: Rakuten fulfillment companies match their products; unmatched products remain unassigned.\n'
 printf 'Verified: historical rows retained, stock totals unchanged, business ownership retained, warehouse accounts are shared and system administrators have no company.\n' | tee "$COMPANY_BACKUP_DIR/migration-verification.txt"

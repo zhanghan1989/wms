@@ -3,6 +3,7 @@ import { BadRequestException, CallHandler, ExecutionContext, ForbiddenException,
 import { Observable } from 'rxjs';
 import { AuthUser } from '../common/types/auth-user.type';
 import { companyContext } from './company-context';
+import { isJapanManagementPath, isWarehouseWorkPath } from './business-access';
 
 @Injectable()
 export class CompanyScopeInterceptor implements NestInterceptor {
@@ -27,12 +28,19 @@ export class CompanyScopeInterceptor implements NestInterceptor {
       companyId = BigInt(String(selected));
     }
     if (!systemAdmin && !warehouse && !companyId) throw new ForbiddenException('账号尚未分配公司');
-    const path = req.originalUrl.split('?')[0].replace(/^\/api\//, '');
+    let path: string;
+    try { path = decodeURIComponent(req.originalUrl.split('?')[0]).replace(/^\/api\//, ''); }
+    catch { throw new BadRequestException('请求路径无效'); }
+    const japanOperations = isJapanManagementPath(path) || /^orders\/overseas-warehouse(\/|$)/.test(path)
+      || (systemAdmin && /^orders\/(detail\/rakuten|rakuten\/[^/]+)(\/|$)/.test(path));
+    if (!systemAdmin && !warehouse && (isJapanManagementPath(path) || isWarehouseWorkPath(path, req.method))) {
+      throw new ForbiddenException('此功能由日本海外仓或系统管理员处理');
+    }
     const globalAdminPath = systemAdmin && /^(auth|companies|users|backups|branding|user-options)(\/|$)/.test(path);
     // Warehouse access is global; the business selector applies only to Chinese
     // company accounts and system administrators. Existing role guards still apply.
-    if (globalAdminPath || warehouse) companyId = undefined;
-    if (systemAdmin && !warehouse && !globalAdminPath && !companyId && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)
+    if (globalAdminPath || warehouse || japanOperations) companyId = undefined;
+    if (systemAdmin && !warehouse && !globalAdminPath && !japanOperations && !companyId && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)
       && !/^(auth|companies)(\/|$)/.test(path)) {
       throw new BadRequestException('请先选择所属中国公司，再处理业务');
     }
@@ -47,7 +55,7 @@ export class CompanyScopeInterceptor implements NestInterceptor {
       throw new ForbiddenException('仅系统管理员可以管理全局配置和备份');
     }
     return new Observable((subscriber) => companyContext.run({
-      companyId, systemAdmin, warehouse, userId: user.id,
+      companyId, systemAdmin, warehouse, japanOperations, userId: user.id,
     }, () => {
       const subscription = next.handle().subscribe(subscriber);
       return () => subscription.unsubscribe();

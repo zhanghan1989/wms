@@ -222,11 +222,12 @@ suite('company isolation against MySQL', () => {
     await db.inboundOrder.delete({ where: { id: order.id } });
     expect((await db.box.findMany({ where: { id: { in: [boxA, boxB] } } })).length).toBe(2);
   }, { warehouse: true }));
-  it('lets warehouse staff create combinations for either company without a selector and preserves Chinese ownership', async () => scope(undefined, async () => {
+  it('lets Japan manage combinations referencing either company while preserving physical product ownership', async () => scope(undefined, async () => {
     for (const [companyId, productId] of [[a, productA], [b, productB]] as const) {
       const combo = await db.rakutenComboProduct.create({ data: { comboName: `QA-combo-${productId}`, items: { create: [{ productId, position: 1 }] } } });
-      expect(combo.companyId).toBe(companyId);
-      expect((await base.rakutenComboProductItem.findFirstOrThrow({ where: { comboId: combo.id } })).companyId).toBe(companyId);
+      expect(combo.companyId).toBe(1n);
+      expect((await base.rakutenComboProductItem.findFirstOrThrow({ where: { comboId: combo.id } })).companyId).toBe(1n);
+      expect((await base.masterProduct.findUniqueOrThrow({ where: { productId } })).companyId).toBe(companyId);
       expect(await scope(companyId === a ? b : a, () => db.rakutenComboProduct.findUnique({ where: { id: combo.id } }))).toBeNull();
       await db.rakutenComboProductItem.deleteMany({ where: { comboId: combo.id } });
       await db.rakutenComboProduct.delete({ where: { id: combo.id } });

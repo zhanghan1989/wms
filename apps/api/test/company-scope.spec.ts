@@ -19,6 +19,39 @@ function fixture(options: Record<string, unknown> = {}) {
   return { request, context, prisma, interceptor, next };
 }
 describe('company request boundaries', () => {
+  it.each(['employee', 'admin'])('blocks Chinese %s warehouse work and Japan sales management at the API boundary', async role => {
+    const routes = [
+      ['GET', '/api/rakuten-rms-api/connections'], ['PUT', '/api/rakuten-rms-api/automation/schedules/import'],
+      ['GET', '/api/rakuten-combo-products'], ['GET', '/api/orders'], ['GET', '/api/orders/overseas-warehouse'],
+      ['POST', '/api/orders/overseas-warehouse/picking-batches'], ['POST', '/api/inventory/manual-adjust'],
+      ['POST', '/api/master-products/B/box-inventories/outbound-one'], ['POST', '/api/master-products/B/fba-replenishments'],
+      ['GET', '/api/batch-inbound/orders'], ['POST', '/api/inbound'], ['POST', '/api/boxes'],
+      ['GET', '/api/inventory/dashboard/production-recommendations-excel'], ['POST', '/api/stocktake-planner/tasks/generate'],
+      ['GET', '/api/%72akuten-rms-api/connections'],
+    ];
+    for (const [method, originalUrl] of routes) {
+      const f = fixture({ user: { id: 2n, role, companyId: 2n }, method, originalUrl });
+      await expect(f.interceptor.intercept(f.context, f.next)).rejects.toBeInstanceOf(ForbiddenException);
+    }
+  });
+  it('retains Chinese product/SKU work, Amazon/manual imports, China fulfillment and the existing switch-Japan permission', async () => {
+    for (const [method, originalUrl] of [
+      ['GET', '/api/master-products/B/detail'], ['GET', '/api/skus/export-unmatched-excel'], ['POST', '/api/skus/import-excel'],
+      ['POST', '/api/orders/amazon/import-txt'], ['POST', '/api/orders/manual/import-excel'], ['POST', '/api/orders/manual'],
+      ['GET', '/api/orders/china-orders'], ['GET', '/api/orders/detail/rakuten/2'],
+      ['POST', '/api/orders/china-orders/rakuten/2/switch-to-japan'], ['POST', '/api/orders/china-orders/sync-xiya-tracking'],
+      ['GET', '/api/inventory/fba-replenishments/pending-summary'],
+    ]) {
+      const f = fixture({ method, originalUrl });
+      expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next))).toMatchObject({ companyId: 2n, warehouse: false });
+    }
+  });
+  it.each([{}, { 'x-company-id': '2' }])('keeps the administrator Japan center global regardless of business selection %j', async headers => {
+    const f = fixture({ user: { id: 1n, role: 'system_admin', companyId: null }, headers,
+      method: 'POST', originalUrl: '/api/rakuten-rms-api/processing/check' });
+    expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next))).toMatchObject({ companyId: undefined, japanOperations: true });
+    expect(f.prisma.company.findUnique).not.toHaveBeenCalled();
+  });
   it('uses the employee company and retains context during the Observable subscription', async () => {
     const f = fixture();
     expect(await firstValueFrom(await f.interceptor.intercept(f.context,f.next))).toMatchObject({ companyId: 2n, userId: 1n });

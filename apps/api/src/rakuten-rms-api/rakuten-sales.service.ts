@@ -1,4 +1,4 @@
-import { CompanyJob } from '../company-scope/company-job';
+import { JapanJob } from '../company-scope/company-job';
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Prisma, RakutenSalesSnapshot } from '@prisma/client';
@@ -20,11 +20,11 @@ export class RakutenSalesService {
 
   // Read-only RMS endpoints; never invoke warehouse import, shipping, inventory or mail.
   @Cron('0 10 3 * * *', { name: 'rakuten-sales-full', timeZone: 'Asia/Tokyo', waitForCompletion: true })
-  @CompanyJob()
+  @JapanJob()
   async refreshHistory(): Promise<void> { await this.refreshAll(180); }
 
   @Cron('0 40 * * * *', { name: 'rakuten-sales-recent', timeZone: 'Asia/Tokyo', waitForCompletion: true })
-  @CompanyJob()
+  @JapanJob()
   async refreshRecent(): Promise<void> { await this.refreshAll(7); }
 
   private async refreshAll(days: number): Promise<void> {

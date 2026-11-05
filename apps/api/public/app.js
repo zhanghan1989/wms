@@ -1744,6 +1744,14 @@ function isWarehouseOnlyAccount() {
   return state.me?.department === "overseas_warehouse" && !isCurrentUserSystemAdmin();
 }
 
+function canDownloadXyjgRbLinkStock() {
+  return isCurrentUserSystemAdmin() || isWarehouseOnlyAccount() || String(state.me?.companyId || "") === "1";
+}
+
+function canManageJapanOperations() {
+  return isCurrentUserSystemAdmin() || isWarehouseOnlyAccount();
+}
+
 function isCurrentUserSystemAdmin() {
   return String(state.me?.role || "") === "system_admin" && Number(state.me?.status ?? 0) === 1;
 }
@@ -3205,8 +3213,17 @@ function applyRoleView() {
   const canEditOrders = canCurrentUserEditOrders();
   document.querySelector('.nav-btn[data-target="users"]')?.classList.toggle("hidden", !hasAdminAccess(state.me?.role));
   $("openDataBackupPanel")?.classList.toggle("hidden", !isCurrentUserSystemAdmin() && !isWarehouseOnlyAccount());
+  $("openOverseasWarehousePanel")?.classList.toggle("hidden", !isCurrentUserSystemAdmin() && !isWarehouseOnlyAccount());
+  $("openBatchInboundModal")?.classList.toggle("hidden", !isCurrentUserSystemAdmin() && !isWarehouseOnlyAccount());
+  ["downloadAmazonRbLinkStockStore1Btn", "downloadAmazonRbLinkStockStore2Btn", "downloadAmazonRbLinkStockArcBtn"].forEach((id) => {
+    $(id)?.classList.toggle("hidden", !canDownloadXyjgRbLinkStock());
+  });
   $("openAmazonDashboardPanel")?.classList.remove("hidden");
-  $("openRakutenDashboardPanel")?.classList.remove("hidden");
+  ["openRakutenDashboardPanel", "openFbaReplenishmentPanel", "openRakutenOrderImportPanel",
+    "openRakutenComboProductManagementPanel", "openOverseasOrderProcessingPanel"].forEach((id) => {
+    $(id)?.classList.toggle("hidden", !canManageJapanOperations());
+  });
+  document.querySelectorAll('.warehouse-operation-only').forEach((node) => node.classList.toggle("hidden", !canManageJapanOperations()));
   $("openDepartmentManageModal")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
   document.querySelectorAll('[data-center-view="settings"], [data-center-view="templates"]').forEach((tab) => {
     tab.classList.remove("hidden");
@@ -3477,6 +3494,7 @@ function ensureInventoryPanelUi() {
         }
       });
     }
+    button.classList.toggle("hidden", !canDownloadXyjgRbLinkStock());
     return button;
   });
   if (!downloadButton.isConnected) {
@@ -3712,6 +3730,7 @@ function ensureOrderProcessingLandingUi() {
   const overseasBtn = document.createElement("button");
   overseasBtn.type = "button";
   overseasBtn.id = "openOverseasOrderProcessingPanel";
+  overseasBtn.classList.toggle("hidden", !canManageJapanOperations());
   overseasBtn.textContent = "\u6D77\u5916\u4ED3\u8BA2\u5355\u5904\u7406";
   actions.appendChild(overseasBtn);
   const chinaBtn = document.createElement("button");
@@ -5746,6 +5765,7 @@ function renderProductSummaryMeta(containerId, product) {
     ["尺寸", product.size],
     ["Yamato打印机", product.yamatoPrinterName],
     ["在库数", product.stockQty],
+    ...(product.reservedQty !== undefined ? [["总占用", product.reservedQty], ["可用数量", product.availableQty]] : []),
   ];
   meta.innerHTML = fields
     .map(
@@ -5967,6 +5987,7 @@ function renderProductSkuTable(detail, { bodyId, selectId = "" } = {}) {
 }
 
 function buildProductBoxFillButtons(boxCode, actionPrefix) {
+  if (!canManageJapanOperations()) return '<span class="muted">-</span>';
   const safeBoxCode = escapeHtml(String(boxCode || "").trim());
   return `
     <div class="master-product-box-actions">
@@ -5978,6 +5999,7 @@ function buildProductBoxFillButtons(boxCode, actionPrefix) {
 }
 
 function buildInventoryDetailBoxActionButtons(box) {
+  if (!canManageJapanOperations()) return '<span class="muted">-</span>';
   const boxCode = String(box?.boxCode || "").trim();
   const qty = Number(box?.qty ?? 0);
   if (!boxCode || qty <= 0) {
@@ -6916,7 +6938,7 @@ function renderShopsTable() {
             data-original-name="${escapeHtml(item.name)}"
           />
         </td>
-        <td data-label="所属公司">${escapeHtml(companyName(item.companyId))}</td>
+        <td data-label="所属公司">${escapeHtml(platform === "amazon" ? companyName(item.companyId) : "日本海外仓")}</td>
         ${hasConnection ? `
         <td data-label="${escapeHtml(platform === "amazon" ? "Amazon连接" : "乐天连接")}">
           <button class="tiny-btn ghost" data-action="${connectionAction}" data-id="${escapeHtml(item.id)}">
@@ -6949,6 +6971,7 @@ async function loadAmazonSpApiConnections() {
 }
 
 async function loadRakutenRmsConnections() {
+  if (!canManageJapanOperations()) { state.rakutenRmsConnections = []; return []; }
   state.rakutenRmsConnections = (await request("/rakuten-rms-api/connections")) || [];
   renderShopsTable();
   renderRakutenMailConnectionFilter();
@@ -7199,6 +7222,7 @@ async function loadRakutenAutomationHealth() {
 }
 
 async function loadRakutenShopAutomationHealth() {
+  if (!canManageJapanOperations()) { state.rakutenShopAutomationHealthItems = []; return []; }
   const health = await request("/rakuten-rms-api/automation/health") || {};
   state.rakutenShopAutomationHealthItems = Array.isArray(health.items) ? health.items : [];
   renderShopsTable();

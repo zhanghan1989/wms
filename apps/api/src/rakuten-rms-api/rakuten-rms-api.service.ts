@@ -1728,7 +1728,17 @@ export class RakutenRmsApiService {
       // changed. A polling timestamp alone must not rewrite the wide order row
       // or create a full rollback snapshot.
       const changed = this.changedOrderFields(plan.existing, data).filter((key) => key !== 'rmsLastSyncedAt');
-      if (!changed.length) return null;
+      if (!changed.length) {
+        // A previously unknown product may have been registered since the last
+        // poll. Repair only its fulfillment assignment; no sales/stock changes.
+        if (plan.existing.fulfillmentCompanyId === null) {
+          const productId = String(plan.existing.skuCode ?? '').trim() || String(plan.existing.setComponentSkuCode ?? '').trim();
+          const product = productId ? await db.masterProduct.findUnique({ where: { productId }, select: { companyId: true } }) : null;
+          if (product) await db.rakutenOrderRecord.updateMany({ where: { id: plan.existing.id, fulfillmentCompanyId: null },
+            data: { fulfillmentCompanyId: product.companyId } });
+        }
+        return null;
+      }
       const patch = Object.fromEntries(changed.map((key) => [key, data[key as keyof typeof data]]));
       const before = this.snapshotOrderRecord(plan.existing);
       const updated = await db.rakutenOrderRecord.update({

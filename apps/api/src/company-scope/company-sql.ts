@@ -4,7 +4,7 @@ import { ForbiddenException } from '@nestjs/common';
  * Values remain bound parameters; identifiers come only from Prisma metadata.
  * Locking reads lock inside the derived table as well as in the outer statement.
  */
-export function scopeCompanySql(sql: string, companyId: bigint, tables: Set<string>, write = false): string {
+export function scopeCompanySql(sql: string, companyId: bigint, tables: Set<string>, write = false, amazonSkuOnly = false): string {
   const id = companyId.toString();
   if (write) {
     // The sole business raw-write path is the master-product bulk update.
@@ -36,7 +36,9 @@ export function scopeCompanySql(sql: string, companyId: bigint, tables: Set<stri
     if (tokens[k] === '.' || tokens[k] === ',') throw new ForbiddenException('此 SQL 表引用不支持公司范围');
     if (!tables.has(table)) continue;
     const alias = tokens[k] && (/^`/.test(tokens[k]) || (/^[a-z_]\w*$/i.test(tokens[k]) && !keywords.has(tokens[k].toLowerCase())));
-    tokens[j] = `(SELECT * FROM \`${table}\` WHERE company_id = ${id}${lock})${alias ? '' : ` AS \`${table}\``}`;
+    const ownerColumn = table === 'rakuten_order_records' ? 'fulfillment_company_id' : 'company_id';
+    const skuFilter = amazonSkuOnly && table === 'skus' ? " AND shop NOT IN (SELECT name FROM shops WHERE platform <> 'amazon')" : '';
+    tokens[j] = `(SELECT * FROM \`${table}\` WHERE ${ownerColumn} = ${id}${skuFilter}${lock})${alias ? '' : ` AS \`${table}\``}`;
   }
   return tokens.join('');
 }

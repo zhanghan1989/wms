@@ -1337,6 +1337,9 @@ model BackupRecord {
 }
 
 model RakutenOrderRecord {
+  fulfillmentCompanyId BigInt? @map("fulfillment_company_id") @db.UnsignedBigInt
+  fulfillmentCompany Company? @relation("RakutenFulfillmentCompany", fields: [fulfillmentCompanyId], references: [id], onDelete: Restrict)
+  @@index([fulfillmentCompanyId])
   companyId BigInt @default(1) @map("company_id") @db.UnsignedBigInt
   company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
   @@index([companyId])
@@ -2094,6 +2097,7 @@ model SiteBranding {
 }
 
 model Company {
+  rakutenFulfillmentLines RakutenOrderRecord[] @relation("RakutenFulfillmentCompany")
   id BigInt @id @default(autoincrement()) @db.UnsignedBigInt
   name String @unique @db.VarChar(128)
   status Int @default(1) @db.TinyInt

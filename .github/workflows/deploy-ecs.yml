@@ -128,7 +128,9 @@ jobs:
                 echo "Company release failed; restoring the previous API image. The verified database backup is retained."
                 # Older Prisma clients require non-null account/audit company IDs.
                 # This compatibility rollback does not change stock or order ownership.
-                docker exec wms_db sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; mysql -uroot wms_v1 -e "UPDATE users SET company_id=1 WHERE company_id IS NULL; UPDATE operation_audit_logs SET company_id=1 WHERE company_id IS NULL;"' || true
+                if [ "${COMPANY_AFFILIATION_PENDING:-0}" = 1 ]; then
+                  docker exec wms_db sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; mysql -uroot wms_v1 -e "UPDATE users SET company_id=1 WHERE company_id IS NULL; UPDATE operation_audit_logs SET company_id=1 WHERE company_id IS NULL;"' || true
+                fi
                 export DEPLOY_SESSION_VERSION="$OLD_API_DEPLOY_VERSION"
                 docker compose -f docker-compose.yml -f /tmp/wms-api-rollback-compose.yml --profile rakuten-egress up -d --no-deps api || true
               fi

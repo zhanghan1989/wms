@@ -22,5 +22,22 @@ export function CompanyJob(): MethodDecorator {
   };
 }
 export function companyScheduleWhere(key: string): { companyId_key: { companyId: bigint; key: string } } {
-  return { companyId_key: { companyId: companyContext.getStore()?.companyId ?? 1n, key } };
+  // Retain the original center's settings; selecting a Chinese company must not
+  // create another automation center or another set of switches.
+  return { companyId_key: { companyId: 1n, key } };
+}
+
+/** One Japan-operated job, with access to each product's existing inventory. */
+export function JapanJob(): MethodDecorator {
+  return (_target, _key, descriptor: PropertyDescriptor) => {
+    const original = descriptor.value;
+    descriptor.value = function (...args: unknown[]) {
+      const current = companyContext.getStore();
+      if (current && !current.systemAdmin && !current.warehouse) {
+        throw new Error('仅日本海外仓或系统管理员可以执行乐天任务');
+      }
+      return companyContext.run({ systemAdmin: current?.systemAdmin ?? false, warehouse: true,
+        japanOperations: true, userId: current?.userId ?? 0n }, () => original.apply(this, args));
+    };
+  };
 }
