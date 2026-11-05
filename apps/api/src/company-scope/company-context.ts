@@ -9,5 +9,6 @@ export interface CompanyScope {
   japanOperations?: boolean;
   japanShopNames?: Promise<string[]>;
   amazonSkuOnly?: boolean;
+  dashboardCompanyScope?: boolean;
 }
 export const companyContext = new AsyncLocalStorage<CompanyScope | undefined>();

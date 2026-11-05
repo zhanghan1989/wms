@@ -31,6 +31,10 @@ export class CompanyScopeInterceptor implements NestInterceptor {
     let path: string;
     try { path = decodeURIComponent(req.originalUrl.split('?')[0]).replace(/^\/api\//, ''); }
     catch { throw new BadRequestException('请求路径无效'); }
+    // Warehouse company selection narrows dashboard reads only; operations stay global.
+    const dashboardCompanyScope = warehouse && !systemAdmin && ['GET', 'HEAD'].includes(req.method)
+      && (/^inventory\/dashboard(\/|$)/.test(path) || /^rakuten-rms-api\/store-dashboard(\/|$)/.test(path));
+    if (dashboardCompanyScope) companyId = selected ? BigInt(selected) : 1n;
     const japanOperations = isJapanManagementPath(path) || /^orders\/overseas-warehouse(\/|$)/.test(path)
       || ((systemAdmin || warehouse) && path === 'orders')
       || ((systemAdmin || warehouse) && isCompanySalesDashboardPath(path))
@@ -41,7 +45,7 @@ export class CompanyScopeInterceptor implements NestInterceptor {
     const globalAdminPath = systemAdmin && /^(auth|companies|users|backups|branding|user-options)(\/|$)/.test(path);
     // Warehouse access is global; the business selector applies only to Chinese
     // company accounts and system administrators. Existing role guards still apply.
-    if (globalAdminPath || warehouse || japanOperations) companyId = undefined;
+    if (!dashboardCompanyScope && (globalAdminPath || warehouse || japanOperations)) companyId = undefined;
     if (systemAdmin && !warehouse && !globalAdminPath && !japanOperations && !companyId && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)
       && !/^(auth|companies)(\/|$)/.test(path)) {
       throw new BadRequestException('请先选择所属中国公司，再处理业务');
@@ -57,7 +61,7 @@ export class CompanyScopeInterceptor implements NestInterceptor {
       throw new ForbiddenException('仅系统管理员可以管理全局配置和备份');
     }
     return new Observable((subscriber) => companyContext.run({
-      companyId, systemAdmin, warehouse, japanOperations, userId: user.id,
+      companyId, systemAdmin, warehouse, japanOperations, dashboardCompanyScope, userId: user.id,
     }, () => {
       const subscription = next.handle().subscribe(subscriber);
       return () => subscription.unsubscribe();

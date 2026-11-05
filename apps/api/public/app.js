@@ -1,7 +1,8 @@
 let activeCompanyId = "";
 let companyOptions = [];
-function companyHeaders() {
-  return activeCompanyId && !isWarehouseOnlyAccount() ? { "X-Company-Id": activeCompanyId } : {};
+function companyHeaders(path = "") {
+  const dashboardPath = /^\/(inventory\/dashboard(?:\/|\?|$)|rakuten-rms-api\/store-dashboard(?:\/|\?|$))/.test(path);
+  return activeCompanyId && (!isWarehouseOnlyAccount() || dashboardPath) ? { "X-Company-Id": activeCompanyId } : {};
 }
 function getUserByIdForCompany(id) { return state.users.find((user) => String(user.id) === String(id)); }
 function companyName(id) {
@@ -39,7 +40,10 @@ async function loadCompanyUi() {
   const saved = stored || "";
   const warehouseAccount = isWarehouseOnlyAccount();
   const activeCompanies = companyOptions.filter((company) => company.status === 1);
-  activeCompanyId = warehouseAccount ? "" : crossCompany
+  const defaultDashboardCompany = activeCompanies.find((company) => company.name.trim().toUpperCase() === "XYJG")
+    || activeCompanies.find((company) => String(company.id) === "1") || activeCompanies[0];
+  activeCompanyId = warehouseAccount
+    ? (activeCompanies.some((company) => String(company.id) === saved) ? saved : String(defaultDashboardCompany?.id || "")) : crossCompany
     ? (activeCompanies.some((company) => String(company.id) === saved) ? saved
       : stored === null && activeCompanies.length === 1 ? String(activeCompanies[0].id) : "")
     : String(state.me.companyId);
@@ -52,11 +56,14 @@ async function loadCompanyUi() {
     });
   }
   const options = companyOptions.filter((c) => c.status === 1).map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
-  selector.innerHTML = (crossCompany ? '<option value="">全部公司</option>' : "") + options;
+  selector.innerHTML = (crossCompany && !warehouseAccount ? '<option value="">全部公司</option>' : "") + options;
   selector.value = activeCompanyId;
   selector.title = activeCompanyId ? companyName(activeCompanyId) : "查看全部公司；处理业务前请选择具体公司";
   selector.disabled = !crossCompany;
-  selector.closest(".session-company")?.classList.toggle("hidden", warehouseAccount);
+  selector.closest(".session-company")?.classList.remove("hidden");
+  selector.closest(".session-company")?.querySelector("span")?.replaceChildren(warehouseAccount ? "查看公司" : "业务公司");
+  selector.setAttribute("aria-label", warehouseAccount ? "看板查看公司" : "业务公司");
+  if (warehouseAccount) selector.title = `看板查看公司：${companyName(activeCompanyId)}`;
   const userCompany = document.getElementById("newUserCompany");
   if (userCompany) {
     renderUserAffiliationOptions(userCompany, activeCompanyId || String(state.me.companyId || companyOptions[0]?.id || ""));
@@ -3992,7 +3999,7 @@ async function request(path, options = {}) {
     await ensureAuthDeployVersion();
   }
 
-  const headers = { ...(!normalizedPath.startsWith("/auth/") && normalizedPath !== "/companies" ? companyHeaders() : {}), ...(options.headers || {}) };
+  const headers = { ...(!normalizedPath.startsWith("/auth/") && normalizedPath !== "/companies" ? companyHeaders(normalizedPath) : {}), ...(options.headers || {}) };
   const isFormData = options.body instanceof FormData;
 
   if (!isFormData && !headers["Content-Type"]) {
@@ -4055,7 +4062,7 @@ async function fetchAuthorizedResponse(path, options = {}) {
     await ensureAuthDeployVersion();
   }
 
-  const headers = { ...companyHeaders(), ...(options.headers || {}) };
+  const headers = { ...companyHeaders(normalizedPath), ...(options.headers || {}) };
   const isFormData = options.body instanceof FormData;
   if (!isFormData && options.body !== undefined && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";

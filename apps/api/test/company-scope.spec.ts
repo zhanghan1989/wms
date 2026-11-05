@@ -145,7 +145,7 @@ describe('company request boundaries', () => {
       ['GET', '/api/rakuten-combo-products/export-excel'], ['POST', '/api/shops'], ['PUT', '/api/shops/4'],
       ['POST', '/api/brands'], ['GET', '/api/amazon-sp-api/connections'],
       ['GET', '/api/rakuten-rms-api/connections'], ['PUT', '/api/rakuten-rms-api/connections/4'],
-      ['GET', '/api/rakuten-rms-api/store-dashboard'], ['GET', '/api/rakuten-rms-api/connections/4/mail-templates'],
+      ['GET', '/api/rakuten-rms-api/connections/4/mail-templates'],
       ['POST', '/api/rakuten-rms-api/processing/check'], ['GET', '/api/backups'], ['POST', '/api/backups/run'],
     ];
     for (const headers of [{}, { 'x-company-id': '2' }]) {
@@ -155,6 +155,31 @@ describe('company request boundaries', () => {
         expect(f.prisma.company.findUnique).not.toHaveBeenCalled();
       }
     }
+  });
+  it.each([
+    '/api/inventory/dashboard', '/api/inventory/dashboard/summary',
+    '/api/inventory/dashboard/page', '/api/inventory/dashboard/export-excel',
+    '/api/inventory/dashboard/production-recommendations-excel',
+    '/api/rakuten-rms-api/store-dashboard', '/api/rakuten-rms-api/store-dashboard/export-excel',
+    '/api/rakuten-rms-api/store-dashboard/factory-recommendations-excel',
+  ])('defaults warehouse dashboard reads to XYJG and accepts another company: %s', async originalUrl => {
+    for (const selected of [undefined, '2']) {
+      const f = fixture({ originalUrl, user: { id: 3n, role: 'employee', department: 'overseas_warehouse' },
+        headers: selected ? { 'x-company-id': selected } : {} });
+      expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
+        .toMatchObject({ companyId: selected ? 2n : 1n, warehouse: true, dashboardCompanyScope: true });
+      expect(f.prisma.company.findUnique).toHaveBeenCalled();
+    }
+    const disabled = fixture({ originalUrl, user: { id: 3n, role: 'employee', department: 'overseas_warehouse' },
+      headers: { 'x-company-id': '2' } });
+    disabled.prisma.company.findUnique.mockResolvedValue({ id: 2n, status: 0 });
+    await expect(disabled.interceptor.intercept(disabled.context, disabled.next)).rejects.toThrow('禁用');
+  });
+  it('keeps dashboard report writes global for warehouse staff', async () => {
+    const f = fixture({ originalUrl: '/api/inventory/dashboard/fba-sales-report', method: 'POST',
+      user: { id: 3n, role: 'employee', department: 'overseas_warehouse' }, headers: { 'x-company-id': '2' } });
+    expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
+      .toMatchObject({ companyId: undefined, warehouse: true, dashboardCompanyScope: false });
   });
   it('still requires a system administrator to select a company for business writes', async () => {
     const f = fixture({ user: { id: 1n, role: 'system_admin', companyId: null }, method: 'POST' });

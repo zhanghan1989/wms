@@ -91,6 +91,20 @@ const china = (companyId: bigint): CompanyScope => ({ companyId, systemAdmin: fa
 const japan: CompanyScope = { systemAdmin: false, warehouse: true, japanOperations: true, userId: 8n };
 
 describe('Japan sales and Chinese fulfillment boundaries', () => {
+  it.each([1n, 2n])('narrows warehouse dashboard stock and orders while keeping shared Japan sales SKUs (case %#)', async companyId => {
+    const { db } = fixture();
+    await companyContext.run({ ...japan, companyId, dashboardCompanyScope: true }, async () => {
+      expect((await db.masterProduct.findMany()).map((row: any) => row.productId)).toEqual([companyId === 1n ? 'A' : 'B']);
+      expect((await db.rakutenOrderRecord.findMany()).map((row: any) => row.fulfillmentCompanyId)).toEqual([companyId]);
+      const shops = await db.shop.findMany();
+      expect(shops.map((row: any) => row.name)).toContain('Japan Rakuten');
+      expect(shops.filter((row: any) => row.platform === 'amazon').map((row: any) => row.companyId)).toEqual([companyId]);
+    });
+    await companyContext.run({ ...japan, companyId }, async () => {
+      expect(await db.masterProduct.findMany()).toHaveLength(2);
+      expect(await db.rakutenOrderRecord.findMany()).toHaveLength(3);
+    });
+  });
   it.each([1n, 2n])('exports only the company Amazon SKUs, including unmatched SKUs (case %#)', async companyId => {
     const { db } = fixture();
     const service = new SkusService(db, {} as any);

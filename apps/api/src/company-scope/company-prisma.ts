@@ -211,7 +211,7 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     if (context?.bypass) return next(params);
     const args = params.model ? copyArgs(params.args ?? {}) : Array.isArray(params.args) ? [...params.args] : params.args;
     params.args = args;
-    const companyId = context?.warehouse && !context.systemAdmin ? undefined : context?.companyId;
+    const companyId = context?.warehouse && !context.systemAdmin && !context.dashboardCompanyScope ? undefined : context?.companyId;
     if (!params.model) {
       if (companyId !== undefined && /Raw/.test(params.action)) {
         if (Array.isArray(args)) {
@@ -227,7 +227,7 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
     const model = params.model;
     const chineseAccount = Boolean(context && !context.systemAdmin && !context.warehouse);
     let japanShops: string[] = [];
-    if (chineseAccount || (context?.amazonSkuOnly && model === 'Sku') || (context?.systemAdmin && companyId !== undefined && model === 'Sku')) {
+    if (chineseAccount || (context?.amazonSkuOnly && model === 'Sku') || ((context?.systemAdmin || context?.dashboardCompanyScope) && companyId !== undefined && model === 'Sku')) {
       const names = () => companyContext.run({ ...context!, bypass: true }, async () => (await client.shop.findMany({
         where: { platform: { not: 'amazon' } }, select: { name: true },
       })).map(shop => shop.name));
@@ -238,7 +238,7 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
       args.where = { ...args.where, AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []),
         { shop: { notIn: japanShops } }] };
     }
-    const adminSharedSales = context?.systemAdmin && companyId !== undefined && (model === 'Shop' || model === 'Sku');
+    const adminSharedSales = (context?.systemAdmin || context?.dashboardCompanyScope) && companyId !== undefined && (model === 'Shop' || model === 'Sku');
     if (adminSharedSales && !['create', 'createMany'].includes(params.action)) args.where = { ...args.where,
       AND: [...(args.where?.AND ? (Array.isArray(args.where.AND) ? args.where.AND : [args.where.AND]) : []),
         { OR: [{ companyId }, model === 'Shop' ? { platform: { not: 'amazon' } } : { shop: { in: japanShops } }] }] };

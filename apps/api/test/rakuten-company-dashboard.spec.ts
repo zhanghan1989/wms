@@ -112,6 +112,23 @@ describe('company-scoped Japanese Rakuten dashboard', () => {
     expect(payload.dashboard.topProducts).toEqual([]);
   });
 
+  it.each([[1n, 210, ['A1', 'zh-A']], [2n, 400, ['B1', 'zh-B']]] as const)(
+    'filters warehouse dashboard and Excel by selected product owner (case %#)', async (companyId, amount, skus) => {
+      const { service, prisma } = fixture();
+      const scope = { companyId, warehouse: true, systemAdmin: false, dashboardCompanyScope: true, userId: 8n };
+      const payload: any = await companyContext.run(scope, () => service.getStoreDashboard('1', '7'));
+      expect(payload.salesOnly).toBe(false);
+      expect(payload.dashboard.summary.salesAmount).toBe(amount);
+      expect(payload.dashboard.topProducts.map((row: any) => row.skuCode).sort()).toEqual([...skus].sort());
+      expect(payload.latestSyncRun.fetchedCount).toBe(123456);
+      expect(prisma.batchInboundItem.findMany).toHaveBeenCalled();
+      const file = exportStoreDashboard(payload, '乐天');
+      const book = XLSX.read(file.content, { type: 'buffer' });
+      const text = JSON.stringify(book.SheetNames.map(name => XLSX.utils.sheet_to_json(book.Sheets[name], { header: 1 })));
+      expect(text).not.toContain(companyId === 1n ? 'PRIVATE_COMPANY_B_PRODUCT' : 'Company A product');
+      expect(text).not.toContain('zh-MIXED');
+    });
+
   it('preserves the complete warehouse view', async () => {
     const { service, prisma } = fixture();
     const payload: any = await companyContext.run({ warehouse: true, systemAdmin: false, userId: 8n },

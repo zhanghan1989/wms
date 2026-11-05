@@ -197,12 +197,13 @@ export class RakutenRmsApiService {
   async getStoreDashboard(connectionIdRaw?: string, daysRaw?: string, minimumDailySalesRaw?: string, month?: string): Promise<unknown> {
     const scope = companyContext.getStore();
     const companySalesOnly = Boolean(scope && !scope.systemAdmin && !scope.warehouse);
+    const companyFiltered = companySalesOnly || Boolean(scope?.dashboardCompanyScope && scope.companyId);
     if (companySalesOnly && !scope?.companyId) throw new ForbiddenException('账号尚未分配公司');
     // Japan owns the store and financial facts. Chinese accounts may read only
     // the product-filtered aggregates assembled below, never connection APIs.
     // Await inside the scope: Prisma promises do not execute when constructed.
-    const readSharedSales = <T>(read: () => Promise<T>): Promise<T> => companySalesOnly
-      ? companyContext.run({ ...scope!, companyId: undefined, warehouse: true, japanOperations: true }, async () => await read()) : read();
+    const readSharedSales = <T>(read: () => Promise<T>): Promise<T> => companyFiltered
+      ? companyContext.run({ ...scope!, companyId: undefined, dashboardCompanyScope: false, warehouse: true, japanOperations: true }, async () => await read()) : read();
     const minimumAverageDailySalesExclusive = minimumDailySalesRaw === undefined ? 0.05 : Number(minimumDailySalesRaw);
     if (minimumDailySalesRaw?.trim() === "" || !Number.isFinite(minimumAverageDailySalesExclusive) || minimumAverageDailySalesExclusive < 0) {
       throw new BadRequestException("日均需求门槛须为大于或等于0的数字");
@@ -240,19 +241,19 @@ export class RakutenRmsApiService {
     const orderScope = includesLegacyData
       ? Prisma.sql`(rms_connection_id = ${selected.id} OR rms_connection_id IS NULL)`
       : Prisma.sql`rms_connection_id = ${selected.id}`;
-    const latestSyncRunPromise = companySalesOnly ? Promise.resolve(null) : this.prisma.rakutenRmsSyncRun.findFirst({
+    const latestSyncRunPromise = companySalesOnly ? Promise.resolve(null) : readSharedSales(() => this.prisma.rakutenRmsSyncRun.findFirst({
       where: { connectionId: selected.id },
       orderBy: { startedAt: "desc" },
       select: {
         status: true, startedAt: true, finishedAt: true, fetchedCount: true,
         createdCount: true, updatedCount: true, skippedCount: true, errorMessage: true,
       },
-    });
+    }));
     const factoryPeriodStart = new Date(now.getTime() - RAKUTEN_FACTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
     const factoryDateStart = new Date(`${this.formatTokyoDateKey(factoryPeriodStart, "-")}T00:00:00.000Z`);
     const factoryDateEnd = new Date(`${this.formatTokyoDateKey(analysisEndDay, "-")}T00:00:00.000Z`);
     const activeConnectionIds = connections.map((connection) => connection.id);
-    const [orderRows, factoryOrderRows] = await Promise.all([
+    const [orderRows, factoryOrderRows] = await readSharedSales(() => Promise.all([
       this.prisma.$queryRaw<RakutenDashboardQueryRow[]>(Prisma.sql`
         SELECT /*+ MAX_EXECUTION_TIME(15000) */
           rms_connection_id AS rmsConnectionId,
@@ -292,7 +293,7 @@ export class RakutenRmsApiService {
           trackingIsDelivered: true,
         },
       }),
-    ]);
+    ]));
     let orders = orderRows.map((row) => ({
       ...row,
       trackingIsDelivered: Boolean(row.trackingIsDelivered),
@@ -320,7 +321,7 @@ export class RakutenRmsApiService {
     const [salesProducts, latestSyncRun] = await Promise.all([
       dashboardProductIds.length
         ? this.prisma.masterProduct.findMany({
-          where: { productId: { in: dashboardProductIds }, ...(companySalesOnly ? { companyId: scope!.companyId } : {}) },
+          where: { productId: { in: dashboardProductIds }, ...(companyFiltered ? { companyId: scope!.companyId } : {}) },
           select: {
             productId: true, productName: true, productType: true, stockQty: true,
             bomComponents: { select: {
@@ -334,7 +335,7 @@ export class RakutenRmsApiService {
         : Promise.resolve([]),
       latestSyncRunPromise,
     ]);
-    if (companySalesOnly) {
+    if (companyFiltered) {
       const normalizeSku = (value: string | null | undefined) => String(value ?? '').trim().toLowerCase();
       const ownProducts = new Set(salesProducts.map(product => normalizeSku(product.productId)));
       // A bundle is attributable only when every component belongs to this

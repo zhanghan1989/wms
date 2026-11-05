@@ -1340,8 +1340,10 @@ export class InventoryService {
   ): Promise<unknown> {
     const requestedDays = Number(options.days ?? 30);
     const days = [30, 60, 90].includes(requestedDays) ? requestedDays : 30;
+    const scope = companyContext.getStore();
     const cacheKey = [
-      String(companyContext.getStore()?.companyId ?? "all"),
+      scope?.systemAdmin ? 'admin' : scope?.warehouse ? 'warehouse' : 'company',
+      String(scope?.companyId ?? "all"),
       days,
       options.month || '',
       options.includeFba === true ? 'fba' : 'base',
