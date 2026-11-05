@@ -94,7 +94,7 @@ async function main() {
             blocked(tx, user, 'rakuten-rms-api/connections'),
             blocked(tx, user, 'rakuten-rms-api/store-dashboard/factory-recommendations-excel'),
           ]);
-          const check = { company: company.name, store: String(connection.id), days, matchingSalesRows: active.filter(row => ownerOf(row.skuCode) === company.id).length,
+          const check = { company: company.name, store: String(connection.id), days, warehouseActiveSalesRows: active.length, unattributedSalesRows: active.filter(row => ownerOf(row.skuCode) === undefined).length, matchingSalesRows: active.filter(row => ownerOf(row.skuCode) === company.id).length,
             totalsMatch, trendMatch, foreignProducts, salesOnly, exportRows, exportSafe, restrictedChecksPassed: restrictions.filter(Boolean).length,
             coverageReady: payload.sourceSummary.sales?.ready ?? null };
           report.checks.push(check);
