@@ -45,7 +45,7 @@ async function main() {
       assert(sample, 'Each order source must have a real sample');
       samples.push({ source: config.source, id: String(sample.id), originCompany: sample[config.owner],
         queries: [ ['orderId', String(sample.orderId)], ['formattedOrderId', orders.normalizeSearchOrderId(sample.orderId)],
-          ['recipientName', String(sample[config.name])], ['phone', String(sample[config.phone])] });
+          ['recipientName', String(sample[config.name])], ['phone', String(sample[config.phone])] ] });
     }
     const ownerMaps = new Map(configurations.map(config => [config.source, new Map(all.get(config.source).map(row => [String(row.id), row[config.owner]]))]));
     const labels = new Map(configurations.map(config => [config.label, config]));
