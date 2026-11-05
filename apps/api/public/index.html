@@ -622,7 +622,13 @@
 
       <section class="panel" id="rakutenDashboard">
         <div class="panel-head">
-          <h2>乐天店铺看板</h2>
+          <div class="dashboard-heading">
+            <h2>乐天店铺看板</h2>
+            <label class="dashboard-company hidden" for="rakutenDashboardCompanySelect">
+              <span>查看公司</span>
+              <select id="rakutenDashboardCompanySelect" aria-label="乐天店铺看板查看公司"></select>
+            </label>
+          </div>
         </div>
         <article class="card amazon-store-dashboard-toolbar-card">
           <div class="form-grid amazon-store-dashboard-toolbar">
@@ -1756,7 +1762,13 @@
       <section class="panel" id="overview">
         <p id="overviewSnapshotMeta" class="muted"></p>
         <div class="panel-head">
-          <h2>系统看板</h2>
+          <div class="dashboard-heading">
+            <h2>系统看板</h2>
+            <label class="dashboard-company hidden" for="overviewDashboardCompanySelect">
+              <span>查看公司</span>
+              <select id="overviewDashboardCompanySelect" aria-label="系统看板查看公司"></select>
+            </label>
+          </div>
           <div class="panel-tools">
             <button type="button" id="refreshOverviewDashboard" class="ghost">刷新看板</button>
             <button type="button" id="logoutBtn" class="ghost hidden">退出登录</button>

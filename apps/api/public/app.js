@@ -47,23 +47,25 @@ async function loadCompanyUi() {
     ? (activeCompanies.some((company) => String(company.id) === saved) ? saved
       : stored === null && activeCompanies.length === 1 ? String(activeCompanies[0].id) : "")
     : String(state.me.companyId);
-  const selector = document.getElementById("activeCompanySelect");
-  if (!selector.dataset.companyBound) {
-    selector.dataset.companyBound = "true";
-    selector.addEventListener("change", () => {
-      sessionStorage.setItem(`wms.company.${state.me.id}`, selector.value);
-      window.location.reload();
-    });
+  const options = activeCompanies.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
+  for (const id of ["activeCompanySelect", "rakutenDashboardCompanySelect", "overviewDashboardCompanySelect"]) {
+    const selector = document.getElementById(id);
+    if (!selector) continue;
+    const dashboardSelector = id !== "activeCompanySelect";
+    if (!selector.dataset.companyBound) {
+      selector.dataset.companyBound = "true";
+      selector.addEventListener("change", () => {
+        sessionStorage.setItem(`wms.company.${state.me.id}`, selector.value);
+        window.location.reload();
+      });
+    }
+    selector.innerHTML = (crossCompany && !warehouseAccount ? '<option value="">全部公司</option>' : "") + options;
+    selector.value = activeCompanyId;
+    selector.disabled = !crossCompany;
+    selector.title = dashboardSelector ? `看板查看公司：${companyName(activeCompanyId)}`
+      : activeCompanyId ? companyName(activeCompanyId) : "查看全部公司；处理业务前请选择具体公司";
+    selector.closest("label")?.classList.toggle("hidden", dashboardSelector ? !warehouseAccount : warehouseAccount);
   }
-  const options = companyOptions.filter((c) => c.status === 1).map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join("");
-  selector.innerHTML = (crossCompany && !warehouseAccount ? '<option value="">全部公司</option>' : "") + options;
-  selector.value = activeCompanyId;
-  selector.title = activeCompanyId ? companyName(activeCompanyId) : "查看全部公司；处理业务前请选择具体公司";
-  selector.disabled = !crossCompany;
-  selector.closest(".session-company")?.classList.remove("hidden");
-  selector.closest(".session-company")?.querySelector("span")?.replaceChildren(warehouseAccount ? "查看公司" : "业务公司");
-  selector.setAttribute("aria-label", warehouseAccount ? "看板查看公司" : "业务公司");
-  if (warehouseAccount) selector.title = `看板查看公司：${companyName(activeCompanyId)}`;
   const userCompany = document.getElementById("newUserCompany");
   if (userCompany) {
     renderUserAffiliationOptions(userCompany, activeCompanyId || String(state.me.companyId || companyOptions[0]?.id || ""));
