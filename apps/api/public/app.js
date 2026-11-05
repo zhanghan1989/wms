@@ -6881,7 +6881,7 @@ function renderShopsTable() {
   }
   const platform = state.shopManagePlatform;
   const platformName = platforms.find((item) => item.key === platform)?.name || "";
-  const hasConnection = platform === "amazon" || platform === "rakuten";
+  const hasConnection = (platform === "amazon" && hasAdminAccess(state.me?.role)) || platform === "rakuten";
   const allRows = Array.isArray(state.shops) ? state.shops : [];
   const rows = allRows.filter((item) => item.platform === platform).sort((a, b) =>
     String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
@@ -6969,6 +6969,11 @@ function renderShopsTable() {
 }
 
 async function loadAmazonSpApiConnections() {
+  if (!hasAdminAccess(state.me?.role)) {
+    state.amazonSpApiConnections = [];
+    renderShopsTable();
+    return [];
+  }
   state.amazonSpApiConnections = (await request('/amazon-sp-api/connections')) || [];
   renderShopsTable();
   return state.amazonSpApiConnections;

@@ -12,6 +12,7 @@ function setup() {
   const submit = { disabled: false };
   elements.shopForm = { querySelector: () => submit };
   const state = {
+    me: { role: 'admin' },
     shopPlatforms: [{ key: 'amazon', name: 'Amazon' }, { key: 'rakuten', name: 'Rakuten' }, { key: 'custom', name: 'Yahoo' }],
     shopManagePlatform: 'custom',
     shops: [
@@ -26,12 +27,55 @@ function setup() {
     rakutenShopAutomationHealthItems: [],
   };
   const context: any = { isCurrentUserSystemAdmin: () => false, isWarehouseOnlyAccount: () => true, companyName: (id: string) => ({ '1': 'XYJG', '2': '祈麟双子' }[id] || '未分配'), state, $: (id: string) => elements[id], escapeHtml: (s: string) => s };
+  runInNewContext(app.slice(app.indexOf('function hasAdminAccess('), app.indexOf('function isWarehouseOnlyAccount(')), context);
   runInNewContext(app.slice(app.indexOf('function renderShopsTable()'), app.indexOf('async function loadAmazonSpApiConnections()')), context);
   runInNewContext(app.slice(app.indexOf('function renderManualOrderShopOptions()'), app.indexOf('async function openAmazonManualOrderModal()')), context);
   return { context, elements, state };
 }
 
 describe('dynamic shop platform UI', () => {
+  it('opens shop management for a Chinese employee without requesting restricted connections', async () => {
+    const { context, elements, state } = setup();
+    state.me.role = 'employee';
+    context.isWarehouseOnlyAccount = () => false;
+    // A previous account's connection data must also be cleared.
+    state.amazonSpApiConnections = [{ id: 'old-connection', shop: { id: '1' } }] as any;
+    context.canManageJapanOperations = () => false;
+    context.request = jest.fn().mockRejectedValue(new Error('Forbidden'));
+    context.loadShops = jest.fn().mockImplementation(async () => context.renderShopsTable());
+    context.openModal = jest.fn();
+    context.showToast = jest.fn();
+    let click!: () => Promise<void>;
+    elements.openShopManageModal = { addEventListener: (_event: string, handler: typeof click) => { click = handler; } };
+    runInNewContext(app.slice(app.indexOf('async function loadAmazonSpApiConnections()'), app.indexOf('async function openRakutenMailManagementForShop(')), context);
+    runInNewContext(app.slice(app.indexOf('async function loadRakutenShopAutomationHealth()'), app.indexOf('function renderRakutenAutomationRuns()')), context);
+    const start = app.indexOf('  $("openShopManageModal").addEventListener');
+    runInNewContext(app.slice(start, app.indexOf('  $("openShelfManageModal").addEventListener', start)), context);
+
+    await click();
+
+    expect(context.loadShops).toHaveBeenCalled();
+    expect(context.request).not.toHaveBeenCalled();
+    expect(context.openModal).toHaveBeenCalledWith('shopManageModal');
+    expect(context.showToast).not.toHaveBeenCalled();
+    expect(state.amazonSpApiConnections).toEqual([]);
+    expect(elements.shopsBody.innerHTML).toContain('Amazon Store');
+    expect(elements.shopsBody.innerHTML).toContain('data-action="editShop"');
+    expect(elements.shopsBody.innerHTML).not.toContain('data-action="amazonSpApi"');
+    expect(elements.shopsHead.innerHTML).not.toContain('Amazon SP-API');
+  });
+
+  it.each(['admin', 'system_admin'])('loads Amazon connections for %s', async role => {
+    const { context, state } = setup();
+    state.me.role = role;
+    const connections = [{ id: 'connection', shop: { id: '1' } }];
+    context.request = jest.fn().mockResolvedValue(connections);
+    runInNewContext(app.slice(app.indexOf('async function loadAmazonSpApiConnections()'), app.indexOf('async function loadRakutenRmsConnections()')), context);
+    await expect(context.loadAmazonSpApiConnections()).resolves.toEqual(connections);
+    expect(context.request).toHaveBeenCalledWith('/amazon-sp-api/connections');
+    expect(state.amazonSpApiConnections).toEqual(connections);
+  });
+
   it('submits a new platform, selects its tab and refreshes the management list', async () => {
     const { context, elements, state } = setup();
     const button = { dataset: {}, textContent: '新增平台', disabled: false };
