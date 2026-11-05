@@ -1,4 +1,3 @@
-import { CompanyJob } from '../company-scope/company-job';
 import { resolveXiyaCompany, setXiyaCompanyParams, xiyaSyncDays } from '../common/xiya-company';
 import { companyContext } from '../company-scope/company-context';
 import { assertBoxUsable } from '../common/box-availability';
@@ -122,6 +121,14 @@ type XiyaExternalProductRow = {
 };
 
 type MasterProductSyncOperationType = 'bulk_upload' | 'manual_sync' | 'scheduled_sync';
+
+type MasterProductSyncStartResult = {
+  recordId: string;
+  recordIds?: string[];
+  status: MasterProductSyncStatus;
+  message: string;
+  days?: number;
+};
 
 type MasterProductSyncContext = {
   operationType: MasterProductSyncOperationType;
@@ -534,10 +541,9 @@ export class MasterProductsService {
     name: 'weekly-master-product-sync-from-xiya',
     timeZone: APP_TIMEZONE,
   })
-  @CompanyJob()
   async runScheduledMasterProductSync(): Promise<void> {
     try {
-      await this.triggerXiyaSync(undefined, {
+      await this.triggerAllCompanyXiyaSync(undefined, {
         operationType: 'scheduled_sync',
       }, true);
     } catch (error) {
@@ -550,17 +556,11 @@ export class MasterProductsService {
     daysRaw?: string | number,
     context?: MasterProductSyncContext,
     waitForCompletion = false,
-  ): Promise<{
-    recordId: string;
-    status: MasterProductSyncStatus;
-    message: string;
-    days: number;
-  }> {
-    const company = await resolveXiyaCompany(this.prisma);
-    if (companyContext.getStore()?.companyId === undefined) {
-      return companyContext.run({ ...companyContext.getStore()!, companyId: company.companyId },
-        () => this.triggerXiyaSync(daysRaw, context, waitForCompletion));
+  ): Promise<MasterProductSyncStartResult> {
+    if (companyContext.getStore()?.warehouse) {
+      return this.triggerAllCompanyXiyaSync(daysRaw, context, waitForCompletion);
     }
+    const company = await resolveXiyaCompany(this.prisma);
     const days = xiyaSyncDays(daysRaw, company.productDays);
 
     if (this.xiyaSyncStarting || this.masterProductSyncRunning) {
@@ -597,6 +597,74 @@ export class MasterProductsService {
       this.xiyaSyncStarting = false;
     }
   }
+  private async triggerAllCompanyXiyaSync(
+    daysRaw?: string | number,
+    context?: MasterProductSyncContext,
+    waitForCompletion = false,
+  ): Promise<MasterProductSyncStartResult> {
+    if (this.xiyaSyncStarting || this.masterProductSyncRunning) {
+      throw new ConflictException('当前已有产品主表同步任务正在启动，请稍后再试');
+    }
+    xiyaSyncDays(daysRaw, 10);
+    this.xiyaSyncStarting = true;
+    const caller = companyContext.getStore() ?? { systemAdmin: true, warehouse: false, userId: 0n };
+    const inCompany = <T>(companyId: bigint, work: () => T): T =>
+      companyContext.run({ ...caller, companyId, bypass: false }, work);
+    const plans: Array<{ companyId: bigint; days: number; recordId: bigint }> = [];
+    try {
+      const companies = await this.prisma.company.findMany({
+        where: { status: 1, name: { in: [process.env.XIYA_WMS_COMPANY_NAME || 'XYJG',
+          process.env.XIYA_QILIN_WMS_COMPANY_NAME || '祈麟双子'] } },
+        select: { id: true, name: true }, orderBy: { id: 'asc' },
+      });
+      if (!companies.length) throw new BadRequestException('没有已启用且配置 Xiya 接入的公司');
+      for (const company of companies) {
+        await inCompany(company.id, async () => {
+          const profile = await resolveXiyaCompany(this.prisma);
+          await this.failLingeringRunningSyncRecords();
+          const recordId = await this.createSyncRecord({
+            operationType: context?.operationType ?? 'manual_sync',
+            operatorId: context?.operatorId, operatorName: context?.operatorName ?? null,
+            sourceFileName: context?.sourceFileName ?? null,
+            status: MasterProductSyncStatus.running, fetchedCount: 0, createdCount: 0, updatedCount: 0,
+          });
+          plans.push({ companyId: company.id, days: xiyaSyncDays(daysRaw, profile.productDays), recordId });
+        });
+      }
+      this.masterProductSyncRunning = true;
+      const run = async (): Promise<void> => {
+        try {
+          for (const plan of plans) {
+            try {
+              await inCompany(plan.companyId, () => this.runXiyaSyncJob(plan.recordId, plan.days, false));
+            } catch (error) {
+              this.logger.error(`company ${plan.companyId} product sync failed: ${this.toSafeSyncErrorMessage(error)}`);
+            }
+          }
+        } finally {
+          this.masterProductSyncRunning = false;
+        }
+      };
+      if (waitForCompletion) await run();
+      else setTimeout(() => { void run(); }, 0);
+      return {
+        recordId: plans[0].recordId.toString(), recordIds: plans.map((plan) => plan.recordId.toString()),
+        status: MasterProductSyncStatus.running,
+        message: `已启动全部 ${plans.length} 家公司的产品同步，各公司分别记录同步结果`,
+        days: daysRaw === undefined ? undefined : Number(daysRaw),
+      };
+    } catch (error) {
+      for (const plan of plans) {
+        await inCompany(plan.companyId, () => this.finishSyncRecord(plan.recordId, {
+          status: MasterProductSyncStatus.failed, errorMessage: this.toSafeSyncErrorMessage(error),
+        }));
+      }
+      throw error;
+    } finally {
+      this.xiyaSyncStarting = false;
+    }
+  }
+
   async streamExportCsv(filters: ExportMasterProductsDto, output: Writable): Promise<number> {
     if (this.masterProductExportRunning) {
       throw new ConflictException('当前已有分类下载正在生成，请稍后再试');
@@ -957,7 +1025,7 @@ export class MasterProductsService {
       this.masterProductSyncRunning = false;
     }
   }
-  private async runXiyaSyncJob(recordId: bigint, days: number): Promise<void> {
+  private async runXiyaSyncJob(recordId: bigint, days: number, releaseLock = true): Promise<void> {
     try {
       const result = await this.performXiyaSync(days);
       await this.finishSyncRecord(recordId, {
@@ -975,7 +1043,7 @@ export class MasterProductsService {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`master product sync job failed: ${message}`);
     } finally {
-      this.masterProductSyncRunning = false;
+      if (releaseLock) this.masterProductSyncRunning = false;
     }
   }
 

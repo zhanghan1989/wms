@@ -18,8 +18,8 @@ export async function resolveXiyaCompany(prisma: PrismaClient): Promise<XiyaComp
   const context = companyContext.getStore();
   const selectedId = context?.companyId;
   if (selectedId === undefined && !context?.warehouse) throw new BadRequestException('请先选择同步所属公司');
-  // Warehouse accounts have no company selector. Preserve their legacy XYJG action,
-  // then execute it inside an explicit company scope in the service entry point.
+  // Warehouse logistics actions retain their legacy XYJG scope. Product actions
+  // enumerate all configured companies before resolving an individual profile.
   const company = await prisma.company.findUnique({ where: selectedId !== undefined
     ? { id: selectedId } : { name: process.env.XIYA_WMS_COMPANY_NAME || 'XYJG' } });
   if (!company || company.status !== 1) throw new BadRequestException('公司不存在或已停用');

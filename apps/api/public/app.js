@@ -17495,7 +17495,8 @@ function bindForms() {
   $("triggerMasterProductSyncBtn").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     try {
-      const daysText = window.prompt("输入同步天数（留空使用公司默认：XYJG 10 天，祈麟双子 30 天）", "");
+      const syncScope = isWarehouseOnlyAccount() || state.me?.department === "overseas_warehouse" ? "全部公司" : "当前公司";
+      const daysText = window.prompt(`同步${syncScope}的产品。输入同步天数（留空使用各公司默认：XYJG 10 天，祈麟双子 30 天）`, "");
       if (daysText === null) return;
       const days = daysText.trim() ? Number(daysText) : undefined;
       if (days !== undefined && (!Number.isInteger(days) || days <= 0 || days > 365)) {

@@ -216,3 +216,65 @@ describe('XYJG legacy compatibility', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('product sync scope by account', () => {
+  const fixture = () => {
+    let recordId = 0n;
+    const recordOwners: bigint[] = [];
+    const prisma = { company: companyModel(), masterProductSyncRecord: {
+      create: jest.fn(async () => { recordOwners.push(companyContext.getStore()!.companyId!); return { id: ++recordId }; }),
+      update: jest.fn(), updateMany: jest.fn(),
+    } };
+    const service = new MasterProductsService(prisma as any, {} as any);
+    const seen: Array<[bigint | undefined, number]> = [];
+    const perform = jest.spyOn(service as any, 'performXiyaSync').mockImplementation(async (days: any) => {
+      seen.push([companyContext.getStore()?.companyId, days]);
+      expect((service as any).masterProductSyncRunning).toBe(true);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      return { totalRows: 0, createdCount: 0, updatedCount: 0, conflictIds: [] };
+    });
+    return { service, prisma, seen, recordOwners, perform };
+  };
+
+  it.each([undefined, 45])('syncs both companies for warehouse users, with independent records (days=%s)', async (days) => {
+    const { service, prisma, seen, recordOwners } = fixture();
+    const result = await companyContext.run({ systemAdmin: false, warehouse: true, userId: 9n }, () =>
+      service.triggerXiyaSync(days, { operationType: 'manual_sync', operatorName: '仓库操作员' }, true));
+    expect(seen).toEqual([[1n, days ?? 10], [2n, days ?? 30]]);
+    expect(recordOwners).toEqual([1n, 2n]);
+    expect(result.recordIds).toEqual(['1', '2']);
+    expect(result.message).toContain('全部 2 家公司');
+    expect(prisma.masterProductSyncRecord.update).toHaveBeenCalledTimes(2);
+    expect((service as any).masterProductSyncRunning).toBe(false);
+  });
+
+  it.each([1n, 2n])('only syncs the signed-in Chinese company %s', async (companyId) => {
+    const { service, prisma, seen, recordOwners } = fixture();
+    await companyContext.run({ companyId, systemAdmin: false, warehouse: false, userId: 10n }, () =>
+      service.triggerXiyaSync(undefined, { operationType: 'manual_sync' }, true));
+    expect(seen).toEqual([[companyId, companyId === 1n ? 10 : 30]]);
+    expect(recordOwners).toEqual([companyId]);
+    expect(prisma.company.findMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps the global lock between company jobs and continues after one company fails', async () => {
+    const { service, prisma, seen, perform } = fixture();
+    perform.mockImplementation(async (days: any) => {
+      const id = companyContext.getStore()!.companyId;
+      seen.push([id, days]);
+      await expect(scope(1n, () => service.triggerXiyaSync())).rejects.toThrow('已有产品主表同步');
+      if (id === 1n) throw new Error('XYJG upstream unavailable');
+      return { totalRows: 0, createdCount: 0, updatedCount: 0, conflictIds: [] };
+    });
+    await companyContext.run({ systemAdmin: false, warehouse: true, userId: 9n }, () =>
+      service.triggerXiyaSync(undefined, undefined, true));
+    expect(seen).toEqual([[1n, 10], [2n, 30]]);
+    expect(prisma.masterProductSyncRecord.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 1n }, data: expect.objectContaining({ status: 'failed' }),
+    }));
+    expect(prisma.masterProductSyncRecord.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 2n }, data: expect.objectContaining({ status: 'success' }),
+    }));
+    expect((service as any).masterProductSyncRunning).toBe(false);
+  });
+});
