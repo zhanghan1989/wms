@@ -8,6 +8,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthUser } from '../common/types/auth-user.type';
 import { AmazonSpApiService } from './amazon-sp-api.service';
+import { AmazonConnectionAccessGuard } from './amazon-connection-access.guard';
 import { ContinueAmazonAppstoreOAuthDto } from './dto/continue-amazon-appstore-oauth.dto';
 import { StartAmazonOAuthDto } from './dto/start-amazon-oauth.dto';
 import { SyncAmazonConnectionDto } from './dto/sync-amazon-connection.dto';
@@ -19,13 +20,13 @@ export class AmazonSpApiController {
   constructor(private readonly service: AmazonSpApiService) {}
 
   @Get('connections')
-  @Roles(Role.admin)
+  @UseGuards(AmazonConnectionAccessGuard)
   async listConnections(): Promise<unknown[]> {
     return this.service.listConnections();
   }
 
   @Post('oauth/start')
-  @Roles(Role.admin)
+  @UseGuards(AmazonConnectionAccessGuard)
   async startOAuth(
     @Body() payload: StartAmazonOAuthDto,
     @CurrentUser() user: AuthUser,
@@ -34,7 +35,7 @@ export class AmazonSpApiController {
   }
 
   @Post('oauth/appstore/continue')
-  @Roles(Role.admin)
+  @UseGuards(AmazonConnectionAccessGuard)
   async continueAppstoreOAuth(
     @Body() payload: ContinueAmazonAppstoreOAuthDto,
     @CurrentUser() user: AuthUser,
@@ -43,7 +44,7 @@ export class AmazonSpApiController {
   }
 
   @Put('connections/:id')
-  @Roles(Role.admin)
+  @UseGuards(AmazonConnectionAccessGuard)
   async updateConnection(
     @Param('id') id: string,
     @Body() payload: UpdateAmazonConnectionDto,
@@ -52,13 +53,13 @@ export class AmazonSpApiController {
   }
 
   @Post('connections/:id/test')
-  @Roles(Role.admin)
+  @UseGuards(AmazonConnectionAccessGuard)
   async testConnection(@Param('id') id: string): Promise<unknown> {
     return this.service.testConnection(id);
   }
 
   @Post('connections/:id/sync')
-  @Roles(Role.admin)
+  @UseGuards(AmazonConnectionAccessGuard)
   async syncConnection(
     @Param('id') id: string,
     @Body() payload: SyncAmazonConnectionDto,
@@ -76,7 +77,7 @@ export class AmazonSpApiController {
   }
 
   @Get('sync-runs')
-  @Roles(Role.admin)
+  @UseGuards(AmazonConnectionAccessGuard)
   async listSyncRuns(
     @Query('connectionId') connectionId?: string,
     @Query('limit') limit?: string,

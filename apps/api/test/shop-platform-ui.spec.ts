@@ -34,10 +34,10 @@ function setup() {
 }
 
 describe('dynamic shop platform UI', () => {
-  it('opens shop management for a Chinese employee without requesting restricted connections', async () => {
+  it('opens shop management for a warehouse employee without requesting restricted connections', async () => {
     const { context, elements, state } = setup();
     state.me.role = 'employee';
-    context.isWarehouseOnlyAccount = () => false;
+    state.shopManagePlatform = 'amazon';
     // A previous account's connection data must also be cleared.
     state.amazonSpApiConnections = [{ id: 'old-connection', shop: { id: '1' } }] as any;
     context.canManageJapanOperations = () => false;
@@ -65,15 +65,17 @@ describe('dynamic shop platform UI', () => {
     expect(elements.shopsHead.innerHTML).not.toContain('Amazon SP-API');
   });
 
-  it.each(['admin', 'system_admin'])('loads Amazon connections for %s', async role => {
+  it.each(['admin', 'system_admin', 'employee'])('loads Amazon connections for a Chinese company %s', async role => {
     const { context, state } = setup();
-    state.me.role = role;
+    Object.assign(state.me, { role, companyId: '2' });
+    context.isWarehouseOnlyAccount = () => false;
     const connections = [{ id: 'connection', shop: { id: '1' } }];
     context.request = jest.fn().mockResolvedValue(connections);
     runInNewContext(app.slice(app.indexOf('async function loadAmazonSpApiConnections()'), app.indexOf('async function loadRakutenRmsConnections()')), context);
     await expect(context.loadAmazonSpApiConnections()).resolves.toEqual(connections);
     expect(context.request).toHaveBeenCalledWith('/amazon-sp-api/connections');
     expect(state.amazonSpApiConnections).toEqual(connections);
+    expect(context.$('shopsBody').innerHTML).toContain('data-action="amazonSpApi"');
   });
 
   it('submits a new platform, selects its tab and refreshes the management list', async () => {

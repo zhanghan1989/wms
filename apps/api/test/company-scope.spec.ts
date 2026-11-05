@@ -20,6 +20,22 @@ function fixture(options: Record<string, unknown> = {}) {
 }
 describe('company request boundaries', () => {
   it.each([
+    ['GET', '/api/amazon-sp-api/connections'],
+    ['POST', '/api/amazon-sp-api/oauth/start'],
+    ['POST', '/api/amazon-sp-api/oauth/appstore/continue'],
+    ['PUT', '/api/amazon-sp-api/connections/7'],
+    ['POST', '/api/amazon-sp-api/connections/7/test'],
+    ['POST', '/api/amazon-sp-api/connections/7/sync'],
+    ['GET', '/api/amazon-sp-api/sync-runs?connectionId=7'],
+  ])('keeps Chinese employee Amazon connection operations scoped: %s %s', async (method, originalUrl) => {
+    const f = fixture({ method, originalUrl });
+    expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
+      .toMatchObject({ companyId: 2n, warehouse: false, japanOperations: false });
+    const forged = fixture({ method, originalUrl, headers: { 'x-company-id': '1' } });
+    await expect(forged.interceptor.intercept(forged.context, forged.next)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it.each([
     ['employee', 1n], ['admin', 1n], ['employee', 2n], ['admin', 2n],
   ])('opens the Rakuten entry with the Chinese %s account company scope (case %#)', async (role, companyId) => {
     const f = fixture({ user: { id: 5n, role, companyId }, originalUrl: '/api/orders?limit=30&offset=0' });

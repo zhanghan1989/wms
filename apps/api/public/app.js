@@ -1740,6 +1740,11 @@ function hasAdminAccess(role) {
   return ["admin", "system_admin"].includes(String(role || ""));
 }
 
+function canManageAmazonConnections() {
+  return hasAdminAccess(state.me?.role)
+    || (state.me?.role === "employee" && !!state.me?.companyId && !isWarehouseOnlyAccount());
+}
+
 function isWarehouseOnlyAccount() {
   return state.me?.department === "overseas_warehouse" && !isCurrentUserSystemAdmin();
 }
@@ -5883,8 +5888,8 @@ async function openPendingAmazonAppstoreAuthorization() {
     showToast('Amazon授权请求参数不完整，请从Seller Central重新发起', true);
     return true;
   }
-  if (state.me?.role !== 'admin') {
-    showToast('只有系统管理员可以关联Amazon店铺，请使用管理员账号登录', true);
+  if (!canManageAmazonConnections()) {
+    showToast('当前账号无权关联Amazon店铺', true);
     return true;
   }
 
@@ -6881,7 +6886,7 @@ function renderShopsTable() {
   }
   const platform = state.shopManagePlatform;
   const platformName = platforms.find((item) => item.key === platform)?.name || "";
-  const hasConnection = (platform === "amazon" && hasAdminAccess(state.me?.role)) || platform === "rakuten";
+  const hasConnection = (platform === "amazon" && canManageAmazonConnections()) || platform === "rakuten";
   const allRows = Array.isArray(state.shops) ? state.shops : [];
   const rows = allRows.filter((item) => item.platform === platform).sort((a, b) =>
     String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
@@ -6969,7 +6974,7 @@ function renderShopsTable() {
 }
 
 async function loadAmazonSpApiConnections() {
-  if (!hasAdminAccess(state.me?.role)) {
+  if (!canManageAmazonConnections()) {
     state.amazonSpApiConnections = [];
     renderShopsTable();
     return [];
