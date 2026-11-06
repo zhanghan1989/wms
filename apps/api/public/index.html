@@ -960,9 +960,9 @@
             <div id="masterProductDetailMeta" class="master-product-summary-grid"></div>
 
             <div class="master-product-detail-layout">
-              <article class="card master-product-detail-card warehouse-operation-only hidden">
+              <article class="card master-product-detail-card">
                 <h4>主商品操作</h4>
-                <form id="masterProductPrintSettingsForm" class="form-grid">
+                <form id="masterProductPrintSettingsForm" class="form-grid warehouse-operation-only hidden">
                   <label>
                     Yamato打印机
                     <input id="masterProductYamatoPrinterName" maxlength="128" placeholder="例如：Yamato-A-Printer" />
@@ -970,7 +970,7 @@
                   <button type="submit" id="submitMasterProductPrintSettingsBtn">保存打印设置</button>
                 </form>
 
-                <form id="masterProductManualAdjustForm" class="form-grid">
+                <form id="masterProductManualAdjustForm" class="form-grid warehouse-operation-only hidden">
                   <label>
                     入库箱号
                     <input id="masterProductAdjustBoxCode" placeholder="输入箱号" required />
@@ -986,7 +986,7 @@
                   <button type="submit" id="submitMasterProductAdjustBtn">主商品入库</button>
                 </form>
 
-                <form id="masterProductOutboundOneForm" class="form-grid">
+                <form id="masterProductOutboundOneForm" class="form-grid warehouse-operation-only hidden">
                   <label>
                     出库箱号
                     <input id="masterProductOutboundBoxCode" placeholder="输入箱号" required />

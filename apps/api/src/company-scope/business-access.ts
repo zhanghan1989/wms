@@ -11,11 +11,13 @@ export function isCompanySalesDashboardPath(path: string): boolean {
 }
 
 export function isWarehouseWorkPath(path: string, method: string): boolean {
-  if (path === 'inventory/fba-replenishments/pending-summary' && method === 'GET') return false;
+  // FBA workflows use the requesting company's data scope.
+  if (/^inventory\/fba-replenishments(\/|$)/.test(path)
+    || /^master-products\/[^/]+\/fba-replenishments$/.test(path)) return false;
   if (/^(batch-inbound|inbound|outbound|stocktake|stocktake-planner|return-records|print-jobs)(\/|$)/.test(path)
     || /^orders\/overseas-warehouse(\/|$)/.test(path)) return true;
-  if (/^inventory\/(fba-replenishments|replace-box|dashboard\/(amazon-replenishment|production-recommendations))/.test(path)) return true;
-  if (/^master-products\/[^/]+\/(box-inventories|fba-replenishments|print-settings)(\/|$)/.test(path)
+  if (/^inventory\/(replace-box|dashboard\/(amazon-replenishment|production-recommendations))/.test(path)) return true;
+  if (/^master-products\/[^/]+\/(box-inventories|print-settings)(\/|$)/.test(path)
     && !['GET', 'HEAD', 'OPTIONS'].includes(method)) return true;
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     return /^(boxes|shelves)(\/|$)/.test(path) || path.startsWith('inventory/');

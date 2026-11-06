@@ -19,6 +19,28 @@ function fixture(options: Record<string, unknown> = {}) {
   return { request, context, prisma, interceptor, next };
 }
 describe('company request boundaries', () => {
+  it.each(['employee', 'admin'])('allows Chinese %s FBA workflows only in its own company', async role => {
+    for (const companyId of [1n, 2n]) {
+      for (const [method, originalUrl] of [
+        ['GET', '/api/inventory/fba-replenishments'],
+        ['GET', '/api/inventory/fba-replenishments/outbound-excel'],
+        ['GET', '/api/inventory/fba-replenishments/pending-summary'],
+        ['POST', '/api/inventory/fba-replenishments'],
+        ['POST', '/api/inventory/fba-replenishments/7/confirm'],
+        ['POST', '/api/inventory/fba-replenishments/outbound'],
+        ['POST', '/api/inventory/fba-replenishments/7/delete'],
+        ['POST', '/api/inventory/fba-replenishments/7/reopen'],
+        ['POST', '/api/master-products/B/fba-replenishments'],
+      ]) {
+        const options = { user: { id: 5n, role, companyId }, method, originalUrl };
+        const f = fixture(options);
+        expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
+          .toMatchObject({ companyId, warehouse: false, japanOperations: false });
+        const forged = fixture({ ...options, headers: { 'x-company-id': String(companyId === 1n ? 2n : 1n) } });
+        await expect(forged.interceptor.intercept(forged.context, forged.next)).rejects.toBeInstanceOf(ForbiddenException);
+      }
+    }
+  });
   it.each([
     ['GET', '/api/amazon-sp-api/connections'],
     ['POST', '/api/amazon-sp-api/oauth/start'],
@@ -67,7 +89,7 @@ describe('company request boundaries', () => {
       ['GET', '/api/rakuten-rms-api/store-dashboard/factory-recommendations-excel'],
       ['GET', '/api/rakuten-combo-products'], ['GET', '/api/orders/overseas-warehouse'],
       ['POST', '/api/orders/overseas-warehouse/picking-batches'], ['POST', '/api/inventory/manual-adjust'],
-      ['POST', '/api/master-products/B/box-inventories/outbound-one'], ['POST', '/api/master-products/B/fba-replenishments'],
+      ['POST', '/api/master-products/B/box-inventories/outbound-one'],
       ['GET', '/api/batch-inbound/orders'], ['POST', '/api/inbound'], ['POST', '/api/boxes'],
       ['GET', '/api/inventory/dashboard/production-recommendations-excel'], ['POST', '/api/stocktake-planner/tasks/generate'],
       ['GET', '/api/%72akuten-rms-api/connections'],

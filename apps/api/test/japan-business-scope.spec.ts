@@ -50,6 +50,10 @@ function fixture() {
       { id: 3n, companyId: 1n, fulfillmentCompanyId: null, skuCode: 'unknown', dispatchMode: 'china_no_stock' },
     ],
     RakutenComboProduct: [], RakutenComboProductItem: [],
+    FbaReplenishment: [
+      { id: 1n, companyId: 1n, status: 'pending_confirm' },
+      { id: 2n, companyId: 2n, status: 'pending_confirm' },
+    ],
   };
   const calls: Array<{ model: string; operation: string; args: any }> = [];
   const base: any = {};
@@ -91,6 +95,28 @@ const china = (companyId: bigint): CompanyScope => ({ companyId, systemAdmin: fa
 const japan: CompanyScope = { systemAdmin: false, warehouse: true, japanOperations: true, userId: 8n };
 
 describe('Japan sales and Chinese fulfillment boundaries', () => {
+  it('offers FBA actions without general stock operations for Chinese accounts', () => {
+    const source = readFileSync(join(__dirname, '../public/app.js'), 'utf8');
+    const context: any = { canManageJapanOperations: () => false, escapeHtml: (s: string) => s };
+    runInNewContext(source.slice(source.indexOf('function buildProductBoxFillButtons('),
+      source.indexOf('function buildInventoryDetailBoxRows(')), context);
+    expect(context.buildProductBoxFillButtons('BOX', 'MasterProduct')).toContain('fillMasterProductFbaBox');
+    expect(context.buildProductBoxFillButtons('BOX', 'MasterProduct')).not.toContain('InboundBox');
+    expect(context.buildInventoryDetailBoxActionButtons({ boxCode: 'BOX', qty: 5 })).toContain('openInventoryDetailFbaBox');
+    expect(context.buildInventoryDetailBoxActionButtons({ boxCode: 'BOX', qty: 5 })).not.toContain('OutboundOne');
+    expect(context.buildInventoryDetailBoxActionButtons({ boxCode: 'BOX', qty: 0 })).not.toContain('data-action');
+  });
+  it.each([1n, 2n])('isolates FBA list and updates for company %s', async companyId => {
+    const { db, tables } = fixture();
+    await companyContext.run(china(companyId), async () => {
+      expect((await db.fbaReplenishment.findMany()).map((row: any) => row.companyId)).toEqual([companyId]);
+      const otherId = companyId === 1n ? 2n : 1n;
+      expect(await db.fbaReplenishment.findUnique({ where: { id: otherId } })).toBeNull();
+      await expect(db.fbaReplenishment.update({ where: { id: otherId }, data: { status: 'outbound' } })).rejects.toThrow();
+      await db.fbaReplenishment.update({ where: { id: companyId }, data: { status: 'pending_outbound' } });
+      expect(tables.FbaReplenishment.find(row => row.id === otherId)?.status).toBe('pending_confirm');
+    });
+  });
   it.each([1n, 2n])('narrows warehouse dashboard stock and orders while keeping shared Japan sales SKUs (case %#)', async companyId => {
     const { db } = fixture();
     await companyContext.run({ ...japan, companyId, dashboardCompanyScope: true }, async () => {
@@ -236,13 +262,15 @@ describe('account UI boundaries', () => {
   it.each([
     [{ role: 'employee', companyId: '2' }, false],
     [{ role: 'admin', companyId: '1' }, false],
+    [{ role: 'employee', companyId: '1' }, false],
+    [{ role: 'admin', companyId: '2' }, false],
     [{ role: 'employee', department: 'overseas_warehouse' }, true],
     [{ role: 'system_admin', status: 1 }, true],
   ])('keeps warehouse controls and SKU downloads consistent for account %#', (me, expected) => {
     const elements = new Map<string, any>();
     const $ = (id: string) => {
       if (!elements.has(id)) {
-        const hidden = new Set();
+        const hidden = new Set(id === 'openFbaReplenishmentPanel' ? ['hidden'] : []);
         elements.set(id, { classList: { toggle: (name: string, force: boolean) => force ? hidden.add(name) : hidden.delete(name),
           remove: (name: string) => hidden.delete(name), contains: (name: string) => hidden.has(name) }, setAttribute() {} });
       }
@@ -252,12 +280,13 @@ describe('account UI boundaries', () => {
     runInNewContext(source.slice(source.indexOf('function hasAdminAccess('), source.indexOf('function getDepartmentText('))
       + source.slice(source.indexOf('function applyRoleView('), source.indexOf('function setAuthGate(')), context);
     context.applyRoleView();
-    for (const id of ['openOverseasWarehousePanel', 'openBatchInboundModal', 'openFbaReplenishmentPanel',
+    for (const id of ['openOverseasWarehousePanel', 'openBatchInboundModal',
       'openRakutenApiImportModal', 'openRakutenWorkflowModal', 'rakutenBatchChangeOrderIdBtn',
       'rakutenBatchDeleteBtn', 'openRakutenComboProductManagementPanel', 'openOverseasOrderProcessingPanel']) {
       expect(!$(id).classList.contains('hidden')).toBe(expected);
     }
     expect(!$('openRakutenOrderImportPanel').classList.contains('hidden')).toBe(true);
+    expect(!$('openFbaReplenishmentPanel').classList.contains('hidden')).toBe(true);
     expect(!$('openRakutenDashboardPanel').classList.contains('hidden')).toBe(true);
   });
 });

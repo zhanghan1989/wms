@@ -3276,7 +3276,8 @@ function applyRoleView() {
   $("openAmazonDashboardPanel")?.classList.remove("hidden");
   $("openRakutenDashboardPanel")?.classList.toggle("hidden", !isLoggedIn);
   $("openRakutenOrderImportPanel")?.classList.toggle("hidden", !isLoggedIn);
-  ["openFbaReplenishmentPanel", "openRakutenApiImportModal", "openRakutenWorkflowModal",
+  $("openFbaReplenishmentPanel")?.classList.toggle("hidden", !isLoggedIn);
+  ["openRakutenApiImportModal", "openRakutenWorkflowModal",
     "rakutenBatchChangeOrderIdBtn", "rakutenBatchDeleteBtn", "openRakutenComboProductManagementPanel", "openOverseasOrderProcessingPanel"].forEach((id) => {
     $(id)?.classList.toggle("hidden", !canManageJapanOperations());
   });
@@ -6044,8 +6045,8 @@ function renderProductSkuTable(detail, { bodyId, selectId = "" } = {}) {
 }
 
 function buildProductBoxFillButtons(boxCode, actionPrefix) {
-  if (!canManageJapanOperations()) return '<span class="muted">-</span>';
   const safeBoxCode = escapeHtml(String(boxCode || "").trim());
+  if (!canManageJapanOperations()) return `<button type="button" class="tiny-btn ghost" data-action="fill${actionPrefix}FbaBox" data-box-code="${safeBoxCode}">填入FBA</button>`;
   return `
     <div class="master-product-box-actions">
       <button type="button" class="tiny-btn ghost" data-action="fill${actionPrefix}InboundBox" data-box-code="${safeBoxCode}">填入入库</button>
@@ -6056,13 +6057,13 @@ function buildProductBoxFillButtons(boxCode, actionPrefix) {
 }
 
 function buildInventoryDetailBoxActionButtons(box) {
-  if (!canManageJapanOperations()) return '<span class="muted">-</span>';
   const boxCode = String(box?.boxCode || "").trim();
   const qty = Number(box?.qty ?? 0);
   if (!boxCode || qty <= 0) {
     return '<span class="muted">-</span>';
   }
   const safeBoxCode = escapeHtml(boxCode);
+  if (!canManageJapanOperations()) return `<button type="button" class="tiny-btn" data-action="openInventoryDetailFbaBox" data-box-code="${safeBoxCode}">FBA入库</button>`;
   return `
     <div class="master-product-box-actions">
       <button type="button" class="tiny-btn" data-action="openInventoryDetailInboundBox" data-box-code="${safeBoxCode}">入库</button>
