@@ -1,3 +1,4 @@
+import { OrdersService } from '../orders/orders.service';
 import { warehouseCompanyData } from '../company-scope/warehouse-company';
 import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
 import {
@@ -35,6 +36,7 @@ export class InboundService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly ordersService: OrdersService,
   ) {}
 
   async list(status?: OrderStatus): Promise<unknown[]> {
@@ -106,6 +108,7 @@ export class InboundService {
     status: OrderStatus;
     idempotent: boolean;
     changedRows: number;
+    switchedToJapanCount?: number;
   }> {
     const orderId = parseId(idParam, 'inboundOrderId');
     return stockTransaction(this.prisma, async (tx) => {
@@ -262,6 +265,10 @@ export class InboundService {
         });
       }
 
+      const switchedToJapanCount = await this.ordersService.reassignUnpulledChinaOrdersAfterInbound(
+        tx, order.items.filter(item => item.qty > 0).map(item => item.productId), operatorId, requestId,
+      );
+
       await tx.inboundOrder.update({
         where: { id: orderId },
         data: { status: OrderStatus.confirmed },
@@ -283,6 +290,7 @@ export class InboundService {
         orderId: order.id.toString(),
         status: OrderStatus.confirmed,
         idempotent: false,
+        switchedToJapanCount,
         changedRows: order.items.length,
       };
     });

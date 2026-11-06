@@ -33,7 +33,7 @@ describe('history query optimizations', () => {
       { orderId: 1n, status: 'confirmed', _count: { _all: 2 } },
     ]);
     const service = new BatchInboundService({ batchInboundOrder: { findMany, count: jest.fn().mockResolvedValue(1) },
-      batchInboundItem: { groupBy } } as never, {} as never);
+      batchInboundItem: { groupBy } } as never, {} as never, {} as never);
     const result = await service.list('1');
     expect(result.items[0]).toMatchObject({ itemCount: 5, pendingCount: 3, confirmedCount: 2 });
     expect(findMany.mock.calls[0][0].include.items).toBeUndefined();
@@ -54,7 +54,7 @@ describe('history query optimizations', () => {
     const service = new BatchInboundService({ batchInboundOrder: { findMany, count: jest.fn().mockResolvedValue(2) },
       batchInboundItem: { groupBy }, batchInboundPlannedItem: { findMany: jest.fn().mockResolvedValue([
         { orderId: 1n, productId: 'P1', qty: 5 }, { orderId: 2n, productId: 'P1', qty: 5 },
-      ]) } } as never, {} as never);
+      ]) } } as never, {} as never, {} as never);
     const result = await service.list('1');
     expect(result.items.map((item: any) => item.hasUnpacked)).toEqual([true, false]);
     expect(findMany.mock.calls[0][0].include.items).toBeUndefined();

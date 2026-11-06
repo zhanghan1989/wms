@@ -11264,7 +11264,7 @@ async function confirmBatchInboundAction(action, orderId, payload = {}) {
   } else if (action === "box") {
     path = `/batch-inbound/orders/${orderId}/boxes/${encodeURIComponent(payload.boxCode)}/confirm`;
   }
-  await request(path, {
+  return request(path, {
     method: "POST",
     body: JSON.stringify({
       actualQuantities: payload.actualQuantities || {},
@@ -21002,22 +21002,22 @@ function bindDelegates() {
     try {
       if (action === "batchInboundConfirmAll") {
         const actualQuantities = collectBatchInboundActualQuantities();
-        await confirmBatchInboundAction("all", orderId, { actualQuantities });
-        showToast("整单确认入库成功");
+        const result = await confirmBatchInboundAction("all", orderId, { actualQuantities });
+        showToast(`整单确认入库成功，自动切日本发 ${result.switchedToJapanCount || 0} 条乐天订单明细`);
       } else if (action === "batchInboundConfirmBox") {
         const boxCode = button.dataset.boxCode;
         const actualQuantities = collectBatchInboundActualQuantities({ boxCode,
         });
-        await confirmBatchInboundAction("box", orderId, { boxCode, actualQuantities,
+        const result = await confirmBatchInboundAction("box", orderId, { boxCode, actualQuantities,
         });
-        showToast("整箱确认入库成功");
+        showToast(`整箱确认入库成功，自动切日本发 ${result.switchedToJapanCount || 0} 条乐天订单明细`);
       } else if (action === "batchInboundConfirmItem") {
         const itemId = button.dataset.itemId;
         const actualQuantities = collectBatchInboundActualQuantities({ itemId,
         });
-        await confirmBatchInboundAction("item", orderId, { itemId, actualQuantities,
+        const result = await confirmBatchInboundAction("item", orderId, { itemId, actualQuantities,
         });
-        showToast("产品和数量确认入库成功");
+        showToast(`产品和数量确认入库成功，自动切日本发 ${result.switchedToJapanCount || 0} 条乐天订单明细`);
       } else if (action === "batchInboundPrintItemLabel") {
         const itemId = button.dataset.itemId;
         const productId = String(button.dataset.productId || "").trim();

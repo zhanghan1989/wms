@@ -43,7 +43,7 @@ function setup(existing = false) {
     },
   };
   const prisma = { ...tx, $transaction: jest.fn((work) => work(tx)) };
-  return { service: new BatchInboundService(prisma as any, audit as any), tx, audit, order: () => order };
+  return { service: new BatchInboundService(prisma as any, audit as any, { reassignUnpulledChinaOrdersAfterInbound: jest.fn().mockResolvedValue(0) } as any), tx, audit, order: () => order };
 }
 
 describe('pre-registration quantities', () => {

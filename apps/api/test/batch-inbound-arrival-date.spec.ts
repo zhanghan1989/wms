@@ -14,7 +14,7 @@ function setup(status = 'waiting_inbound', missing = false) {
   } };
   const prisma = { $transaction: jest.fn((work) => work(tx)) };
   const audit = { create: jest.fn().mockResolvedValue(undefined) };
-  return { service: new BatchInboundService(prisma as any, audit as any), tx, audit };
+  return { service: new BatchInboundService(prisma as any, audit as any, { reassignUnpulledChinaOrdersAfterInbound: jest.fn().mockResolvedValue(0) } as any), tx, audit };
 }
 
 describe('batch inbound expected arrival date', () => {

@@ -5072,6 +5072,68 @@ export class OrdersService {
     };
   }
 
+  /** Called inside the receipt transaction, after its product locks and stock writes.
+   * Only received finished goods are allocated; assembly stock is not promised here.
+   */
+  async reassignUnpulledChinaOrdersAfterInbound(
+    tx: Prisma.TransactionClient, productIds: string[], operatorId: bigint, requestId?: string,
+  ): Promise<number> {
+    const ids = [...new Set(productIds.filter(Boolean))];
+    if (!ids.length) return 0;
+    const eligible: Prisma.RakutenOrderRecordWhereInput = {
+      deletedAt: null, warehouseShippedAt: null, sendStatus: OrderSendStatus.unsent,
+      dispatchMode: { in: ['china_no_stock', 'china_pending'] },
+      xiyaPulledAt: null, xiyaExportedAt: null,
+      OR: [{ shipmentNo: null }, { shipmentNo: '' }],
+    };
+    const rows = await tx.rakutenOrderRecord.findMany({
+      where: { ...eligible, AND: [{ OR: [
+        { skuCode: { in: ids } }, { setComponentSkuCode: { in: ids } },
+      ] }] },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
+    if (!rows.length) return 0;
+    const stock = await availableStock(tx, ids);
+    const remaining = new Map<string, number>();
+    for (const row of stock) remaining.set(row.productId, (remaining.get(row.productId) ?? 0) + row.qty);
+    for (const demand of await this.inventorySyncPendingDemands(tx, ids)) {
+      remaining.set(demand.productId, Math.max(0, (remaining.get(demand.productId) ?? 0) - demand.quantity));
+    }
+    const batched = await tx.overseasPickingBatchItem.findMany({
+      where: { source: 'rakuten', sourceRecordId: { in: rows.map(row => row.id) },
+        batch: { status: { in: ['created', 'picked', 'yamato_exported', 'completed'] } } },
+      select: { sourceRecordId: true },
+    });
+    const excluded = new Set(batched.map(row => row.sourceRecordId.toString()));
+    let switched = 0;
+    for (const row of rows) {
+      const productId = String(row.skuCode ?? '').trim() || String(row.setComponentSkuCode ?? '').trim();
+      const qty = row.orderQuantity ?? 1;
+      if (excluded.has(row.id.toString()) || rakutenOrderRemarkNeedsConfirmation(row) ||
+          !Number.isSafeInteger(qty) || qty <= 0 || (remaining.get(productId) ?? 0) < qty) continue;
+      // Compete with Xiya's claim on the same row; a failed claim consumes no stock.
+      const result = await tx.rakutenOrderRecord.updateMany({
+        where: { ...eligible, id: row.id, dispatchMode: row.dispatchMode,
+          skuCode: row.skuCode, setComponentSkuCode: row.setComponentSkuCode,
+          orderQuantity: row.orderQuantity, orderRemark: row.orderRemark,
+          rawPayload: { equals: row.rawPayload === null ? Prisma.DbNull : row.rawPayload },
+        },
+        data: { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
+      });
+      if (result.count !== 1) continue;
+      remaining.set(productId, (remaining.get(productId) ?? 0) - qty);
+      switched++;
+      await tx.operationAuditLog.create({ data: {
+        companyId: row.companyId, entityType: 'rakuten_order_record', entityId: row.id,
+        action: 'update', eventType: 'inbound_order_confirmed', operatorId, requestId,
+        beforeData: { dispatchMode: row.dispatchMode },
+        afterData: { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS, productId, quantity: qty },
+        remark: '确认入库后按可用成品库存自动切日本发',
+      } });
+    }
+    return switched;
+  }
+
   async switchChinaOrderToJapan(sourceRaw: string, idRaw: string) {
     const source = String(sourceRaw ?? '').trim();
     if (source !== 'rakuten') {

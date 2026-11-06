@@ -17,7 +17,7 @@ describe('batch inbound deletion', () => {
     } };
     const prisma = { $transaction: jest.fn((work) => work(tx)) };
     const audit = { create: jest.fn().mockResolvedValue(undefined) };
-    return { service: new BatchInboundService(prisma as any, audit as any), tx, audit };
+    return { service: new BatchInboundService(prisma as any, audit as any, { reassignUnpulledChinaOrdersAfterInbound: jest.fn().mockResolvedValue(0) } as any), tx, audit };
   }
 
   it('deletes a collected order and records the deletion', async () => {

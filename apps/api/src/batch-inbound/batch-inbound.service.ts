@@ -1,3 +1,4 @@
+import { OrdersService } from '../orders/orders.service';
 import { summarizeInboundPlan, validateInboundPacking } from './batch-inbound-plan';
 import { resolveInboundExpectedArrivalDate } from '../common/inbound-expected-arrival';
 import { stockTransaction, lockStockProducts, changeBoxStock } from '../inventory/stock-transaction';
@@ -79,6 +80,7 @@ interface BatchInboundConfirmResult {
   status: BatchInboundOrderStatus;
   idempotent: boolean;
   changedRows: number;
+  switchedToJapanCount?: number;
   detail: BatchInboundOrderDetail;
 }
 
@@ -99,6 +101,7 @@ export class BatchInboundService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
+    private readonly ordersService: OrdersService,
   ) {}
 
   async getUploadTemplate(): Promise<{ fileName: string; content: Buffer }> {
@@ -878,6 +881,9 @@ export class BatchInboundService {
         requestId,
         payload?.differenceReason,
       );
+      const switchedToJapanCount = await this.ordersService.reassignUnpulledChinaOrdersAfterInbound(
+        tx, [item].filter(item => this.resolveActualQuantity(item, actualQuantityByItemId) > 0).map(item => item.productId), operatorId, requestId,
+      );
       const status = await this.syncOrderStatus(tx, order.id, operatorId, requestId);
       const detail = await this.loadOrderDetailInTx(tx, order.id);
 
@@ -885,6 +891,7 @@ export class BatchInboundService {
         orderId: order.id.toString(),
         status,
         idempotent: false,
+        switchedToJapanCount,
         changedRows: 1,
         detail,
       };
@@ -939,6 +946,9 @@ export class BatchInboundService {
         );
       }
 
+      const switchedToJapanCount = await this.ordersService.reassignUnpulledChinaOrdersAfterInbound(
+        tx, pendingItems.filter(item => this.resolveActualQuantity(item, actualQuantityByItemId) > 0).map(item => item.productId), operatorId, requestId,
+      );
       const status = await this.syncOrderStatus(tx, order.id, operatorId, requestId);
       const detail = await this.loadOrderDetailInTx(tx, order.id);
 
@@ -946,6 +956,7 @@ export class BatchInboundService {
         orderId: order.id.toString(),
         status,
         idempotent: false,
+        switchedToJapanCount,
         changedRows: pendingItems.length,
         detail,
       };
@@ -994,6 +1005,9 @@ export class BatchInboundService {
         );
       }
 
+      const switchedToJapanCount = await this.ordersService.reassignUnpulledChinaOrdersAfterInbound(
+        tx, pendingItems.filter(item => this.resolveActualQuantity(item, actualQuantityByItemId) > 0).map(item => item.productId), operatorId, requestId,
+      );
       const status = await this.syncOrderStatus(tx, order.id, operatorId, requestId);
       const detail = await this.loadOrderDetailInTx(tx, order.id);
 
@@ -1001,6 +1015,7 @@ export class BatchInboundService {
         orderId: order.id.toString(),
         status,
         idempotent: false,
+        switchedToJapanCount,
         changedRows: pendingItems.length,
         detail,
       };

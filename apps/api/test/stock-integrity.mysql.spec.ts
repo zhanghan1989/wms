@@ -37,7 +37,7 @@ mysql('stock integrity against isolated MySQL', () => {
     operatorId = operator.id;
     const audit = new AuditService(db as any);
     inventory = new InventoryService(db as any, audit);
-    inbound = new BatchInboundService(db as any, audit);
+    inbound = new BatchInboundService(db as any, audit, new OrdersService(db as any));
     orders = new OrdersService(db as any);
   });
   afterAll(async () => { await db?.$disconnect(); });
@@ -216,7 +216,7 @@ mysql('stock integrity against isolated MySQL', () => {
     const f = await fixture(0);
     const order = await db.inboundOrder.create({ data: { orderNo: name(), orderType: 'manual_single', status: 'draft',
       createdBy: operatorId, items: { create: { boxId: f.box.id, productId: f.productId, qty: 7 } } }, include: { items: true } });
-    const service = new InboundService(db as any, new AuditService(db as any));
+    const service = new InboundService(db as any, new AuditService(db as any), new OrdersService(db as any));
     await service.confirm(String(order.id), operatorId);
     await expectBalance(f, 7);
     expect(await db.stockMovement.count({ where: { operationKey: `inbound-item:${order.items[0].id}` } })).toBe(1);
