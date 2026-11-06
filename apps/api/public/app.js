@@ -13343,7 +13343,7 @@ function setupOverseasOrderProcessingLoadObserver() {
 }
 
 async function loadOverseasOrderProcessingOrders() {
-  if (!state.token) {
+  if (!state.token || !canManageJapanOperations()) {
     state.overseasOrderProcessingOrders = [];
     state.overseasOrderProcessingVisibleCount = state.inventoryPageSize;
     state.selectedOverseasOrderKeys = new Set();
