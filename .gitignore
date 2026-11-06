@@ -10,3 +10,5 @@ dist/
 coverage/
 apps/api/data/
 apps/api/storage/
+
+/data/

@@ -251,6 +251,7 @@ jobs:
               docker logs --tail=120 wms_rakuten_egress || true
               exit 1
             fi
+            timed "preserve_api_data" bash scripts/wms-preserve-api-data.sh
             timed_retry "compose_up_api_recreate" 3 docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress up -d --force-recreate --remove-orphans api
             timed "compose_ps" docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress ps
             timed "api_logs_tail_120" sh -c "docker compose -f docker-compose.yml -f /tmp/wms-api-image-compose.yml --profile rakuten-egress logs --tail=120 api || true"

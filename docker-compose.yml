@@ -57,6 +57,7 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
+      - ./data:/app/data
       - backup_data:/app/storage/backups
     restart: unless-stopped
 

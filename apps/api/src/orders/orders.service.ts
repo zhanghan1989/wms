@@ -698,6 +698,7 @@ interface YamatoShipmentBatchSummary {
   exportedFileName: string | null;
   pdfFileName: string | null;
   pdfUploadedAt: string | null;
+  pdfAvailable: boolean;
   createdAt: string;
 }
 
@@ -2810,7 +2811,7 @@ export class OrdersService {
     }) : [];
     const printedByBatch = new Map(printedCounts.map(row => [row.batchId.toString(), row._count._all]));
 
-    return rows.map((row) => {
+    return Promise.all(rows.map(async (row) => {
       const printedPageCount = printedByBatch.get(row.id.toString()) ?? 0;
       const pageCount = Number(row.pageCount ?? row._count.pages ?? 0);
       return {
@@ -2820,11 +2821,12 @@ export class OrdersService {
         printedPageCount,
         pendingPageCount: Math.max(pageCount - printedPageCount, 0),
         exportedFileName: row.exportedFileName ?? null,
+        pdfAvailable: await this.isYamatoPdfAvailable(row.pdfFilePath),
         pdfFileName: row.pdfFileName ?? null,
         pdfUploadedAt: row.pdfUploadedAt ? row.pdfUploadedAt.toISOString() : null,
         createdAt: row.createdAt.toISOString(),
       };
-    });
+    }));
   }
 
   private overdueSnapshot?: Awaited<ReturnType<OrdersService['buildOverdueOrders']>>;
@@ -7096,7 +7098,23 @@ export class OrdersService {
         const printed = await tx.yamatoShipmentBatchPage.count({ where: { batchId: batch.id, printedAt: { not: null } } });
         const jobs = await tx.printJob.count({ where: { batchPage: { batchId: batch.id },
           status: { in: [PrintJobStatus.pending, PrintJobStatus.claimed, PrintJobStatus.completed] } } });
-        if (printed || jobs) throw new BadRequestException('该批次已有打印记录或执行中任务，不能替换 PDF');
+        // Recover only a missing file with the original label identities. Keep every
+        // page and print job intact so already printed labels cannot be issued again.
+        const currentBatch = await tx.yamatoShipmentBatch.findUnique({ where: { id: batch.id } });
+        const restoring = currentBatch?.status === YAMATO_BATCH_STATUS.PDF_READY
+          && !(await this.isYamatoPdfAvailable(currentBatch.pdfFilePath));
+        if (restoring) {
+          const activeJobs = await tx.printJob.count({ where: { batchPage: { batchId: batch.id },
+            status: { in: [PrintJobStatus.pending, PrintJobStatus.claimed] } } });
+          if (activeJobs) throw new BadRequestException('该批次有执行中或待确认的打印任务，请先在「查看 / 恢复打印任务」中处理后恢复 PDF');
+          const currentPages = await tx.yamatoShipmentBatchPage.findMany({ where: { batchId: batch.id }, orderBy: [{ pageNo: 'asc' }, { id: 'asc' }] });
+          if (currentPages.length !== batch.pages.length || currentPages.some((page, index) =>
+            page.id !== batch.pages[index].id || page.pageNo !== index + 1 || page.trackingNo !== trackingNumbers[index])) {
+            throw new BadRequestException('恢复 PDF 必须使用原批次的全部面单，且每张面单的运单号必须与原记录一致');
+          }
+        } else if (printed || jobs) {
+          throw new BadRequestException('该批次已有打印记录或执行中任务，不能替换 PDF');
+        }
         await tx.yamatoShipmentBatch.update({
           where: { id: batch.id },
           data: {
@@ -7107,6 +7125,8 @@ export class OrdersService {
             pageCount: parsedPages.length,
           },
         });
+
+        if (restoring) return;
 
         for (let index = 0; index < batch.pages.length; index += 1) {
           const page = batch.pages[index];
@@ -7870,6 +7890,16 @@ export class OrdersService {
     }
     const bytes = await target.save();
     return Buffer.from(bytes);
+  }
+
+  private async isYamatoPdfAvailable(filePath: string | null | undefined): Promise<boolean> {
+    if (!filePath) return false;
+    try {
+      return (await stat(filePath)).isFile();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
   }
 
   private buildYamatoBatchDir(batchId: string): string {

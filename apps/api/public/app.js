@@ -14191,9 +14191,10 @@ function renderYamatoShipmentBatchControls() {
   const scanInput = $("overseasYamatoScanInput");
   const currentBatch = getSelectedYamatoShipmentBatch();
   const isCompleted = String(state.selectedOverseasPickingBatchDetail?.status || "") === "completed";
-  const canUploadPdf = Boolean(currentBatch && !isCompleted && Number(currentBatch.printedPageCount || 0) === 0);
-  const canReprint = Boolean(currentBatch && currentBatch.status === "pdf_ready");
-  const canScanPrint = Boolean(currentBatch && currentBatch.status === "pdf_ready" && !isCompleted);
+  const pdfMissing = currentBatch?.status === "pdf_ready" && currentBatch.pdfAvailable === false;
+  const canUploadPdf = Boolean(currentBatch && !isCompleted && (pdfMissing || Number(currentBatch.printedPageCount || 0) === 0));
+  const canReprint = Boolean(currentBatch && currentBatch.status === "pdf_ready" && !pdfMissing);
+  const canScanPrint = Boolean(currentBatch && currentBatch.status === "pdf_ready" && !isCompleted && !pdfMissing);
 
   if (meta) {
     if (!currentBatch) {
@@ -14215,7 +14216,7 @@ function renderYamatoShipmentBatchControls() {
   if (uploadBtn) {
     uploadBtn.disabled = !canUploadPdf;
     uploadBtn.textContent =
-      currentBatch?.status === "pdf_ready" ? "3.重新上传 Yamato PDF" : "3.上传 Yamato PDF";
+      pdfMissing ? "3.恢复 Yamato PDF" : currentBatch?.status === "pdf_ready" ? "3.重新上传 Yamato PDF" : "3.上传 Yamato PDF";
   }
   if (scanBtn) {
     scanBtn.disabled = !canScanPrint;
@@ -14237,6 +14238,8 @@ function renderYamatoShipmentBatchControls() {
   if (summary) {
     if (!currentBatch) {
       summary.textContent = "";
+    } else if (pdfMissing) {
+      summary.textContent = `批次 #${currentBatch.id} 的 PDF 文件缺失，请上传原批次全部 PDF 恢复；已打印 ${currentBatch.printedPageCount} 张的进度会保留。如有未结束的打印任务，请先在「查看 / 恢复打印任务」中处理。`;
     } else if (currentBatch.status !== "pdf_ready") {
       summary.textContent =
         `当前拣货批次对应的 Yamato 批次 #${currentBatch.id} 已生成 Excel，尚未上传 PDF。应上传 ${currentBatch.pageCount} 张面单（相同订单号已合并计算）。${getYamatoPrintModeSummary()}`;
