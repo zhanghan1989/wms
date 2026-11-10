@@ -11,7 +11,7 @@ const base = new PrismaClient();
 const prisma = installCompanyIsolation(base);
 async function main() {
   if (!process.env.XIYA_EXPORT_API_KEY) throw new Error('Xiya export key is not configured');
-  const names = [process.env.XIYA_WMS_COMPANY_NAME || 'XYJG', process.env.XIYA_QILIN_WMS_COMPANY_NAME || '祈麟双子'];
+  const names = [process.env.XIYA_WMS_COMPANY_NAME || 'XYJG', process.env.XIYA_QILIN_WMS_COMPANY_NAME || 'QLSZ'];
   for (const name of names) {
     const company = await prisma.company.findUnique({ where: { name } });
     if (!company || company.status !== 1) throw new Error(`Active WMS company missing: ${name}`);

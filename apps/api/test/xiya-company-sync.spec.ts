@@ -5,7 +5,7 @@ import { resolveXiyaCompany, setXiyaCompanyParams } from '../src/common/xiya-com
 
 const scope = <T>(id: bigint, fn: () => T) => companyContext.run(
   { companyId: id, systemAdmin: true, warehouse: false, userId: 0n }, fn);
-const companies = [{ id: 1n, name: 'XYJG', status: 1 }, { id: 2n, name: '祈麟双子', status: 1 }];
+const companies = [{ id: 1n, name: 'XYJG', status: 1 }, { id: 2n, name: 'QLSZ', status: 1 }];
 const companyModel = () => ({
   findUnique: jest.fn(async ({ where }) => companies.find((row) => row.id === where.id || row.name === where.name)),
   findMany: jest.fn().mockResolvedValue(companies),

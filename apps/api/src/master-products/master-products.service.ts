@@ -616,7 +616,7 @@ export class MasterProductsService {
     try {
       const companies = await this.prisma.company.findMany({
         where: { status: 1, name: { in: [process.env.XIYA_WMS_COMPANY_NAME || 'XYJG',
-          process.env.XIYA_QILIN_WMS_COMPANY_NAME || '祈麟双子'] } },
+          process.env.XIYA_QILIN_WMS_COMPANY_NAME || 'QLSZ'] } },
         select: { id: true, name: true }, orderBy: { id: 'asc' },
       });
       if (!companies.length) throw new BadRequestException('没有已启用且配置 Xiya 接入的公司');

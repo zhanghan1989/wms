@@ -9,7 +9,7 @@ const prisma = installCompanyIsolation(base);
 async function main() {
   const mode = process.env.QILIN_PRODUCT_SYNC_MODE || 'inspect';
   if (!['inspect', 'import'].includes(mode)) throw new Error('Unsupported operation');
-  const company = await prisma.company.findUnique({ where: { name: process.env.XIYA_QILIN_WMS_COMPANY_NAME || '祈麟双子' } });
+  const company = await prisma.company.findUnique({ where: { name: process.env.XIYA_QILIN_WMS_COMPANY_NAME || 'QLSZ' } });
   if (!company || company.status !== 1) throw new Error('Active Qilin company not found');
   const xyjg = await prisma.company.findUnique({ where: { name: process.env.XIYA_WMS_COMPANY_NAME || 'XYJG' } });
   if (!xyjg || xyjg.id === company.id) throw new Error('Company mapping is invalid');

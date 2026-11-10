@@ -26,7 +26,7 @@ function setup() {
     rakutenRmsConnections: [{ id: '10', shop: { id: '2' }, status: 1 }],
     rakutenShopAutomationHealthItems: [],
   };
-  const context: any = { isCurrentUserSystemAdmin: () => false, isWarehouseOnlyAccount: () => true, companyName: (id: string) => ({ '1': 'XYJG', '2': '祈麟双子' }[id] || '未分配'), state, $: (id: string) => elements[id], escapeHtml: (s: string) => s };
+  const context: any = { isCurrentUserSystemAdmin: () => false, isWarehouseOnlyAccount: () => true, companyName: (id: string) => ({ '1': 'XYJG', '2': 'QLSZ' }[id] || '未分配'), state, $: (id: string) => elements[id], escapeHtml: (s: string) => s };
   runInNewContext(app.slice(app.indexOf('function hasAdminAccess('), app.indexOf('function isWarehouseOnlyAccount(')), context);
   runInNewContext(app.slice(app.indexOf('function renderShopsTable()'), app.indexOf('async function loadAmazonSpApiConnections()')), context);
   runInNewContext(app.slice(app.indexOf('function renderManualOrderShopOptions()'), app.indexOf('async function openAmazonManualOrderModal()')), context);
@@ -140,7 +140,7 @@ describe('dynamic shop platform UI', () => {
     context.renderShopsTable();
     expect(elements.shopsHead.innerHTML).toContain('<th>所属公司</th>');
     expect(elements.shopsBody.innerHTML).toContain('data-label="所属公司">XYJG</td>');
-    expect(elements.shopsBody.innerHTML).toContain('data-label="所属公司">祈麟双子</td>');
+    expect(elements.shopsBody.innerHTML).toContain('data-label="所属公司">QLSZ</td>');
     expect(elements.shopsBody.innerHTML).toContain('所属公司：XYJG');
     expect(elements.shopsBody.innerHTML).toContain('Amazon Store');
     expect(elements.shopsBody.innerHTML).toContain('Twin Store');

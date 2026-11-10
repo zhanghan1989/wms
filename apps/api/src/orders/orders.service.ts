@@ -9278,7 +9278,7 @@ export class OrdersService {
     const ownerId = row.companyId ?? companyContext.getStore()?.companyId;
     if (ownerId !== undefined) {
       const owner = await this.prisma.company.findUnique({ where: { id: ownerId } });
-      if (owner?.name === (process.env.XIYA_QILIN_WMS_COMPANY_NAME || '祈麟双子')) return;
+      if (owner?.name === (process.env.XIYA_QILIN_WMS_COMPANY_NAME || 'QLSZ')) return;
     }
     const orderId = String(row.orderId ?? '').trim();
     const orderRows = orderId

@@ -24,7 +24,7 @@ export async function resolveXiyaCompany(prisma: PrismaClient): Promise<XiyaComp
     ? { id: selectedId } : { name: process.env.XIYA_WMS_COMPANY_NAME || 'XYJG' } });
   if (!company || company.status !== 1) throw new BadRequestException('公司不存在或已停用');
   const companyId = company.id;
-  if (company.name === (process.env.XIYA_QILIN_WMS_COMPANY_NAME || '祈麟双子')) {
+  if (company.name === (process.env.XIYA_QILIN_WMS_COMPANY_NAME || 'QLSZ')) {
     let storeAliases: Record<string, string> = {};
     try {
       const parsed: unknown = JSON.parse(process.env.XIYA_QILIN_STORE_ALIASES || '{}');
