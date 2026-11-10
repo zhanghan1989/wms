@@ -44,10 +44,16 @@ printf '\n== Kernel OOM events (last 7 days) ==\n'
 journalctl -k --since '7 days ago' --no-pager 2>/dev/null | awk 'tolower($0) ~ /out of memory|oom-kill|killed process/' | tail -n 25 || true
 printf '\n== MySQL memory settings and utilization (no business rows) ==\n'
 docker exec -i wms_db sh -c 'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql -uroot --batch wms_v1' <<'SQL'
-SHOW GLOBAL VARIABLES WHERE Variable_name IN ('innodb_buffer_pool_size','innodb_buffer_pool_instances','max_connections','thread_cache_size','table_open_cache','table_definition_cache','performance_schema','tmp_table_size','max_heap_table_size','sort_buffer_size','join_buffer_size','read_buffer_size','read_rnd_buffer_size');
-SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Threads_running','Max_used_connections','Created_tmp_tables','Created_tmp_disk_tables','Innodb_buffer_pool_pages_total','Innodb_buffer_pool_pages_data','Innodb_buffer_pool_pages_free','Innodb_buffer_pool_reads','Innodb_buffer_pool_read_requests');
+SHOW GLOBAL VARIABLES WHERE Variable_name IN ('innodb_buffer_pool_size','innodb_buffer_pool_instances','max_connections','thread_cache_size','table_open_cache','table_definition_cache','performance_schema','tmp_table_size','max_heap_table_size','sort_buffer_size','join_buffer_size','read_buffer_size','read_rnd_buffer_size','temptable_max_ram','temptable_max_mmap','table_open_cache_instances','performance_schema_digests_size','performance_schema_events_statements_history_long_size','max_allowed_packet');
+SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime','Threads_connected','Threads_running','Max_used_connections','Created_tmp_tables','Created_tmp_disk_tables','Innodb_buffer_pool_pages_total','Innodb_buffer_pool_pages_data','Innodb_buffer_pool_pages_free','Innodb_buffer_pool_reads','Innodb_buffer_pool_read_requests','Open_tables','Opened_tables','Table_open_cache_hits','Table_open_cache_misses','Table_open_cache_overflows','Memory_used','Memory_used_initial');
 SELECT event_name, current_number_of_bytes_used FROM performance_schema.memory_summary_global_by_event_name ORDER BY current_number_of_bytes_used DESC LIMIT 12;
+SELECT ROUND(SUM(current_number_of_bytes_used)/1048576,1) AS tracked_current_mib FROM performance_schema.memory_summary_global_by_event_name;
+SELECT event_name, ROUND(current_number_of_bytes_used/1048576,1) AS current_mib, ROUND(high_number_of_bytes_used/1048576,1) AS peak_mib FROM performance_schema.memory_summary_global_by_event_name ORDER BY high_number_of_bytes_used DESC LIMIT 20;
+SELECT event_name, ROUND(SUM(current_number_of_bytes_used)/1048576,1) AS current_mib FROM performance_schema.memory_summary_by_thread_by_event_name WHERE current_number_of_bytes_used > 0 GROUP BY event_name ORDER BY SUM(current_number_of_bytes_used) DESC LIMIT 10;
 SQL
+printf '\n== MySQL address-space summary (KiB) ==\n'
+pid=$(docker inspect --format '{{.State.Pid}}' wms_db)
+cat "/proc/$pid/smaps_rollup"
 printf '\n== Public service local health ==\n'
 curl --max-time 10 -sS -o /dev/null -w 'root_http=%{http_code} seconds=%{time_total}\n' http://127.0.0.1:3000/
 curl --max-time 10 -sS -o /dev/null -w 'auth_http=%{http_code} seconds=%{time_total}\n' http://127.0.0.1:3000/api/auth/me
