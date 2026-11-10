@@ -11,6 +11,7 @@ on:
         options:
           - inspect
           - import
+          - diagnose-memory
 
 permissions:
   contents: read
@@ -31,7 +32,12 @@ jobs:
           SYNC_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          case "$SYNC_MODE" in inspect|import) ;; *) exit 1 ;; esac
+          case "$SYNC_MODE" in inspect|import|diagnose-memory) ;; *) exit 1 ;; esac
+          if [ "$SYNC_MODE" = diagnose-memory ]; then
+            bash -n scripts/wms-memory-diagnostics.sh
+            printf 'QILIN_SYNC_SCRIPT_B64=%s\n' "$(base64 -w0 scripts/wms-memory-diagnostics.sh)" >> "$GITHUB_ENV"
+            exit 0
+          fi
           node --check scripts/sync-qilin-products.cjs
           printf 'QILIN_SYNC_SCRIPT_B64=%s\n' "$(base64 -w0 scripts/sync-qilin-products.cjs)" >> "$GITHUB_ENV"
       - name: Run in existing API container
@@ -48,5 +54,9 @@ jobs:
           envs: QILIN_SYNC_SCRIPT_B64,QILIN_PRODUCT_SYNC_MODE
           script: |
             set -euo pipefail
-            case "$QILIN_PRODUCT_SYNC_MODE" in inspect|import) ;; *) exit 1 ;; esac
+            case "$QILIN_PRODUCT_SYNC_MODE" in inspect|import|diagnose-memory) ;; *) exit 1 ;; esac
+            if [ "$QILIN_PRODUCT_SYNC_MODE" = diagnose-memory ]; then
+              printf '%s' "$QILIN_SYNC_SCRIPT_B64" | base64 -d | timeout --kill-after=10s 180s bash
+              exit 0
+            fi
             printf '%s' "$QILIN_SYNC_SCRIPT_B64" | base64 -d | timeout --kill-after=10s 420s docker exec -i -e QILIN_PRODUCT_SYNC_MODE="$QILIN_PRODUCT_SYNC_MODE" wms_api node
