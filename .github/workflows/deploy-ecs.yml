@@ -185,22 +185,7 @@ jobs:
             timed "git_checkout_main" git checkout main
             timed "git_reset_deploy_ref" git reset --hard "${DEPLOY_REF}"
             # Persist the WMS company rename before Compose recreates the API.
-            python3 - <<'PY'
-            from pathlib import Path
-            import re
-            from shutil import copy2
-
-            path = Path('.env')
-            content = path.read_text()
-            pattern = r'(?m)^[ \t]*(?:export[ \t]+)?XIYA_QILIN_WMS_COMPANY_NAME[ \t]*=.*$'
-            updated, count = re.subn(pattern, 'XIYA_QILIN_WMS_COMPANY_NAME=QLSZ', content)
-            if not count:
-                updated = content.rstrip('\n') + '\nXIYA_QILIN_WMS_COMPANY_NAME=QLSZ\n'
-            if updated != content:
-                copy2(path, path.with_name('.env.before-qlsz-rename'))
-                path.write_text(updated)
-            print('Production config: XIYA_QILIN_WMS_COMPANY_NAME=QLSZ')
-            PY
+            timed "update_qlsz_company_config" python3 scripts/wms-update-qilin-company-name.py
             DEPLOY_SESSION_VERSION="$(git rev-parse HEAD)"
             export DEPLOY_SESSION_VERSION
             echo "Using DEPLOY_SESSION_VERSION=${DEPLOY_SESSION_VERSION}"
