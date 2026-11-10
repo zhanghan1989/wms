@@ -1,0 +1,18 @@
+-- DRAFT ONLY: not executed. Apply only inside an approved maintenance window.
+-- Capture existing persisted values and back up mysqld-auto.cnf first.
+-- MySQL 8.0.45; SET PERSIST_ONLY changes next-start configuration, not runtime.
+-- This is NOT a Prisma migration and must never run as part of normal deployment.
+SET PERSIST_ONLY max_connections = 40;
+SET PERSIST_ONLY table_open_cache = 2048;
+SET PERSIST_ONLY table_open_cache_instances = 2;
+SET PERSIST_ONLY table_definition_cache = 512;
+SET PERSIST_ONLY performance_schema_digests_size = 3000;
+SET PERSIST_ONLY performance_schema_events_statements_history_long_size = 1000;
+SET PERSIST_ONLY performance_schema_events_waits_history_long_size = 1000;
+SET PERSIST_ONLY performance_schema_events_stages_history_long_size = 1000;
+SET PERSIST_ONLY performance_schema_events_transactions_history_long_size = 1000;
+-- Bound future temporary-table RAM growth; current observed peak is ~11 MiB.
+-- This does not reserve 128 MiB or release 896 MiB of currently allocated memory.
+SET PERSIST_ONLY temptable_max_ram = 134217728;
+-- Keep performance_schema enabled and innodb_buffer_pool_size at 128 MiB.
+-- Preserve transaction durability, binary logging, SQL modes and authentication.
