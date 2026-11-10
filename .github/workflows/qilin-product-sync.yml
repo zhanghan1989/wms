@@ -12,6 +12,7 @@ on:
           - inspect
           - import
           - diagnose-memory
+          - mysql-memory-plan
           - memory-headroom
 
 permissions:
@@ -33,7 +34,12 @@ jobs:
           SYNC_MODE: ${{ inputs.mode }}
         run: |
           set -euo pipefail
-          case "$SYNC_MODE" in inspect|import|diagnose-memory|memory-headroom) ;; *) exit 1 ;; esac
+          case "$SYNC_MODE" in inspect|import|diagnose-memory|memory-headroom|mysql-memory-plan) ;; *) exit 1 ;; esac
+          if [ "$SYNC_MODE" = mysql-memory-plan ]; then
+            bash -n scripts/wms-mysql-memory-plan-baseline.sh
+            printf 'QILIN_SYNC_SCRIPT_B64=%s\n' "$(base64 -w0 scripts/wms-mysql-memory-plan-baseline.sh)" >> "$GITHUB_ENV"
+            exit 0
+          fi
           if [ "$SYNC_MODE" = memory-headroom ]; then
             bash -n scripts/wms-memory-headroom.sh
             printf 'QILIN_SYNC_SCRIPT_B64=%s\n' "$(base64 -w0 scripts/wms-memory-headroom.sh)" >> "$GITHUB_ENV"
@@ -60,8 +66,8 @@ jobs:
           envs: QILIN_SYNC_SCRIPT_B64,QILIN_PRODUCT_SYNC_MODE
           script: |
             set -euo pipefail
-            case "$QILIN_PRODUCT_SYNC_MODE" in inspect|import|diagnose-memory|memory-headroom) ;; *) exit 1 ;; esac
-            if [ "$QILIN_PRODUCT_SYNC_MODE" = diagnose-memory ] || [ "$QILIN_PRODUCT_SYNC_MODE" = memory-headroom ]; then
+            case "$QILIN_PRODUCT_SYNC_MODE" in inspect|import|diagnose-memory|memory-headroom|mysql-memory-plan) ;; *) exit 1 ;; esac
+            if [ "$QILIN_PRODUCT_SYNC_MODE" = diagnose-memory ] || [ "$QILIN_PRODUCT_SYNC_MODE" = memory-headroom ] || [ "$QILIN_PRODUCT_SYNC_MODE" = mysql-memory-plan ]; then
               printf '%s' "$QILIN_SYNC_SCRIPT_B64" | base64 -d | timeout --kill-after=10s 180s bash
               exit 0
             fi
