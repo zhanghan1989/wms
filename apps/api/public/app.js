@@ -3282,6 +3282,9 @@ function applyRoleView() {
     $(id)?.classList.toggle("hidden", !canManageJapanOperations());
   });
   document.querySelectorAll('.warehouse-operation-only').forEach((node) => node.classList.toggle("hidden", !canManageJapanOperations()));
+  setTextById("returnRecordManagementNote", canManageJapanOperations()
+    ? "支持新增返回记录、批量导入 Excel、批量删除。产品名称会根据产品ID自动匹配主表。"
+    : "仅可检索和查看本公司的返品记录。");
   $("openDepartmentManageModal")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
   document.querySelectorAll('[data-center-view="settings"], [data-center-view="templates"]').forEach((tab) => {
     tab.classList.remove("hidden");
@@ -3444,10 +3447,6 @@ function switchPanel(targetId, { markAsUserNavigation = true } = {}) {
     Promise.all([
       state.chinaOrderProcessingOrders.length ? Promise.resolve() : loadChinaOrderProcessingOrders()]).catch((error) => showToast(error.message, true),
     );
-    return;
-  }
-  if (targetId === "returnManagement" && state.token && !state.returnRecords.length) {
-    loadReturnRecords().catch((error) => showToast(error.message, true));
     return;
   }
   if (targetId === "overseasPickingBatchManagement" && state.token) {
@@ -12692,7 +12691,7 @@ function renderReturnRecordsTable() {
       const id = String(item.id || "");
       return `
         <tr>
-          <td><input type="checkbox" class="return-record-select" data-id="${escapeHtml(id)}" ${
+          <td class="${canManageJapanOperations() ? "" : "hidden"}"><input type="checkbox" class="return-record-select" data-id="${escapeHtml(id)}" ${
             state.selectedReturnRecordIds.has(id) ? "checked" : ""
           } /></td>
           <td>${escapeHtml(formatDate(item.createdAt))}</td>
@@ -12718,8 +12717,8 @@ function renderReturnRecordsTable() {
 }
 
 function loadMoreReturnRecordsIfNeeded() {
-  const panel = $("returnManagement");
-  if (!panel || !panel.classList.contains("active")) return;
+  const panel = $("orderProcessing");
+  if (!panel || !panel.classList.contains("active") || !$("returnRecordsDetails")?.open) return;
   const rows = getReturnRecordsDisplayRows();
   if (state.returnRecordsVisibleCount >= rows.length) {
     if (!state.returnRecordSearchResult && historyHasMore('returns')) loadReturnRecords(false).catch(error => showToast(error.message, true));
@@ -19124,17 +19123,20 @@ function bindForms() {
     switchPanel("overseasWarehouse");
   });
 
-  $("openReturnManagementPanel")?.addEventListener("click", async () => {
+  $("returnRecordsDetails")?.addEventListener("toggle", async (event) => {
+    const details = event.currentTarget;
+    details.querySelector("summary").textContent = details.open ? "收起返品一览" : "展开返品一览";
+    if (!details.open) {
+      state.selectedReturnRecordIds = new Set();
+      renderReturnRecordsTable();
+      return;
+    }
     try {
-      await loadReturnRecords();
-      switchPanel("returnManagement");
+      if (!state.returnRecordSearchResult) await loadReturnRecords();
+      else setupReturnRecordsLoadObserver();
     } catch (error) {
       showToast(error.message, true);
     }
-  });
-
-  $("backToOverseasWarehouseFromReturnBtn")?.addEventListener("click", () => {
-    switchPanel("overseasWarehouse");
   });
 
   $("openReturnRecordCreateModal")?.addEventListener("click", () => {
@@ -19159,6 +19161,7 @@ function bindForms() {
     try {
       await withBusyButton(button, "检索中...", async () => {
         state.returnRecordSearchResult = await searchReturnRecords(keyword);
+        $("returnRecordsDetails").open = true;
         state.returnRecordsVisibleCount = state.inventoryPageSize;
         state.selectedReturnRecordIds = new Set();
         renderReturnRecordSearchSummary();
@@ -19182,6 +19185,7 @@ function bindForms() {
   });
   $("returnRecordSearchClearBtn")?.addEventListener("click", () => {
     clearReturnRecordSearchResults();
+    if ($("returnRecordsDetails")?.open) loadReturnRecords().catch((error) => showToast(error.message, true));
     $("returnRecordSearchInput")?.focus();
   });
 

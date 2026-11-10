@@ -11,10 +11,12 @@ export function isCompanySalesDashboardPath(path: string): boolean {
 }
 
 export function isWarehouseWorkPath(path: string, method: string): boolean {
+  // Chinese companies may query returns; only warehouse/system accounts may write.
+  if (/^return-records(\/|$)/.test(path) && !['GET', 'HEAD', 'OPTIONS'].includes(method)) return true;
   // FBA workflows use the requesting company's data scope.
   if (/^inventory\/fba-replenishments(\/|$)/.test(path)
     || /^master-products\/[^/]+\/fba-replenishments$/.test(path)) return false;
-  if (/^(batch-inbound|inbound|outbound|stocktake|stocktake-planner|return-records|print-jobs)(\/|$)/.test(path)
+  if (/^(batch-inbound|inbound|outbound|stocktake|stocktake-planner|print-jobs)(\/|$)/.test(path)
     || /^orders\/overseas-warehouse(\/|$)/.test(path)) return true;
   if (/^inventory\/(replace-box|dashboard\/(amazon-replenishment|production-recommendations))/.test(path)) return true;
   if (/^master-products\/[^/]+\/(box-inventories|print-settings)(\/|$)/.test(path)

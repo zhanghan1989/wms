@@ -41,6 +41,30 @@ describe('company request boundaries', () => {
       }
     }
   });
+  it.each(['employee', 'admin'])('allows Chinese %s scoped return queries, blocks writes and keeps warehouse access global', async role => {
+    for (const [method, originalUrl] of [
+      ['GET', '/api/return-records?page=1'], ['GET', '/api/return-records/search?q=test'],
+      ['GET', '/api/return-records/search-suggestions?q=test'], ['POST', '/api/return-records'],
+      ['POST', '/api/return-records/import-excel'], ['POST', '/api/return-records/delete-batch'],
+    ]) {
+      const options = { user: { id: 5n, role, companyId: 2n }, method, originalUrl };
+      const f = fixture(options);
+      if (method === 'GET') {
+        expect(await firstValueFrom(await f.interceptor.intercept(f.context, f.next)))
+          .toMatchObject({ companyId: 2n, warehouse: false });
+      } else {
+        await expect(f.interceptor.intercept(f.context, f.next)).rejects.toBeInstanceOf(ForbiddenException);
+      }
+      const forged = fixture({ ...options, headers: { 'x-company-id': '1' } });
+      await expect(forged.interceptor.intercept(forged.context, forged.next)).rejects.toBeInstanceOf(ForbiddenException);
+      for (const headers of [{}, { 'x-company-id': '2' }]) {
+        const warehouse = fixture({ ...options, headers,
+          user: { id: 6n, role, department: 'overseas_warehouse', companyId: null } });
+        expect(await firstValueFrom(await warehouse.interceptor.intercept(warehouse.context, warehouse.next)))
+          .toMatchObject({ companyId: undefined, warehouse: true });
+      }
+    }
+  });
   it.each([
     ['GET', '/api/amazon-sp-api/connections'],
     ['POST', '/api/amazon-sp-api/oauth/start'],

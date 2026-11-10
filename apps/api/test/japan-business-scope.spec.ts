@@ -276,7 +276,7 @@ describe('account UI boundaries', () => {
       }
       return elements.get(id);
     };
-    const context: any = { state: { me }, $, document: { querySelector: () => null, querySelectorAll: () => [] }, canCurrentUserEditOrders: () => false };
+    const context: any = { state: { me }, $, setTextById: (id: string, text: string) => { $(id).textContent = text; }, document: { querySelector: () => null, querySelectorAll: () => [] }, canCurrentUserEditOrders: () => false };
     runInNewContext(source.slice(source.indexOf('function hasAdminAccess('), source.indexOf('function getDepartmentText('))
       + source.slice(source.indexOf('function applyRoleView('), source.indexOf('function setAuthGate(')), context);
     context.applyRoleView();
@@ -285,6 +285,9 @@ describe('account UI boundaries', () => {
       'rakutenBatchDeleteBtn', 'openRakutenComboProductManagementPanel', 'openOverseasOrderProcessingPanel']) {
       expect(!$(id).classList.contains('hidden')).toBe(expected);
     }
+    expect($('returnRecordManagementNote').textContent).toBe(expected
+      ? '支持新增返回记录、批量导入 Excel、批量删除。产品名称会根据产品ID自动匹配主表。'
+      : '仅可检索和查看本公司的返品记录。');
     expect(!$('openRakutenOrderImportPanel').classList.contains('hidden')).toBe(true);
     expect(!$('openFbaReplenishmentPanel').classList.contains('hidden')).toBe(true);
     expect(!$('openRakutenDashboardPanel').classList.contains('hidden')).toBe(true);

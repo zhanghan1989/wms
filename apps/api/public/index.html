@@ -318,7 +318,6 @@
               <button type="button" id="openBoxManageModal">箱号管理</button>
               <button type="button" id="openShelfManageModal">货架管理</button>
               <button type="button" id="openStocktakePlannerPanel">库存盘点</button>
-              <button type="button" id="openReturnManagementPanel">返品管理</button>
               <button type="button" id="openEmptyBoxManageModal" class="btn-with-badge">
                 空箱管理
                 <span id="emptyBoxManageBadge" class="quick-badge hidden">0</span>
@@ -1204,6 +1203,57 @@
             </div>
           </div>
         </article>
+
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h3>返品管理</h3>
+              <p id="returnRecordManagementNote" class="muted">可检索和查看返品记录。</p>
+            </div>
+            <div class="actions warehouse-operation-only hidden">
+              <button id="openReturnRecordCreateModal" type="button">新增返回记录</button>
+              <button id="openReturnRecordImportModal" type="button">批量导入</button>
+              <button id="returnRecordBatchDeleteBtn" class="danger" type="button" disabled>批量删除</button>
+            </div>
+          </div>
+          <div class="action-row order-search-row">
+            <input id="returnRecordSearchInput" type="text" autocomplete="off" list="returnRecordSearchSuggestionsList" placeholder="输入 注文番号、追跡番号、発送人或電話番号" />
+            <datalist id="returnRecordSearchSuggestionsList"></datalist>
+            <button id="returnRecordSearchSubmitBtn" type="button">检索</button>
+            <button id="returnRecordSearchClearBtn" type="button" class="ghost">清空</button>
+          </div>
+          <p id="returnRecordSearchSummary" class="muted order-import-note">请输入条件后检索。</p>
+          <details id="returnRecordsDetails" class="return-records-details">
+            <summary>展开返品一览</summary>
+            <div id="returnRecordsTableWrap" class="master-product-table-wrap return-records-table-wrap">
+              <table class="return-records-table">
+                <thead>
+                  <tr>
+                    <th class="warehouse-operation-only hidden"><input id="returnRecordsSelectAll" type="checkbox" /></th>
+                    <th>作成时间</th>
+                    <th>発送人</th>
+                    <th>運送会社</th>
+                    <th>追跡番号</th>
+                    <th>快递费</th>
+                    <th>郵便番号</th>
+                    <th>住所</th>
+                    <th>電話番号</th>
+                    <th>販売サイト</th>
+                    <th>注文番号</th>
+                    <th>产品ID</th>
+                    <th>产品名称</th>
+                    <th>是否已拆封使用</th>
+                    <th>是否可以再入库</th>
+                  </tr>
+                </thead>
+                <tbody id="returnRecordsBody">
+                  <tr><td colspan="15" class="muted">暂无返品记录。</td></tr>
+                </tbody>
+              </table>
+              <div id="returnRecordsLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
+            </div>
+          </details>
+        </article>
       </section>
 
       <section class="panel" id="overseasOrderProcessing">
@@ -1999,61 +2049,6 @@
         </article>
       </section>
 
-      <section class="panel" id="returnManagement">
-        <div class="panel-head">
-          <h2>返品管理</h2>
-          <div class="panel-tools">
-            <button id="backToOverseasWarehouseFromReturnBtn" class="ghost" type="button">返回海外仓管理</button>
-          </div>
-        </div>
-        <article class="card">
-          <div class="card-head">
-            <div>
-              <h3>返品管理一览</h3>
-              <p class="muted">支持新增返回记录、批量导入 Excel、批量删除。产品名称会根据产品ID自动匹配主表。</p>
-            </div>
-            <div class="actions">
-              <button id="openReturnRecordCreateModal" type="button">新增返回记录</button>
-              <button id="openReturnRecordImportModal" type="button">批量导入</button>
-              <button id="returnRecordBatchDeleteBtn" class="danger" type="button" disabled>批量删除</button>
-            </div>
-          </div>
-          <div class="action-row order-search-row">
-            <input id="returnRecordSearchInput" type="text" autocomplete="off" list="returnRecordSearchSuggestionsList" placeholder="输入 注文番号、追跡番号、発送人或電話番号" />
-            <datalist id="returnRecordSearchSuggestionsList"></datalist>
-            <button id="returnRecordSearchSubmitBtn" type="button">检索</button>
-            <button id="returnRecordSearchClearBtn" type="button" class="ghost">清空</button>
-          </div>
-          <p id="returnRecordSearchSummary" class="muted order-import-note">请输入条件后检索。</p>
-          <div id="returnRecordsTableWrap" class="master-product-table-wrap return-records-table-wrap">
-            <table class="return-records-table">
-              <thead>
-                <tr>
-                  <th><input id="returnRecordsSelectAll" type="checkbox" /></th>
-                  <th>作成时间</th>
-                  <th>発送人</th>
-                  <th>運送会社</th>
-                  <th>追跡番号</th>
-                  <th>快递费</th>
-                  <th>郵便番号</th>
-                  <th>住所</th>
-                  <th>電話番号</th>
-                  <th>販売サイト</th>
-                  <th>注文番号</th>
-                  <th>产品ID</th>
-                  <th>产品名称</th>
-                  <th>是否已拆封使用</th>
-                  <th>是否可以再入库</th>
-                </tr>
-              </thead>
-              <tbody id="returnRecordsBody">
-                <tr><td colspan="15" class="muted">暂无返品记录。</td></tr>
-              </tbody>
-            </table>
-            <div id="returnRecordsLoadSentinel" class="inventory-home-load-sentinel" aria-hidden="true"></div>
-          </div>
-        </article>
-      </section>
       <section class="panel" id="dataBackup">
         <div class="panel-head">
           <h2>数据备份一览</h2>

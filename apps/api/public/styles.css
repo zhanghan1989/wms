@@ -4653,3 +4653,14 @@ body.branding-custom button:not(.ghost):not(.nav-btn) { border-color: var(--acce
   .session-main .session-company { flex: 1 1 100%; }
   .session-company select { flex: 1; width: auto; }
 }
+
+.return-records-details > summary {
+  cursor: pointer;
+  color: var(--primary, #11865f);
+  font-weight: 600;
+  padding: 8px 0;
+}
+
+.return-records-details[open] > summary {
+  margin-bottom: 8px;
+}
