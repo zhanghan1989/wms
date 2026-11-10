@@ -3,7 +3,7 @@ export function normalizeBoxCode(raw: string | null | undefined): string {
   if (!value) return '';
 
   if (/^\d{1,6}$/.test(value)) {
-    return value.padStart(Math.max(3, value.length), '0');
+    return value.padStart(4, '0');
   }
   return '';
 }
@@ -14,7 +14,9 @@ export function buildEquivalentBoxCodes(raw: string | null | undefined): string[
 
   const codes = new Set<string>([normalized]);
   if (/^\d+$/.test(normalized)) {
-    codes.add(String(Number(normalized)));
+    const digits = String(Number(normalized));
+    codes.add(digits.padStart(3, '0'));
+    codes.add(digits);
   }
 
   return Array.from(codes);

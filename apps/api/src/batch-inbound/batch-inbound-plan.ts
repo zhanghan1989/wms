@@ -1,4 +1,5 @@
 import { UnprocessableEntityException } from '@nestjs/common';
+import { normalizeBoxCode } from '../common/box-code';
 
 type Plan = { productId: string; qty: number };
 type Item = Plan & { boxCode: string; status?: string };
@@ -29,12 +30,12 @@ export function validateInboundPacking(plans: Plan[], previous: Item[], uploaded
     }
   }
   for (const item of previous.filter((line) => line.status === 'confirmed')) {
-    const replacement = uploaded.find((line) => line.boxCode === item.boxCode && line.productId === item.productId);
+    const replacement = uploaded.find((line) => normalizeBoxCode(line.boxCode) === normalizeBoxCode(item.boxCode) && line.productId === item.productId);
     if (!replacement || replacement.qty !== item.qty) {
       throw new UnprocessableEntityException(`已入库的 ${item.boxCode}/${item.productId} 不能修改或省略，请上传包含已入库行的完整装箱表`);
     }
-    if (uploaded.some((line) => line.boxCode === item.boxCode
-      && !previous.some((old) => old.boxCode === line.boxCode && old.productId === line.productId))) {
+    if (uploaded.some((line) => normalizeBoxCode(line.boxCode) === normalizeBoxCode(item.boxCode)
+      && !previous.some((old) => normalizeBoxCode(old.boxCode) === normalizeBoxCode(line.boxCode) && old.productId === line.productId))) {
       throw new UnprocessableEntityException(`箱号 ${item.boxCode} 已有入库记录，不能追加产品`);
     }
   }

@@ -569,7 +569,7 @@ export class BatchInboundService {
         this.validateUploadedBoxes(this.parseCollectedBoxCodes(order.collectedBoxCodes), uploadedBoxCodes);
       }
       const confirmedKeys = new Set(order.items.filter((item) => item.status === BatchInboundItemStatus.confirmed)
-        .map((item) => `${item.boxCode}||${item.productId}`));
+        .map((item) => `${normalizeBoxCode(item.boxCode)}||${item.productId}`));
       await tx.batchInboundItem.deleteMany({
         where: { orderId: order.id, status: BatchInboundItemStatus.pending },
       });
@@ -917,7 +917,7 @@ export class BatchInboundService {
       const pendingItems = await tx.batchInboundItem.findMany({
         where: {
           orderId: order.id,
-          boxCode,
+          boxCode: { in: buildEquivalentBoxCodes(boxCode) },
           status: BatchInboundItemStatus.pending,
         },
         orderBy: BATCH_INBOUND_ITEM_PRODUCT_ORDER_BY,
@@ -1458,7 +1458,7 @@ export class BatchInboundService {
   }
 
   private formatBoxCode(num: number): string {
-    return num.toString().padStart(3, '0');
+    return num.toString().padStart(4, '0');
   }
 
   private normalizeHeader(header: string): string {

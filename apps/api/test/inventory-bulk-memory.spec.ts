@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import { InventoryService } from '../src/inventory/inventory.service';
 
 function fixture(count: number) {
-  const rows = Array.from({ length: count }, (_, i) => ({ boxCode: '001', productId: `P${i}`, qty: 2 }));
+  const rows = Array.from({ length: count }, (_, i) => ({ boxCode: '0001', productId: `P${i}`, qty: 2 }));
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
     masterProduct: { findMany: jest.fn().mockResolvedValue(rows.map((row, i) => ({ id: BigInt(i + 1), productId: row.productId, productName: row.productId, stockQty: 1 }))) },
@@ -63,7 +63,7 @@ describe('bulk inventory bounded memory', () => {
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['irrelevant'], ['ignored']]), '其他');
     const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
     const service = new InventoryService({} as never, {} as never);
-    expect(service.parseBulkInventoryUpdateRows(buffer)).toEqual([{ boxCode: '001', productId: 'P1', sku: 'P1', qty: 5 }]);
+    expect(service.parseBulkInventoryUpdateRows(buffer)).toEqual([{ boxCode: '0001', productId: 'P1', sku: 'P1', qty: 5 }]);
     const firstOnly = XLSX.read(buffer, { type: 'buffer', sheets: 0 });
     expect(firstOnly.Sheets['其他']).toBeUndefined();
   });

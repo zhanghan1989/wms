@@ -95,6 +95,11 @@ describe('batch receipt hooks', () => {
     const result = method === 'confirmAll' ? await service[method]('1', 7n, 'receipt')
       : await service[method]('1', method === 'confirmItem' ? '2' : '001', 7n, 'receipt');
     expect(result.switchedToJapanCount).toBe(2);
+    if (method === 'confirmBox') {
+      expect(tx.batchInboundItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { orderId: 1n, boxCode: { in: ['0001', '001', '1'] }, status: 'pending' },
+      }));
+    }
     expect(orders.reassignUnpulledChinaOrdersAfterInbound).toHaveBeenCalledWith(tx, ['P1'], 7n, 'receipt');
     if (method === 'confirmItem') {
       tx.batchInboundItem.findFirst.mockResolvedValue({ ...item, status: 'confirmed' });

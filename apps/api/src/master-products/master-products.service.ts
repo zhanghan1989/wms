@@ -21,7 +21,7 @@ import type { Writable } from 'stream';
 import { AuditAction, MasterProductSyncStatus, Prisma } from '@prisma/client';
 import * as XLSX from 'xlsx';
 import { AuditService } from '../audit/audit.service';
-import { normalizeBoxCode } from '../common/box-code';
+import { buildEquivalentBoxCodes, normalizeBoxCode } from '../common/box-code';
 import { APP_TIMEZONE, getZonedDateParts } from '../common/utils';
 import { AuditEventType } from '../constants/audit-event-type';
 import { PrismaService } from '../prisma/prisma.service';
@@ -1621,8 +1621,8 @@ export class MasterProductsService {
             stockQty: true,
           },
         }),
-        tx.box.findUnique({
-          where: { boxCode },
+        tx.box.findFirst({
+          where: { boxCode: { in: buildEquivalentBoxCodes(boxCode) } },
           select: { status: true,
             id: true,
             boxCode: true,
@@ -1760,8 +1760,8 @@ export class MasterProductsService {
             shop: true,
           },
         }),
-        tx.box.findUnique({
-          where: { boxCode },
+        tx.box.findFirst({
+          where: { boxCode: { in: buildEquivalentBoxCodes(boxCode) } },
           select: { status: true,
             id: true,
             boxCode: true,
@@ -1990,8 +1990,8 @@ export class MasterProductsService {
             productId: true,
           },
         }),
-        tx.box.findUnique({
-          where: { boxCode },
+        tx.box.findFirst({
+          where: { boxCode: { in: buildEquivalentBoxCodes(boxCode) } },
           select: { status: true,
             id: true,
             boxCode: true,
@@ -2119,8 +2119,8 @@ export class MasterProductsService {
             stockQty: true,
           },
         }),
-        tx.box.findUnique({
-          where: { boxCode },
+        tx.box.findFirst({
+          where: { boxCode: { in: buildEquivalentBoxCodes(boxCode) } },
           select: { status: true,
             id: true,
             boxCode: true,

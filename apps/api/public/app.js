@@ -1962,7 +1962,7 @@ function parseFixedDigits(raw, length, fieldName) {
 }
 
 function buildBoxCode(rawDigits) {
-  return parseFixedDigits(rawDigits, 3, "箱号");
+  return parseFixedDigits(rawDigits, 4, "箱号");
 }
 
 function buildShelfCode(rawDigits) {
@@ -4256,9 +4256,9 @@ function bindBatchNoInput(id) {
 
 function bindInputRules() {
   bindShelfCodeInput("newShelfCodeDigits");
-  bindDigitInput("newBoxCodeDigits", 3);
-  bindDigitInput("modalNewBoxCodeDigits", 3);
-  bindDigitInput("boxManageCodeInput", 3);
+  bindDigitInput("newBoxCodeDigits", 4);
+  bindDigitInput("modalNewBoxCodeDigits", 4);
+  bindDigitInput("boxManageCodeInput", 4);
   bindShelfCodeInput("modalNewShelfCodeDigits");
   bindShelfCodeInput("shelfManageCodeInput");
   bindPositiveIntegerInput("batchCollectInitialBoxNumber", { min: 1, max: 999999,
@@ -4762,7 +4762,7 @@ async function getCurrentBoxSkuQty(skuId, boxCode) {
   if (!normalizedBoxCode) return 0;
   const rows = await getSkuInventoryRows(skuId);
   const matched = rows.find(
-    (row) => String(row?.box?.boxCode || "").toUpperCase() === normalizedBoxCode);
+    (row) => normalizeBoxCodeInput(row?.box?.boxCode) === normalizedBoxCode);
   return Math.max(0, Number(matched?.qty ?? 0));
 }
 
@@ -9324,7 +9324,7 @@ function normalizeBoxCodeInput(raw) {
   const value = String(raw ?? "").trim().toUpperCase();
   if (!value) return "";
   if (/^\d{1,6}$/.test(value)) {
-    return value.padStart(Math.max(3, value.length), "0");
+    return value.padStart(4, "0");
   }
   return value;
 }
@@ -15765,7 +15765,7 @@ async function quickOutboundOne(skuId, boxCode) {
   await loadFbaPendingSummary();
   const rows = await getSkuInventoryRows(skuId);
   const matched = rows.find(
-    (row) => String(row?.box?.boxCode || "").toUpperCase() === normalizedBoxCode);
+    (row) => normalizeBoxCodeInput(row?.box?.boxCode) === normalizedBoxCode);
   const currentQty = Math.max(0, Number(matched?.qty ?? 0));
   const boxId = Number(matched?.box?.id ?? 0);
   const pendingQty = boxId > 0 ? getFbaPendingQtyByBoxSku(boxId, skuId) : 0;
@@ -19408,7 +19408,7 @@ function bindForms() {
     const prefillBoxCode = String(prefill?.boxCode || "").trim();
     const prefillShelfId = Number(prefill?.shelfId);
     if (prefillBoxCode) {
-      $("modalNewBoxCodeDigits").value = prefillBoxCode.replace(/\D/g, "").slice(-3);
+      $("modalNewBoxCodeDigits").value = normalizeBoxCodeInput(prefillBoxCode).slice(-4);
     }
     if (Number.isInteger(prefillShelfId) && prefillShelfId > 0) {
       $("modalNewBoxShelfId").value = String(prefillShelfId);
