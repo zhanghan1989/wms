@@ -12516,9 +12516,9 @@ function renderOrderSearchResults() {
 
   const matches = Array.isArray(result.matches) ? result.matches : [];
   const history = Array.isArray(result.history) ? result.history : [];
-  const isOrderSearch = result.mode === "order";
+  const isOrderSearch = result.mode === "order" || result.mode === "tracking";
   summary.textContent = isOrderSearch
-    ? `找到 ${matches.length} 条该注文番号订单，下面显示 ${history.length} 条该用户历史订单。`
+    ? `找到 ${matches.length} 条${result.mode === "tracking" ? "该追跡番号" : "该注文番号"}订单，下面显示 ${history.length} 条该用户历史订单。`
     : `找到 ${matches.length} 条该用户订单。`;
   if (matchesTitle) {
     matchesTitle.textContent = isOrderSearch ? "命中的订单" : "检索结果";
@@ -16562,7 +16562,7 @@ function bindForms() {
     const input = $("orderSearchInput");
     const keyword = String(input?.value || "").trim();
     if (!keyword) {
-      showToast("请输入注文番号、收件人或电话", true);
+      showToast("请输入注文番号、追跡番号、收件人或电话", true);
       input?.focus();
       return;
     }

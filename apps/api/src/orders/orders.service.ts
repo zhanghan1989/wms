@@ -318,7 +318,7 @@ interface DeleteAmazonManualOrdersForXiyaPayload {
 type ThirdPartyExportSource = 'rakuten' | 'amazon' | 'manual';
 
 type UnifiedOrderSearchSource = 'rakuten' | 'amazon' | 'manual';
-type UnifiedOrderSearchMode = 'order' | 'customer';
+type UnifiedOrderSearchMode = 'order' | 'tracking' | 'customer';
 
 interface UnifiedOrderSearchRow {
   source: UnifiedOrderSearchSource;
@@ -348,7 +348,7 @@ interface UnifiedOrderSearchResult {
   history: UnifiedOrderSearchRow[];
 }
 
-type UnifiedOrderSearchSuggestionType = 'orderId' | 'recipientName' | 'phone';
+type UnifiedOrderSearchSuggestionType = 'orderId' | 'shipmentNo' | 'recipientName' | 'phone';
 
 interface UnifiedOrderSearchSuggestion {
   type: UnifiedOrderSearchSuggestionType;
@@ -3002,15 +3002,24 @@ export class OrdersService {
   async searchOrders(queryRaw?: string): Promise<UnifiedOrderSearchResult> {
     const query = String(queryRaw ?? '').trim();
     if (!query) {
-      throw new BadRequestException('请输入注文番号、收件人或电话');
+      throw new BadRequestException('请输入注文番号、追跡番号、收件人或电话');
     }
 
     const normalizedOrderId = this.normalizeSearchOrderId(query);
-    const [rakutenExactIds, amazonExactIds, manualExactIds] = await Promise.all([
+    let [rakutenExactIds, amazonExactIds, manualExactIds] = await Promise.all([
       this.findOrderIdsByNormalizedOrderId('rakuten', normalizedOrderId, 300),
       this.findOrderIdsByNormalizedOrderId('amazon', normalizedOrderId, 300),
       this.findOrderIdsByNormalizedOrderId('manual', normalizedOrderId, 300),
     ]);
+    let mode: UnifiedOrderSearchMode = 'order';
+    if (!rakutenExactIds.length && !amazonExactIds.length && !manualExactIds.length) {
+      mode = 'tracking';
+      [rakutenExactIds, amazonExactIds, manualExactIds] = await Promise.all([
+        this.findOrderIdsByNormalizedOrderId('rakuten', normalizedOrderId, 300, 'shipment_no'),
+        this.findOrderIdsByNormalizedOrderId('amazon', normalizedOrderId, 300, 'shipment_no'),
+        this.findOrderIdsByNormalizedOrderId('manual', normalizedOrderId, 300, 'shipment_no'),
+      ]);
+    }
     const [rakutenExactRows, amazonExactRows, manualExactRows]: [
       RakutenOrderRecord[],
       AmazonOrderRecord[],
@@ -3047,7 +3056,7 @@ export class OrdersService {
       const matchedKeys = new Set(matches.map((row) => `${row.source}:${row.id}`));
       return {
         query,
-        mode: 'order',
+        mode,
         matches,
         history: historyRows.filter((row) => !matchedKeys.has(`${row.source}:${row.id}`)),
       };
@@ -3070,16 +3079,19 @@ export class OrdersService {
     const normalizedOrderId = this.normalizeSearchOrderId(query);
     const phoneDigits = this.normalizeSearchPhoneDigits(query);
     const limit = 20;
-    const [orderIdSuggestions, phoneSuggestions, recipientNameSuggestions] = await Promise.all([
+    const [orderIdSuggestions, trackingSuggestions, phoneSuggestions, recipientNameSuggestions] = await Promise.all([
       normalizedOrderId
         ? this.findOrderSearchSuggestionsByNormalizedColumn('orderId', normalizedOrderId, limit)
+        : Promise.resolve([]),
+      normalizedOrderId
+        ? this.findOrderSearchSuggestionsByNormalizedColumn('shipmentNo', normalizedOrderId, limit)
         : Promise.resolve([]),
       phoneDigits ? this.findOrderSearchSuggestionsByNormalizedColumn('phone', phoneDigits, limit) : Promise.resolve([]),
       this.findRecipientNameSuggestions(query, limit),
     ]);
 
     const seen = new Set<string>();
-    return [...orderIdSuggestions, ...recipientNameSuggestions, ...phoneSuggestions]
+    return [...orderIdSuggestions, ...trackingSuggestions, ...recipientNameSuggestions, ...phoneSuggestions]
       .filter((suggestion) => {
         const key = `${suggestion.type}:${suggestion.value}`;
         if (seen.has(key)) return false;
@@ -3128,7 +3140,7 @@ export class OrdersService {
   }
 
   private async findOrderSearchSuggestionsByNormalizedColumn(
-    type: 'orderId' | 'phone',
+    type: 'orderId' | 'shipmentNo' | 'phone',
     normalizedFragment: string,
     limit: number,
   ): Promise<UnifiedOrderSearchSuggestion[]> {
@@ -3136,29 +3148,29 @@ export class OrdersService {
       {
         sourceLabel: '乐天',
         tableName: 'rakuten_order_records',
-        valueColumn: type === 'orderId' ? 'order_id' : 'shipping_phone',
+        valueColumn: type === 'shipmentNo' ? 'shipment_no' : type === 'orderId' ? 'order_id' : 'shipping_phone',
       },
       {
         sourceLabel: '亚马逊',
         tableName: 'amazon_order_records',
-        valueColumn: type === 'orderId' ? 'order_id' : 'buyer_phone_number',
+        valueColumn: type === 'shipmentNo' ? 'shipment_no' : type === 'orderId' ? 'order_id' : 'buyer_phone_number',
       },
       {
         sourceLabel: '手动订单',
         tableName: 'manual_order_records',
-        valueColumn: type === 'orderId' ? 'order_id' : 'buyer_phone_number',
+        valueColumn: type === 'shipmentNo' ? 'shipment_no' : type === 'orderId' ? 'order_id' : 'buyer_phone_number',
       },
     ];
     const normalizedLimit = Math.max(1, Math.min(Number(limit) || 20, 50));
     const normalizedSql =
-      type === 'orderId'
+      type !== 'phone'
         ? `UPPER(REGEXP_REPLACE(COALESCE(value_column_placeholder, ''), '[^0-9A-Za-z]', ''))`
         : `REGEXP_REPLACE(COALESCE(value_column_placeholder, ''), '[^0-9]', '')`;
     const rowsBySource = await Promise.all(
       configs.map(async (config) => {
         const sourceFilter = config.tableName === 'amazon_order_records'
           ? "AND source_kind <> 'sp_api'"
-          : '';
+          : config.tableName === 'rakuten_order_records' ? 'AND deleted_at IS NULL' : '';
         const rows = await this.prisma.$queryRawUnsafe<Array<{ value: string | null }>>(
           `SELECT ${config.valueColumn} AS value
            FROM ${config.tableName}
@@ -3178,7 +3190,7 @@ export class OrdersService {
             type,
             value,
             sourceLabel: config.sourceLabel,
-            label: `${config.sourceLabel} ${type === 'orderId' ? '注文番号' : '电话'}: ${value}`,
+            label: `${config.sourceLabel} ${type === 'shipmentNo' ? '追跡番号' : type === 'orderId' ? '注文番号' : '电话'}: ${value}`,
           }));
       }),
     );
@@ -3413,6 +3425,7 @@ export class OrdersService {
     source: UnifiedOrderSearchSource,
     normalizedOrderId: string,
     limit: number,
+    column: 'order_id' | 'shipment_no' = 'order_id',
   ): Promise<bigint[]> {
     if (!normalizedOrderId) {
       return [];
@@ -3424,10 +3437,11 @@ export class OrdersService {
       manual: 'manual_order_records',
     }[source];
     const normalizedLimit = Math.max(1, Math.min(Number(limit) || 300, 1000));
-    const sourceFilter = source === 'amazon' ? " AND source_kind <> 'sp_api'" : '';
+    const sourceFilter = source === 'amazon' ? " AND source_kind <> 'sp_api'"
+      : source === 'rakuten' ? ' AND deleted_at IS NULL' : '';
     const rows = await this.prisma.$queryRawUnsafe<Array<{ id: bigint | number | string }>>(
       `SELECT id FROM ${tableName}
-       WHERE UPPER(REGEXP_REPLACE(COALESCE(order_id, ''), '[^0-9A-Za-z]', '')) = ?
+       WHERE UPPER(REGEXP_REPLACE(COALESCE(${column}, ''), '[^0-9A-Za-z]', '')) = ?
        ${sourceFilter}
        ORDER BY csv_imported_at DESC, id DESC
        LIMIT ?`,
