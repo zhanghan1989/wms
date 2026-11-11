@@ -1,6 +1,7 @@
 import { assertBoxUsableById } from '../common/box-availability';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { companyContext } from '../company-scope/company-context';
 import { PrismaService } from '../prisma/prisma.service';
 
 // Callbacks must contain database work only: a deadlock rolls back and retries the whole unit.
@@ -37,6 +38,28 @@ export async function lockFbaRequests(tx: Prisma.TransactionClient, ids: bigint[
     WHERE id IN (${Prisma.join(sorted)}) ORDER BY id FOR UPDATE`);
 }
 
+// The caller holds the box row lock. The company on a box tracks its stock
+// for existing queries and relations; the warehouse can reuse an empty box.
+export async function assignBoxStockCompany(
+  tx: Prisma.TransactionClient, boxId: bigint, companyId: bigint,
+): Promise<void> {
+  const scope = companyContext.getStore();
+  if (!scope?.warehouse) return;
+  const box = await tx.box.findUniqueOrThrow({ where: { id: boxId }, select: { boxCode: true, companyId: true } });
+  if (box.companyId === companyId) return;
+
+  const [stock, itemCode, fba] = await Promise.all([
+    tx.masterProductBoxInventory.findFirst({ where: { boxId, qty: { not: 0 }, companyId: { not: companyId } }, select: { id: true } }),
+    tx.itemCode.findFirst({ where: { boxId, status: { in: ['in_stock', 'frozen'] }, companyId: { not: companyId } }, select: { id: true } }),
+    tx.fbaReplenishment.findFirst({ where: { boxId, status: { in: ['pending_confirm', 'pending_outbound'] }, companyId: { not: companyId } }, select: { id: true } }),
+  ]);
+  if (stock || itemCode || fba) {
+    throw new ConflictException(`箱号 ${box.boxCode} 仍有其他公司的库存或补货占用，请选择空箱或同公司商品所在的箱号`);
+  }
+  await companyContext.run({ ...scope, bypass: true },
+    async () => tx.box.update({ where: { id: boxId }, data: { companyId }, select: { id: true } }));
+}
+
 export async function changeBoxStock(
   tx: Prisma.TransactionClient, boxId: bigint, productId: string, delta: number,
 ): Promise<void> {
@@ -44,6 +67,11 @@ export async function changeBoxStock(
   await assertBoxUsableById(tx, boxId);
   if (delta === 0) return;
   if (delta > 0) {
+    if (companyContext.getStore()?.warehouse) {
+      const product = await tx.masterProduct.findUnique({ where: { productId }, select: { companyId: true } });
+      if (!product) throw new NotFoundException('未找到产品主表信息');
+      await assignBoxStockCompany(tx, boxId, product.companyId);
+    }
     await tx.masterProductBoxInventory.upsert({
       where: { boxId_productId: { boxId, productId } },
       create: { boxId, productId, qty: delta },

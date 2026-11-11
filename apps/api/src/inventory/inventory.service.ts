@@ -8,7 +8,7 @@ import { DashboardCache } from './dashboard-cache';
 import { randomUUID } from 'crypto';
 import { recordStockAdjustment } from './stock-ledger';
 import { assertStockAvailable } from './stock-availability';
-import { stockTransaction, lockStockProducts, changeBoxStock, lockFbaRequests } from '../inventory/stock-transaction';
+import { assignBoxStockCompany, stockTransaction, lockStockProducts, changeBoxStock, lockFbaRequests } from '../inventory/stock-transaction';
 import {
   BadRequestException,
   ConflictException,
@@ -479,7 +479,7 @@ export class InventoryService {
     return stockTransaction(this.prisma, async (tx) => {
       await this.ensureReferences(tx, normalizedItems);
 
-      const ownership = await warehouseCompanyData(tx, { boxIds: normalizedItems.map(item => item.boxId) });
+      const ownership = await warehouseCompanyData(tx, { skuIds: normalizedItems.map(item => item.skuId) });
       const order = await tx.inventoryAdjustOrder.create({
         data: {
           ...ownership,
@@ -586,6 +586,7 @@ export class InventoryService {
             productId: true,
             productName: true,
             stockQty: true,
+            companyId: true,
           },
         }),
         tx.box.findUnique({
@@ -613,6 +614,7 @@ export class InventoryService {
 
       await assertStockAvailable(tx, productId, sourceBox.id, qty);
       const targetQty = await findMasterProductBoxInventoryQty(tx, targetBox.id, product.productId);
+      await assignBoxStockCompany(tx, targetBox.id, product.companyId);
 
       await tx.masterProductBoxInventory.delete({
         where: buildMasterProductBoxInventoryWhereUnique(sourceBox.id, product.productId),
@@ -2094,7 +2096,6 @@ export class InventoryService {
     defaultShelfId: bigint,
     operatorId: bigint,
     requestId?: string,
-    companyId?: bigint,
   ): Promise<{ id: bigint; boxCode: string; status: number; shelfStatus: number }> {
     const normalizedBoxCode = normalizeBoxCode(boxCode);
     if (!normalizedBoxCode) {
@@ -2118,7 +2119,6 @@ export class InventoryService {
           boxCode: normalizedBoxCode,
           shelfId: defaultShelfId,
           status: 1,
-          companyId,
         },
         select: {
           id: true,
@@ -2409,18 +2409,6 @@ async function importBulkUpdateExcelByProduct(
 
       const missingBoxCodes = boxCodes.filter((boxCode) => !boxByCode.has(boxCode));
       if (missingBoxCodes.length > 0) {
-        const newBoxOwners = new Map<string, bigint>();
-        if (companyContext.getStore()?.warehouse) {
-          for (const row of rows) {
-            if (boxByCode.has(row.boxCode)) continue;
-            const companyId = productById.get(row.productId)!.companyId;
-            const owner = newBoxOwners.get(row.boxCode);
-            if (owner !== undefined && owner !== companyId) {
-              throw new UnprocessableEntityException(`箱号 ${row.boxCode} 不能放入不同公司的商品`);
-            }
-            newBoxOwners.set(row.boxCode, companyId);
-          }
-        }
         const defaultShelf = await this.resolveOrCreateBulkUpdateDefaultShelf(tx, operatorId, requestId);
 
         for (const boxCode of missingBoxCodes) {
@@ -2430,7 +2418,6 @@ async function importBulkUpdateExcelByProduct(
             defaultShelf.id,
             operatorId,
             requestId,
-            newBoxOwners.get(boxCode),
           );
 
           const mappedBox = {
@@ -2531,6 +2518,7 @@ async function importBulkUpdateExcelByProduct(
       }
 
       await assertBoxesUsableByIds(tx, adjustItems.map(item => item.boxId));
+      const assignedOwners = new Map<bigint, bigint>();
       for (const item of adjustItems) {
         if (item.qtyDelta < 0) await assertStockAvailable(tx, item.productId, item.boxId, -item.qtyDelta);
         if (item.afterQty <= 0) {
@@ -2541,6 +2529,11 @@ async function importBulkUpdateExcelByProduct(
             },
           });
         } else {
+          const companyId = productById.get(item.productId)!.companyId;
+          if (item.qtyDelta > 0 && assignedOwners.get(item.boxId) !== companyId) {
+            await assignBoxStockCompany(tx, item.boxId, companyId);
+            assignedOwners.set(item.boxId, companyId);
+          }
           await upsertMasterProductBoxInventoryQty(
             tx,
             item.boxId,
@@ -4269,6 +4262,9 @@ async function manualAdjustByProduct(
       throw new ConflictException(`当前箱号内主商品库存不足，调整前库存为 ${beforeQty}`);
     }
 
+    if (qtyDelta < 0) await assertStockAvailable(tx, productId, box.id, -qtyDelta);
+    await changeBoxStock(tx, box.id, productId, qtyDelta);
+
     const adjustOrder = await tx.inventoryAdjustOrder.create({
       data: {
         ...(companyContext.getStore()?.warehouse ? { companyId: product.companyId } : {}),
@@ -4302,9 +4298,6 @@ async function manualAdjustByProduct(
         operatorId,
       },
     });
-
-    if (qtyDelta < 0) await assertStockAvailable(tx, productId, box.id, -qtyDelta);
-    await changeBoxStock(tx, box.id, productId, qtyDelta);
 
     const totalQty = await this.recalculateMasterProductStockQty(tx, productId);
 

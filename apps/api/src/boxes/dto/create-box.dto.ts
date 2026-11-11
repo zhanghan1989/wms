@@ -15,9 +15,4 @@ export class CreateBoxDto {
   @Min(0)
   @Max(1)
   status?: number;
-
-  @IsOptional()
-  @IsString()
-  @Length(1, 128)
-  productId?: string;
 }

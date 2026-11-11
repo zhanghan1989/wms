@@ -9295,13 +9295,14 @@ function renderProductEditRequestDetail(item) {
   confirmBtn.classList.toggle("hidden", !canShowConfirmButton);
 }
 
-function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "", matches = filterAdjustBoxes(keyword)) {
+function renderBoxOptionsForInput(inputId, listId, placeholder, keyword = "") {
   const input = $(inputId);
   const datalist = $(listId);
   if (!input || !datalist) return;
 
   const prev = input.value;
   input.placeholder = placeholder;
+  const matches = filterAdjustBoxes(keyword);
   datalist.innerHTML = matches
     .map((box) => `<option value="${escapeHtml(box.boxCode)}"></option>`)
     .join("");
@@ -10309,14 +10310,11 @@ function renderInventoryDetailInboundBoxSuggestions(keyword = "") {
   if (input?.readOnly) {
     return;
   }
-  const companyId = state.inventoryHomeSelectedDetail?.product?.companyId;
-  const matches = filterAdjustBoxes(keyword).filter((box) => companyId == null || String(box.companyId) === String(companyId));
   renderBoxOptionsForInput(
     "inventoryDetailInboundBoxCode",
     "inventoryDetailInboundBoxCodeList",
     "输入数字或选择已有箱号",
     keyword,
-    matches,
   );
   const hint = $("inventoryDetailInboundBoxHint");
   if (!hint) return;
@@ -10325,7 +10323,7 @@ function renderInventoryDetailInboundBoxSuggestions(keyword = "") {
     hint.classList.add("hidden");
     return;
   }
-  hint.classList.toggle("hidden", matches.length > 0);
+  hint.classList.toggle("hidden", filterAdjustBoxes(keyword).length > 0);
 }
 
 async function validateInventoryDetailInboundBoxInput(raw, { normalizeInput = false } = {}) {
@@ -15917,13 +15915,12 @@ async function importBulkInventoryUpdateFromExcel(file) {
 async function createBoxFromSkuModal() {
   const boxCode = buildBoxCode($("modalNewBoxCodeDigits").value);
   const shelfId = Number($("modalNewBoxShelfId").value);
-  const productId = $("createBoxFromSkuForm").dataset.productId || undefined;
 
   if (!Number.isInteger(shelfId) || shelfId <= 0) throw new Error("请选择货架号");
 
   await request("/boxes", {
     method: "POST",
-    body: JSON.stringify({ boxCode, shelfId, productId }),
+    body: JSON.stringify({ boxCode, shelfId }),
   });
   return boxCode;
 }
@@ -19408,7 +19405,6 @@ function bindForms() {
       await loadShelves().catch((error) => showToast(error.message, true));
     }
     $("createBoxFromSkuForm").reset();
-    $("createBoxFromSkuForm").dataset.productId = prefill?.productId || "";
     const prefillBoxCode = String(prefill?.boxCode || "").trim();
     const prefillShelfId = Number(prefill?.shelfId);
     if (prefillBoxCode) {
@@ -19610,9 +19606,7 @@ function bindForms() {
       input.value = "1";
     }
   });
-  $("openCreateBoxFromInventoryDetailInbound").addEventListener("click", () => {
-    return openCreateBoxModal({ productId: getSelectedInventoryDetailProductId() });
-  });
+  $("openCreateBoxFromInventoryDetailInbound").addEventListener("click", openCreateBoxModal);
 
   $("createSkuModalForm").addEventListener("submit", async (event) => {
     event.preventDefault();

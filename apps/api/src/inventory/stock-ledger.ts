@@ -10,7 +10,7 @@ export async function recordStockAdjustment(
   reason: string,
   operationKey?: string,
 ): Promise<{ id: bigint; adjustNo: string }> {
-  const ownership = await warehouseCompanyData(tx, { boxIds: [...new Set(items.map(item => item.boxId))] });
+  const ownership = await warehouseCompanyData(tx, { productIds: [...new Set(items.map(item => item.productId))] });
   const order = await tx.inventoryAdjustOrder.create({ data: {
     ...ownership,
     adjustNo: generateOrderNo('ADJ'), status: 'confirmed', createdBy: operatorId, remark: reason.slice(0, 255),

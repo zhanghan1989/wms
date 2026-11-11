@@ -130,6 +130,7 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
         const row = await lookup(field.type, where);
         if (!row) throw new BadRequestException('关联数据不存在');
         if (!japanSales && !isJapanSalesModel(field.type)
+          && !(context?.warehouse && model === 'InventoryAdjustOrderItem' && field.type === 'Box')
           && !(model === 'OverseasPickingBatchItem' && field.type === 'OverseasPickingBatch')) accept(row.companyId);
       }
     }

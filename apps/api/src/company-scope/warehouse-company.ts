@@ -6,14 +6,14 @@ import { companyContext } from './company-context';
 // warehouse reads to that company. Unassociated new documents use the legacy default.
 export async function warehouseCompanyData(
   db: Prisma.TransactionClient,
-  references: { productIds?: string[]; boxIds?: bigint[] },
+  references: { productIds?: string[]; skuIds?: bigint[] },
 ): Promise<{ companyId?: bigint }> {
   if (!companyContext.getStore()?.warehouse) return {};
   const products = references.productIds?.length
     ? await db.masterProduct.findMany({ where: { productId: { in: references.productIds } }, select: { companyId: true } }) : [];
-  const boxes = references.boxIds?.length
-    ? await db.box.findMany({ where: { id: { in: references.boxIds } }, select: { companyId: true } }) : [];
-  const owners = new Set([...products, ...boxes].map(row => row.companyId));
-  if (owners.size > 1) throw new BadRequestException('同一单据不能混合不同公司的商品或箱子');
+  const skus = references.skuIds?.length
+    ? await db.sku.findMany({ where: { id: { in: references.skuIds } }, select: { companyId: true } }) : [];
+  const owners = new Set([...products, ...skus].map(row => row.companyId));
+  if (owners.size > 1) throw new BadRequestException('同一单据不能混合不同公司的商品');
   return owners.size ? { companyId: [...owners][0] } : {};
 }

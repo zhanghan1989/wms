@@ -218,7 +218,6 @@ suite('company isolation against MySQL', () => {
   });
   it('infers warehouse document ownership from goods without narrowing reads', async () => scope(undefined, async () => {
     expect(await warehouseCompanyData(db, { productIds: [productB] })).toEqual({ companyId: b });
-    expect(await warehouseCompanyData(db, { boxIds: [boxA] })).toEqual({ companyId: a });
     await expect(warehouseCompanyData(db, { productIds: [productA, productB] })).rejects.toThrow('同一单据');
     const data = await warehouseCompanyData(db, { productIds: [productB] });
     const order = await db.inboundOrder.create({ data: { ...data, orderNo: `QA-warehouse-${Date.now()}`, orderType: 'pending_batch', status: 'draft', createdBy: warehouseUser } });
@@ -236,7 +235,7 @@ suite('company isolation against MySQL', () => {
     try {
       await scope(undefined, () => work(prisma, new AuditService(prisma), requestId), { warehouse: true, userId: warehouseUser });
     } finally {
-      const where = { productId: productB };
+      const where = { productId: { in: [productA, productB] } };
       const adjustments = await base.inventoryAdjustOrderItem.findMany({ where, select: { orderId: true } });
       await base.operationAuditLog.deleteMany({ where: { requestId } });
       await base.stockMovement.deleteMany({ where });
@@ -244,7 +243,7 @@ suite('company isolation against MySQL', () => {
       await base.inventoryAdjustOrder.deleteMany({ where: { id: { in: adjustments.map(row => row.orderId) } } });
       await base.masterProductBoxInventory.deleteMany({ where });
       await base.box.deleteMany({ where: { boxCode: newBoxCode } });
-      await base.masterProduct.update({ where, data: { stockQty: 0 } });
+      await base.masterProduct.updateMany({ where, data: { stockQty: 0 } });
     }
   }
   it('receives stock for a non-default company with consistent inventory, ledger and audit ownership', async () => {
@@ -254,32 +253,50 @@ suite('company isolation against MySQL', () => {
       const boxes = new BoxesService(prisma, audit);
       const existing = await db.box.findUniqueOrThrow({ where: { id: boxB } });
       await products.manualAdjustBoxInventory(productB, { boxCode: existing.boxCode, qtyDelta: 2 }, warehouseUser, requestId);
-      const newBox = await boxes.create({ boxCode, shelfId: Number(shelf), productId: productB }, warehouseUser, requestId);
-      expect(newBox).toMatchObject({ companyId: b });
+      await boxes.create({ boxCode, shelfId: Number(shelf) }, warehouseUser, requestId);
       await products.manualAdjustBoxInventory(productB, { boxCode, qtyDelta: 3 }, warehouseUser, requestId);
       await products.manualAdjustBoxInventory(productB, { boxCode, qtyDelta: 1 }, warehouseUser, requestId);
-      const foreign = await db.box.findUniqueOrThrow({ where: { id: boxA } });
-      await expect(products.manualAdjustBoxInventory(productB, { boxCode: foreign.boxCode, qtyDelta: 1 }, warehouseUser, requestId))
-        .rejects.toThrow('箱号与商品所属公司不同');
+      await expect(products.manualAdjustBoxInventory(productA, { boxCode, qtyDelta: 1 }, warehouseUser, requestId))
+        .rejects.toThrow('仍有其他公司的库存');
       const inventory = await base.masterProductBoxInventory.findMany({ where: { productId: productB }, orderBy: { qty: 'asc' } });
       expect(inventory.map(row => [row.companyId, row.qty])).toEqual([[b, 2], [b, 4]]);
       expect(await base.masterProduct.findUniqueOrThrow({ where: { productId: productB } })).toMatchObject({ stockQty: 6 });
       const adjustments = await base.inventoryAdjustOrderItem.findMany({ where: { productId: productB }, include: { order: true } });
       expect(adjustments.map(row => [row.companyId, row.order.companyId])).toEqual(Array(3).fill([b, b]));
       expect((await base.stockMovement.findMany({ where: { productId: productB } })).map(row => row.companyId)).toEqual(Array(3).fill(b));
-      expect((await base.operationAuditLog.findMany({ where: { requestId } })).map(row => row.companyId)).toEqual(Array(7).fill(b));
+      expect((await base.operationAuditLog.findMany({ where: { requestId, action: 'update' } })).map(row => row.companyId)).toEqual(Array(6).fill(b));
     });
   });
-  it('moves a non-default company product to another box owned by its company', async () => {
+  it('lets a product move into a previously unassigned empty box', async () => {
     const toBoxCode = '986042';
     await withWarehouseStock('move-box', toBoxCode, async (prisma, audit, requestId) => {
       const from = await db.box.findUniqueOrThrow({ where: { id: boxB } });
       const boxes = new BoxesService(prisma, audit);
-      await boxes.create({ boxCode: toBoxCode, shelfId: Number(shelf), productId: productB }, warehouseUser, requestId);
+      await boxes.create({ boxCode: toBoxCode, shelfId: Number(shelf) }, warehouseUser, requestId);
       await db.masterProductBoxInventory.create({ data: { boxId: boxB, productId: productB, qty: 5 } });
       const inventory = new InventoryService(prisma, audit);
       await expect(inventory.moveProductBetweenBoxes({ productId: productB, fromBoxCode: from.boxCode, toBoxCode }, warehouseUser, requestId))
         .resolves.toMatchObject({ qty: 5 });
+    });
+  });
+  it('serializes competing receipts from different companies and lets the emptied box be reused', async () => {
+    const boxCode = '986045';
+    await withWarehouseStock('reuse-box', boxCode, async (prisma, audit, requestId) => {
+      await new BoxesService(prisma, audit).create({ boxCode, shelfId: Number(shelf) }, warehouseUser, requestId);
+      const products = new MasterProductsService(prisma, audit);
+      const received = await Promise.allSettled([productA, productB].map(productId =>
+        products.manualAdjustBoxInventory(productId, { boxCode, qtyDelta: 1 }, warehouseUser, requestId)));
+      expect(received.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      const firstProduct = received[0].status === 'fulfilled' ? productA : productB;
+      const nextProduct = firstProduct === productA ? productB : productA;
+      const failure = received.find(result => result.status === 'rejected');
+      expect(failure).toMatchObject({ reason: expect.objectContaining({ message: expect.stringContaining('仍有其他公司的库存') }) });
+      await products.outboundOneByProduct(firstProduct, { boxCode }, warehouseUser, requestId);
+      await products.manualAdjustBoxInventory(nextProduct, { boxCode, qtyDelta: 2 }, warehouseUser, requestId);
+      const box = await base.box.findUniqueOrThrow({ where: { boxCode }, include: { masterProductInventories: { where: { qty: { gt: 0 } } } } });
+      expect(box.masterProductInventories).toEqual([expect.objectContaining({
+        productId: nextProduct, qty: 2, companyId: nextProduct === productA ? a : b,
+      })]);
     });
   });
   it('replaces a non-default company box and preserves its stock ownership', async () => {

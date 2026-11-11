@@ -1619,7 +1619,6 @@ export class MasterProductsService {
             id: true,
             productId: true,
             stockQty: true,
-            companyId: true,
           },
         }),
         tx.box.findFirst({
@@ -1627,7 +1626,6 @@ export class MasterProductsService {
           select: { status: true,
             id: true,
             boxCode: true,
-            companyId: true,
             shelf: {
               select: {
                 shelfCode: true,
@@ -1645,9 +1643,6 @@ export class MasterProductsService {
         throw new NotFoundException('未找到箱号信息');
       }
       assertBoxUsable(box);
-      if (box.companyId !== product.companyId) {
-        throw new BadRequestException('箱号与商品所属公司不同，请选择同公司的箱号或在入库窗口新增箱号');
-      }
 
       const currentInventory = await tx.masterProductBoxInventory.findUnique({
         where: {
