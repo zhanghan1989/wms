@@ -50,7 +50,7 @@ export class BoxesService {
   async listOptions(q?: string): Promise<unknown[]> {
     return this.prisma.box.findMany({
       where: { status: 1, ...(q ? { boxCode: { contains: q.trim() } } : {}) },
-      select: { id: true, boxCode: true, shelfId: true, status: true,
+      select: { id: true, boxCode: true, shelfId: true, status: true, companyId: true,
         shelf: { select: { id: true, shelfCode: true, name: true } } },
       orderBy: { id: 'desc' },
     });
@@ -446,8 +446,14 @@ export class BoxesService {
     if (!shelf) throw new BadRequestException('货架不存在');
 
     return this.prisma.$transaction(async (tx) => {
+      const product = payload.productId == null ? null : await tx.masterProduct.findUnique({
+        where: { productId: payload.productId.trim() },
+        select: { companyId: true },
+      });
+      if (payload.productId != null && !product) throw new NotFoundException('未找到产品主表信息');
       const created = await tx.box.create({
         data: {
+          ...(product && { companyId: product.companyId }),
           boxCode,
           shelfId: BigInt(payload.shelfId),
           status: payload.status ?? 1,

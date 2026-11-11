@@ -4,6 +4,10 @@ import { warehouseCompanyData } from '../src/company-scope/warehouse-company';
 import { MasterProductsService } from '../src/master-products/master-products.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AuditService } from '../src/audit/audit.service';
+import { BoxesService } from '../src/boxes/boxes.service';
+import { BoxReplacementService } from '../src/inventory/box-replacement.service';
+import { InventoryService } from '../src/inventory/inventory.service';
+import * as XLSX from 'xlsx';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { companyContext, CompanyScope } from '../src/company-scope/company-context';
 import { installCompanyIsolation } from '../src/company-scope/company-prisma';
@@ -36,8 +40,8 @@ suite('company isolation against MySQL', () => {
     a = (await base.company.create({ data: { name: `QA-A-${tag}` } })).id;
     b = (await base.company.create({ data: { name: `QA-B-${tag}` } })).id;
     shelf = (await base.shelf.create({ data: { shelfCode: `QA-${tag}` } })).id;
-    boxA = (await scope(a, () => db.box.create({ data: { boxCode: `QA-A-${tag}`, shelfId: shelf } }))).id;
-    boxB = (await scope(b, () => db.box.create({ data: { boxCode: `QA-B-${tag}`, shelfId: shelf } }))).id;
+    boxA = (await scope(a, () => db.box.create({ data: { boxCode: '986039', shelfId: shelf } }))).id;
+    boxB = (await scope(b, () => db.box.create({ data: { boxCode: '986040', shelfId: shelf } }))).id;
     warehouseUser = (await base.user.create({ data: { username: `QA-warehouse-${tag}`, companyId: null, department: 'overseas_warehouse', role: 'employee' } })).id;
     productA = `QA-A-${tag}`; productB = `QA-B-${tag}`;
     for (const [companyId, productId] of [[a, productA], [b, productB]] as const) {
@@ -222,6 +226,93 @@ suite('company isolation against MySQL', () => {
     await db.inboundOrder.delete({ where: { id: order.id } });
     expect((await db.box.findMany({ where: { id: { in: [boxA, boxB] } } })).length).toBe(2);
   }, { warehouse: true }));
+  async function withWarehouseStock(
+    label: string,
+    newBoxCode: string,
+    work: (prisma: PrismaService, audit: AuditService, requestId: string) => Promise<void>,
+  ) {
+    const prisma = db as PrismaService;
+    const requestId = `QA-${label}-${productB}`;
+    try {
+      await scope(undefined, () => work(prisma, new AuditService(prisma), requestId), { warehouse: true, userId: warehouseUser });
+    } finally {
+      const where = { productId: productB };
+      const adjustments = await base.inventoryAdjustOrderItem.findMany({ where, select: { orderId: true } });
+      await base.operationAuditLog.deleteMany({ where: { requestId } });
+      await base.stockMovement.deleteMany({ where });
+      await base.inventoryAdjustOrderItem.deleteMany({ where });
+      await base.inventoryAdjustOrder.deleteMany({ where: { id: { in: adjustments.map(row => row.orderId) } } });
+      await base.masterProductBoxInventory.deleteMany({ where });
+      await base.box.deleteMany({ where: { boxCode: newBoxCode } });
+      await base.masterProduct.update({ where, data: { stockQty: 0 } });
+    }
+  }
+  it('receives stock for a non-default company with consistent inventory, ledger and audit ownership', async () => {
+    const boxCode = '986041';
+    await withWarehouseStock('manual-inbound', boxCode, async (prisma, audit, requestId) => {
+      const products = new MasterProductsService(prisma, audit);
+      const boxes = new BoxesService(prisma, audit);
+      const existing = await db.box.findUniqueOrThrow({ where: { id: boxB } });
+      await products.manualAdjustBoxInventory(productB, { boxCode: existing.boxCode, qtyDelta: 2 }, warehouseUser, requestId);
+      const newBox = await boxes.create({ boxCode, shelfId: Number(shelf), productId: productB }, warehouseUser, requestId);
+      expect(newBox).toMatchObject({ companyId: b });
+      await products.manualAdjustBoxInventory(productB, { boxCode, qtyDelta: 3 }, warehouseUser, requestId);
+      await products.manualAdjustBoxInventory(productB, { boxCode, qtyDelta: 1 }, warehouseUser, requestId);
+      const foreign = await db.box.findUniqueOrThrow({ where: { id: boxA } });
+      await expect(products.manualAdjustBoxInventory(productB, { boxCode: foreign.boxCode, qtyDelta: 1 }, warehouseUser, requestId))
+        .rejects.toThrow('箱号与商品所属公司不同');
+      const inventory = await base.masterProductBoxInventory.findMany({ where: { productId: productB }, orderBy: { qty: 'asc' } });
+      expect(inventory.map(row => [row.companyId, row.qty])).toEqual([[b, 2], [b, 4]]);
+      expect(await base.masterProduct.findUniqueOrThrow({ where: { productId: productB } })).toMatchObject({ stockQty: 6 });
+      const adjustments = await base.inventoryAdjustOrderItem.findMany({ where: { productId: productB }, include: { order: true } });
+      expect(adjustments.map(row => [row.companyId, row.order.companyId])).toEqual(Array(3).fill([b, b]));
+      expect((await base.stockMovement.findMany({ where: { productId: productB } })).map(row => row.companyId)).toEqual(Array(3).fill(b));
+      expect((await base.operationAuditLog.findMany({ where: { requestId } })).map(row => row.companyId)).toEqual(Array(7).fill(b));
+    });
+  });
+  it('moves a non-default company product to another box owned by its company', async () => {
+    const toBoxCode = '986042';
+    await withWarehouseStock('move-box', toBoxCode, async (prisma, audit, requestId) => {
+      const from = await db.box.findUniqueOrThrow({ where: { id: boxB } });
+      const boxes = new BoxesService(prisma, audit);
+      await boxes.create({ boxCode: toBoxCode, shelfId: Number(shelf), productId: productB }, warehouseUser, requestId);
+      await db.masterProductBoxInventory.create({ data: { boxId: boxB, productId: productB, qty: 5 } });
+      const inventory = new InventoryService(prisma, audit);
+      await expect(inventory.moveProductBetweenBoxes({ productId: productB, fromBoxCode: from.boxCode, toBoxCode }, warehouseUser, requestId))
+        .resolves.toMatchObject({ qty: 5 });
+    });
+  });
+  it('replaces a non-default company box and preserves its stock ownership', async () => {
+    const toBoxCode = '986043';
+    await withWarehouseStock('replace-box', toBoxCode, async (prisma, audit, requestId) => {
+      const from = await db.box.findUniqueOrThrow({ where: { id: boxB } });
+      await db.masterProductBoxInventory.create({ data: { boxId: boxB, productId: productB, qty: 5 } });
+      const service = new BoxReplacementService(prisma, audit);
+      const input = { fromBoxCode: from.boxCode, toBoxCode };
+      const preview = await service.preview(input);
+      const payload = { ...input, operationId: 'qa-replace-box-nondefault', snapshotToken: preview.snapshotToken };
+      await expect(service.replace(payload, warehouseUser, requestId)).resolves.toMatchObject({ qty: 5, idempotent: false });
+      await expect(service.replace(payload, warehouseUser, requestId)).resolves.toMatchObject({ qty: 5, idempotent: true });
+      const target = await db.box.findUniqueOrThrow({ where: { boxCode: toBoxCode }, include: { masterProductInventories: true } });
+      expect(target).toMatchObject({ companyId: b, masterProductInventories: [{ companyId: b, productId: productB, qty: 5 }] });
+      expect(await db.masterProductBoxInventory.count({ where: { boxId: boxB } })).toBe(0);
+    });
+  });
+  it('imports stock for a non-default company into an existing box and a new box', async () => {
+    const newBoxCode = '986044';
+    await withWarehouseStock('bulk-new-box', newBoxCode, async (prisma, audit, requestId) => {
+      const existing = await db.box.findUniqueOrThrow({ where: { id: boxB } });
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+        ['箱号', '产品ID', '数量'], [existing.boxCode, productB, 3], [newBoxCode, productB, 5],
+      ]), '库存');
+      const file = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+      const service = new InventoryService(prisma, audit);
+      await expect(service.importBulkUpdateExcel(file, 'stock.xlsx', warehouseUser, requestId)).resolves.toMatchObject({ changedRows: 2 });
+      const target = await db.box.findUniqueOrThrow({ where: { boxCode: newBoxCode }, include: { masterProductInventories: true } });
+      expect(target).toMatchObject({ companyId: b, masterProductInventories: [{ companyId: b, productId: productB, qty: 5 }] });
+    });
+  });
   it('lets Japan manage combinations referencing either company while preserving physical product ownership', async () => scope(undefined, async () => {
     for (const [companyId, productId] of [[a, productA], [b, productB]] as const) {
       const combo = await db.rakutenComboProduct.create({ data: { comboName: `QA-combo-${productId}`, items: { create: [{ productId, position: 1 }] } } });

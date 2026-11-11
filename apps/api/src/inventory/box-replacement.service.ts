@@ -165,7 +165,9 @@ export class BoxReplacementService {
           const data = await this.check(tx, payload);
           if (data.items.some(row => !lockedProducts.has(row.productId)) || data.snapshotToken !== payload.snapshotToken) throw new ConflictException('库存或货架已变化，请刷新后重新确认换箱');
           const result = this.summary(data);
-          const target = await tx.box.create({ data: { boxCode: input.toBoxCode, shelfId: data.shelf.id, status: 1 } });
+          const target = await tx.box.create({
+            data: { boxCode: input.toBoxCode, shelfId: data.shelf.id, status: 1, companyId: data.box.companyId },
+          });
           await tx.masterProductBoxInventory.createMany({ data: data.items.map(row => ({ boxId: target.id, productId: row.productId, qty: row.qty })) });
           await tx.masterProductBoxInventory.deleteMany({ where: { boxId: data.box.id } });
           const order = await recordStockAdjustment(tx, operatorId, data.items.flatMap(row => [

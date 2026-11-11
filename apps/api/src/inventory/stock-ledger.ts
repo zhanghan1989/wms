@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { generateOrderNo } from '../common/utils';
+import { warehouseCompanyData } from '../company-scope/warehouse-company';
 
 // Used by product-only adjustment, bulk update and paired move entries.
 export async function recordStockAdjustment(
@@ -9,7 +10,9 @@ export async function recordStockAdjustment(
   reason: string,
   operationKey?: string,
 ): Promise<{ id: bigint; adjustNo: string }> {
+  const ownership = await warehouseCompanyData(tx, { boxIds: [...new Set(items.map(item => item.boxId))] });
   const order = await tx.inventoryAdjustOrder.create({ data: {
+    ...ownership,
     adjustNo: generateOrderNo('ADJ'), status: 'confirmed', createdBy: operatorId, remark: reason.slice(0, 255),
   } });
   for (const [index, item] of items.entries()) {

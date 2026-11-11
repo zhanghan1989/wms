@@ -2094,6 +2094,7 @@ export class InventoryService {
     defaultShelfId: bigint,
     operatorId: bigint,
     requestId?: string,
+    companyId?: bigint,
   ): Promise<{ id: bigint; boxCode: string; status: number; shelfStatus: number }> {
     const normalizedBoxCode = normalizeBoxCode(boxCode);
     if (!normalizedBoxCode) {
@@ -2117,6 +2118,7 @@ export class InventoryService {
           boxCode: normalizedBoxCode,
           shelfId: defaultShelfId,
           status: 1,
+          companyId,
         },
         select: {
           id: true,
@@ -2367,6 +2369,7 @@ async function importBulkUpdateExcelByProduct(
             productId: true,
             productName: true,
             stockQty: true,
+            companyId: true,
           },
         }),
         tx.box.findMany({
@@ -2406,6 +2409,18 @@ async function importBulkUpdateExcelByProduct(
 
       const missingBoxCodes = boxCodes.filter((boxCode) => !boxByCode.has(boxCode));
       if (missingBoxCodes.length > 0) {
+        const newBoxOwners = new Map<string, bigint>();
+        if (companyContext.getStore()?.warehouse) {
+          for (const row of rows) {
+            if (boxByCode.has(row.boxCode)) continue;
+            const companyId = productById.get(row.productId)!.companyId;
+            const owner = newBoxOwners.get(row.boxCode);
+            if (owner !== undefined && owner !== companyId) {
+              throw new UnprocessableEntityException(`箱号 ${row.boxCode} 不能放入不同公司的商品`);
+            }
+            newBoxOwners.set(row.boxCode, companyId);
+          }
+        }
         const defaultShelf = await this.resolveOrCreateBulkUpdateDefaultShelf(tx, operatorId, requestId);
 
         for (const boxCode of missingBoxCodes) {
@@ -2415,6 +2430,7 @@ async function importBulkUpdateExcelByProduct(
             defaultShelf.id,
             operatorId,
             requestId,
+            newBoxOwners.get(boxCode),
           );
 
           const mappedBox = {
