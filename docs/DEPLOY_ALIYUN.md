@@ -4,7 +4,9 @@
 
 当前生产使用根目录 `docker-compose.yml`：API 与 MySQL 独立容器运行，API 仅绑定 `127.0.0.1:3000`，由 Nginx 提供 HTTPS。管理页面位于 `apps/api/public`，已随 API 发布。Redis 默认不启动。
 
-自动部署由 `.github/workflows/deploy-ecs.yml` 执行：推送 `main` 或手动触发，校验通过后在 GitHub Actions 构建镜像，传到 `production` 环境的 `ECS_HOST`，在服务器 `~/wms` 部署指定提交并默认执行 `prisma migrate deploy`。服务器根目录 `.env` 提供 Compose 配置，参考根目录 `.env.example`。
+自动部署由 `.github/workflows/deploy-ecs.yml` 执行：推送 `main` 或手动触发，校验通过后在 GitHub Actions 构建镜像并推送到 GitHub Container Registry。ECS 按镜像摘要拉取，复用已存在的镜像层，核对提交号后在 `~/wms` 发布并默认执行 `prisma migrate deploy`。服务器根目录 `.env` 提供 Compose 配置，参考根目录 `.env.example`。
+
+可手动运行工作流并打开 `image_probe_only`，在 ECS 验证镜像拉取耗时，不更新服务。镜像仓库凭据仅用于当前任务，ECS 端登录配置随拉取步骤退出清除。
 
 当前流程还发布公司官网，并配置乐天日本出口服务，因此新系统不能直接照搬当前部署任务。新服务器应使用独立数据库、密钥、域名、备份和 GitHub Environment；首次启用前核对店铺授权及自动同步设置。现有 Actions 不会因新服务器克隆仓库而自动部署到新服务器。
 

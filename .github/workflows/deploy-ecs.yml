@@ -9,6 +9,11 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      image_probe_only:
+        description: "Build, publish and time the ECS image pull without updating the service"
+        required: false
+        default: false
+        type: boolean
       run_migrations:
         description: "Manual deploy: run prisma migrate deploy"
         required: false
@@ -49,66 +54,107 @@ jobs:
       - name: Run verification checks
         run: npm run ci:verify
 
-  deploy:
-    name: Deploy
+  image:
+    name: Publish API image
     needs: validate
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || inputs.image_probe_only)
     runs-on: ubuntu-latest
-    timeout-minutes: 165
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      repository: ${{ steps.image.outputs.repository }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Set image repository
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: echo "repository=ghcr.io/${REPOSITORY,,}-api" >> "$GITHUB_OUTPUT"
+
+      - name: Sign in to GitHub Container Registry
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and publish API image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          tags: ${{ steps.image.outputs.repository }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Pull and deploy
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     environment:
       name: production
+    permissions:
+      contents: read
+      packages: read
     env:
       DEPLOY_REF: ${{ github.sha }}
-      DEPLOY_GITHUB_TOKEN: ${{ github.token }}
       RUN_MIGRATIONS: ${{ github.event.inputs.run_migrations || 'true' }}
       RAKUTEN_RMS_API_ENCRYPTION_KEY: ${{ secrets.RAKUTEN_RMS_API_ENCRYPTION_KEY }}
       RAKUTEN_RMS_API_PROXY_URL: http://rakuten-egress:1055
       RAKUTEN_RMS_EXIT_NODE_IP: 100.87.11.96
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Deployment Summary
-        run: |
-          {
-            echo "## Deployment plan"
-            echo ""
-            echo "- Ref: \`${DEPLOY_REF}\`"
-            echo "- Run migrations: \`${RUN_MIGRATIONS}\`"
-            echo "- Trigger: \`${{ github.event_name }}\`"
-            echo "- Build mode: GitHub Actions image build, ECS image load"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build API image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/api/Dockerfile
-          tags: wms-api:${{ github.sha }}
-          load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Save API image
-        run: |
-          docker save "wms-api:${DEPLOY_REF}" | gzip > "wms-api-${DEPLOY_REF}.tar.gz"
-          ls -lh "wms-api-${DEPLOY_REF}.tar.gz"
-
-      - name: Copy API image to ECS
-        timeout-minutes: 110
+      - name: Pull API image on ECS
+        uses: appleboy/ssh-action@v1.2.0
         env:
-          ECS_HOST: ${{ secrets.ECS_HOST }}
-          ECS_PORT: ${{ secrets.ECS_PORT }}
-          ECS_USER: ${{ secrets.ECS_USER }}
-          ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
-        run: bash scripts/wms-upload-image.sh "wms-api-${DEPLOY_REF}.tar.gz"
+          IMAGE_REPOSITORY: ${{ needs.image.outputs.repository }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+          REGISTRY_ACTOR: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        with:
+          host: ${{ secrets.ECS_HOST }}
+          port: ${{ secrets.ECS_PORT }}
+          username: ${{ secrets.ECS_USER }}
+          key: ${{ secrets.ECS_SSH_KEY }}
+          command_timeout: 12m
+          envs: DEPLOY_REF,IMAGE_REPOSITORY,IMAGE_DIGEST,REGISTRY_ACTOR,REGISTRY_TOKEN
+          script: |
+            set -euo pipefail
+            [[ "$DEPLOY_REF" =~ ^[0-9a-f]{40}$ && "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "$IMAGE_REPOSITORY" =~ ^ghcr\.io/[a-z0-9._-]+/[a-z0-9._-]+$ ]]
+            cd ~/wms
+            bash scripts/wms-resource-check.sh
+            registry_config=$(mktemp -d)
+            trap 'rm -f -- "$registry_config/config.json"; rmdir -- "$registry_config"' EXIT
+            printf '%s\n' '{"auths":{"ghcr.io":{}}}' > "$registry_config/config.json"
+            printf '%s' "$REGISTRY_TOKEN" | docker --config "$registry_config" login ghcr.io --username "$REGISTRY_ACTOR" --password-stdin
+            unset REGISTRY_TOKEN
+            image_ref="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+            started=$(date +%s)
+            timeout --kill-after=15s 10m docker --config "$registry_config" pull "$image_ref"
+            revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image_ref")
+            [[ "$revision" = "$DEPLOY_REF" ]]
+            docker image tag "$image_ref" "wms-api:$DEPLOY_REF"
+            docker image rm "$image_ref"
+            echo "ECS registry pull and verification completed in $(($(date +%s) - started))s"
 
       - name: Deploy to ECS by SSH
+        if: github.ref == 'refs/heads/main' && !inputs.image_probe_only
+        env:
+          DEPLOY_GITHUB_TOKEN: ${{ github.token }}
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.ECS_HOST }}
@@ -182,6 +228,9 @@ jobs:
             # Credential configuration exists only for this command, never in .git/config.
             timed "git_fetch" git -c 'url.https://github.com/.insteadOf=git@github.com:' -c credential.helper= -c 'credential.helper=!f() { printf "%s\n" "username=x-access-token" "password=$DEPLOY_GITHUB_TOKEN"; }; f' fetch origin --prune
             unset DEPLOY_GITHUB_TOKEN
+            IMAGE_TAG="wms-api:${DEPLOY_REF}"
+            revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$IMAGE_TAG")
+            [[ "$revision" = "$DEPLOY_REF" ]]
             timed "git_checkout_main" git checkout main
             timed "git_reset_deploy_ref" git reset --hard "${DEPLOY_REF}"
             # Persist the WMS company rename before Compose recreates the API.
@@ -199,14 +248,6 @@ jobs:
               timed "nginx_config_test" nginx -t
               timed "nginx_reload" systemctl reload nginx
             fi
-            IMAGE_TAR="/tmp/wms-api-${DEPLOY_REF}.tar.gz"
-            IMAGE_TAG="wms-api:${DEPLOY_REF}"
-            if [ ! -s "${IMAGE_TAR}" ]; then
-              echo "Missing deployment image tar: ${IMAGE_TAR}"
-              exit 1
-            fi
-            timed "resource_check_before_image_load" bash scripts/wms-resource-check.sh
-            timed "docker_load_api_image" timeout --kill-after=30s 10m docker load --input "${IMAGE_TAR}"
             {
               printf '%s\n' 'services:'
               printf '%s\n' '  api:'
@@ -291,7 +332,6 @@ jobs:
             fi
             timed "verify_xiya_company_sync_readonly" timeout --kill-after=10s 180s docker exec -i wms_api node < scripts/verify-xiya-sync.cjs
             COMPANY_ROLLBACK_ENABLED=0
-            timed "cleanup_image_tar" rm -f "${IMAGE_TAR}"
             timed "cleanup_old_wms_images" sh -c "docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk -v keep='${IMAGE_TAG}' '\$1 ~ /^wms-api:/ && \$1 != keep {print \$2}' | sort -u | xargs -r docker rmi || true"
             JOB_END_TS="$(date +%s)"
             echo "=== Deploy total elapsed: $((JOB_END_TS - JOB_START_TS))s ==="
