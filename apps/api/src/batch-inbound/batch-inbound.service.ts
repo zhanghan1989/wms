@@ -434,7 +434,7 @@ export class BatchInboundService {
       const rangeStart = this.findContinuousRangeStart(usedNumbers, payload.boxCount, initialBoxNumber);
       const rangeEnd = rangeStart + payload.boxCount - 1;
       const collectedBoxCodes = Array.from({ length: payload.boxCount }, (_, index) =>
-        this.formatBoxCode(rangeStart + index),
+        String(rangeStart + index),
       );
 
       const created = await (async () => {
@@ -1310,7 +1310,7 @@ export class BatchInboundService {
 
     const created = await tx.box.create({
       data: {
-        boxCode,
+        boxCode: normalizeBoxCode(boxCode),
         shelfId: shelf.id,
         status: 1,
       },
@@ -1455,10 +1455,6 @@ export class BatchInboundService {
 
   private normalizeBoxCode(raw: string | null | undefined): string {
     return normalizeBoxCode(raw);
-  }
-
-  private formatBoxCode(num: number): string {
-    return num.toString().padStart(4, '0');
   }
 
   private normalizeHeader(header: string): string {

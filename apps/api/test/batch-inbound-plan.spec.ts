@@ -80,7 +80,7 @@ describe('pre-registration quantities', () => {
     const first = await service.upload('1', file, 'boxes.xlsx', 2n);
     expect(first.items).toHaveLength(3);
     expect(first.items.filter((item) => item.boxCode === '001')).toHaveLength(1);
-    expect(tx.batchInboundItem.createMany.mock.calls[0][0].data.map((item: any) => item.boxCode)).toEqual(['0002', '0003']);
+    expect(tx.batchInboundItem.createMany.mock.calls[0][0].data.map((item: any) => item.boxCode)).toEqual(['2', '3']);
     expect(first.items.find((item) => item.id === '10')?.status).toBe('confirmed');
     expect(first.plannedItems[0]).toMatchObject({ inTransitQty: 40, confirmedQty: 20, unpackedQty: 0 });
     const retry = await service.upload('1', file, 'boxes.xlsx', 2n);

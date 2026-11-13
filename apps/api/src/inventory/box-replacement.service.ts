@@ -140,6 +140,12 @@ export class BoxReplacementService {
     }
     const operationKey = `replace-box:${operatorId}:${payload.operationId}`;
     const fingerprint = JSON.stringify({ ...input, snapshotToken: payload.snapshotToken });
+    const legacyFingerprint = JSON.stringify({
+      ...input,
+      fromBoxCode: payload.fromBoxCode.trim().padStart(4, '0'),
+      toBoxCode: payload.toBoxCode.trim().padStart(4, '0'),
+      snapshotToken: payload.snapshotToken,
+    });
     for (let attempt = 0; ; attempt++) {
       try {
         // Discover lock keys outside the transaction, then lock products before reading balances.
@@ -156,7 +162,7 @@ export class BoxReplacementService {
           if (done) {
             const log = await tx.operationAuditLog.findFirst({ where: { entityType: 'inventory_adjust_order', entityId: done.refId, operatorId, remark: 'replace-box' } });
             const stored = log?.afterData as { fingerprint?: string; result?: ReturnType<BoxReplacementService['summary']> } | null;
-            if (stored?.fingerprint !== fingerprint || !stored.result) throw new ConflictException('重复请求的换箱内容不同，请重新确认');
+            if (!stored?.result || ![fingerprint, legacyFingerprint].includes(stored.fingerprint ?? '')) throw new ConflictException('重复请求的换箱内容不同，请重新确认');
             return { ...stored.result, idempotent: true };
           }
           await tx.$queryRaw(Prisma.sql`SELECT id FROM boxes

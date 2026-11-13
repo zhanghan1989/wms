@@ -18,8 +18,8 @@ export class BoxesController {
   }
 
   @Get('options')
-  async listOptions(@Query('q') q?: string): Promise<unknown[]> {
-    return this.boxesService.listOptions(q);
+  async listOptions(@Query('q') q?: string, @Query('boxCode') boxCode?: string): Promise<unknown[]> {
+    return this.boxesService.listOptions(q, boxCode);
   }
 
   @Get('empty')

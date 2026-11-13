@@ -1962,7 +1962,9 @@ function parseFixedDigits(raw, length, fieldName) {
 }
 
 function buildBoxCode(rawDigits) {
-  return parseFixedDigits(rawDigits, 4, "箱号");
+  const digits = String(rawDigits ?? "").trim();
+  if (!/^\d{1,4}$/.test(digits)) throw new Error("箱号必须是1至4位数字");
+  return normalizeBoxCodeInput(digits);
 }
 
 function buildShelfCode(rawDigits) {
@@ -9324,7 +9326,7 @@ function normalizeBoxCodeInput(raw) {
   const value = String(raw ?? "").trim().toUpperCase();
   if (!value) return "";
   if (/^\d{1,6}$/.test(value)) {
-    return value.padStart(4, "0");
+    return value.replace(/^0+(?=\d)/, "");
   }
   return value;
 }
@@ -9359,7 +9361,7 @@ async function resolveEnabledBoxCodeLive(raw) {
   if (!normalized) return "";
 
   try {
-    const boxes = await request(`/boxes?q=${encodeURIComponent(normalized)}`);
+    const boxes = await request(`/boxes/options?boxCode=${encodeURIComponent(normalized)}`);
     const matched = (Array.isArray(boxes) ? boxes : []).find(
       (box) => normalizeBoxCodeInput(box?.boxCode) === normalized && Number(box?.status) === 1,
     );
@@ -9564,7 +9566,9 @@ function filterAdjustBoxes(keyword) {
 
   const digits = raw.replace(/\D/g, "");
   if (digits) {
-    return boxes.filter((box) => String(box.boxCode).replace(/\D/g, "").includes(digits));
+    const normalized = normalizeBoxCodeInput(raw);
+    return boxes.filter((box) => normalizeBoxCodeInput(box.boxCode) === normalized
+      || String(box.boxCode).replace(/\D/g, "").includes(digits));
   }
 
   return boxes.filter((box) => String(box.boxCode).toUpperCase().includes(raw));
@@ -10347,7 +10351,7 @@ async function validateInventoryDetailInboundBoxInput(raw, { normalizeInput = fa
   if (resolved) {
     renderInventoryDetailInboundBoxSuggestions(resolved);
     if (normalizeInput) {
-      input.value = resolved;
+      input.value = normalizeBoxCodeInput(resolved);
     }
     if (hint) hint.classList.add("hidden");
     return resolved;
@@ -10380,7 +10384,7 @@ function setInventoryDetailInboundBoxMode(prefillBoxCode = "", locked = false) {
   if (!input) return;
 
   input.readOnly = locked;
-  input.value = String(prefillBoxCode || "").trim();
+  input.value = normalizeBoxCodeInput(prefillBoxCode);
   input.dataset.locked = locked ? "1" : "";
   if (locked) {
     hint?.classList.add("hidden");
@@ -10601,7 +10605,7 @@ async function validateAdjustBoxInput(raw, { normalizeInput = false } = {}) {
   if (resolved) {
     renderAdjustBoxSuggestions(resolved);
     if (normalizeInput) {
-      input.value = resolved;
+      input.value = normalizeBoxCodeInput(resolved);
     }
     if (hint) hint.classList.add("hidden");
     return resolved;
@@ -15805,7 +15809,7 @@ async function submitAdjustForm() {
       throw new Error("箱号不存在，请选择已有箱号或者先新增箱号");
     }
   }
-  $("adjustBoxCode").value = boxCode;
+  $("adjustBoxCode").value = normalizeBoxCodeInput(boxCode);
   if (!Number.isFinite(qty) || !Number.isInteger(qty) || qty <= 0) {
     throw new Error("数量必须为正整数");
   }
@@ -16018,7 +16022,8 @@ async function submitReplaceBoxForm() {
   if (fromBoxCode === toBoxCode) throw new Error("新箱号不能与旧箱号相同");
   let pending = replaceBoxPending;
   if (pending) {
-    if (pending.payload.fromBoxCode !== fromBoxCode || pending.payload.toBoxCode !== toBoxCode
+    if (normalizeBoxCodeInput(pending.payload.fromBoxCode) !== fromBoxCode
+      || normalizeBoxCodeInput(pending.payload.toBoxCode) !== toBoxCode
       || (pending.payload.shelfCode || pending.summary.newShelfCode) !== shelfCode) {
       resetReplaceBoxForm();
       throw new Error("上次换箱结果尚未确认，请先重试确认上次结果，再进行新的换箱。");

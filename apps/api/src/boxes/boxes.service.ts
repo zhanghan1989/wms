@@ -47,9 +47,12 @@ export class BoxesService {
     readonly auditService: AuditService,
   ) {}
 
-  async listOptions(q?: string): Promise<unknown[]> {
+  async listOptions(q?: string, boxCode?: string): Promise<unknown[]> {
+    const codeFilter = boxCode !== undefined
+      ? { in: buildEquivalentBoxCodes(boxCode) }
+      : q ? { contains: q.trim() } : undefined;
     return this.prisma.box.findMany({
-      where: { status: 1, ...(q ? { boxCode: { contains: q.trim() } } : {}) },
+      where: { status: 1, boxCode: codeFilter },
       select: { id: true, boxCode: true, shelfId: true, status: true,
         shelf: { select: { id: true, shelfCode: true, name: true } } },
       orderBy: { id: 'desc' },
@@ -127,7 +130,7 @@ export class BoxesService {
     }
 
     const boxIds = boxes.map((box) => box.id);
-    const boxCodes = boxes.map((box) => box.boxCode);
+    const boxCodes = [...new Set(boxes.flatMap((box) => buildEquivalentBoxCodes(box.boxCode)))];
     const [
       masterInventorySums,
       masterInventoryCounts,
@@ -259,14 +262,16 @@ export class BoxesService {
     const activeFbaCountByBoxId = new Map(
       activeFbaCounts.map((row) => [row.boxId.toString(), Number(row._count._all ?? 0)]),
     );
-    const pendingBatchInboundCountByCode = new Map(
-      pendingBatchInboundCounts.map((row) => [String(row.boxCode), Number(row._count._all ?? 0)]),
-    );
+    const pendingBatchInboundCountByCode = new Map<string, number>();
+    for (const row of pendingBatchInboundCounts) {
+      const code = normalizeBoxCode(row.boxCode);
+      pendingBatchInboundCountByCode.set(code, (pendingBatchInboundCountByCode.get(code) ?? 0) + row._count._all);
+    }
     const lockingOrderByCode = new Map<string, string>();
     for (const order of lockingOrders) {
       const rawCodes = Array.isArray(order.collectedBoxCodes) ? order.collectedBoxCodes : [];
       for (const item of rawCodes) {
-        const code = String(item ?? '').trim().toUpperCase();
+        const code = normalizeBoxCode(String(item ?? ''));
         if (code && !lockingOrderByCode.has(code)) {
           lockingOrderByCode.set(code, order.orderNo);
         }
@@ -292,8 +297,9 @@ export class BoxesService {
       const adjustRows = adjustCountByBoxId.get(boxId) ?? 0;
       const fbaRows = fbaHistoryCountByBoxId.get(boxId) ?? 0;
       const activeFbaRows = activeFbaCountByBoxId.get(boxId) ?? 0;
-      const pendingBatchInboundRows = pendingBatchInboundCountByCode.get(box.boxCode) ?? 0;
-      const lockingOrderNo = lockingOrderByCode.get(String(box.boxCode).trim().toUpperCase()) ?? null;
+      const normalizedBoxCode = normalizeBoxCode(box.boxCode);
+      const pendingBatchInboundRows = pendingBatchInboundCountByCode.get(normalizedBoxCode) ?? 0;
+      const lockingOrderNo = lockingOrderByCode.get(normalizedBoxCode) ?? null;
       const deleteBlockedReasons: string[] = [];
       const archiveReleaseBlockedReasons: string[] = [];
 
@@ -679,7 +685,7 @@ export class BoxesService {
     });
   }
 
-  private async findLockingBatchInboundOrderNo(boxCode: string): Promise<string | null> {
+  async findLockingBatchInboundOrderNo(boxCode: string): Promise<string | null> {
     const normalized = normalizeBoxCode(boxCode);
     if (!normalized) return null;
     const orders = await this.loadPendingBatchInboundOrders();
@@ -687,23 +693,6 @@ export class BoxesService {
     for (const order of orders) {
       const codes = this.parseCollectedBoxCodes(order.collectedBoxCodes);
       if (codes.includes(normalized)) {
-        return order.orderNo;
-      }
-    }
-
-    return null;
-  }
-
-  async findLockingBatchInboundOrderNoExact(boxCode: string): Promise<string | null> {
-    const target = String(boxCode ?? '').trim().toUpperCase();
-    if (!target) return null;
-
-    const orders = await this.loadPendingBatchInboundOrders();
-
-    for (const order of orders) {
-      const rawCodes = Array.isArray(order.collectedBoxCodes) ? order.collectedBoxCodes : [];
-      const matched = rawCodes.some((item) => String(item ?? '').trim().toUpperCase() === target);
-      if (matched) {
         return order.orderNo;
       }
     }
@@ -760,7 +749,7 @@ export class BoxesService {
   async countPendingBatchInboundItemsByBoxCode(boxCode: string): Promise<number> {
     return this.prisma.batchInboundItem.count({
       where: {
-        boxCode,
+        boxCode: { in: buildEquivalentBoxCodes(boxCode) },
         order: {
           status: {
             in: [BatchInboundOrderStatus.waiting_upload, BatchInboundOrderStatus.waiting_inbound],
@@ -831,7 +820,7 @@ async function getDeleteCheckByProduct(
     this.countPendingBatchInboundItemsByBoxCode(box.boxCode),
   ]);
 
-  const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
+  const lockingOrderNo = await this.findLockingBatchInboundOrderNo(box.boxCode);
   const reasons: string[] = [];
   const totalInventoryRows = masterInventoryRows;
 
@@ -892,7 +881,7 @@ async function archiveAndReleaseByProduct(
 
   await this.ensureBoxNotUnderActiveFba(id, box.boxCode, '归档释放');
 
-  const lockingOrderNo = await this.findLockingBatchInboundOrderNoExact(box.boxCode);
+  const lockingOrderNo = await this.findLockingBatchInboundOrderNo(box.boxCode);
   if (lockingOrderNo) {
     throw new BadRequestException(`箱号被批量入库单 ${lockingOrderNo} 占用，不能归档释放`);
   }

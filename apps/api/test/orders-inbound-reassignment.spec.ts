@@ -97,7 +97,7 @@ describe('batch receipt hooks', () => {
     expect(result.switchedToJapanCount).toBe(2);
     if (method === 'confirmBox') {
       expect(tx.batchInboundItem.findMany).toHaveBeenCalledWith(expect.objectContaining({
-        where: { orderId: 1n, boxCode: { in: ['0001', '001', '1'] }, status: 'pending' },
+        where: { orderId: 1n, boxCode: { in: ['1', '01', '001', '0001', '00001', '000001'] }, status: 'pending' },
       }));
     }
     expect(orders.reassignUnpulledChinaOrdersAfterInbound).toHaveBeenCalledWith(tx, ['P1'], 7n, 'receipt');

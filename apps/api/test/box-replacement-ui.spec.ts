@@ -12,11 +12,11 @@ function setup() {
   elements.replaceBoxForm = { reset: () => Object.values(elements).forEach(element => { if ('value' in element) element.value = ''; }) };
   elements.replaceBoxOldCode.value = '1'; elements.replaceBoxNewCode.value = '2'; elements.replaceBoxNewShelf.value = 'A1';
   const storage = new Map();
-  const summary = { oldBoxCode: '0001', newBoxCode: '0002', oldShelfCode: 'A1', newShelfCode: 'A1', qty: 17, productCount: 2, snapshotToken: 'a'.repeat(64) };
+  const summary = { oldBoxCode: '1', newBoxCode: '2', oldShelfCode: 'A1', newShelfCode: 'A1', qty: 17, productCount: 2, snapshotToken: 'a'.repeat(64) };
   const request = jest.fn().mockImplementation(async path => path.endsWith('preview') ? summary : { ...summary, idempotent: false });
   const context: any = {
     state: { me: { id: '1' } }, $: (id: string) => elements[id], request,
-    normalizeBoxCodeInput: (raw: string) => /^\d{1,6}$/.test(raw.trim()) ? raw.trim().padStart(4, '0') : raw,
+    normalizeBoxCodeInput: (raw: string) => /^\d{1,6}$/.test(raw.trim()) ? raw.trim().replace(/^0+(?=\d)/, '') : raw,
     normalizeShelfCodeInput: (raw: string) => raw.trim().split('-')[0], formatShelfCodeWithName: (code: string) => code,
     getEnabledShelvesSorted: () => [], escapeHtml: (value: string) => value,
     openActionConfirmModal: jest.fn().mockResolvedValue(true), newYamatoRequestId: () => 'operation-unique-id',
@@ -33,7 +33,7 @@ describe('whole-box replacement UI', () => {
     const { context, request } = setup();
     await context.submitReplaceBoxForm();
     expect(context.openActionConfirmModal.mock.calls[0][0]).toContain('全部 2 种产品、共 17 件');
-    expect(JSON.parse(request.mock.calls[1][1].body)).toMatchObject({ fromBoxCode: '0001', toBoxCode: '0002', shelfCode: 'A1', operationId: 'operation-unique-id', snapshotToken: 'a'.repeat(64) });
+    expect(JSON.parse(request.mock.calls[1][1].body)).toMatchObject({ fromBoxCode: '1', toBoxCode: '2', shelfCode: 'A1', operationId: 'operation-unique-id', snapshotToken: 'a'.repeat(64) });
     expect(context.loadBoxes).toHaveBeenCalled();
     expect(context.loadInventory).toHaveBeenCalled();
   });
@@ -56,7 +56,7 @@ describe('whole-box replacement UI', () => {
     elements.replaceBoxNewCode.value = '3';
     await expect(context.submitReplaceBoxForm()).rejects.toThrow('上次换箱结果尚未确认');
     expect(request).toHaveBeenCalledTimes(2);
-    expect(elements.replaceBoxNewCode.value).toBe('0002');
+    expect(elements.replaceBoxNewCode.value).toBe('2');
   });
   it('preserves the retry request across form resets when browser storage is unavailable', async () => {
     const { context, request, summary, elements } = setup();
@@ -66,7 +66,7 @@ describe('whole-box replacement UI', () => {
     await expect(context.submitReplaceBoxForm()).rejects.toThrow('offline');
     const original = request.mock.calls[1][1].body;
     context.resetReplaceBoxForm();
-    expect(elements.replaceBoxNewCode.value).toBe('0002');
+    expect(elements.replaceBoxNewCode.value).toBe('2');
     await context.submitReplaceBoxForm();
     expect(request.mock.calls[2][1].body).toBe(original);
     expect(context.openActionConfirmModal).toHaveBeenCalledTimes(1);
