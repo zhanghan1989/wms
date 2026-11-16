@@ -60,13 +60,18 @@ describe('batch inbound deletion', () => {
   });
 });
 
-describe('batch inbound delete button', () => {
+describe('batch inbound order actions', () => {
   const source = readFileSync(join(__dirname, '../public/app.js'), 'utf8');
-  const start = source.indexOf('function canDeleteBatchInboundOrder(order)');
+  const start = source.indexOf('function renderBatchInboundUploadOptions()');
   const end = source.indexOf('\nfunction loadMoreBatchInboundOrdersIfNeeded', start);
   const tbody = { innerHTML: '' };
+  const uploadSelect = { innerHTML: '', value: '' };
+  const elements: Record<string, unknown> = {
+    batchInboundBody: tbody,
+    batchUploadOrderId: uploadSelect,
+  };
   const context: any = {
-    $: () => tbody,
+    $: (id: string) => elements[id],
     state: { batchInboundOrders: [], batchInboundVisibleCount: 30 },
     escapeHtml: String,
     getBatchInboundStatusText: () => '',
@@ -90,5 +95,24 @@ describe('batch inbound delete button', () => {
     context.renderBatchInboundOrders();
     expect(tbody.innerHTML.includes('data-action="batchInboundDeleteOrder"')).toBe(eligible);
     expect(tbody.innerHTML).toContain('data-action="batchInboundSelectOrder"');
+  });
+
+  const uploadedOrder = { ...collectedOrder, uploadedFileName: 'inbound.xlsx', itemCount: 66, confirmedCount: 0 };
+
+  it.each([
+    [uploadedOrder, true, true],
+    [{ ...uploadedOrder, status: 'waiting_inbound' }, true, true],
+    [{ ...uploadedOrder, uploadedFileName: null }, true, true],
+    [{ ...uploadedOrder, status: 'waiting_inbound', confirmedCount: 1 }, false, false],
+    [{ ...uploadedOrder, status: 'confirmed', confirmedCount: 66 }, false, false],
+    [{ ...uploadedOrder, status: 'void' }, false, false],
+    [{ ...uploadedOrder, isPreRegistered: true, status: 'waiting_inbound', confirmedCount: 1 }, false, true],
+    [collectedOrder, false, true],
+  ])('keeps the reupload action and upload picker eligibility in sync (%#)', (order, reupload, canUpload) => {
+    context.state.batchInboundOrders = [order];
+    context.renderBatchInboundOrders();
+    context.renderBatchInboundUploadOptions();
+    expect(tbody.innerHTML.includes('data-action="batchInboundReupload"')).toBe(reupload);
+    expect(uploadSelect.innerHTML.includes('<option value="1">')).toBe(canUpload);
   });
 });

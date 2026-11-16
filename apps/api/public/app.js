@@ -10855,7 +10855,8 @@ function renderBatchInboundUploadOptions() {
   const waitingUploadOrders = state.batchInboundOrders.filter(
     (order) =>
       (order.isPreRegistered && ['waiting_upload', 'waiting_inbound'].includes(order.status)) ||
-      (order.status === "waiting_upload" && !order.uploadedFileName),
+      (order.status === "waiting_upload" && !order.uploadedFileName && order.itemCount === 0) ||
+      canReuploadBatchInboundOrder(order),
   );
   const options = waitingUploadOrders
     .map(
@@ -10877,6 +10878,13 @@ function canDeleteBatchInboundOrder(order) {
     !String(order.seaOrderNo || "").trim();
 }
 
+function canReuploadBatchInboundOrder(order) {
+  return !order.isPreRegistered &&
+    ["waiting_upload", "waiting_inbound"].includes(order.status) &&
+    Boolean(order.uploadedFileName || order.itemCount > 0) &&
+    order.confirmedCount === 0;
+}
+
 function renderBatchInboundOrders() {
   const tbody = $("batchInboundBody");
   if (!tbody) return;
@@ -10893,6 +10901,9 @@ function renderBatchInboundOrders() {
           order.id,
         )}">查看</button>`,
       ];
+      if (canReuploadBatchInboundOrder(order)) {
+        actions.push(`<button type="button" class="tiny-btn" data-action="batchInboundReupload" data-order-id="${escapeHtml(order.id)}">重新上传</button>`);
+      }
       if (order.isPreRegistered && order.hasUnpacked && ['waiting_upload', 'waiting_inbound'].includes(order.status)) {
         actions.push(`<button class="tiny-btn danger" data-action="batchInboundCancelPlan" data-order-id="${escapeHtml(order.id)}">取消剩余在途</button>`);
         actions.push(`<button class="tiny-btn" data-action="batchInboundTransferUnpacked" data-order-id="${escapeHtml(order.id)}">未装箱转下一批</button>`);
@@ -11233,6 +11244,17 @@ async function submitUploadBatchInboundForm() {
     throw new Error("请上传批量入库文档");
   }
 
+  const order = state.batchInboundOrders.find((entry) => String(entry.id) === orderId);
+  const isReupload = order && canReuploadBatchInboundOrder(order);
+  if (isReupload) {
+    const confirmed = await openActionConfirmModal(
+      `将用「${file.name}」覆盖入库单 ${order.orderNo} 的全部待确认明细。请确认文件包含原采集范围 ${formatBatchRange(order)} 内的所有箱号。`,
+      "重新上传明细",
+      "确认覆盖",
+    );
+    if (!confirmed) return null;
+  }
+
   const formData = new FormData();
   formData.append("file", file);
   await request(`/batch-inbound/orders/${orderId}/upload`, {
@@ -11241,7 +11263,7 @@ async function submitUploadBatchInboundForm() {
   });
 
   $("batchInboundFile").value = "";
-  state.selectedBatchInboundOrderId = String(orderId);
+  return orderId;
 }
 
 async function saveBatchInboundDomesticOrderNo(orderId, domesticOrderNo) {
@@ -17484,12 +17506,11 @@ function bindForms() {
     const submitButton = getSubmitButton(event.currentTarget, event);
     try {
       await withBusyButton(submitButton, "上传中...", async () => {
-        await submitUploadBatchInboundForm();
+        const orderId = await submitUploadBatchInboundForm();
+        if (!orderId) return;
         showToast("文档上传成功");
         await loadBatchInboundOrders({ refreshDetail: false });
-        if (state.selectedBatchInboundOrderId) {
-          await loadBatchInboundOrderDetail(state.selectedBatchInboundOrderId);
-        }
+        await loadBatchInboundOrderDetail(orderId);
         await loadInventory();
         await loadBoxes();
         await loadAudit();
@@ -20328,6 +20349,12 @@ function bindDelegates() {
       if (action === "batchInboundSelectOrder" || action === "batchInboundOpenConfirm") {
         await loadBatchInboundOrderDetail(orderId, { silent: true });
         openModal("batchInboundDetailModal");
+      } else if (action === "batchInboundReupload") {
+        $("batchUploadOrderId").value = orderId;
+        const fileInput = $("batchInboundFile");
+        fileInput.value = "";
+        $("uploadBatchInboundForm").scrollIntoView({ block: "center" });
+        fileInput.focus({ preventScroll: true });
       } else if (action === "batchInboundEditOrderNo") {
         const input = $(button.dataset.inputId || "");
         if (!input) return;
