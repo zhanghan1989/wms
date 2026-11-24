@@ -1,4 +1,5 @@
 import { originalRakutenOrderId } from '../common/rakuten-order-identity';
+import { rakutenDeliveryCompanyCode } from '../common/rakuten-delivery-company';
 import { createHash } from 'crypto';
 import { RakutenOrderMail, RakutenOrderRecord, RakutenOrderShippingReport, RakutenRmsConnection } from '@prisma/client';
 
@@ -44,10 +45,28 @@ export function shippingTargetRows(rows: RakutenOrderRecord[], type: string = fu
   const split = rows.some((row) => row.orderId !== originalRakutenOrderId(row));
   return split ? rows : rows.filter((row) => type === 'japan' ? !isChinaRow(row) : isChinaRow(row));
 }
-export function shippingTargetsReady(rows: RakutenOrderRecord[], type: string = fulfillmentOf(rows)): boolean {
+export function shippingVerificationBlockReason(rows: RakutenOrderRecord[], type: Fulfillment): string | null {
   const targets = shippingTargetRows(rows, type);
-  return targets.length > 0 && targets.every((row) => trackingReady([row], isChinaRow(row)) &&
-    (isChinaRow(row) || japanWarehouseReady([row])));
+  if (!targets.length) return '缺少待核实的包裹，请先核对发货范围';
+  for (const row of targets) {
+    const parcel = `订单「${row.orderId}」的包裹`;
+    if (basketIdOf(row) === null) return `${parcel}缺少乐天送付先ID，请先核对订单资料`;
+    if (!String(row.shipmentNo ?? '').trim()) return `${parcel}缺少快递单号，请先补齐发货信息`;
+    try {
+      rakutenDeliveryCompanyCode(row.shipmentCompany);
+    } catch {
+      return `${parcel}缺少可识别的配送公司，请先核对发货信息`;
+    }
+    if (isChinaRow(row)) {
+      if (row.trackingHasCustomsClearance !== true) return `${parcel}尚未确认清关，请先核对物流轨迹`;
+      if (!Number.isFinite(row.trackingCustomsClearanceDate?.getTime())) {
+        return `${parcel}缺少有效清关日期，请先核对物流轨迹`;
+      }
+    } else if (!Number.isFinite(row.warehouseShippedAt?.getTime())) {
+      return `${parcel}缺少实际出货日期，请先核对仓库第5步的出货确认`;
+    }
+  }
+  return null;
 }
 export function shippingFingerprint(rows: RakutenOrderRecord[], type: Fulfillment = fulfillmentOf(rows)): string {
   const baskets = new Map<number, Map<string, RakutenOrderRecord>>();
@@ -164,8 +183,13 @@ export function mailConditionReason(event: string, rows: RakutenOrderRecord[], r
   const japan = rows.filter((row) => !isChinaRow(row));
   if (event === 'new_order') return null;
   if (['japan_shipped', 'china_customs', 'mixed_customs'].includes(event) && report?.status === 'skipped' && !shippingSatisfied(report)) return '单号回传已跳过但未核实完成，请人工核对后续邮件';
-  if (['japan_shipped', 'china_customs', 'mixed_customs'].includes(event) && shippingSatisfied(report) && report?.fingerprint &&
-    (report.fulfillmentType !== type || !shippingTargetsReady(rows, type) || report.fingerprint !== shippingFingerprint(rows, type))) return '回传后包裹信息已变化，请人工核对';
+  if (['japan_shipped', 'china_customs', 'mixed_customs'].includes(event) && shippingSatisfied(report) && report?.fingerprint) {
+    if (report.fulfillmentType !== type || shippingVerificationBlockReason(rows, type) ||
+      report.fingerprint !== shippingFingerprint(rows, type)) return '回传后包裹信息已变化，请人工核对';
+    if (shippingTargetRows(rows, type).some((row) => !isChinaRow(row) && !row.shipmentNoRegisteredAt)) {
+      return '等待日本侧全部包裹单号及登记日期';
+    }
+  }
   if (event === 'japan_shipped') {
     if (type !== 'japan') return '发货类型已变化，请人工核对';
     if (!japanWarehouseReady(japan)) return '等待仓库点击5确认本批次作业完成并实际出货';
@@ -210,6 +234,10 @@ export function buildOrderWorkflow(input: {
   const events = ['new_order', 'shipping', first, ...(second ? [second] : [])];
   const cancelled = orderCancellationConfirmed(rows, report);
   const block = orderBlockReason(rows);
+  const completedReport = !cancelled && shippingSatisfied(report) && report?.fingerprint ? report : null;
+  const verificationBlock = completedReport ? shippingVerificationBlockReason(rows, fulfillmentType) : null;
+  const shippingChanged = Boolean(completedReport && (verificationBlock || completedReport.fulfillmentType !== fulfillmentType ||
+    completedReport.fingerprint !== shippingFingerprint(rows, fulfillmentType)));
   const steps = events.map((event) => {
     const shipping = event === 'shipping';
     const stepBlock = shipping ? block : mailOrderBlockReason(event, rows);
@@ -230,9 +258,8 @@ export function buildOrderWorkflow(input: {
       state = 'done';
       reason = terminated ? CANCELLED_ORDER_REASON
         : mail?.status === 'cancelled' ? mail.resolutionNote ?? '邮件已取消' : null;
-    } else if (shipping && report && shippingSatisfied(report) && report.fingerprint &&
-      (report.fulfillmentType !== fulfillmentType || !shippingTargetsReady(rows, fulfillmentType) || report.fingerprint !== shippingFingerprint(rows, fulfillmentType))) {
-      state = 'manual'; reason = '完成回传后单号、配送公司、日期或发货范围已变化，请人工核对';
+    } else if (shipping && shippingChanged) {
+      state = 'manual'; reason = block ?? verificationBlock ?? '完成回传后单号、配送公司、日期或发货范围已变化，请人工核对';
     } else if (job && ['sent', 'skipped', 'cancelled'].includes(job.status)) {
       state = 'done';
       reason = shipping && report?.status === 'skipped' ? report.lastError
@@ -290,7 +317,8 @@ export function buildOrderWorkflow(input: {
     return {
       event, label: labels[event], state, reason, status: job?.status ?? null,
       id: job?.id.toString() ?? null, kind: shipping ? 'shipping' : 'mail', templateVersion,
-      executable, canReviewBody, requiresManualReview: Boolean(review), manualReviewReason: review,
+      executable, canReviewBody, canVerifyShipping: shipping && shippingChanged && !block && !verificationBlock,
+      requiresManualReview: Boolean(review), manualReviewReason: review,
       outcome: terminated ? 'terminated' : job?.status === 'sent' ? 'completed' : shipping && report?.status === 'skipped' && shippingSatisfied(report) ? 'verified'
         : mail?.status === 'cancelled' && mail.resolutionNote === IGNORED_MAIL ? 'ignored' : job?.status ?? null,
       completedAt: shipping ? report?.reportedAt?.toISOString() ?? null : mail?.sentAt?.toISOString() ?? null,

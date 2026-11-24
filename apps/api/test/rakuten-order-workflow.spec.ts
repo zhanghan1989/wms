@@ -48,6 +48,21 @@ describe('order-level Rakuten workflow', () => {
     expect(result.steps.find((step) => step.event === 'shipping')?.state).toBe('done');
     expect(result.steps.find((step) => step.event === 'japan_shipped')).toMatchObject({ state: 'manual', executable: false });
   });
+  it('shows the missing dispatch confirmation before offering completed shipping verification', () => {
+    const saved = report([row()]);
+    const rows = [row({ shipmentNo: 'CORRECTED', warehouseShippedAt: null })];
+    expect(workflow(rows, [], saved).steps.find((step) => step.event === 'shipping')).toMatchObject({
+      state: 'manual', canVerifyShipping: false, reason: expect.stringContaining('缺少实际出货日期'),
+    });
+    const corrected = [row({ shipmentNo: 'CORRECTED', shipmentNoRegisteredAt: null })];
+    expect(workflow(corrected, [], saved).steps.find((step) => step.event === 'shipping')).toMatchObject({
+      state: 'manual', canVerifyShipping: true,
+    });
+    expect(workflow(corrected, [], report(corrected)).steps.find((step) => step.event === 'shipping')).toMatchObject({
+      state: 'done', canVerifyShipping: false,
+    });
+    expect(mailConditionReason('japan_shipped', corrected, report(corrected))).toBe('等待日本侧全部包裹单号及登记日期');
+  });
   it('allows an explicit human resend after verifying external mail history', () => {
     const rows = [row()];
     const result = workflow(rows, [mail('new_order', { status: 'sent' }), mail('japan_shipped', {

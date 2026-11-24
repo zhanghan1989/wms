@@ -21,7 +21,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RakutenRmsApiClient } from './rakuten-rms-api.client';
 import { RakutenRmsApiCryptoService } from './rakuten-rms-api-crypto.service';
 import { RakutenScheduleControlService } from './rakuten-schedule-control.service';
-import { buildOrderWorkflow, mailReviewMessage, hasRemovedOrderItems, fulfillmentOf, isChinaRow, validOrderQuantity, IGNORED_MAIL, VERIFIED_SHIPPING, shippingConditionReason, basketIdOf, japanWarehouseReady, mailEventReviewReason, mailOrderBlockReason, mailConditionReason, orderBlockReason, shippingSatisfied, shippingTargetRows, shippingTargetsReady, mailSatisfied, shippingFingerprint, trackingReady } from './rakuten-order-workflow';
+import { buildOrderWorkflow, mailReviewMessage, hasRemovedOrderItems, fulfillmentOf, isChinaRow, validOrderQuantity, IGNORED_MAIL, VERIFIED_SHIPPING, shippingConditionReason, basketIdOf, japanWarehouseReady, mailEventReviewReason, mailOrderBlockReason, mailConditionReason, orderBlockReason, shippingSatisfied, shippingTargetRows, shippingVerificationBlockReason, mailSatisfied, shippingFingerprint, trackingReady } from './rakuten-order-workflow';
 
 export const RAKUTEN_ORDER_PROCESSING_CRON = process.env.RAKUTEN_RMS_AUTOMATION_CRON || '0 */20 * * * *';
 const AUTOMATION_TIMEZONE = 'Asia/Tokyo';
@@ -791,10 +791,9 @@ export class RakutenRmsAutomationService {
     try {
       const rows = await this.loadOrderRows(report.connectionId, report.orderId);
       if (!await this.isAutomationEligibleOrder(rows)) throw new BadRequestException('订单不在2026年10月1日起导入范围内');
-      const block = orderBlockReason(rows);
-      if (block) throw new BadRequestException(block);
       const type = fulfillmentOf(rows);
-      if (!shippingTargetsReady(rows, type)) throw new BadRequestException('包裹资料或出货、清关确认不完整，请先核对');
+      const verificationBlock = orderBlockReason(rows) ?? shippingVerificationBlockReason(rows, type);
+      if (verificationBlock) throw new BadRequestException(verificationBlock);
       const fingerprint = shippingFingerprint(rows, type);
       const baskets = this.buildShippingBaskets(shippingTargetRows(rows, type));
       const verifiedBaskets = baskets.map((basket) => ({ ...basket, ShippingModelList: basket.ShippingModelList.map((shipping) => ({ ...shipping })) }));
@@ -824,7 +823,7 @@ export class RakutenRmsAutomationService {
         const latestRows = await tx.rakutenOrderRecord.findMany({ where: {
           deletedAt: null, rmsConnectionId: report.connectionId, ...rakutenOrderIdentityWhere(report.orderId),
         }, orderBy: { id: 'asc' } });
-        if (orderBlockReason(latestRows) || fulfillmentOf(latestRows) !== type || !shippingTargetsReady(latestRows, type) ||
+        if (orderBlockReason(latestRows) || fulfillmentOf(latestRows) !== type || shippingVerificationBlockReason(latestRows, type) ||
           shippingFingerprint(latestRows, type) !== fingerprint) throw new BadRequestException('核实期间包裹信息已变化，请刷新后重试');
         const result = await tx.rakutenOrderShippingReport.updateMany({ where: {
           id, status: report.status, fingerprint: report.fingerprint, updatedAt: report.updatedAt,

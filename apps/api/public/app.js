@@ -7819,7 +7819,7 @@ function renderRakutenWorkflowStep(step, order) {
   if (step.executable || canReview) actions.push(button("workflowExecute", canReview ? "确认正文" : step.kind === "mail" ? "预览并发送" : "人工回传"));
   if (!terminated && step.status === "uncertain") actions.push(button("workflowMarkSent", "确认已发送"), button("workflowRetry", "确认重发"));
   if (!terminated && (step.status === "dead_letter" || step.kind === "shipping" && step.state === "manual" && ["sent", "skipped"].includes(step.status))) actions.push(button("workflowRetry", "处理后重试"));
-  if (step.id && step.kind === "shipping" && step.state === "manual" && ["sent", "skipped"].includes(step.status)) actions.push(button("workflowVerifyShipping", "已人工回传，忽略提醒"));
+  if (step.id && step.canVerifyShipping) actions.push(button("workflowVerifyShipping", "已人工回传，忽略提醒"));
   if (!terminated && step.kind === "shipping" && ["pending", "failed", "dead_letter"].includes(step.status)) actions.push(button("workflowIgnoreShipping", "忽略回传"));
   if (!terminated && step.kind === "mail" && step.status === "pending") actions.push(button("workflowIgnore", "忽略"));
   return `<div class="rakuten-manual-mail-stage"><strong>${escapeHtml(step.label)} · ${escapeHtml(status)}</strong>

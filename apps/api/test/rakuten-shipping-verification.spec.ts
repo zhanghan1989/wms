@@ -75,6 +75,26 @@ describe('human verification of completed shipping', () => {
       data: { automationLockToken: null, automationLockedAt: null },
     }));
   });
+  it('verifies confirmed Japan parcels using the dispatch date when tracking registration time is missing', async () => {
+    const { service, rows, live, tx, client } = setup();
+    for (const row of rows) {
+      Object.assign(row, { dispatchMode: 'overseas', warehouseShippedAt: date,
+        shipmentNoRegisteredAt: null, shipmentCompany: 'Yamato',
+        trackingHasCustomsClearance: false, trackingCustomsClearanceDate: null });
+    }
+    for (const shipping of live.PackageModelList[0].ShippingModelList) shipping.deliveryCompany = '1001';
+    await expect(service.verifyCompletedShippingReport('84', 9n)).resolves.toEqual({ verified: true });
+    expect(tx.rakutenOrderShippingReport.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ fulfillmentType: 'japan', fingerprint: shippingFingerprint(rows) }),
+    }));
+    expect(client.updateOrderShipping).not.toHaveBeenCalled();
+  });
+  it('identifies a Japan parcel missing warehouse confirmation before querying Rakuten', async () => {
+    const { service, rows, client } = setup();
+    Object.assign(rows[1], { dispatchMode: 'overseas', warehouseShippedAt: null });
+    await expect(service.verifyCompletedShippingReport('84', 9n)).rejects.toThrow('订单「ORDERa」的包裹缺少实际出货日期');
+    expect(client.getOrders).not.toHaveBeenCalled();
+  });
   it.each(['wrong-order', 'cancelled', 'unknown'])('rejects an external %s order', async condition => {
     const { service, live, tx } = setup();
     if (condition === 'wrong-order') live.orderNumber = 'OTHER';
@@ -86,7 +106,7 @@ describe('human verification of completed shipping', () => {
   it('rejects incomplete local parcels, concurrent order edits, and report changes', async () => {
     const incomplete = setup();
     incomplete.rows[1].trackingCustomsClearanceDate = null;
-    await expect(incomplete.service.verifyCompletedShippingReport('84', 9n)).rejects.toThrow('不完整');
+    await expect(incomplete.service.verifyCompletedShippingReport('84', 9n)).rejects.toThrow('缺少有效清关日期');
     expect(incomplete.client.getOrders).not.toHaveBeenCalled();
     const edited = setup();
     edited.tx.rakutenOrderRecord.findMany.mockResolvedValue(edited.rows.map(row => ({ ...row, shipmentNo: 'CHANGED' })));

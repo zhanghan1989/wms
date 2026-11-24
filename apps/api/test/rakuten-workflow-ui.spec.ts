@@ -65,10 +65,16 @@ describe('Rakuten order progress UI', () => {
   });
   it.each(['sent', 'skipped'])('offers verification for a changed %s shipment', status => {
     const html = render({ event: 'shipping', label: '单号回传', kind: 'shipping', id: '84', status,
-      state: 'manual', executable: false }, order);
+      state: 'manual', executable: false, canVerifyShipping: true }, order);
     expect(html).toContain('已人工回传，忽略提醒');
     expect(html).toContain('workflowVerifyShipping');
     expect(html).toContain('处理后重试');
+  });
+  it('shows the missing package field in place of the verification action', () => {
+    const html = render({ event: 'shipping', label: '单号回传', kind: 'shipping', id: '84', status: 'sent',
+      state: 'manual', canVerifyShipping: false, reason: '包裹所属订单 ORDER 缺少实际出货日期' }, order);
+    expect(html).toContain('缺少实际出货日期');
+    expect(html).not.toContain('workflowVerifyShipping');
   });
   it('keeps ordinary pending ignores separate from verified completed shipments', () => {
     const pending = render({ event: 'shipping', label: '单号回传', kind: 'shipping', id: '84', status: 'pending', state: 'waiting' }, order);
