@@ -104,7 +104,7 @@ jobs:
     name: Pull and deploy
     needs: image
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 80
     environment:
       name: production
     permissions:
@@ -129,7 +129,7 @@ jobs:
           port: ${{ secrets.ECS_PORT }}
           username: ${{ secrets.ECS_USER }}
           key: ${{ secrets.ECS_SSH_KEY }}
-          command_timeout: 12m
+          command_timeout: 32m
           envs: DEPLOY_REF,IMAGE_REPOSITORY,IMAGE_DIGEST,REGISTRY_ACTOR,REGISTRY_TOKEN
           script: |
             set -euo pipefail
@@ -144,7 +144,7 @@ jobs:
             unset REGISTRY_TOKEN
             image_ref="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
             started=$(date +%s)
-            timeout --kill-after=15s 10m docker --config "$registry_config" pull "$image_ref"
+            timeout --kill-after=15s 30m docker --config "$registry_config" pull "$image_ref"
             revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image_ref")
             [[ "$revision" = "$DEPLOY_REF" ]]
             docker image tag "$image_ref" "wms-api:$DEPLOY_REF"
