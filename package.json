@@ -8,6 +8,9 @@
     "packages/*"
   ],
   "overrides": {
+    "@prisma/config": {
+      "effect": "3.22.5"
+    },
     "multer": "2.5.0",
     "deepmerge-ts": "8.0.0",
     "qs": "6.16.0",
