@@ -7,7 +7,8 @@ jest.mock('../src/inventory/stock-availability', () => ({ availableStock: jest.f
 function setup(quantities = [2, 2, 1], stock = 3, pending = 0) {
   const rows = quantities.map((orderQuantity, i) => ({
     id: BigInt(i + 1), companyId: 1n, skuCode: 'P1', setComponentSkuCode: null,
-    dispatchMode: 'china_no_stock', orderQuantity, orderRemark: '[配送日時指定:]', rawPayload: null,
+    dispatchMode: 'china_no_stock', orderQuantity, orderRemark: '[配送日時指定:]',
+    rawPayload: null as Record<string, unknown> | null,
   }));
   const tx: any = {
     rakutenOrderRecord: { findMany: jest.fn().mockResolvedValue(rows), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
@@ -44,6 +45,14 @@ describe('receipt reassigns unclaimed China orders using finished stock', () => 
     const { tx, run } = setup([1, 2], 2, 3);
     expect(await run()).toBe(0);
     expect(tx.rakutenOrderRecord.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('skips a China order with a previously registered waybill', async () => {
+    const { rows, tx, run } = setup([1, 1], 2);
+    rows[0].rawPayload = { _wmsChinaShipmentRegistered: true };
+    expect(await run()).toBe(1);
+    expect(tx.rakutenOrderRecord.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.rakutenOrderRecord.updateMany.mock.calls[0][0].where.id).toBe(2n);
   });
 
   it('does not consume stock when a concurrent Xiya claim wins', async () => {

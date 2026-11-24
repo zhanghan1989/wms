@@ -4,7 +4,7 @@ import { CompanyJob } from '../company-scope/company-job';
 import { nextTrackingCheck, trackingFactDifferences } from './rakuten-tracking-checks';
 import { rakutenOrderRemarkNeedsConfirmation } from '../common/rakuten-order-remark';
 import { originalRakutenOrderId, rakutenOrderIdentityWhere } from '../common/rakuten-order-identity';
-import { basketIdOf, productIdWasManuallyEdited } from '../rakuten-rms-api/rakuten-order-workflow';
+import { basketIdOf, productIdWasManuallyEdited, shippingSatisfied } from '../rakuten-rms-api/rakuten-order-workflow';
 import { stockTransaction, lockStockProducts } from '../inventory/stock-transaction';
 import { availableStock } from '../inventory/stock-availability';
 import { execFile } from 'child_process';
@@ -3587,6 +3587,8 @@ export class OrdersService {
       const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
       const changed = shipmentNo !== current.shipmentNo || shipmentCompany !== current.shipmentCompany;
       const correction = payload.shipmentEditMode === 'correction';
+      // Preserve dispatch evidence when the editable tracking field is cleared.
+      const clearedChinaShipment = this.isChinaDispatchMode(current.dispatchMode) && !shipmentNo;
       if (correction) {
         if ((payload.expectedShipmentNo !== undefined && payload.expectedShipmentNo !== current.shipmentNo) ||
           (payload.expectedShipmentCompany !== undefined && payload.expectedShipmentCompany !== current.shipmentCompany) ||
@@ -3657,6 +3659,9 @@ export class OrdersService {
                 trackingCheckedAt: null,
                 trackingError: null,
               } : {}),
+              ...(clearedChinaShipment ? { rawPayload: this.mergeRawPayload(edited.rawPayload, {
+                _wmsChinaShipmentRegistered: true,
+              }) } : {}),
               ...(correction && changed ? { rawPayload: {
                 ...(edited.rawPayload && typeof edited.rawPayload === 'object' && !Array.isArray(edited.rawPayload) ? edited.rawPayload : {}),
                 _wmsShipmentCorrectionHistory: [
@@ -3706,7 +3711,11 @@ export class OrdersService {
     const shippingCity = this.normalizeEditableText(payload.shippingCity, '市区町村', 128);
     const shippingAddress = this.normalizeEditableText(payload.shippingAddress, '地址', 5000);
     const shippingPhone = this.normalizeEditableText(payload.shippingPhone, '电话', 64);
-    const dispatchMode = await this.resolveDispatchModeForProductId(productId, orderQuantity ?? 1);
+    const keepChinaDispatch = this.isChinaDispatchMode(current.dispatchMode) &&
+      (this.hasRakutenChinaDispatchEvidence(current) || await this.hasCompletedRakutenChinaShippingReport(current));
+    const dispatchMode = keepChinaDispatch
+      ? current.dispatchMode
+      : await this.resolveDispatchModeForProductId(productId, orderQuantity ?? 1);
     const shipmentCompany = this.normalizeEditableText(payload.shipmentCompany, '发货公司', 128);
     const shipmentNo = this.normalizeEditableText(payload.shipmentNo, '发货单号', 128);
     const deliveryDateRaw = this.normalizeEditableText(payload.deliveryDateRaw, 'お届け日指定', 32);
@@ -3721,8 +3730,11 @@ export class OrdersService {
 
     const manualOverrideAt = new Date();
     await this.prisma.$transaction(async (tx) => {
-      await tx.rakutenOrderRecord.update({
-      where: { deletedAt: null, id },
+      const result = await tx.rakutenOrderRecord.updateMany({
+      where: {
+        deletedAt: null, id, updatedAt: current.updatedAt, dispatchMode: current.dispatchMode,
+        shipmentNo: current.shipmentNo, xiyaPulledAt: current.xiyaPulledAt, xiyaExportedAt: current.xiyaExportedAt,
+      },
       data: {
         orderId,
         rmsOrderId: current.rmsConnectionId || (current.rawPayload as Prisma.JsonObject | null)?._wmsOriginalOrderId
@@ -3797,6 +3809,7 @@ export class OrdersService {
         }),
       },
     });
+      if (result.count !== 1) throw new ConflictException('订单已更新，请刷新后重新保存');
       await this.freezeRelatedRakutenOrderRowsAfterManualEdit(
         tx,
         current.orderId,
@@ -3817,6 +3830,24 @@ export class OrdersService {
         .trim()
         .slice(0, 64) || "unknown"
     );
+  }
+
+  private hasRakutenChinaDispatchEvidence(row: RakutenOrderRecord): boolean {
+    return Boolean(row.xiyaPulledAt || row.xiyaExportedAt || row.shipmentNoRegisteredAt ||
+      (row.rawPayload as Prisma.JsonObject | null)?._wmsChinaShipmentRegistered === true);
+  }
+
+  private async hasCompletedRakutenChinaShippingReport(
+    row: RakutenOrderRecord, db: Prisma.TransactionClient = this.prisma,
+  ): Promise<boolean> {
+    const orderId = originalRakutenOrderId(row);
+    if (!row.rmsConnectionId || !orderId) return false;
+    const report = await db.rakutenOrderShippingReport.findUnique({
+      where: { connectionId_orderId: { connectionId: row.rmsConnectionId, orderId } },
+      select: { fulfillmentType: true, status: true, lastError: true, reportedAt: true },
+    });
+    return (report?.fulfillmentType === 'china' || report?.fulfillmentType === 'mixed') &&
+      (Boolean(report.reportedAt) || shippingSatisfied(report));
   }
 
   private async freezeRelatedRakutenOrderRowsAfterManualEdit(
@@ -5099,7 +5130,7 @@ export class OrdersService {
     const eligible: Prisma.RakutenOrderRecordWhereInput = {
       deletedAt: null, warehouseShippedAt: null, sendStatus: OrderSendStatus.unsent,
       dispatchMode: { in: ['china_no_stock', 'china_pending'] },
-      xiyaPulledAt: null, xiyaExportedAt: null,
+      xiyaPulledAt: null, xiyaExportedAt: null, shipmentNoRegisteredAt: null,
       OR: [{ shipmentNo: null }, { shipmentNo: '' }],
     };
     const rows = await tx.rakutenOrderRecord.findMany({
@@ -5125,8 +5156,10 @@ export class OrdersService {
     for (const row of rows) {
       const productId = String(row.skuCode ?? '').trim() || String(row.setComponentSkuCode ?? '').trim();
       const qty = row.orderQuantity ?? 1;
-      if (excluded.has(row.id.toString()) || rakutenOrderRemarkNeedsConfirmation(row) ||
+      if (excluded.has(row.id.toString()) || this.hasRakutenChinaDispatchEvidence(row) ||
+          rakutenOrderRemarkNeedsConfirmation(row) ||
           !Number.isSafeInteger(qty) || qty <= 0 || (remaining.get(productId) ?? 0) < qty) continue;
+      if (await this.hasCompletedRakutenChinaShippingReport(row, tx)) continue;
       // Compete with Xiya's claim on the same row; a failed claim consumes no stock.
       const result = await tx.rakutenOrderRecord.updateMany({
         where: { ...eligible, id: row.id, dispatchMode: row.dispatchMode,
@@ -5162,8 +5195,10 @@ export class OrdersService {
       if (!row) throw new NotFoundException('订单不存在或当前不可处理');
       if (row.xiyaPulledAt || row.xiyaExportedAt) throw new BadRequestException('Xiya 已拉取该订单，无法切日本发');
       const active = await this.loadActiveOverseasPickingBatchRefs([{ source, sourceRecordId: id }]);
-      if (String(row.shipmentNo ?? '').trim() || row.sendStatus !== OrderSendStatus.unsent ||
-          rakutenOrderRemarkNeedsConfirmation(row) || active.has(`rakuten:${id.toString()}`)) {
+      if (this.hasRegisteredShipmentNo(row) || this.hasRakutenChinaDispatchEvidence(row) ||
+          row.sendStatus !== OrderSendStatus.unsent ||
+          rakutenOrderRemarkNeedsConfirmation(row) || active.has(`rakuten:${id.toString()}`) ||
+          await this.hasCompletedRakutenChinaShippingReport(row, tx)) {
         throw new BadRequestException('订单已登记运单、已进入拣货或尚未确认备注，无法切日本发');
       }
       const enriched = await this.enrichOrderRows([row]);
@@ -5171,7 +5206,8 @@ export class OrdersService {
         throw new BadRequestException('当前订单已不在待 Xiya 拉取范围内');
       }
       const result = await model.updateMany({
-        where: { deletedAt: null, id, dispatchMode: row.dispatchMode, sendStatus: OrderSendStatus.unsent,
+        where: { deletedAt: null, id, updatedAt: row.updatedAt, dispatchMode: row.dispatchMode,
+          sendStatus: OrderSendStatus.unsent, shipmentNoRegisteredAt: null,
           orderRemark: row.orderRemark, xiyaPulledAt: null, xiyaExportedAt: null, OR: [{ shipmentNo: null }, { shipmentNo: '' }] },
         data: { dispatchMode: OVERSEAS_DISPATCH_MODE.OVERSEAS },
       });

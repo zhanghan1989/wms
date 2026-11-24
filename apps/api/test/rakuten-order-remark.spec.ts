@@ -44,8 +44,7 @@ describe('Rakuten remark confirmation', () => {
     const record = {
       findUnique: jest.fn().mockResolvedValue(current),
       findUniqueOrThrow: jest.fn().mockResolvedValue(current),
-      update: jest.fn().mockResolvedValue(current),
-      updateMany: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     };
     const tx = { rakutenOrderRecord: record };
     const db = { ...tx, $transaction: jest.fn(async (work) => work(tx)) };
@@ -55,7 +54,7 @@ describe('Rakuten remark confirmation', () => {
     jest.spyOn(service as any, 'resolveDispatchModeForProductId').mockResolvedValue('overseas');
     jest.spyOn(service as any, 'enrichOrderRows').mockResolvedValue([current]);
     await service.updateRakutenOrder('1', { orderId: 'R-1', orderRemark: '请周末配送' }, 'reviewer');
-    const data = (record.update.mock.calls[0] as any)[0].data;
+    const data = (record.updateMany.mock.calls[0] as any)[0].data;
     expect(data.orderRemark).toBe('请周末配送');
     expect(data.rawPayload.original).toBe('preserved');
     expect(rakutenOrderRemarkNeedsConfirmation(data)).toBe(false);

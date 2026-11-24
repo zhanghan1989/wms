@@ -27,6 +27,11 @@ describe('China pending orders switch to Japan', () => {
     await expect(service.switchChinaOrderToJapan(source, '1')).rejects.toThrow('无法切日本发');
     expect(model.updateMany).not.toHaveBeenCalled();
   });
+  it('rejects a manual switch after a China waybill was cleared', async () => {
+    const { service, model } = setup('rakuten', { rawPayload: { _wmsChinaShipmentRegistered: true } });
+    await expect(service.switchChinaOrderToJapan('rakuten', '1')).rejects.toThrow('无法切日本发');
+    expect(model.updateMany).not.toHaveBeenCalled();
+  });
   it.each(['amazon', 'manual'])('rejects unsupported source %s before writing', async source => {
     const { service, model } = setup(source);
     await expect(service.switchChinaOrderToJapan(source, '1')).rejects.toThrow('仅支持待 Xiya 拉取的乐天订单');

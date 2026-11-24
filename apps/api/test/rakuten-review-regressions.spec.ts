@@ -7,7 +7,8 @@ import { buildOrderWorkflow, mailReviewReason, shippingConditionReason } from '.
 const date = new Date('2026-10-12T02:00:00Z');
 const order = (extra: object = {}) => ({
   id: 1n, orderId: 'ORDER', rmsConnectionId: 7n, rmsOrderId: null, shopName: '旧店名', sourceKind: 'rms_api', createdAt: date,
-  deletedAt: null, dispatchMode: 'overseas', orderQuantity: 1, shipmentNo: 'PRINTED-1', shipmentCompany: 'Yamato',
+  deletedAt: null, updatedAt: date, xiyaPulledAt: null, xiyaExportedAt: null,
+  dispatchMode: 'overseas', orderQuantity: 1, shipmentNo: 'PRINTED-1', shipmentCompany: 'Yamato',
   shipmentNoRegisteredAt: date, warehouseShippedAt: date, warehouseShippedBy: 9n, buyerEmail: 'buyer@example.jp',
   trackingHasCustomsClearance: true, trackingIsDelivered: true, trackingCustomsClearanceDate: date,
   shippingName: '購入者', shippingPostalCode: '123-4567', shippingPrefecture: '東京都', shippingCity: '千代田区', shippingAddress: '1-2-3',
@@ -19,15 +20,77 @@ function editableOrder(extra: object = {}) {
   let saved = order(extra);
   const tx = { rakutenOrderRecord: {
     update: jest.fn(async ({ data }) => { saved = { ...saved, ...data }; return saved; }),
-    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    updateMany: jest.fn(async ({ where, data }) => {
+      if (where.id !== saved.id) return { count: 0 };
+      saved = { ...saved, ...data };
+      return { count: 1 };
+    }),
   } };
+  const findShippingReport = jest.fn().mockResolvedValue(null);
   const service = new OrdersService({
     rakutenOrderRecord: { findUnique: jest.fn(async () => saved), findUniqueOrThrow: jest.fn(async () => saved) },
+    rakutenOrderShippingReport: { findUnique: findShippingReport },
     $transaction: jest.fn(async (cb) => cb(tx)),
   } as any);
   jest.spyOn(service as any, 'enrichOrderRows').mockImplementation(async (rows) => rows);
-  return { service, saved: () => saved };
+  return { service, saved: () => saved, updateMany: tx.rakutenOrderRecord.updateMany, findShippingReport };
 }
+
+describe('editing a Rakuten order after China fulfillment started', () => {
+  const payload = { orderId: 'ORDER', productId: 'PART', orderQuantity: 1, orderRemark: '[配送日時指定:]',
+    shipmentNo: 'CHINA-1', shipmentCompany: 'Xiya-SAGAWA' };
+  function fixture(extra: object = {}) {
+    const result = editableOrder({ dispatchMode: 'china_no_stock', shipmentNo: null, shipmentNoRegisteredAt: null,
+      warehouseShippedAt: null, ...extra });
+    jest.spyOn(result.service as any, 'assertEditableOrderNotInActiveOverseasPickingBatch').mockResolvedValue(undefined);
+    jest.spyOn(result.service as any, 'assertEditedOrderIdentityDoesNotConflict').mockResolvedValue(undefined);
+    const resolveDispatch = jest.spyOn(result.service as any, 'resolveDispatchModeForProductId').mockResolvedValue('overseas');
+    return { ...result, resolveDispatch };
+  }
+  it.each([{ xiyaPulledAt: date }, { xiyaExportedAt: date }, { shipmentNoRegisteredAt: date }])(
+    'keeps a China shipment from being assigned to Japan when saving again: %j', async extra => {
+      const { service, saved, resolveDispatch } = fixture(extra);
+      await service.updateRakutenOrder('1', payload, 'reviewer');
+      expect(saved()).toMatchObject({ dispatchMode: 'china_no_stock', shipmentNo: 'CHINA-1', orderRemark: payload.orderRemark });
+      expect(resolveDispatch).not.toHaveBeenCalled();
+    },
+  );
+  it('preserves China routing after a manually registered waybill is cleared and restored', async () => {
+    const { service, saved, resolveDispatch } = fixture({ shipmentNo: 'CHINA-1', shipmentCompany: 'Xiya-SAGAWA' });
+    await service.updateRakutenOrder('1', { shipmentNo: '', shipmentCompany: 'Xiya-SAGAWA' }, 'reviewer');
+    expect(saved().shipmentNo).toBeNull();
+    expect(saved().rawPayload).toMatchObject({ rmsPackage: { basketId: 1 }, _wmsChinaShipmentRegistered: true });
+    await service.updateRakutenOrder('1', payload, 'reviewer');
+    expect(saved()).toMatchObject({ dispatchMode: 'china_no_stock', shipmentNo: 'CHINA-1' });
+    expect(resolveDispatch).not.toHaveBeenCalled();
+  });
+  it('uses completed RMS reporting as evidence for a historical order without Xiya markers', async () => {
+    const { service, saved, resolveDispatch, findShippingReport } = fixture({ rmsOrderId: 'ORIGINAL' });
+    findShippingReport.mockResolvedValue({ fulfillmentType: 'china', status: 'sent', lastError: null });
+    await service.updateRakutenOrder('1', payload, 'reviewer');
+    expect(findShippingReport).toHaveBeenCalledWith(expect.objectContaining({
+      where: { connectionId_orderId: { connectionId: 7n, orderId: 'ORIGINAL' } },
+    }));
+    expect(saved().dispatchMode).toBe('china_no_stock');
+    expect(resolveDispatch).not.toHaveBeenCalled();
+  });
+  it('can still recompute an unclaimed China route', async () => {
+    const { service, saved, resolveDispatch } = fixture();
+    await service.updateRakutenOrder('1', { ...payload, shipmentNo: '' }, 'reviewer');
+    expect(resolveDispatch).toHaveBeenCalledWith('PART', 1);
+    expect(saved().dispatchMode).toBe('overseas');
+  });
+  it('rejects a save if shipment registration or routing changes during the edit', async () => {
+    const { service, saved, updateMany } = fixture();
+    updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(service.updateRakutenOrder('1', payload, 'reviewer')).rejects.toThrow('请刷新后重新保存');
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      updatedAt: date, shipmentNo: null, xiyaPulledAt: null, xiyaExportedAt: null, dispatchMode: 'china_no_stock',
+    }) }));
+    expect(saved().dispatchMode).toBe('china_no_stock');
+  });
+});
 
 describe('manual review is specific to actual product ID edits', () => {
   const payload = { orderId: 'ORDER', productId: 'PART', skuCode: 'PART', orderQuantity: 1, productName: '商品',
