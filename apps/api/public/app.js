@@ -15885,11 +15885,6 @@ async function createSkuFromModal() {
 
   if (!sku) throw new Error("SKU 不能为空");
 
-  const possibleDuplicate = await request(`/skus?q=${encodeURIComponent(sku)}`);
-  if (possibleDuplicate.some((item) => item.sku === sku)) {
-    throw new Error("SKU 已存在");
-  }
-
   let normalizedProductId = productId;
   if (normalizedProductId) {
     const matchedProduct = await syncSkuProductName("modalNewProductId", "modalNewProductName");
