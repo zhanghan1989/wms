@@ -87,9 +87,17 @@ function percentageChange(current: number, previous: number): number | null {
   return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
-function salesMetrics(rows: RakutenDashboardOrderRow[]) {
+function isPhysicalPurchase(row: RakutenDashboardOrderRow): boolean {
+  const name = (row.productName ?? '').normalize('NFKC').replace(/\s+/g, '');
+  // Dedicated color-change listings are fees. Older data can have only their option SKU.
+  const isColorOption = /^(?:\([^)]*\))?カラーカスタマイズ(?:バッグインバッグカスタマイズ)?$/.test(name)
+    || (!name && /^(?:cd|db)-\d+(?:-\d+)*$/i.test(row.skuCode?.trim() ?? ''));
+  return !isColorOption;
+}
+
+function salesMetrics(rows: RakutenDashboardOrderRow[], purchases: RakutenDashboardOrderRow[]) {
   const orderIds = new Set(rows.map((row) => row.orderId).filter(Boolean));
-  const unitCount = rows.reduce((sum, row) => sum + nonNegative(row.orderQuantity), 0);
+  const unitCount = purchases.reduce((sum, row) => sum + nonNegative(row.orderQuantity), 0);
   const salesAmount = rows.reduce(
     (sum, row) => sum + nonNegative(row.salesAmount), 0,
   );
@@ -172,6 +180,8 @@ export function buildRakutenStoreDashboard(input: {
   const datedRows = activeRows.map((row) => ({ row, date: parseDate(row.orderImportedAtRaw) }));
   const currentRows = datedRows.filter(({ date }) => date && date >= periodStart && date < periodEnd).map(({ row }) => row);
   const previousRows = datedRows.filter(({ date }) => date && date >= previousStart && date < periodStart).map(({ row }) => row);
+  const currentPurchases = currentRows.filter(isPhysicalPurchase);
+  const previousPurchases = previousRows.filter(isPhysicalPurchase);
   const cancelledOrderIds = new Set(orders.filter((row) => isCancelled(row.orderStatusText)).map((row) => row.orderId));
   const activeFulfillmentRows = input.fulfillmentOrders?.filter((row) => !isCancelled(row.orderStatusText) && !cancelledOrderIds.has(row.orderId));
   const currentFulfillmentRows = activeFulfillmentRows?.filter((row) => {
@@ -180,14 +190,14 @@ export function buildRakutenStoreDashboard(input: {
   }) ?? currentRows;
   const separateFulfillment = input.fulfillmentOrders !== orders ? activeFulfillmentRows : undefined;
   const current = {
-    ...salesMetrics(currentRows),
+    ...salesMetrics(currentRows, currentPurchases),
     pendingShipmentOrderCount: pendingShipmentOrderCount(currentFulfillmentRows),
-    ...purchaseWarehouseCounts(currentRows, separateFulfillment),
+    ...purchaseWarehouseCounts(currentPurchases, separateFulfillment),
   };
   const previous = {
-    ...salesMetrics(previousRows),
+    ...salesMetrics(previousRows, previousPurchases),
     pendingShipmentOrderCount: pendingShipmentOrderCount(previousRows),
-    ...purchaseWarehouseCounts(previousRows, separateFulfillment),
+    ...purchaseWarehouseCounts(previousPurchases, separateFulfillment),
   };
   const warehouseUnits = (overseas: boolean) => currentFulfillmentRows
     .reduce((sum, row) => sum + ((row.dispatchMode === 'overseas') === overseas ? nonNegative(row.orderQuantity) : 0), 0);
@@ -329,7 +339,7 @@ export function buildRakutenStoreDashboard(input: {
     componentProducts: Array<{ productId: string; productName: string | null; stockQty: number }>;
     orders: Set<string>; units: number; salesAmount: number; shippedUnits: number;
   }>();
-  for (const row of currentRows) {
+  for (const row of currentPurchases) {
     const skuCode = String(row.skuCode ?? '').trim() || '(无SKU)';
     const isCombo = /^zh-/i.test(skuCode);
     const product = isCombo ? undefined : productLookup.get(normalize(skuCode));
@@ -379,8 +389,7 @@ export function buildRakutenStoreDashboard(input: {
     const key = tokyoDateKey(date);
     const daily = dailyMap.get(key) ?? { orderIds: new Set<string>(), units: 0, salesAmount: 0 };
     if (row.orderId) daily.orderIds.add(row.orderId);
-    const quantity = nonNegative(row.orderQuantity);
-    daily.units += quantity;
+    if (isPhysicalPurchase(row)) daily.units += nonNegative(row.orderQuantity);
     daily.salesAmount += nonNegative(row.salesAmount);
     dailyMap.set(key, daily);
   }

@@ -25,7 +25,7 @@ export function exportStoreDashboard(payload: any, channel: string) {
   const salesNote = channel === 'Amazon' ? 'Amazon销售额仅含FBA。'
     : '销售按RMS原订单、原购买SKU统计，已扣优惠券并排除取消。SKU优惠券按商品金额比例分摊。';
   const warehousesNote = d.summary.crossWarehouseUnitCount === undefined ? ''
-    : '分仓购买件数按原购买明细统计，跨仓表示同一明细由两仓履约。未导入指无有效WMS订单，未匹配包括缺少对应明细或仓库未定。发货概况按WMS拆套后的履约明细统计，包含待发货明细。';
+    : '销量、分仓和SKU排行按原购买的实物明细统计，颜色定制费用计入总销售额与每日趋势。跨仓表示同一购买明细由两仓履约。未导入指无有效WMS订单，未匹配包括缺少对应明细或仓库未定。发货概况按WMS拆套后的履约明细统计，包含待发货明细。';
   add('统计说明', [{ 店铺: payload.selectedShop.shopName, 平台: channel, 生成时间: payload.generatedAt,
     ...d.period, 说明: `统计时间按日本时间。${payload.salesOnly ? '仅统计本公司产品。' : '库存为当前快照，备货建议按独立周期计算。'}商品排行最多100项。${salesNote}${warehousesNote}` }]);
   add('统计汇总', [d.summary]);

@@ -81,6 +81,32 @@ describe('RMS original-order financial facts', () => {
       '日本仓履约件数（拆套后）': 10, '中国仓履约件数（拆套后）': 12,
     });
   });
+  it('counts color changes as fees while keeping physical purchase units and WMS fulfillment separate', () => {
+    const now = new Date('2026-11-25T03:00:00Z');
+    const orderedAt = new Date('2026-10-10T00:00:00Z');
+    const previous = new Date('2026-09-10T00:00:00Z');
+    const item = (itemId: string, skuCode: string, productName: string, quantity: number, salesAmount: number) =>
+      ({ itemId, skuCode, productName, quantity, salesAmount });
+    const physical = item('1:1', 'cd-98', '实物商品', 2, 8000);
+    const silkenColor = item('1:2', 'cd-12', '(シルク)カラーカスタマイズ　バッグインバッグカスタマイズ', 1, 1800);
+    const dupontColor = item('2:1', 'db-19', '（デュポン紙）カラー カスタマイズ  バッグインバッグカスタマイズ', 1, 1500);
+    const legacyColor = item('3:1', 'cd-12-2', '', 1, 1200);
+    const orders = rakutenSalesRows([
+      { orderId: 'mixed', orderedAt, orderProgress: '600', items: [physical, silkenColor] },
+      { orderId: 'fee-only', orderedAt, orderProgress: '600', items: [dupontColor] },
+      { orderId: 'legacy-fee-only', orderedAt: previous, orderProgress: '600', items: [legacyColor] },
+    ]);
+    const dashboard = buildRakutenStoreDashboard({
+      now, days: 31, period: storeDashboardPeriod(now, undefined, '2026-10'), orders, products: [],
+      fulfillmentOrders: orders.filter(row => row.orderId === 'mixed').map(row => ({ ...row, shipmentNo: 'registered', dispatchMode: 'overseas' })),
+    }) as any;
+    expect(dashboard.summary).toMatchObject({ orderCount: 2, salesAmount: 11300, unitCount: 2,
+      overseasUnitCount: 2, chinaUnitCount: 0, crossWarehouseUnitCount: 0, unimportedUnitCount: 0, unmatchedFulfillmentUnitCount: 0 });
+    expect(dashboard.comparison.previous).toMatchObject({ orderCount: 1, unitCount: 0, salesAmount: 1200 });
+    expect(dashboard.daily[9]).toMatchObject({ orderCount: 2, unitCount: 2, salesAmount: 11300 });
+    expect(dashboard.topProducts).toMatchObject([{ skuCode: 'cd-98', unitCount: 2, salesAmount: 8000 }]);
+    expect(dashboard.fulfillment.overseasUnitCount).toBe(3);
+  });
   it('uses current RMS quantity and price, not manually changed warehouse quantities', () => {
     const snapshot = parseRakutenSalesOrder(order('qty', { goodsPrice: 2000, couponAllTotalPrice: 1000,
       PackageModelList: [{ basketId: 1, ItemModelList: [{ itemDetailId: 1, units: 2, price: 1000,
