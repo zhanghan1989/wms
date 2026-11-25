@@ -62,7 +62,7 @@ export function parseRakutenSalesOrder(order: RakutenJsonObject) {
 
 export function rakutenSalesRows(snapshots: Array<{ orderId: string; orderedAt: Date; orderProgress: string; items: unknown }>): RakutenDashboardOrderRow[] {
   return snapshots.flatMap((order) => (order.items as RakutenSalesItem[]).map((item) => ({
-    orderId: order.orderId, skuCode: item.skuCode, productName: item.productName,
+    orderId: order.orderId, purchaseItemId: item.itemId, skuCode: item.skuCode, productName: item.productName,
     orderQuantity: item.quantity, orderStatusText: order.orderProgress, orderImportedAtRaw: order.orderedAt,
     salesAmount: item.salesAmount, dispatchMode: null, shipmentNo: null, trackingIsDelivered: false,
   })));

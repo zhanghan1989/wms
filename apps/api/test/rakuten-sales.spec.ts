@@ -1,3 +1,5 @@
+import * as XLSX from 'xlsx';
+import { exportStoreDashboard } from '../src/common/store-dashboard-export';
 import { parseRakutenSalesOrder, rakutenSalesRows } from '../src/rakuten-rms-api/rakuten-sales';
 import { RakutenSalesService } from '../src/rakuten-rms-api/rakuten-sales.service';
 import { buildRakutenStoreDashboard } from '../src/rakuten-rms-api/rakuten-store-dashboard';
@@ -27,6 +29,57 @@ describe('RMS original-order financial facts', () => {
     expect(d.summary).toMatchObject({ orderCount: 1, unitCount: 2, salesAmount: 2500, averageOrderValue: 2500 });
     expect(d.daily[0]).toMatchObject({ date: '2026-09-01', salesAmount: 2500, orderCount: 1 });
     expect(d.topProducts.reduce((a: number, row: any) => a + row.salesAmount, 0)).toBe(2500);
+  });
+  it('partitions original purchase quantities by matched warehouse and exports WMS component quantities separately', () => {
+    const now = new Date('2026-10-01T09:00:00Z');
+    const soldAt = new Date('2026-09-01T01:00:00Z');
+    const previousDate = new Date('2026-08-31T10:00:00Z');
+    const item = (itemId: string, skuCode: string, quantity: number) => ({ itemId, skuCode, quantity, salesAmount: 100 });
+    const sale = (orderId: string, items: ReturnType<typeof item>[], orderProgress = '300', orderedAt = soldAt) =>
+      ({ orderId, items, orderProgress, orderedAt });
+    const sales = [
+      sale('mixed', [item('1:1', 'zh-jp', 2), item('1:2', 'zh-cross', 3), item('1:3', 'single', 4), item('1:4', 'custom', 1)]),
+      sale('legacy', [item('2:1', 'legacy', 3)]),
+      sale('repeated', [item('3:1', 'same', 2), item('3:2', 'same', 1)]),
+      sale('unknown-warehouse', [item('4:1', 'unknown', 2)]),
+      sale('not-imported', [item('5:1', 'new', 2)], '200'),
+      sale('old', [item('6:1', 'old', 1)], '300', previousDate),
+      sale('cancelled', [item('7:1', 'cancelled', 99)], '900'),
+    ];
+    const fulfillment = (orderId: string, purchaseItemId: string | null, skuCode: string, orderQuantity: number,
+      dispatchMode: string | null, orderImportedAtRaw = soldAt) => ({
+      orderId, purchaseItemId, skuCode, productName: skuCode, orderQuantity, dispatchMode, orderImportedAtRaw,
+      orderStatusText: '300', shipmentNo: null, trackingIsDelivered: false, salesAmount: 0,
+    });
+    const dashboard = buildRakutenStoreDashboard({
+      now, days: 30, period: storeDashboardPeriod(now, undefined, '2026-09'), products: [], orders: rakutenSalesRows(sales),
+      fulfillmentOrders: [
+        fulfillment('mixed', '1:1', 'part-a', 2, 'overseas'), fulfillment('mixed', '1:1', 'part-b', 2, 'overseas'),
+        fulfillment('mixed', '1:2', 'part-c', 3, 'overseas'), fulfillment('mixed', '1:2', 'part-d', 3, 'china_no_stock'),
+        fulfillment('mixed', '1:3', 'substitute', 4, 'china_no_stock'),
+        fulfillment('mixed', '1:99', 'custom', 1, 'overseas'), // Same SKU, different original item.
+        { ...fulfillment('legacy', null, 'legacy-product', 3, 'china_pending'), purchaseSkuCode: 'legacy' },
+        fulfillment('repeated', null, 'same', 2, 'overseas'),
+        fulfillment('unknown-warehouse', '4:1', 'unknown', 2, null),
+        fulfillment('old', '6:1', 'old', 1, 'overseas', previousDate),
+        fulfillment('cancelled', '7:1', 'cancelled', 99, 'overseas'),
+      ],
+    }) as any;
+
+    expect(dashboard.summary).toMatchObject({ unitCount: 20, overseasUnitCount: 2, chinaUnitCount: 7,
+      crossWarehouseUnitCount: 3, unimportedUnitCount: 2, unmatchedFulfillmentUnitCount: 6 });
+    expect(dashboard.comparison.previous).toMatchObject({ unitCount: 1, overseasUnitCount: 1 });
+    expect(dashboard.fulfillment).toMatchObject({ overseasUnitCount: 10, chinaUnitCount: 12, pendingShipmentOrderCount: 4 });
+
+    const { content } = exportStoreDashboard({ dashboard, selectedShop: { shopName: '乐天-1号店' } }, '乐天');
+    const workbook = XLSX.read(content, { type: 'buffer' });
+    expect(XLSX.utils.sheet_to_json(workbook.Sheets['统计汇总'])[0]).toMatchObject({
+      '件数': 20, '日本仓购买件数': 2, '中国仓购买件数': 7, '跨仓购买件数': 3,
+      '未导入购买件数': 2, '未匹配履约的购买件数': 6,
+    });
+    expect(XLSX.utils.sheet_to_json(workbook.Sheets['发货概况'])[0]).toMatchObject({
+      '日本仓履约件数（拆套后）': 10, '中国仓履约件数（拆套后）': 12,
+    });
   });
   it('uses current RMS quantity and price, not manually changed warehouse quantities', () => {
     const snapshot = parseRakutenSalesOrder(order('qty', { goodsPrice: 2000, couponAllTotalPrice: 1000,

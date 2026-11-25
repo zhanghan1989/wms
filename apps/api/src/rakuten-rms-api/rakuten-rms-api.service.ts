@@ -132,6 +132,8 @@ interface RakutenDashboardQueryRow {
   rmsConnectionId: bigint | null;
   orderId: string | null;
   skuCode: string | null;
+  purchaseItemId: string | null;
+  purchaseSkuCode: string | null;
   productName: string | null;
   orderQuantity: number | null;
   orderStatusText: string | null;
@@ -259,6 +261,12 @@ export class RakutenRmsApiService {
           rms_connection_id AS rmsConnectionId,
           COALESCE(rms_order_id, order_id) AS orderId,
           sku_code AS skuCode,
+          CONCAT(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsPackage.basketId')), 'null'), ':',
+            COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.itemDetailId')), 'null'),
+              NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.ItemDetailId')), 'null'))) AS purchaseItemId,
+          COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$.rmsItem.SkuModelList[0].variantId')), 'null'),
+            NULLIF(combo_order_sku, ''), NULLIF(JSON_UNQUOTE(JSON_EXTRACT(raw_payload, '$."SKU管理番号"')), 'null'),
+            sku_code) AS purchaseSkuCode,
           product_name AS productName,
           order_quantity AS orderQuantity,
           order_status_text AS orderStatusText,

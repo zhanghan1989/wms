@@ -2981,7 +2981,12 @@ function renderRakutenStoreDashboard(payload) {
     { label: "商品销售额", value: formatAmazonStoreCurrency(summary.salesAmount, "JPY") },
     { label: "平均客单价", value: formatAmazonStoreCurrency(summary.averageOrderValue, "JPY") },
     { label: "待发货订单", value: `${formatMetricNumber(summary.pendingShipmentOrderCount)} 单` },
+  ]);
+  renderAmazonMetricCards("rakutenStoreDashboardPurchaseWarehouses", [
     { label: "日本仓 / 中国仓", value: `${formatMetricNumber(summary.overseasUnitCount)} / ${formatMetricNumber(summary.chinaUnitCount)} 件` },
+    { label: "跨仓发货", value: `${formatMetricNumber(summary.crossWarehouseUnitCount)} 件` },
+    { label: "未导入", value: `${formatMetricNumber(summary.unimportedUnitCount)} 件` },
+    { label: "未匹配履约", value: `${formatMetricNumber(summary.unmatchedFulfillmentUnitCount)} 件` },
   ]);
   const comparisonBox = $("rakutenStoreDashboardComparison");
   if (comparisonBox) {
@@ -3034,8 +3039,8 @@ function renderRakutenStoreDashboard(payload) {
     { label: "待发货订单", value: formatMetricNumber(fulfillment.pendingShipmentOrderCount) },
     { label: "已发货订单", value: formatMetricNumber(fulfillment.shippedOrderCount) },
     { label: "已妥投订单", value: formatMetricNumber(fulfillment.deliveredOrderCount) },
-    { label: "日本仓出库", value: `${formatMetricNumber(fulfillment.overseasUnitCount)} 件` },
-    { label: "中国仓出库", value: `${formatMetricNumber(fulfillment.chinaUnitCount)} 件` },
+    { label: "日本仓履约（拆套后）", value: `${formatMetricNumber(fulfillment.overseasUnitCount)} 件` },
+    { label: "中国仓履约（拆套后）", value: `${formatMetricNumber(fulfillment.chinaUnitCount)} 件` },
   ]);
   const latestRun = payload.latestSyncRun;
   $("rakutenStoreDashboardSyncStatus").textContent = canManageJapanOperations()
@@ -3045,7 +3050,7 @@ function renderRakutenStoreDashboard(payload) {
     ? `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细 + 历史手动导入 ${formatMetricNumber(sourceSummary.legacyItemCount)} 条明细。`
     : `本次分析数据：API ${formatMetricNumber(sourceSummary.apiItemCount)} 条明细。`;
   const licenseText = selectedShop.licenseExpiresAt ? ` RMS License 到期时间：${formatDate(selectedShop.licenseExpiresAt)}。` : "";
-  $("rakutenStoreDashboardStatusMeta").textContent = `${sourceText}${licenseText} 销售按RMS原订单统计，已扣优惠券并排除取消；库存与履约按WMS出库明细。销售对账：${sourceSummary.sales?.syncedAt ? formatDate(sourceSummary.sales.syncedAt) : "尚未同步"}。${sourceSummary.sales?.error ? ` 最近对账异常：${sourceSummary.sales.error}` : ""}`;
+  $("rakutenStoreDashboardStatusMeta").textContent = `${sourceText}${licenseText} 销售按RMS原订单统计，已扣优惠券并排除取消。履约按 WMS 明细统计，包含待发货明细，套装按拆分后的单品计件。销售对账：${sourceSummary.sales?.syncedAt ? formatDate(sourceSummary.sales.syncedAt) : "尚未同步"}。${sourceSummary.sales?.error ? ` 最近对账异常：${sourceSummary.sales.error}` : ""}`;
   hydrateResponsiveTableLabels($("rakutenDashboard"));
 }
 

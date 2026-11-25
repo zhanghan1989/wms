@@ -646,7 +646,9 @@
           尚无已启用的乐天 RMS API 店铺连接。请先在“产品管理 → 店铺管理”中完成配置。
         </div>
         <div id="rakutenStoreDashboardResult" class="hidden">
-          <div id="rakutenStoreDashboardSummary" class="amazon-dashboard-summary-grid"></div>
+          <div id="rakutenStoreDashboardSummary" class="amazon-dashboard-metric-row"></div>
+          <p class="muted">按乐天原购买件数分仓，合计等于总销量。同一购买明细由两仓履约时计入跨仓。未导入按无有效 WMS 订单统计，未匹配包括缺少对应明细或仓库未定。</p>
+          <div id="rakutenStoreDashboardPurchaseWarehouses" class="amazon-dashboard-metric-row"></div>
           <article class="card">
             <div class="card-head">
               <div><h3>销售趋势</h3><p id="rakutenStoreDashboardTrendMeta" class="muted">按日本时间统计</p></div>

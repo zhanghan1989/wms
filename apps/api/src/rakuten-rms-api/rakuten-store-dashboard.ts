@@ -5,6 +5,8 @@ import { buildFactoryMaterialMetrics, FactoryProduct } from './rakuten-factory-m
 export interface RakutenDashboardOrderRow {
   orderId: string | null;
   skuCode: string | null;
+  purchaseItemId?: string | null;
+  purchaseSkuCode?: string | null;
   productName: string | null;
   orderQuantity: number | null;
   orderStatusText: string | null;
@@ -85,7 +87,7 @@ function percentageChange(current: number, previous: number): number | null {
   return Math.round(((current - previous) / previous) * 1000) / 10;
 }
 
-function metrics(rows: RakutenDashboardOrderRow[]) {
+function salesMetrics(rows: RakutenDashboardOrderRow[]) {
   const orderIds = new Set(rows.map((row) => row.orderId).filter(Boolean));
   const unitCount = rows.reduce((sum, row) => sum + nonNegative(row.orderQuantity), 0);
   const salesAmount = rows.reduce(
@@ -96,10 +98,54 @@ function metrics(rows: RakutenDashboardOrderRow[]) {
     unitCount,
     salesAmount: Math.round(salesAmount),
     averageOrderValue: orderIds.size ? Math.round(salesAmount / orderIds.size) : 0,
-    pendingShipmentOrderCount: new Set(rows.filter((row) => !row.shipmentNo).map((row) => row.orderId).filter(Boolean)).size,
-    overseasUnitCount: rows.filter((row) => row.dispatchMode === 'overseas').reduce((sum, row) => sum + nonNegative(row.orderQuantity), 0),
-    chinaUnitCount: rows.filter((row) => row.dispatchMode !== 'overseas').reduce((sum, row) => sum + nonNegative(row.orderQuantity), 0),
   };
+}
+
+function groupByOrderId(rows: RakutenDashboardOrderRow[]) {
+  const groups = new Map<string, RakutenDashboardOrderRow[]>();
+  for (const row of rows) {
+    if (!row.orderId) continue;
+    const group = groups.get(row.orderId) ?? [];
+    group.push(row);
+    groups.set(row.orderId, group);
+  }
+  return groups;
+}
+
+function purchaseWarehouseCounts(purchases: RakutenDashboardOrderRow[], fulfillmentRows?: RakutenDashboardOrderRow[]) {
+  const totals = { overseasUnitCount: 0, chinaUnitCount: 0, crossWarehouseUnitCount: 0, unimportedUnitCount: 0, unmatchedFulfillmentUnitCount: 0 };
+  const fulfillmentByOrder = groupByOrderId(fulfillmentRows ?? []);
+  const purchasesByOrder = groupByOrderId(purchases);
+  for (const purchase of purchases) {
+    const quantity = nonNegative(purchase.orderQuantity);
+    const orderRows = fulfillmentRows ? fulfillmentByOrder.get(purchase.orderId ?? '') : [purchase];
+    if (!orderRows) {
+      totals[purchase.orderId ? 'unimportedUnitCount' : 'unmatchedFulfillmentUnitCount'] += quantity;
+      continue;
+    }
+    let matched = fulfillmentRows ? orderRows.filter((row) => purchase.purchaseItemId && row.purchaseItemId === purchase.purchaseItemId) : orderRows;
+    // Historical CSV rows can lack RMS item IDs. A SKU is safe as a fallback only
+    // if it identifies a single purchase line and there is no conflicting item ID.
+    const sku = purchase.skuCode?.trim();
+    if (!matched.length && sku && purchasesByOrder.get(purchase.orderId ?? '')?.filter((row) => row.skuCode?.trim() === sku).length === 1) {
+      matched = orderRows.filter((row) => (!row.purchaseItemId || !purchase.purchaseItemId)
+        && (row.purchaseSkuCode || row.skuCode)?.trim() === sku);
+    }
+    const modes = new Set(matched.filter((row) => nonNegative(row.orderQuantity) > 0).map((row) => {
+      if (row.dispatchMode === 'overseas') return 'japan';
+      if (row.dispatchMode === 'china_pending' || row.dispatchMode === 'china_no_stock') return 'china';
+      return 'unknown';
+    }));
+    if (modes.has('japan') && modes.has('china')) totals.crossWarehouseUnitCount += quantity;
+    else if (modes.size === 1 && modes.has('japan')) totals.overseasUnitCount += quantity;
+    else if (modes.size === 1 && modes.has('china')) totals.chinaUnitCount += quantity;
+    else totals.unmatchedFulfillmentUnitCount += quantity;
+  }
+  return totals;
+}
+
+function pendingShipmentOrderCount(rows: RakutenDashboardOrderRow[]): number {
+  return new Set(rows.filter((row) => !row.shipmentNo).map((row) => row.orderId).filter(Boolean)).size;
 }
 
 export function buildRakutenStoreDashboard(input: {
@@ -126,18 +172,25 @@ export function buildRakutenStoreDashboard(input: {
   const datedRows = activeRows.map((row) => ({ row, date: parseDate(row.orderImportedAtRaw) }));
   const currentRows = datedRows.filter(({ date }) => date && date >= periodStart && date < periodEnd).map(({ row }) => row);
   const previousRows = datedRows.filter(({ date }) => date && date >= previousStart && date < periodStart).map(({ row }) => row);
-  const current = metrics(currentRows);
-  const previous = metrics(previousRows);
   const cancelledOrderIds = new Set(orders.filter((row) => isCancelled(row.orderStatusText)).map((row) => row.orderId));
-  const currentFulfillmentRows = input.fulfillmentOrders ? input.fulfillmentOrders.filter((row) => {
+  const activeFulfillmentRows = input.fulfillmentOrders?.filter((row) => !isCancelled(row.orderStatusText) && !cancelledOrderIds.has(row.orderId));
+  const currentFulfillmentRows = activeFulfillmentRows?.filter((row) => {
     const date = parseDate(row.orderImportedAtRaw);
-    return !isCancelled(row.orderStatusText) && !cancelledOrderIds.has(row.orderId)
-      && date && date >= periodStart && date < periodEnd;
-  }) : currentRows;
-  const fulfillment = metrics(currentFulfillmentRows);
-  current.pendingShipmentOrderCount = fulfillment.pendingShipmentOrderCount;
-  current.overseasUnitCount = fulfillment.overseasUnitCount;
-  current.chinaUnitCount = fulfillment.chinaUnitCount;
+    return date && date >= periodStart && date < periodEnd;
+  }) ?? currentRows;
+  const separateFulfillment = input.fulfillmentOrders !== orders ? activeFulfillmentRows : undefined;
+  const current = {
+    ...salesMetrics(currentRows),
+    pendingShipmentOrderCount: pendingShipmentOrderCount(currentFulfillmentRows),
+    ...purchaseWarehouseCounts(currentRows, separateFulfillment),
+  };
+  const previous = {
+    ...salesMetrics(previousRows),
+    pendingShipmentOrderCount: pendingShipmentOrderCount(previousRows),
+    ...purchaseWarehouseCounts(previousRows, separateFulfillment),
+  };
+  const warehouseUnits = (overseas: boolean) => currentFulfillmentRows
+    .reduce((sum, row) => sum + ((row.dispatchMode === 'overseas') === overseas ? nonNegative(row.orderQuantity) : 0), 0);
   const productLookup = new Map(products.map((row) => [normalize(row.productId), row]));
   const comboLookup = new Map((input.combos ?? []).map((row) => [normalize(row.comboName), row]));
   const todayKey = tokyoDateKey(now);
@@ -360,8 +413,8 @@ export function buildRakutenStoreDashboard(input: {
       pendingShipmentOrderCount: current.pendingShipmentOrderCount,
       shippedOrderCount: new Set(currentFulfillmentRows.filter((row) => row.shipmentNo).map((row) => row.orderId).filter(Boolean)).size,
       deliveredOrderCount: new Set(currentFulfillmentRows.filter((row) => row.trackingIsDelivered).map((row) => row.orderId).filter(Boolean)).size,
-      overseasUnitCount: current.overseasUnitCount,
-      chinaUnitCount: current.chinaUnitCount,
+      overseasUnitCount: warehouseUnits(true),
+      chinaUnitCount: warehouseUnits(false),
     },
     factoryRecommendations: {
       channelScope: 'rakuten_all_shops',
