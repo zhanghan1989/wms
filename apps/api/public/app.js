@@ -2584,6 +2584,7 @@ function renderAmazonMetricCards(containerId, items) {
         <div class="amazon-dashboard-metric">
           <span>${escapeHtml(item.label)}</span>
           <strong>${escapeHtml(item.value)}</strong>
+          ${item.detail ? `<small class="muted">${escapeHtml(item.detail)}</small>` : ""}
         </div>
       `,
     )
@@ -2982,9 +2983,12 @@ function renderRakutenStoreDashboard(payload) {
     { label: "平均客单价", value: formatAmazonStoreCurrency(summary.averageOrderValue, "JPY") },
     { label: "待发货订单", value: `${formatMetricNumber(summary.pendingShipmentOrderCount)} 单` },
   ]);
+  const japanUnits = Number(summary.overseasUnitCount ?? 0);
+  const chinaUnits = Number(summary.chinaUnitCount ?? 0);
+  const matchedWarehouseUnits = japanUnits + chinaUnits + Number(summary.crossWarehouseUnitCount ?? 0);
   renderAmazonMetricCards("rakutenStoreDashboardPurchaseWarehouses", [
-    { label: "日本仓 / 中国仓", value: `${formatMetricNumber(summary.overseasUnitCount)} / ${formatMetricNumber(summary.chinaUnitCount)} 件` },
-    { label: "跨仓发货", value: `${formatMetricNumber(summary.crossWarehouseUnitCount)} 件` },
+    { label: "已匹配仓库", value: `${formatMetricNumber(matchedWarehouseUnits)} 件`,
+      detail: `单仓件数　日本仓 ${formatMetricNumber(japanUnits)} 件 / 中国仓 ${formatMetricNumber(chinaUnits)} 件` },
     { label: "未导入", value: `${formatMetricNumber(summary.unimportedUnitCount)} 件` },
     { label: "未匹配履约", value: `${formatMetricNumber(summary.unmatchedFulfillmentUnitCount)} 件` },
   ]);
