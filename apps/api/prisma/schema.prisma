@@ -437,9 +437,32 @@ model Shop {
   amazonSpApiConnection  AmazonSpApiConnection?
   amazonSpApiOAuthStates AmazonSpApiOAuthState[]
   rakutenRmsConnection   RakutenRmsConnection?
+  yahooOrderConnection   YahooOrderConnection?
 
   @@index([platform])
   @@map("shops")
+}
+
+model YahooOrderConnection {
+  id             Int       @id @default(1)
+  shopId         BigInt    @unique @map("shop_id") @db.UnsignedBigInt
+  shop           Shop      @relation(fields: [shopId], references: [id], onDelete: Restrict)
+  sellerId       String    @map("seller_id") @db.VarChar(50)
+  credentials    String?   @db.Text
+  authStateHash  String?   @map("auth_state_hash") @db.Char(64)
+  authExpiresAt  DateTime? @map("auth_expires_at")
+  pendingAuth    String?   @map("pending_auth") @db.Text
+  importFrom     DateTime  @map("import_from")
+  enabled        Boolean   @default(false)
+  lastCheckedAt  DateTime? @map("last_checked_at")
+  lastError      String?   @map("last_error") @db.VarChar(255)
+  lastResult     Json?     @map("last_result")
+  lockToken      String?   @map("lock_token") @db.Char(36)
+  lockedUntil    DateTime? @map("locked_until")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("yahoo_order_connections")
 }
 
 model RakutenRmsConnection {

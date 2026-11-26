@@ -143,6 +143,8 @@ export function installCompanyIsolation(client: PrismaClient): PrismaClient {
         if (context && !context.systemAdmin && !context.warehouse) throw new ForbiddenException('中国公司仅可管理本公司的亚马逊SKU');
         continue;
       }
+      // A Yahoo store is shared by the Japanese warehouse. Its goods determine record ownership.
+      if (key === 'shopName' && model === 'ManualOrderRecord' && data.sourceFilePath === 'yahoo:order-api') continue;
       if (row && !japanSales && !isJapanSalesModel(target)) accept(row.companyId);
     }
     if (model === 'ManualOrderRecord' && data.rawPayload && typeof data.rawPayload === 'object') {

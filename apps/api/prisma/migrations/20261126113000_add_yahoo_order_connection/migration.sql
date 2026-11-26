@@ -1,0 +1,21 @@
+CREATE TABLE `yahoo_order_connections` (
+  `id` INTEGER NOT NULL DEFAULT 1,
+  `shop_id` BIGINT UNSIGNED NOT NULL,
+  `seller_id` VARCHAR(50) NOT NULL,
+  `credentials` TEXT NULL,
+  `auth_state_hash` CHAR(64) NULL,
+  `auth_expires_at` DATETIME(3) NULL,
+  `pending_auth` TEXT NULL,
+  `import_from` DATETIME(3) NOT NULL,
+  `enabled` BOOLEAN NOT NULL DEFAULT FALSE,
+  `last_checked_at` DATETIME(3) NULL,
+  `last_error` VARCHAR(255) NULL,
+  `last_result` JSON NULL,
+  `lock_token` CHAR(36) NULL,
+  `locked_until` DATETIME(3) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE INDEX `yahoo_order_connections_shop_id_key` (`shop_id`),
+  CONSTRAINT `yahoo_order_connections_shop_id_fkey` FOREIGN KEY (`shop_id`) REFERENCES `shops` (`id`) ON DELETE RESTRICT ON UPDATE CASCADE
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

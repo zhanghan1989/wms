@@ -29,6 +29,7 @@ import { SkusModule } from './skus/skus.module';
 import { StocktakePlannerModule } from './stocktake-planner/stocktake-planner.module';
 import { UserOptionsModule } from './user-options/user-options.module';
 import { UsersModule } from './users/users.module';
+import { YahooOrdersModule } from './yahoo-orders/yahoo-orders.module';
 
 @Module({
   providers: [{ provide: APP_INTERCEPTOR, useClass: CompanyScopeInterceptor }],
@@ -61,6 +62,7 @@ import { UsersModule } from './users/users.module';
     PrintAgentModule,
     RakutenComboProductsModule,
     RakutenRmsApiModule,
+    YahooOrdersModule,
     ReturnRecordsModule,
     AuditModule,
   ],

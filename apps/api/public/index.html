@@ -1634,6 +1634,7 @@
               <div class="action-row">
                 <button id="openAmazonManualOrderModal" type="button">生成手动订单</button>
                 <button id="manualOrderImportBtn" type="button">批量上传</button>
+                <button id="openYahooOrders" class="hidden" type="button">雅虎自动拉单</button>
                 <button id="manualOrderBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
               </div>
             </div>
@@ -2724,6 +2725,38 @@
           <button type="button" class="ghost" data-action="closeAmazonManualOrderModal">取消</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="yahooOrdersModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>雅虎自动拉单</h3>
+        <button id="closeYahooOrders" class="ghost" type="button">关闭</button>
+      </div>
+      <p id="yahooOrdersStatus" role="status"></p>
+      <div class="action-row">
+        <button id="testYahooOrders" type="button" class="ghost">测试订单 API</button>
+        <button id="toggleYahooOrders" type="button">开启自动拉单</button>
+        <button id="runYahooOrders" type="button" class="ghost">立即拉单</button>
+      </div>
+      <ul id="yahooOrdersIssues"></ul>
+      <details id="yahooOrdersSettings">
+        <summary>授权设置</summary>
+        <p class="muted">Yahoo 开发者后台的回调 URL <code id="yahooOrdersCallback"></code></p>
+        <form id="yahooOrdersAuthForm" class="form-grid modal-grid" autocomplete="off">
+          <label>店铺<select id="yahooOrdersShop" required></select></label>
+          <label>Seller ID<input name="sellerId" maxlength="50" required /></label>
+          <label>导入起始日期（日本时间）<input name="importFrom" type="date" required /></label>
+          <label>Client ID<input name="clientId" required /></label>
+          <label>Client Secret<input name="clientSecret" type="password" required /></label>
+          <label>公开密钥版本<input name="keyVersion" inputmode="numeric" value="1" required /></label>
+          <label class="create-sku-full-row">公开密钥<textarea name="publicKey" rows="5" required></textarea></label>
+          <div class="form-actions">
+            <button type="submit">前往 Yahoo 授权</button>
+          </div>
+        </form>
+      </details>
     </div>
   </div>
 

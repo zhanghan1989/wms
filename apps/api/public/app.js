@@ -3297,6 +3297,7 @@ function applyRoleView() {
     ? "支持新增返回记录、批量导入 Excel、批量删除。产品名称会根据产品ID自动匹配主表。"
     : "仅可检索和查看本公司的返品记录。");
   $("openDepartmentManageModal")?.classList.toggle("hidden", !isCurrentUserSystemAdmin());
+  $("openYahooOrders")?.classList.toggle("hidden", !canManageJapanOperations() || !hasAdminAccess(state.me?.role));
   document.querySelectorAll('[data-center-view="settings"], [data-center-view="templates"]').forEach((tab) => {
     tab.classList.remove("hidden");
   });
@@ -22845,3 +22846,102 @@ document.getElementById("companyList")?.addEventListener("click", async (event) 
 });
 
 document.querySelector('[data-action="closeCompanyManageModal"]')?.addEventListener("click", () => closeModal("companyManageModal"));
+
+(() => {
+  const openButton = $("openYahooOrders");
+  const form = $("yahooOrdersAuthForm");
+  if (!openButton || !form) return;
+  let current;
+
+  function setSummary(message) {
+    $("yahooOrdersStatus").textContent = message;
+  }
+
+  async function refresh() {
+    current = await request("/yahoo-orders/status");
+    setSummary([
+      current.shopName && `${current.shopName}（${current.sellerId}）`,
+      current.proxyConfigured ? "飞牛 OS 日本出口" : "飞牛 OS 出口未配置",
+      current.authorized ? "已授权" : "待授权",
+      current.enabled ? "每 10 分钟拉单" : "自动拉单已暂停",
+      current.running && "正在查询",
+      current.lastCheckedAt && `上次检查 ${formatDate(current.lastCheckedAt)}`,
+      current.lastError,
+      current.lastResult && `匹配 ${current.lastResult.matched} 单，新增 ${current.lastResult.imported} 单，跳过 ${current.lastResult.skipped} 单，待处理 ${current.lastResult.issueCount} 单`,
+    ].filter(Boolean).join(" / "));
+    $("yahooOrdersCallback").textContent = current.callbackUrl;
+    $("testYahooOrders").disabled = !current.authorized || current.running;
+    $("toggleYahooOrders").disabled = !current.authorized || (!current.enabled && current.running);
+    $("toggleYahooOrders").textContent = current.enabled ? "暂停自动拉单" : "开启自动拉单";
+    $("runYahooOrders").disabled = !current.enabled || current.running;
+    $("yahooOrdersIssues").replaceChildren(...(current.lastResult?.issues ?? []).map((issue) => {
+      const item = document.createElement("li");
+      item.textContent = `${issue.orderId}　${issue.message}`;
+      return item;
+    }));
+  }
+
+  openButton.addEventListener("click", async () => {
+    try {
+      await Promise.all([loadShops(), refresh()]);
+      const platforms = new Set(state.shopPlatforms.filter(p => p.name.trim().toLowerCase() === "yahoo").map(p => p.key));
+      const shops = state.shops.filter(shop => platforms.has(shop.platform) && Number(shop.status) === 1);
+      const shopSelect = $("yahooOrdersShop");
+      shopSelect.replaceChildren(...shops.map(shop => new Option(shop.name, shop.id)));
+      if (current.shopId) shopSelect.value = current.shopId;
+      form.elements.sellerId.value = current.sellerId || "";
+      form.elements.importFrom.value = current.importFrom
+        ? new Date(new Date(current.importFrom).getTime() + 9 * 3600000).toISOString().slice(0, 10)
+        : new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+      $("yahooOrdersSettings").open = !current.authorized;
+      openModal("yahooOrdersModal");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  });
+  $("closeYahooOrders").addEventListener("click", () => {
+    form.elements.clientSecret.value = "";
+    form.elements.publicKey.value = "";
+    closeModal("yahooOrdersModal");
+  });
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    withBusyButton(event.submitter, "请求授权中…", async () => {
+      try {
+        const body = Object.fromEntries(new FormData(form));
+        body.shopId = $("yahooOrdersShop").value;
+        const result = await request("/yahoo-orders/authorize", { method: "POST", body: JSON.stringify(body) });
+        form.reset();
+        location.assign(result.url);
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+  });
+
+  const bindAction = (id, action, run) => $(id).addEventListener("click", async (event) => {
+    await withBusyButton(event.currentTarget, "处理中…", async () => {
+      try {
+        const result = await run();
+        if (action === "test") showToast(`订单 API 已连通，匹配 ${result.matched} 单`);
+        if (action === "sync") await loadManualOrders();
+      } catch (error) {
+        showToast(error.message, true);
+      }
+    });
+    await refresh().catch(error => showToast(error.message, true));
+  });
+  bindAction("testYahooOrders", "test", () => request("/yahoo-orders/test", { method: "POST" }));
+  bindAction("toggleYahooOrders", "toggle", () => request("/yahoo-orders/enabled", {
+    method: "POST", body: JSON.stringify({ enabled: !current.enabled }),
+  }));
+  bindAction("runYahooOrders", "sync", () => request("/yahoo-orders/sync", { method: "POST" }));
+
+  const callback = new URL(location.href);
+  const oauthResult = callback.searchParams.get("yahooOrders");
+  if (oauthResult) {
+    callback.searchParams.delete("yahooOrders");
+    history.replaceState(null, "", callback);
+    showToast(oauthResult === "authorized" ? "Yahoo 已授权，请测试订单 API" : "Yahoo 授权未完成，请查看授权设置", oauthResult !== "authorized");
+  }
+})();

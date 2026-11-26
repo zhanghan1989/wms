@@ -1,6 +1,6 @@
 # 乐天 RMS 日本出口
 
-生产环境通过 Tailscale 用户空间容器，仅将乐天 RMS API 请求送到日本办公室飞牛 OS 的 Exit Node。
+生产环境通过 Tailscale 用户空间容器，将乐天 RMS API 与 Yahoo 订单 API 请求送到日本办公室飞牛 OS 的 Exit Node。
 用户空间模式不会在阿里云 ECS 宿主机创建 `tailscale0`、修改路由或安装防火墙规则，因而避开阿里云
 Workbench 和云助手使用的 `100.104.0.0/16` 与 Tailscale CGNAT 网段的冲突。
 
@@ -47,5 +47,5 @@ docker exec wms_rakuten_egress tailscale status
 docker exec wms_api node -e "const {ProxyAgent}=require('undici'); const agent=new ProxyAgent(process.env.RAKUTEN_RMS_API_PROXY_URL); fetch('https://api.rms.rakuten.co.jp/', {dispatcher:agent}).then(r=>console.log(r.status)).finally(()=>agent.close())"
 ```
 
-只有 `RakutenRmsApiClient` 使用该代理，系统其他网络请求仍走原出口。代理连接使用 HTTPS CONNECT，
+乐天 RMS 和 Yahoo 订单客户端使用该代理，系统其他网络请求仍走原出口。代理连接使用 HTTPS CONNECT，
 WMS 与乐天之间的 TLS 保持端到端加密。

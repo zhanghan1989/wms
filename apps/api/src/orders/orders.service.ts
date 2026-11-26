@@ -293,12 +293,14 @@ interface UpdateAmazonOrderPayload {
   blogger_cooperation_id?: string | null;
 }
 
-interface CreateAmazonManualOrderPayload extends UpdateAmazonOrderPayload, Partial<ManualOrderDeliveryFields> {}
+interface CreateAmazonManualOrderPayload extends UpdateAmazonOrderPayload, Partial<ManualOrderDeliveryFields> {
+  yahooOrderTime?: string;
+}
 interface BatchCreateAmazonManualOrdersPayload {
   items?: CreateAmazonManualOrderPayload[];
 }
 
-type ManualOrderCreateOrigin = 'system_single' | 'system_batch' | 'xiya_push';
+type ManualOrderCreateOrigin = 'system_single' | 'system_batch' | 'xiya_push' | 'yahoo_api';
 
 interface ManualOrderFileImportResult {
   sourceFileName: string;
@@ -10973,6 +10975,7 @@ export class OrdersService {
   ): Promise<Prisma.ManualOrderRecordCreateInput> {
     const withField = (fieldName: string) => (fieldPrefix ? `${fieldPrefix}.${fieldName}` : fieldName);
     const isXiyaPush = origin === 'xiya_push';
+    const isYahoo = origin === 'yahoo_api';
     const orderId = this.requireEditableText(payload.orderId, withField('orderId'), 64);
     const sku = this.normalizeEditableText(payload.sku, withField('sku'), 128);
     const productId = this.requireEditableText(payload.productId, withField('productId'), 64);
@@ -11011,6 +11014,14 @@ export class OrdersService {
     const shipmentNo = this.normalizeEditableText(payload.shipmentNo, withField('shipmentNo'), 128);
     const dispatchMode = await this.resolveDispatchModeForProductId(productId, quantityPurchased);
     const now = new Date();
+    const yahooOrderTime = isYahoo ? String(payload.yahooOrderTime ?? '').trim() : '';
+    const formattedYahooTime = /^\d{14}$/.test(yahooOrderTime)
+      ? yahooOrderTime.replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6+09:00')
+      : yahooOrderTime;
+    const purchaseDate = formattedYahooTime
+      ? new Date(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(formattedYahooTime) ? formattedYahooTime + '+09:00' : formattedYahooTime)
+      : now;
+    if (!Number.isFinite(purchaseDate.getTime())) throw new BadRequestException('Yahoo 下单时间无效');
     const rawPayload = this.buildAmazonManualRawPayload({
       orderId,
       orderItemId,
@@ -11040,7 +11051,7 @@ export class OrdersService {
         .digest('hex'),
       orderId,
       orderItemId,
-      purchaseDateRaw: this.formatManualAmazonTimestamp(now),
+      purchaseDateRaw: this.formatManualAmazonTimestamp(purchaseDate),
       sku,
       productName,
       quantityPurchased,
@@ -11062,8 +11073,8 @@ export class OrdersService {
       shipmentCompany,
       shipmentNo,
       shipmentNoRegisteredAt: this.resolveEditedShipmentRegisteredAt(null, null, shipmentNo),
-      sourceFileName: isXiyaPush ? XIYA_MANUAL_ORDER_SOURCE_FILE_NAME : AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME,
-      sourceFilePath: isXiyaPush ? XIYA_MANUAL_ORDER_SOURCE_FILE_PATH : AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH,
+      sourceFileName: isYahoo ? 'Yahoo 订单 API' : isXiyaPush ? XIYA_MANUAL_ORDER_SOURCE_FILE_NAME : AMAZON_MANUAL_ORDER_SOURCE_FILE_NAME,
+      sourceFilePath: isYahoo ? 'yahoo:order-api' : isXiyaPush ? XIYA_MANUAL_ORDER_SOURCE_FILE_PATH : AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH,
       rawPayload: rawPayloadWithSource,
       csvImportedAt: now,
     };
