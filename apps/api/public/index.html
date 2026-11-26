@@ -2714,6 +2714,8 @@
         <label>地址1<input id="amazonManualAddress1" /></label>
         <label>地址2<input id="amazonManualAddress2" /></label>
         <label>地址3<input id="amazonManualAddress3" /></label>
+        <label>配送日期<input id="amazonManualDeliveryDate" type="date" /></label>
+        <label>配送时段<select id="amazonManualDeliveryTimeSlot"></select></label>
         <label>发货公司<input id="amazonManualShipmentCompany" maxlength="128" /></label>
         <label>发货单号<input id="amazonManualShipmentNo" maxlength="128" /></label>
         <label>发货模式<input id="amazonManualDispatchMode" value="保存后自动判断" readonly /></label>
@@ -3164,6 +3166,8 @@
         </label>
         <label class="order-edit-rakuten-only">お届け日指定<input id="orderEditDeliveryDate" maxlength="32" /></label>
         <label class="order-edit-rakuten-only">お届け時間帯<input id="orderEditDeliveryTimeSlot" maxlength="64" /></label>
+        <label class="order-edit-manual-only hidden">配送日期<input id="orderEditManualDeliveryDate" type="date" /></label>
+        <label class="order-edit-manual-only hidden">配送时段<select id="orderEditManualDeliveryTimeSlot"></select></label>
         <label class="order-edit-rakuten-only order-edit-wide">订单备注<textarea id="orderEditRemark" rows="3"></textarea></label>
         <div class="form-actions order-edit-actions">
           <button type="submit" id="submitOrderEditBtn">保存修改</button>

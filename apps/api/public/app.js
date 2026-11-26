@@ -11889,6 +11889,24 @@ function getAmazonRawValue(item, key) {
   return value === null || value === undefined ? "" : String(value).trim();
 }
 
+const MANUAL_ORDER_DELIVERY_TIME_SLOTS = new Map([
+  ["0812", "上午（08:00–12:00）"],
+  ["1416", "14:00–16:00"],
+  ["1618", "16:00–18:00"],
+  ["1820", "18:00–20:00"],
+  ["1921", "19:00–21:00"],
+]);
+
+function setManualOrderDeliveryTimeSlot(id, value) {
+  const select = $(id);
+  if (!select) return;
+  select.replaceChildren(
+    new Option("不指定", ""),
+    ...Array.from(MANUAL_ORDER_DELIVERY_TIME_SLOTS, ([code, label]) => new Option(label, code)),
+  );
+  select.value = value || "";
+}
+
 function buildAmazonOrderDetailFields(item) {
   const orderNo = getAmazonRawValue(item, "order-id") || item?.orderId || "";
   const orderCreatedAt = getAmazonRawValue(item, "purchase-date") || item?.purchaseDateRaw || "";
@@ -11929,8 +11947,8 @@ function buildAmazonOrderDetailFields(item) {
     ["Amazon待发数量", item?.amazonObservedQuantityToShip ?? "-"],
     ["状态检查时间", item?.amazonObservedAt ? formatDate(item.amazonObservedAt) : "-"],
     ["状态差异", item?.amazonStateMismatch ? "有差异，请人工确认" : "-"],
-    ["お届け日指定", "-"],
-    ["お届け時間帯", "-"],
+    ["お届け日指定", item?.deliveryDateRaw || "-"],
+    ["お届け時間帯", MANUAL_ORDER_DELIVERY_TIME_SLOTS.get(item?.deliveryTimeSlot) || "-"],
   ];
 }
 
@@ -12048,7 +12066,7 @@ function setOrderEditShipmentOnlyMode(enabled) {
     "orderEditId",
     "orderEditShipmentCompany",
     "orderEditShipmentNo"]);
-  document.querySelectorAll("#orderEditForm input, #orderEditForm textarea").forEach((node) => {
+  document.querySelectorAll("#orderEditForm input, #orderEditForm textarea, #orderEditManualDeliveryTimeSlot").forEach((node) => {
     node.disabled = Boolean(enabled) && !editableIds.has(node.id);
   });
 }
@@ -12064,6 +12082,9 @@ function setOrderEditSourceMode(source) {
   });
   document.querySelectorAll(".order-edit-rakuten-only").forEach((node) => {
     node.classList.toggle("hidden", isAmazon);
+  });
+  document.querySelectorAll(".order-edit-manual-only").forEach((node) => {
+    node.classList.toggle("hidden", source !== "manual");
   });
   const skuInput = $("orderEditSku");
   if (skuInput) {
@@ -12194,6 +12215,7 @@ async function openAmazonManualOrderModal() {
   setOrderEditFieldValue("amazonManualMallName", "");
   renderManualOrderShopOptions();
   setOrderEditFieldValue("amazonManualDispatchMode", "保存后自动判断");
+  setManualOrderDeliveryTimeSlot("amazonManualDeliveryTimeSlot");
   openModal("amazonManualOrderModal");
 }
 
@@ -12216,6 +12238,8 @@ async function createAmazonManualOrder() {
       shipAddress1: getAmazonManualFieldValue("amazonManualAddress1"),
       shipAddress2: getAmazonManualFieldValue("amazonManualAddress2"),
       shipAddress3: getAmazonManualFieldValue("amazonManualAddress3"),
+      deliveryDateRaw: getAmazonManualFieldValue("amazonManualDeliveryDate"),
+      deliveryTimeSlot: getAmazonManualFieldValue("amazonManualDeliveryTimeSlot"),
       shipmentCompany: getAmazonManualFieldValue("amazonManualShipmentCompany"),
       shipmentNo: getAmazonManualFieldValue("amazonManualShipmentNo"),
     }),
@@ -12293,6 +12317,10 @@ function openOrderEditModalFromItem(normalizedSource, item) {
   setOrderEditFieldValue("orderEditShipmentNo", item.shipmentNo);
   setOrderEditFieldValue("orderEditDeliveryDate", item.deliveryDateRaw);
   setOrderEditFieldValue("orderEditDeliveryTimeSlot", item.deliveryTimeSlot);
+  if (isManual) {
+    setOrderEditFieldValue("orderEditManualDeliveryDate", item.deliveryDateRaw);
+    setManualOrderDeliveryTimeSlot("orderEditManualDeliveryTimeSlot", item.deliveryTimeSlot);
+  }
   setOrderEditFieldValue("orderEditRemark", item.orderRemark);
   setOrderEditShipmentOnlyMode(isShipmentRegistered);
   openModal("orderEditModal");
@@ -12353,6 +12381,10 @@ async function submitOrderEditForm() {
         shipAddress1: getOrderEditFieldValue("orderEditAddress1"),
         shipAddress2: getOrderEditFieldValue("orderEditAddress2"),
         shipAddress3: getOrderEditFieldValue("orderEditAddress3"),
+        ...(source === "manual" && {
+          deliveryDateRaw: getOrderEditFieldValue("orderEditManualDeliveryDate"),
+          deliveryTimeSlot: getOrderEditFieldValue("orderEditManualDeliveryTimeSlot"),
+        }),
       }),
     });
   }

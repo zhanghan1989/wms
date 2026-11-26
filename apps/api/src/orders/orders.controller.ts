@@ -170,6 +170,8 @@ export class OrdersController {
       shipAddress1?: string | null;
       shipAddress2?: string | null;
       shipAddress3?: string | null;
+      deliveryDateRaw?: string | null;
+      deliveryTimeSlot?: string | null;
       shipmentCompany?: string | null;
       shipmentNo?: string | null;
     },
@@ -199,6 +201,8 @@ export class OrdersController {
       shipAddress1?: string | null;
       shipAddress2?: string | null;
       shipAddress3?: string | null;
+      deliveryDateRaw?: string | null;
+      deliveryTimeSlot?: string | null;
       shipmentCompany?: string | null;
       shipmentNo?: string | null;
     },

@@ -8,12 +8,13 @@ function editor(confirmed = true) {
   const $ = (id: string) => elements[id] ??= { value: '', dataset: {}, classList: { toggle: jest.fn() } };
   const request = jest.fn().mockResolvedValue({ id: '1' });
   const confirmation = jest.fn().mockResolvedValue(confirmed);
+  const setFieldValue = (id: string, value: unknown) => { $(id).value = String(value ?? ''); };
   const start = source.indexOf('function openOrderEditModalFromItem(');
   const end = source.indexOf('function renderOrdersPanels(', start);
   const functions = runInNewContext(`${source.slice(start, end)}; ({ openOrderEditModalFromItem, submitOrderEditForm })`, {
     $, request, openActionConfirmModal: confirmation, encodeURIComponent,
     hasRegisteredShipmentNo: (item: any) => Boolean(item.shipmentNo), formatDate: (date: string) => date,
-    setOrderEditFieldValue: (id: string, value: unknown) => { $(id).value = String(value ?? ''); },
+    setOrderEditFieldValue: setFieldValue, setManualOrderDeliveryTimeSlot: setFieldValue,
     getOrderEditFieldValue: (id: string) => $(id).value.trim(),
     setTextById: (id: string, value: string) => { $(id).textContent = value; },
     setOrderEditSourceMode: jest.fn(), setOrderEditProductMeta: jest.fn(), formatOrderEditDispatchMode: (x: unknown) => x,
@@ -82,5 +83,19 @@ describe('shipment correction editor', () => {
     expect(ui.$('orderEditShipmentChangeMode').value).toBe('');
     expect(ui.$('orderEditForm').dataset.confirmedJapanParcel).toBe('false');
     expect(ui.$('orderEditShipmentChangeLabel').classList.toggle).toHaveBeenLastCalledWith('hidden', true);
+  });
+  it('loads and submits a manual order delivery schedule', async () => {
+    const ui = editor();
+    ui.openOrderEditModalFromItem('manual', {
+      id: '2', orderId: 'MANUAL-2', sku: 'M2', deliveryDateRaw: '2026-12-03', deliveryTimeSlot: '0812',
+    });
+    expect(ui.$('orderEditManualDeliveryDate').value).toBe('2026-12-03');
+    expect(ui.$('orderEditManualDeliveryTimeSlot').value).toBe('0812');
+    ui.$('orderEditManualDeliveryTimeSlot').value = '1921';
+    await ui.submitOrderEditForm();
+    expect(ui.request.mock.calls[0][0]).toBe('/orders/manual/2');
+    expect(JSON.parse(ui.request.mock.calls[0][1].body)).toMatchObject({
+      deliveryDateRaw: '2026-12-03', deliveryTimeSlot: '1921',
+    });
   });
 });

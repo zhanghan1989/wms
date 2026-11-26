@@ -21,6 +21,7 @@ import { Cron } from '@nestjs/schedule';
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import {
   AmazonOrderRecord,
+  ManualOrderRecord,
   OrderSendStatus,
   PrintJobStatus,
   Prisma,
@@ -256,8 +257,9 @@ interface AmazonOrderListItem extends AmazonOrderRecord {
   amazonFreezeReason?: string | null;
   amazonStateMismatch?: boolean;
 }
-type ManualOrderRecordLike = AmazonOrderRecord & ManualOrderXyjgFields;
-type ManualOrderListItem = AmazonOrderListItem & ManualOrderXyjgFields;
+type ManualOrderDeliveryFields = Pick<ManualOrderRecord, 'deliveryDateRaw' | 'deliveryTimeSlot'>;
+type ManualOrderRecordLike = AmazonOrderRecord & ManualOrderXyjgFields & ManualOrderDeliveryFields;
+type ManualOrderListItem = AmazonOrderListItem & ManualOrderXyjgFields & ManualOrderDeliveryFields;
 
 type AmazonFulfillmentMode = 'overseas_warehouse' | 'xiya_api';
 
@@ -267,7 +269,7 @@ interface AmazonEnrichedOrderListItem extends AmazonOrderListItem {
   assemblableStockApplicable: boolean;
   fulfillmentMode: AmazonFulfillmentMode;
 }
-type ManualEnrichedOrderListItem = AmazonEnrichedOrderListItem & ManualOrderXyjgFields;
+type ManualEnrichedOrderListItem = AmazonEnrichedOrderListItem & ManualOrderXyjgFields & ManualOrderDeliveryFields;
 
 interface UpdateAmazonOrderPayload {
   orderId?: string | null;
@@ -291,7 +293,7 @@ interface UpdateAmazonOrderPayload {
   blogger_cooperation_id?: string | null;
 }
 
-interface CreateAmazonManualOrderPayload extends UpdateAmazonOrderPayload {}
+interface CreateAmazonManualOrderPayload extends UpdateAmazonOrderPayload, Partial<ManualOrderDeliveryFields> {}
 interface BatchCreateAmazonManualOrdersPayload {
   items?: CreateAmazonManualOrderPayload[];
 }
@@ -856,6 +858,7 @@ const AMAZON_MANUAL_ORDER_SOURCE_FILE_PATH = 'manual:amazon-order';
 const XIYA_MANUAL_ORDER_SOURCE_FILE_NAME = 'xiya-manual-order';
 const XIYA_MANUAL_ORDER_SOURCE_FILE_PATH = 'external:xiya-manual-order';
 const MANUAL_ORDER_UPLOAD_TEMPLATE_FILE = '手动订单上传模板.xlsx';
+const MANUAL_ORDER_DELIVERY_TIME_SLOTS = new Set(['0812', '1416', '1618', '1820', '1921']);
 const XIYA_LOGISTICS_EXPORT_URL =
   process.env.XIYA_LOGISTICS_EXPORT_URL || 'http://103.236.55.93/api/external/logistics/rakuten';
 const XIYA_LOGISTICS_API_KEY = process.env.XIYA_EXPORT_API_KEY || '';
@@ -899,6 +902,8 @@ const MANUAL_ORDER_UPLOAD_HEADERS = {
   shipAddress3: ['地址3', '地址三', 'shipAddress3', 'ship-address-3'],
   shipmentCompany: ['发货公司', '配送会社', 'shipmentCompany', 'shipment-company'],
   shipmentNo: ['发货单号', '运单号', 'tracking-number', 'shipmentNo', 'shipment-no'],
+  deliveryDateRaw: ['配送日期', 'お届け指定日', 'deliveryDateRaw'],
+  deliveryTimeSlot: ['配送时段', 'お届け指定時間帯', 'deliveryTimeSlot'],
 } as const;
 const XYJG_BLOGGER_STATUS_PUSH_URL =
   process.env.XYJG_BLOGGER_STATUS_PUSH_URL || 'http://103.236.55.93/api/external/push';
@@ -1465,8 +1470,8 @@ export class OrdersService {
         shippingPrefecture: rakutenRow?.shippingPrefecture ?? null,
         shippingCity: rakutenRow?.shippingCity ?? null,
         shippingAddress: rakutenRow?.shippingAddress ?? null,
-        deliveryDateRaw: rakutenRow?.deliveryDateRaw ?? null,
-        deliveryTimeSlot: rakutenRow?.deliveryTimeSlot ?? null,
+        deliveryDateRaw: rakutenRow?.deliveryDateRaw ?? manualRow?.deliveryDateRaw ?? null,
+        deliveryTimeSlot: rakutenRow?.deliveryTimeSlot ?? manualRow?.deliveryTimeSlot ?? null,
         buyerPhoneNumber: amazonRow?.buyerPhoneNumber ?? manualRow?.buyerPhoneNumber ?? null,
         shipPostalCode: amazonRow?.shipPostalCode ?? manualRow?.shipPostalCode ?? null,
         shipState: amazonRow?.shipState ?? manualRow?.shipState ?? null,
@@ -3991,7 +3996,7 @@ export class OrdersService {
     return enriched;
   }
 
-  async updateManualOrder(idRaw: string, payload: UpdateAmazonOrderPayload): Promise<ManualEnrichedOrderListItem> {
+  async updateManualOrder(idRaw: string, payload: CreateAmazonManualOrderPayload): Promise<ManualEnrichedOrderListItem> {
     const id = parseId(idRaw, 'id');
     const current = await (this.prisma as any).manualOrderRecord.findUnique({ where: { id },
     });
@@ -4075,6 +4080,12 @@ export class OrdersService {
         shipAddress1,
         shipAddress2,
         shipAddress3,
+        deliveryDateRaw: payload.deliveryDateRaw === undefined
+          ? undefined
+          : this.normalizeManualOrderDeliveryDate(payload.deliveryDateRaw),
+        deliveryTimeSlot: payload.deliveryTimeSlot === undefined
+          ? undefined
+          : this.normalizeManualOrderDeliveryTimeSlot(payload.deliveryTimeSlot),
         dispatchMode,
         shippingOrigin: this.resolveAmazonShippingOriginFromDispatchMode(dispatchMode),
         shipmentCompany,
@@ -4156,6 +4167,8 @@ export class OrdersService {
       '地址3',
       '发货公司',
       '发货单号',
+      '配送日期',
+      '配送时段',
     ];
     const rows = [
       headers,
@@ -4948,6 +4961,8 @@ export class OrdersService {
             shipAddress1: row.shipAddress1,
             shipAddress2: row.shipAddress2,
             shipAddress3: row.shipAddress3,
+            deliveryDateRaw: row.deliveryDateRaw,
+            deliveryTimeSlot: row.deliveryTimeSlot,
             rawPayload: row.rawPayload,
           })),
       );
@@ -5426,6 +5441,8 @@ export class OrdersService {
               shipAddress1: row.shipAddress1,
               shipAddress2: row.shipAddress2,
               shipAddress3: row.shipAddress3,
+              deliveryDateRaw: row.deliveryDateRaw,
+              deliveryTimeSlot: row.deliveryTimeSlot,
               rawPayload: row.rawPayload,
               dispatchMode: dispatchMode || null,
               chinaDispatchReason: this.resolveChinaDispatchReason(dispatchMode),
@@ -6887,8 +6904,8 @@ export class OrdersService {
         components,
         printerValue: printerValueByProductId.get(item.productId) ?? '0',
         quantity,
-        deliveryDate: '-',
-        deliveryTimeSlot: '-',
+        deliveryDate: this.formatYamatoDeliveryDate(row.deliveryDateRaw),
+        deliveryTimeSlot: row.deliveryTimeSlot || '-',
         phone: normalizedPhone || '-',
         postalCode: String(row.shipPostalCode ?? '').trim() || '-',
         address1: this.concatAddress([row.shipState, row.shipAddress1]),
@@ -7013,7 +7030,7 @@ export class OrdersService {
   private mergeYamatoExportItems(items: YamatoExportItem[]): YamatoMergedExportRow[] {
     const mergedByOrderId = new Map<
       string,
-      Omit<YamatoExportItem, 'source' | 'id' | 'productId' | 'quantity'> & {
+      Omit<YamatoExportItem, 'id' | 'productId' | 'quantity'> & {
         itemParts: string[];
         productIds: string[];
         printerValues: string[];
@@ -7030,6 +7047,7 @@ export class OrdersService {
       const existing = mergedByOrderId.get(key);
       if (!existing) {
         mergedByOrderId.set(key, {
+          source: item.source,
           orderId: item.orderId || key,
           printerValue: item.printerValue || '0',
           deliveryDate: item.deliveryDate || '-',
@@ -7045,6 +7063,11 @@ export class OrdersService {
           lineCount: 1,
         });
         return;
+      }
+
+      if (existing.source === 'manual' && item.source === 'manual') {
+        if (existing.deliveryDate === '-' && item.deliveryDate) existing.deliveryDate = item.deliveryDate;
+        if (existing.deliveryTimeSlot === '-' && item.deliveryTimeSlot) existing.deliveryTimeSlot = item.deliveryTimeSlot;
       }
 
       existing.itemParts.push(itemPart);
@@ -10795,6 +10818,27 @@ export class OrdersService {
     return parsed;
   }
 
+  private normalizeManualOrderDeliveryDate(value: string | null | undefined, fieldName = '配送日期'): string | null {
+    const text = String(value ?? '').trim();
+    if (!text) return null;
+    const match = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/.exec(text);
+    if (match) {
+      const date = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+      const parsed = new Date(`${date}T00:00:00Z`);
+      if (Number.isFinite(parsed.getTime()) && parsed.toISOString().startsWith(date)) return date;
+    }
+    throw new BadRequestException(`${fieldName}必须是有效日期（YYYY-MM-DD）`);
+  }
+
+  private normalizeManualOrderDeliveryTimeSlot(value: string | null | undefined, fieldName = '配送时段'): string | null {
+    const text = String(value ?? '').normalize('NFKC').trim();
+    if (!text) return null;
+    // Excel can remove the leading zero from the morning slot code.
+    const slot = text === '812' ? '0812' : text;
+    if (MANUAL_ORDER_DELIVERY_TIME_SLOTS.has(slot)) return slot;
+    throw new BadRequestException(`${fieldName}必须是有效的配送时段`);
+  }
+
   private requireEditableText(
     value: string | number | null | undefined,
     fieldName: string,
@@ -10932,6 +10976,8 @@ export class OrdersService {
     const orderId = this.requireEditableText(payload.orderId, withField('orderId'), 64);
     const sku = this.normalizeEditableText(payload.sku, withField('sku'), 128);
     const productId = this.requireEditableText(payload.productId, withField('productId'), 64);
+    const deliveryDateRaw = this.normalizeManualOrderDeliveryDate(payload.deliveryDateRaw, withField('配送日期'));
+    const deliveryTimeSlot = this.normalizeManualOrderDeliveryTimeSlot(payload.deliveryTimeSlot, withField('配送时段'));
     const quantityPurchased = this.requireEditablePositiveInt(payload.quantityPurchased, withField('quantityPurchased'),
     );
     const product = await this.prisma.masterProduct.findUnique({
@@ -11009,6 +11055,8 @@ export class OrdersService {
       mallName,
       shopName,
       bloggerCooperationId,
+      deliveryDateRaw,
+      deliveryTimeSlot,
       shippingOrigin: this.resolveAmazonShippingOriginFromDispatchMode(dispatchMode),
       dispatchMode,
       shipmentCompany,
@@ -11024,7 +11072,7 @@ export class OrdersService {
   private parseManualOrderUploadFile(fileBuffer: Buffer, sourceFileName: string): CreateAmazonManualOrderPayload[] {
     let workbook: XLSX.WorkBook;
     try {
-      workbook = XLSX.read(fileBuffer, { type: 'buffer', cellDates: false, raw: false,
+      workbook = XLSX.read(fileBuffer, { type: 'buffer', cellDates: false, raw: false, dateNF: 'yyyy-mm-dd',
       });
     } catch {
       throw new BadRequestException('手动订单批量上传文件无法解析，请上传 xlsx 文件');
@@ -11068,6 +11116,8 @@ export class OrdersService {
       shipAddress3: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipAddress3),
       shipmentCompany: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipmentCompany),
       shipmentNo: pick(MANUAL_ORDER_UPLOAD_HEADERS.shipmentNo),
+      deliveryDateRaw: pick(MANUAL_ORDER_UPLOAD_HEADERS.deliveryDateRaw),
+      deliveryTimeSlot: pick(MANUAL_ORDER_UPLOAD_HEADERS.deliveryTimeSlot),
     };
     return Object.values(item).some((value) => String(value ?? '').trim()) ? item : null;
   }
@@ -11332,8 +11382,8 @@ export class OrdersService {
       shipmentNo: row.shipmentNo,
       shipmentNoRegisteredAt: row.shipmentNoRegisteredAt,
       deliveryMethod: row.shipServiceLevel,
-      deliveryDateRaw: null,
-      deliveryTimeSlot: null,
+      deliveryDateRaw: row.deliveryDateRaw ?? null,
+      deliveryTimeSlot: row.deliveryTimeSlot ?? null,
       shipmentRequestNo: row.orderItemId,
       productNameExtra: null,
     });

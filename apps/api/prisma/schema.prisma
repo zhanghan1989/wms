@@ -1615,6 +1615,8 @@ model ManualOrderRecord {
   shipState              String?   @map("ship_state") @db.VarChar(255)
   shipPostalCode         String?   @map("ship_postal_code") @db.VarChar(32)
   shipCountry            String?   @map("ship_country") @db.VarChar(32)
+  deliveryDateRaw        String?   @map("delivery_date_raw") @db.VarChar(10)
+  deliveryTimeSlot       String?   @map("delivery_time_slot") @db.VarChar(4)
   customizedUrl          String?   @map("customized_url") @db.Text
   customizedPage         String?   @map("customized_page") @db.Text
   isBusinessOrder        Boolean?  @map("is_business_order")
