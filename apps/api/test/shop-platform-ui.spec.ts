@@ -116,7 +116,10 @@ describe('dynamic shop platform UI', () => {
     expect(elements.shopsBody.innerHTML).toContain('Yahoo Store');
     expect(elements.shopsBody.innerHTML).not.toContain('Amazon Store');
     expect(elements.shopsBody.innerHTML).not.toContain('data-action="rakutenRmsApi"');
-    expect(elements.shopsHead.innerHTML).not.toContain('API');
+    expect(elements.shopsHead.innerHTML).toContain('Yahoo 订单 API连接');
+    expect(elements.shopsBody.innerHTML).toContain('data-action="yahooOrderApi" data-id="3"');
+    expect(elements.shopsBody.innerHTML).not.toContain('data-action="yahooOrderApi" data-id="4"');
+    expect(elements.shopsBody.innerHTML).toContain('data-action="manageYahooCenter"');
   });
 
   it('preserves Amazon and Rakuten connection controls', () => {
@@ -147,7 +150,8 @@ describe('dynamic shop platform UI', () => {
     state.shops = [];
     context.renderShopsTable();
     expect(elements.shopsBody.innerHTML).toContain('colspan="4"');
-    state.shopManagePlatform = 'custom';
+    state.shopPlatforms.push({ key: 'other', name: 'Other' });
+    state.shopManagePlatform = 'other';
     context.renderShopsTable();
     expect(elements.shopsBody.innerHTML).toContain('colspan="3"');
   });

@@ -470,6 +470,7 @@ const state = {
   selectedRakutenOrderIds: new Set(),
   selectedAmazonOrderIds: new Set(),
   selectedManualOrderIds: new Set(),
+  yahooOrderConnection: null,
   selectedFbaIds: new Set(),
   brandEditingIds: new Set(),
   skuTypeEditingIds: new Set(),
@@ -6946,7 +6947,10 @@ function renderShopsTable() {
   }
   const platform = state.shopManagePlatform;
   const platformName = platforms.find((item) => item.key === platform)?.name || "";
-  const hasConnection = (platform === "amazon" && canManageAmazonConnections()) || platform === "rakuten";
+  const isYahoo = platformName.trim().toLowerCase() === "yahoo" && !chineseCompanyAccount;
+  const connectionTitle = platform === "amazon" && canManageAmazonConnections() ? "Amazon SP-API连接"
+    : platform === "rakuten" ? "乐天 RMS API连接"
+      : isYahoo ? "Yahoo 订单 API连接" : "";
   const allRows = Array.isArray(state.shops) ? state.shops : [];
   const rows = allRows.filter((item) => item.platform === platform).sort((a, b) =>
     String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", { numeric: true }),
@@ -6959,7 +6963,7 @@ function renderShopsTable() {
   }).join("");
   $("shopNameInput").disabled = !platform;
   $("shopForm").querySelector('button[type="submit"]').disabled = !platform;
-  head.innerHTML = `<tr><th>店铺</th><th>所属公司</th>${hasConnection ? `<th>${platform === "amazon" ? "Amazon SP-API连接" : "乐天 RMS API连接"}</th>` : ""}<th>操作</th></tr>`;
+  head.innerHTML = `<tr><th>店铺</th><th>所属公司</th>${connectionTitle ? `<th>${connectionTitle}</th>` : ""}<th>操作</th></tr>`;
 
   body.innerHTML =
     rows
@@ -6979,6 +6983,7 @@ function renderShopsTable() {
         const mailAttentionCount = ["pending", "failed", "dead_letter", "uncertain"]
           .reduce((sum, status) => sum + Number(mailCounts?.[status] || 0), 0);
         const connection = platform === "amazon" ? amazonConnection : rakutenConnection;
+        const yahooConnection = String(state.yahooOrderConnection?.shopId || "") === itemId ? state.yahooOrderConnection : null;
         const connectionAction = platform === "amazon" ? "amazonSpApi" : "rakutenRmsApi";
         const connectionLabel =
           platform === "amazon"
@@ -7008,7 +7013,13 @@ function renderShopsTable() {
           />
         </td>
         <td data-label="所属公司">${escapeHtml(platform === "amazon" ? companyName(item.companyId) : "日本海外仓")}</td>
-        ${hasConnection ? `
+        ${isYahoo ? `
+        <td data-label="Yahoo 订单 API连接">
+          ${hasAdminAccess(state.me?.role) && Number(item.status) === 1
+            ? `<button class="tiny-btn ghost" data-action="yahooOrderApi" data-id="${escapeHtml(item.id)}">${yahooConnection?.authorized ? "已授权" : "未授权"}</button>`
+            : yahooConnection?.authorized ? "已授权" : "未授权"}
+          ${yahooConnection?.lastError ? '<span class="muted">同步异常</span>' : ""}
+        </td>` : connectionTitle ? `
         <td data-label="${escapeHtml(platform === "amazon" ? "Amazon连接" : "乐天连接")}">
           <button class="tiny-btn ghost" data-action="${connectionAction}" data-id="${escapeHtml(item.id)}">
             ${connectionLabel}
@@ -7025,12 +7036,13 @@ function renderShopsTable() {
 `
               : `<button class="tiny-btn ghost" data-action="rakutenRmsApi" data-id="${escapeHtml(item.id)}">请先连接</button>`
             : ""}
+          ${isYahoo ? `<button class="tiny-btn ghost" data-action="manageYahooCenter" data-id="${escapeHtml(item.id)}">自动处理中心</button>` : ""}
           <button class="tiny-btn danger" data-action="deleteShop" data-id="${escapeHtml(item.id)}" data-name="${escapeHtml(item.name)}">删除</button>
         </td>
       </tr>
     `;
       })
-      .join("") || `<tr><td colspan="${hasConnection ? 4 : 3}" class="muted">${platform ? `暂无 ${escapeHtml(platformName)} 店铺` : "请先新增平台"}</td></tr>`;
+      .join("") || `<tr><td colspan="${connectionTitle ? 4 : 3}" class="muted">${platform ? `暂无 ${escapeHtml(platformName)} 店铺` : "请先新增平台"}</td></tr>`;
 }
 
 async function loadAmazonSpApiConnections() {
@@ -7050,6 +7062,36 @@ async function loadRakutenRmsConnections() {
   renderShopsTable();
   renderRakutenMailConnectionFilter();
   return state.rakutenRmsConnections;
+}
+
+async function loadYahooOrderConnection() {
+  state.yahooOrderConnection = canManageJapanOperations() ? await request("/yahoo-orders/status") : null;
+  renderShopsTable();
+  return state.yahooOrderConnection;
+}
+
+async function openYahooOrdersConnection(shopId) {
+  const shop = state.shops.find(item => String(item.id) === String(shopId));
+  if (!shop || Number(shop.status) !== 1) throw new Error("请选择已启用的雅虎店铺");
+  const current = await loadYahooOrderConnection();
+  const connection = String(current?.shopId || "") === String(shop.id) ? current : null;
+  const form = $("yahooOrdersAuthForm");
+  form.reset();
+  $("yahooOrdersShop").value = shop.id;
+  $("yahooOrdersShopName").value = shop.name;
+  $("yahooOrdersConnectionTitle").textContent = `${shop.name} / Yahoo 订单 API连接`;
+  $("yahooOrdersCallback").textContent = current.callbackUrl;
+  $("yahooOrdersConnectionStatus").textContent = [
+    connection?.authorized ? "已授权" : "待授权",
+    current.proxyConfigured ? "飞牛 OS 日本出口" : "飞牛 OS 出口未配置",
+    connection?.lastError,
+  ].filter(Boolean).join(" / ");
+  $("testYahooOrders").classList.toggle("hidden", !connection?.authorized);
+  $("testYahooOrders").disabled = Boolean(current.running);
+  form.elements.sellerId.value = connection?.sellerId || "";
+  form.elements.importFrom.value = new Date((connection?.importFrom
+    ? new Date(connection.importFrom).getTime() : Date.now()) + 9 * 3600000).toISOString().slice(0, 10);
+  openModal("yahooOrdersConnectionModal");
 }
 
 async function openRakutenMailManagementForShop(shopIdRaw) {
@@ -19147,7 +19189,7 @@ function bindForms() {
     try {
       state.shopEditingIds = new Set();
       await Promise.all([
-        loadShops(), loadAmazonSpApiConnections(), loadRakutenRmsConnections(), loadRakutenShopAutomationHealth(),
+        loadShops(), loadAmazonSpApiConnections(), loadRakutenRmsConnections(), loadRakutenShopAutomationHealth(), loadYahooOrderConnection(),
       ]);
       openModal("shopManageModal");
     } catch (error) {
@@ -20543,6 +20585,11 @@ function bindDelegates() {
         openAmazonSpApiConnectionModal(id);
       } else if (action === "rakutenRmsApi") {
         openRakutenRmsConnectionModal(id);
+      } else if (action === "yahooOrderApi") {
+        await openYahooOrdersConnection(id);
+      } else if (action === "manageYahooCenter") {
+        closeModal("shopManageModal");
+        $("openYahooOrders")?.click();
       } else if (action === "manageRakutenCenter" || action === "manageRakutenMail") {
         await openRakutenMailManagementForShop(id);
       } else if (action === "manageRakutenShipping") {
@@ -22924,12 +22971,8 @@ async function loadYahooOrders(page = yahooOrderPage) {
     $("yahooScheduleStatus").textContent = current.running ? "正在检查" : current.enabled ? "运行中" : "已暂停";
     $("yahooScheduleNext").textContent = current.enabled ? formatDate(new Date((Math.floor(Date.now() / intervalMs) + 1) * intervalMs)) : "—";
     $("yahooScheduleLast").textContent = current.lastCheckedAt ? formatDate(current.lastCheckedAt) : "—";
-    $("yahooOrdersCallback").textContent = current.callbackUrl;
-    $("testYahooOrders").classList.toggle("hidden", !canConfigure);
     $("toggleYahooOrders").classList.toggle("hidden", !canConfigure);
     $("runYahooOrders").classList.toggle("hidden", !canConfigure);
-    $("yahooOrdersSettings").classList.toggle("hidden", !canConfigure);
-    $("testYahooOrders").disabled = !current.authorized || current.running;
     $("toggleYahooOrders").disabled = !current.authorized || (!current.enabled && current.running);
     $("toggleYahooOrders").textContent = current.enabled ? "暂停自动拉单" : "开启自动拉单";
     $("runYahooOrders").disabled = !current.enabled || current.running;
@@ -22940,36 +22983,23 @@ async function loadYahooOrders(page = yahooOrderPage) {
     }));
   }
 
-  openButton.addEventListener("click", async () => {
-    try {
-      await Promise.all([loadShops(), refresh()]);
-      const platforms = new Set(state.shopPlatforms.filter(p => p.name.trim().toLowerCase() === "yahoo").map(p => p.key));
-      const shops = state.shops.filter(shop => platforms.has(shop.platform) && Number(shop.status) === 1);
-      const shopSelect = $("yahooOrdersShop");
-      shopSelect.replaceChildren(...shops.map(shop => new Option(shop.name, shop.id)));
-      if (current.shopId) shopSelect.value = current.shopId;
-      form.elements.sellerId.value = current.sellerId || "";
-      form.elements.importFrom.value = current.importFrom
-        ? new Date(new Date(current.importFrom).getTime() + 9 * 3600000).toISOString().slice(0, 10)
-        : new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
-      $("yahooOrdersSettings").open = !current.authorized;
-      switchPanel("yahooOrdersCenter");
-    } catch (error) {
-      showToast(error.message, true);
-    }
+  openButton.addEventListener("click", () => {
+    switchPanel("yahooOrdersCenter");
+    refresh().catch(showError);
   });
   $("closeYahooOrders").addEventListener("click", () => {
-    form.elements.clientSecret.value = "";
-    form.elements.publicKey.value = "";
     switchPanel("yahooOrderProcessing");
     loadYahooOrders(0).catch(showError);
+  });
+  $("closeYahooOrdersConnection").addEventListener("click", () => {
+    form.reset();
+    closeModal("yahooOrdersConnectionModal");
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     withBusyButton(event.submitter, "请求授权中…", async () => {
       try {
         const body = Object.fromEntries(new FormData(form));
-        body.shopId = $("yahooOrdersShop").value;
         const result = await request("/yahoo-orders/authorize", { method: "POST", body: JSON.stringify(body) });
         form.reset();
         location.assign(result.url);
@@ -22982,8 +23012,7 @@ async function loadYahooOrders(page = yahooOrderPage) {
   const bindAction = (id, action, run) => $(id).addEventListener("click", async (event) => {
     await withBusyButton(event.currentTarget, "处理中…", async () => {
       try {
-        const result = await run();
-        if (action === "test") showToast(`订单 API 已连通，匹配 ${result.matched} 单`);
+        await run();
         if (action === "sync") await loadYahooOrders(0);
       } catch (error) {
         showToast(error.message, true);
@@ -22991,7 +23020,15 @@ async function loadYahooOrders(page = yahooOrderPage) {
     });
     await refresh().catch(error => showToast(error.message, true));
   });
-  bindAction("testYahooOrders", "test", () => request("/yahoo-orders/test", { method: "POST" }));
+  $("testYahooOrders").addEventListener("click", (event) => withBusyButton(event.currentTarget, "测试中…", async () => {
+    try {
+      const result = await request("/yahoo-orders/test", { method: "POST" });
+      $("yahooOrdersConnectionStatus").textContent = `订单 API 已连通，匹配 ${result.matched} 单`;
+    } catch (error) {
+      $("yahooOrdersConnectionStatus").textContent = error.message;
+    }
+    await loadYahooOrderConnection().catch(showError);
+  }));
   bindAction("toggleYahooOrders", "toggle", () => request("/yahoo-orders/enabled", {
     method: "POST", body: JSON.stringify({ enabled: !current.enabled }),
   }));
@@ -23002,6 +23039,6 @@ async function loadYahooOrders(page = yahooOrderPage) {
   if (oauthResult) {
     callback.searchParams.delete("yahooOrders");
     history.replaceState(null, "", callback);
-    showToast(oauthResult === "authorized" ? "Yahoo 已授权，请测试订单 API" : "Yahoo 授权未完成，请查看授权设置", oauthResult !== "authorized");
+    showToast(oauthResult === "authorized" ? "Yahoo 已授权，可在店铺管理测试订单 API" : "Yahoo 授权未完成，请在店铺管理查看", oauthResult !== "authorized");
   }
 })();
