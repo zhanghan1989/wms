@@ -1107,6 +1107,7 @@
           <div class="actions order-import-actions">
             <button id="openRakutenOrderImportPanel" type="button">乐天订单处理</button>
             <button id="openAmazonOrderImportPanel" type="button">亚马逊订单处理</button>
+            <button id="openYahooOrderProcessingPanel" class="hidden" type="button">雅虎订单处理</button>
             <button id="openManualOrderProcessingPanel" type="button">手动订单处理</button>
           </div>
         </article>
@@ -1619,6 +1620,78 @@
         </article>
       </section>
 
+      <section class="panel" id="yahooOrderProcessing">
+        <div class="panel-head">
+          <h2>雅虎订单处理</h2>
+          <button id="backFromYahooOrders" type="button" class="ghost">返回订单处理</button>
+        </div>
+        <article class="card">
+          <div class="card-head">
+            <div class="card-title-actions">
+              <h3>雅虎订单列表一览</h3>
+              <div class="action-row">
+                <button id="openYahooOrders" type="button">自动处理中心</button>
+                <button id="refreshYahooOrdersList" type="button" class="ghost">刷新订单</button>
+              </div>
+            </div>
+          </div>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>导入时间</th><th>订单号</th><th>SKU</th><th>产品ID</th><th>产品名称</th>
+                  <th>数量</th><th>发货模式</th><th>店铺</th><th>收件人</th><th>发货公司</th>
+                  <th>发货单号</th><th>发货单号登记时间</th><th class="admin-order-edit-only hidden">操作</th>
+                </tr>
+              </thead>
+              <tbody id="yahooOrdersBody"></tbody>
+            </table>
+          </div>
+          <div class="action-row master-product-list-actions">
+            <button id="prevYahooOrdersPage" type="button" class="ghost" disabled>上一页</button>
+            <button id="nextYahooOrdersPage" type="button" class="ghost" disabled>下一页</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel" id="yahooOrdersCenter">
+        <div class="panel-head">
+          <h2>雅虎自动处理中心</h2>
+          <button id="closeYahooOrders" class="ghost" type="button">返回雅虎订单处理</button>
+        </div>
+        <article class="card">
+          <p id="yahooOrdersStatus" role="status"></p>
+          <div class="action-row">
+            <button id="testYahooOrders" type="button" class="ghost">测试订单 API</button>
+            <button id="toggleYahooOrders" type="button">开启自动拉单</button>
+            <button id="runYahooOrders" type="button" class="ghost">立即检查</button>
+          </div>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead><tr><th>定时任务</th><th>状态</th><th>预计下次运行</th><th>上次检查</th></tr></thead>
+              <tbody><tr><td>订单导入（每 20 分钟）</td><td id="yahooScheduleStatus">—</td><td id="yahooScheduleNext">—</td><td id="yahooScheduleLast">—</td></tr></tbody>
+            </table>
+          </div>
+          <ul id="yahooOrdersIssues"></ul>
+          <details id="yahooOrdersSettings">
+            <summary>授权设置</summary>
+            <p class="muted">Yahoo 开发者后台的回调 URL <code id="yahooOrdersCallback"></code></p>
+            <form id="yahooOrdersAuthForm" class="form-grid modal-grid" autocomplete="off">
+              <label>店铺<select id="yahooOrdersShop" required></select></label>
+              <label>Seller ID<input name="sellerId" maxlength="50" required /></label>
+              <label>导入起始日期（日本时间）<input name="importFrom" type="date" required /></label>
+              <label>Client ID<input name="clientId" required /></label>
+              <label>Client Secret<input name="clientSecret" type="password" required /></label>
+              <label>公开密钥版本<input name="keyVersion" inputmode="numeric" value="1" required /></label>
+              <label class="create-sku-full-row">公开密钥<textarea name="publicKey" rows="5" required></textarea></label>
+              <div class="form-actions">
+                <button type="submit">前往 Yahoo 授权</button>
+              </div>
+            </form>
+          </details>
+        </article>
+      </section>
+
       <section class="panel" id="manualOrderProcessing">
         <div class="panel-head">
           <h2>手动订单处理</h2>
@@ -1634,7 +1707,6 @@
               <div class="action-row">
                 <button id="openAmazonManualOrderModal" type="button">生成手动订单</button>
                 <button id="manualOrderImportBtn" type="button">批量上传</button>
-                <button id="openYahooOrders" class="hidden" type="button">雅虎自动拉单</button>
                 <button id="manualOrderBatchDeleteBtn" type="button" class="danger" disabled>批量删除</button>
               </div>
             </div>
@@ -2725,38 +2797,6 @@
           <button type="button" class="ghost" data-action="closeAmazonManualOrderModal">取消</button>
         </div>
       </form>
-    </div>
-  </div>
-
-  <div id="yahooOrdersModal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head">
-        <h3>雅虎自动拉单</h3>
-        <button id="closeYahooOrders" class="ghost" type="button">关闭</button>
-      </div>
-      <p id="yahooOrdersStatus" role="status"></p>
-      <div class="action-row">
-        <button id="testYahooOrders" type="button" class="ghost">测试订单 API</button>
-        <button id="toggleYahooOrders" type="button">开启自动拉单</button>
-        <button id="runYahooOrders" type="button" class="ghost">立即拉单</button>
-      </div>
-      <ul id="yahooOrdersIssues"></ul>
-      <details id="yahooOrdersSettings">
-        <summary>授权设置</summary>
-        <p class="muted">Yahoo 开发者后台的回调 URL <code id="yahooOrdersCallback"></code></p>
-        <form id="yahooOrdersAuthForm" class="form-grid modal-grid" autocomplete="off">
-          <label>店铺<select id="yahooOrdersShop" required></select></label>
-          <label>Seller ID<input name="sellerId" maxlength="50" required /></label>
-          <label>导入起始日期（日本时间）<input name="importFrom" type="date" required /></label>
-          <label>Client ID<input name="clientId" required /></label>
-          <label>Client Secret<input name="clientSecret" type="password" required /></label>
-          <label>公开密钥版本<input name="keyVersion" inputmode="numeric" value="1" required /></label>
-          <label class="create-sku-full-row">公开密钥<textarea name="publicKey" rows="5" required></textarea></label>
-          <div class="form-actions">
-            <button type="submit">前往 Yahoo 授权</button>
-          </div>
-        </form>
-      </details>
     </div>
   </div>
 

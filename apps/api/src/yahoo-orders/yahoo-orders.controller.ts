@@ -14,7 +14,15 @@ const cookieOptions = { httpOnly: true, secure: true, sameSite: 'lax' as const, 
 export class YahooOrdersController {
   constructor(private readonly service: YahooOrdersService) {}
 
+  @Get('orders')
+  @Roles(Role.admin, Role.employee)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  listOrders(@Query('limit') limit?: string, @Query('offset') offset?: string) {
+    return this.service.listOrders(limit, offset);
+  }
+
   @Get('status')
+  @Roles(Role.admin, Role.employee)
   @UseGuards(JwtAuthGuard, RolesGuard)
   status() {
     return this.service.status();

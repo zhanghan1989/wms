@@ -71,6 +71,15 @@ export class YahooOrdersService {
     };
   }
 
+  async listOrders(limit?: string, offset?: string): Promise<unknown[]> {
+    const shops = await this.db.shop.findMany({
+      where: { platformDefinition: { name: 'yahoo' } }, select: { name: true },
+    });
+    return this.orders.listAmazonManualOrders(limit, offset, {
+      OR: [{ mallName: 'yahoo' }, { shopName: { in: shops.map(shop => shop.name) } }],
+    });
+  }
+
   async startAuthorization(input: Record<string, unknown>) {
     if (!this.client.proxyConfigured) throw new BadRequestException('飞牛 OS 日本出口未配置');
     const shopId = BigInt(required(input.shopId, /^[1-9]\d{0,18}$/, '店铺'));
@@ -161,7 +170,7 @@ export class YahooOrdersService {
     return this.run('sync');
   }
 
-  @Cron('0 */10 * * * *', { name: 'yahoo-order-sync' })
+  @Cron('0 */20 * * * *', { name: 'yahoo-order-sync', timeZone: 'Asia/Tokyo' })
   async scheduledSync(): Promise<void> {
     try {
       const row = await this.db.yahooOrderConnection.findUnique({ where: { id: connectionId }, select: { enabled: true } });
