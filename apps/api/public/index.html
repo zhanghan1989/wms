@@ -1664,6 +1664,7 @@
           <div class="action-row">
             <button id="toggleYahooOrders" type="button">开启自动拉单</button>
             <button id="runYahooOrders" type="button" class="ghost">立即检查</button>
+            <button id="openYahooInventory" type="button" class="hidden">库存自动同步</button>
           </div>
           <div class="master-product-table-wrap">
             <table>
@@ -1672,6 +1673,71 @@
             </table>
           </div>
           <ul id="yahooOrdersIssues"></ul>
+        </article>
+      </section>
+
+      <section class="panel" id="yahooInventoryPanel">
+        <div class="panel-head">
+          <h2>雅虎库存自动同步</h2>
+          <button id="closeYahooInventory" type="button" class="ghost">返回雅虎自动处理中心</button>
+        </div>
+        <article class="card">
+          <p id="yahooInventoryStatus" role="status"></p>
+          <div class="action-row">
+            <button id="yahooInventoryRefresh" type="button" class="ghost">刷新</button>
+            <button id="yahooInventoryPreview" type="button" disabled>同步预览</button>
+            <button id="yahooInventoryExecute" type="button" disabled>确认同步</button>
+            <button id="yahooInventoryToggle" type="button" class="ghost" disabled>开启自动同步</button>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>库存 SKU 映射</h3>
+          <form id="yahooInventoryMappingForm" class="form-grid">
+            <label>Yahoo 商品编码<input id="yahooInventoryItemCode" required maxlength="99" autocomplete="off" /></label>
+            <label>Yahoo 规格编码<input id="yahooInventorySubCode" maxlength="99" autocomplete="off" placeholder="无规格商品留空" /></label>
+            <label>WMS 产品 ID<input id="yahooInventoryProductId" required maxlength="128" autocomplete="off" /></label>
+            <label>安全库存<input id="yahooInventorySafety" type="number" required min="0" max="99999" step="1" value="0" /></label>
+            <label><input id="yahooInventoryMappingEnabled" type="checkbox" checked /> 参与同步</label>
+            <div class="action-row">
+              <button id="yahooInventorySave" type="submit" disabled>保存映射</button>
+              <button id="yahooInventoryAutoMatch" type="button" class="ghost" disabled>按本店 SKU 匹配此商品</button>
+              <button id="yahooInventoryCheck" type="button" class="ghost" disabled>测试库存读取</button>
+            </div>
+          </form>
+          <p id="yahooInventoryMappingMessage" role="status"></p>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead><tr><th>商品编码</th><th>规格编码</th><th>WMS 产品 ID</th><th>安全库存</th><th>方式</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody id="yahooInventoryMappingBody"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article id="yahooInventoryJob" class="card hidden">
+          <h3>库存任务明细</h3>
+          <p id="yahooInventoryJobMessage" role="status"></p>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead><tr><th>商品编码</th><th>规格编码</th><th>WMS 产品 ID</th><th>Yahoo 原库存</th><th>WMS 可售</th><th>安全库存</th><th>目标库存</th></tr></thead>
+              <tbody id="yahooInventoryPreviewBody"></tbody>
+            </table>
+          </div>
+          <div class="action-row master-product-list-actions">
+            <button id="yahooInventoryPrev" type="button" class="ghost" disabled>上一页</button>
+            <button id="yahooInventoryNext" type="button" class="ghost" disabled>下一页</button>
+          </div>
+          <ul id="yahooInventoryJobIssues"></ul>
+        </article>
+
+        <article class="card">
+          <h3>最近同步记录</h3>
+          <div class="master-product-table-wrap">
+            <table>
+              <thead><tr><th>运行时间（日本）</th><th>方式</th><th>状态</th><th>已核对写入</th><th>说明</th></tr></thead>
+              <tbody id="yahooInventoryHistoryBody"></tbody>
+            </table>
+          </div>
         </article>
       </section>
 

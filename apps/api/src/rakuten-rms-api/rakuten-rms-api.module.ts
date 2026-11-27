@@ -18,6 +18,6 @@ import { RakutenSalesService } from './rakuten-sales.service';
   imports: [AuditModule, OrdersModule],
   controllers: [RakutenRmsApiController, RakutenInventoryController],
   providers: [RakutenSalesService, RakutenInventorySchedulerService, RakutenInventoryCatalogService, RakutenInventoryService, RakutenRmsApiService, RakutenRmsApiClient, RakutenRmsApiCryptoService, RakutenRmsAutomationService, RakutenOrderSchedulerService, RakutenScheduleControlService],
-  exports: [RakutenRmsApiService],
+  exports: [RakutenRmsApiService, RakutenInventoryService],
 })
 export class RakutenRmsApiModule {}

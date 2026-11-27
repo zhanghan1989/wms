@@ -462,7 +462,49 @@ model YahooOrderConnection {
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
+  lastCompleteOrdersAt   DateTime? @map("last_complete_orders_at")
+  inventoryEnabled       Boolean   @default(false) @map("inventory_enabled")
+  inventoryPauseReason   String?   @map("inventory_pause_reason") @db.VarChar(255)
+  inventoryFailureCount  Int       @default(0) @map("inventory_failure_count")
+  inventoryBaselineCount Int      @default(0) @map("inventory_baseline_count")
+  inventoryMappings      YahooInventoryMapping[]
+  inventoryRuns          YahooInventoryRun[]
+
   @@map("yahoo_order_connections")
+}
+
+model YahooInventoryMapping {
+  id             BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  connectionId   Int      @map("connection_id")
+  connection     YahooOrderConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  itemCode       String   @map("item_code") @db.VarChar(99)
+  subCode        String   @default("") @map("sub_code") @db.VarChar(99)
+  productId      String   @map("product_id") @db.VarChar(128)
+  source         String   @default("manual") @db.VarChar(16)
+  safetyStock    Int      @default(0) @map("safety_stock")
+  enabled        Boolean  @default(true)
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([connectionId, itemCode, subCode], map: "uq_yahoo_inventory_target")
+  @@map("yahoo_inventory_mappings")
+}
+
+model YahooInventoryRun {
+  id             String   @id @db.Char(36)
+  connectionId   Int      @map("connection_id")
+  connection     YahooOrderConnection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+  actorId        String?  @map("actor_id") @db.VarChar(30)
+  trigger        String   @db.VarChar(16)
+  status         String   @db.VarChar(24)
+  plan           Json?
+  result         Json?
+  message        String?  @db.VarChar(255)
+  startedAt      DateTime @default(now()) @map("started_at")
+  finishedAt     DateTime? @map("finished_at")
+  expiresAt      DateTime? @map("expires_at")
+
+  @@index([connectionId, startedAt], map: "idx_yahoo_inventory_recent")
+  @@map("yahoo_inventory_runs")
 }
 
 model RakutenRmsConnection {

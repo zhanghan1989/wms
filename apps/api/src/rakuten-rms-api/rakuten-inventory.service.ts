@@ -247,7 +247,7 @@ export class RakutenInventoryService {
 
   /** A shared stock pool is reduced by real order claims; published SKUs then
    * independently see the full remaining pool, per the user's allocation rule. */
-  private async stockQuantities(productIds: string[], renew: () => Promise<void>, details?: Map<string, InventoryStockBreakdown>) {
+  async stockQuantities(productIds: string[], renew: () => Promise<void>, details?: Map<string, InventoryStockBreakdown>) {
     // All reservation and physical-stock reads share a repeatable-read snapshot.
     // External API calls happen after this read transaction has completed.
     return this.prisma.$transaction((tx) => this.stockSnapshot(productIds, renew, tx, details), {

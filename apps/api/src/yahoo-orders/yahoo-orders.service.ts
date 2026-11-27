@@ -8,12 +8,14 @@ import { OrdersService } from '../orders/orders.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { normalizeYahooPublicKey, YahooCredentials, YahooOrder, YahooOrdersClient, YahooRequestError, yahooItems } from './yahoo-orders.client';
 
-type Connection = YahooOrderConnection & { shop: { name: string; status: number; platformDefinition: { name: string } } };
+export type YahooConnection = YahooOrderConnection & { shop: { name: string; status: number; platformDefinition: { name: string } } };
+export type YahooSession = { row: YahooConnection; credentials: YahooCredentials; token: string; signal: AbortSignal };
 type SyncIssue = { orderId: string; message: string };
 type SyncResult = { matched: number; imported: number; skipped: number; issueCount: number; issues: SyncIssue[] };
 type Authorization = { credentials: YahooCredentials; verifier: string };
 
-const connectionId = 1;
+export const YAHOO_CONNECTION_ID = 1;
+const connectionId = YAHOO_CONNECTION_ID;
 const shopInclude = { shop: { select: { name: true, status: true, platformDefinition: { select: { name: true } } } } } as const;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const minutes = 60000;
@@ -108,7 +110,7 @@ export class YahooOrdersService {
     const authorization = {
       authStateHash: hash(state), authExpiresAt: new Date(Date.now() + 10 * minutes),
       pendingAuth: seal({ credentials: { clientId, clientSecret, publicKey, keyVersion }, verifier }),
-      enabled: false, importFrom, lastError: null, lastResult: Prisma.DbNull,
+      enabled: false, importFrom, lastError: null, lastResult: Prisma.DbNull, lastCompleteOrdersAt: null,
     };
     const where = { id: connectionId, OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }] };
     const existing = await this.db.yahooOrderConnection.findUnique({ where: { id: connectionId } });
@@ -159,7 +161,7 @@ export class YahooOrdersService {
 
   async setEnabled(enabled: boolean) {
     if (!enabled) {
-      await this.db.yahooOrderConnection.updateMany({ where: { id: connectionId }, data: { enabled: false } });
+      await this.db.yahooOrderConnection.updateMany({ where: { id: connectionId }, data: { enabled: false, lastCompleteOrdersAt: null } });
       return this.status();
     }
     await this.run('enable');
@@ -180,11 +182,15 @@ export class YahooOrdersService {
     }
   }
 
-  private async run(mode: 'test' | 'enable' | 'sync') {
+  async withConnection<T>(
+    operation: (session: YahooSession) => Promise<T>,
+    requireOrdersEnabled = false,
+    onFailure?: (error: unknown, token: string) => Promise<void>,
+  ): Promise<T> {
     const token = randomUUID();
     const claimed = await this.db.yahooOrderConnection.updateMany({
       where: {
-        id: connectionId, credentials: { not: null }, ...(mode === 'sync' ? { enabled: true } : {}),
+        id: connectionId, credentials: { not: null }, ...(requireOrdersEnabled ? { enabled: true } : {}),
         AND: [
           { OR: [{ authExpiresAt: null }, { authExpiresAt: { lte: new Date() } }] },
           { OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }] },
@@ -192,7 +198,7 @@ export class YahooOrdersService {
       },
       data: { lockToken: token, lockedUntil: new Date(Date.now() + 9 * minutes) },
     });
-    if (!claimed.count) throw new ConflictException('雅虎订单未授权、未开启或另一项查询正在运行');
+    if (!claimed.count) throw new ConflictException('雅虎店铺未授权、未开启拉单或另一项雅虎任务正在运行');
     try {
       const row = await this.db.yahooOrderConnection.findUniqueOrThrow({ where: { id: connectionId }, include: shopInclude });
       if (row.shop.status !== 1 || !/^yahoo$/i.test(row.shop.platformDefinition.name.trim())) {
@@ -204,32 +210,46 @@ export class YahooOrdersService {
         credential = await this.client.exchange(credential, { grant_type: 'refresh_token', refresh_token: credential.refreshToken! }, signal);
         await this.db.yahooOrderConnection.updateMany({ where: { id: connectionId, lockToken: token }, data: { credentials: seal(credential) } });
       }
-      const to = new Date();
-      const since = new Date(Math.max(to.getTime() - 90 * days, row.importFrom.getTime()));
-      const first = await this.client.list(row.sellerId, credential, since, to, 1, mode === 'sync' ? 100 : 1, signal);
-      const result: SyncResult = { matched: first.total, imported: 0, skipped: 0, issueCount: 0, issues: [] };
-      if (mode === 'sync') {
-        await this.importOrders(row, token, credential, first, since, to, signal, result);
-      } else if (first.ids.length) {
-        await this.client.detail(row.sellerId, credential, first.ids[0], signal);
-      }
-      await this.db.yahooOrderConnection.updateMany({
-        where: { id: connectionId, lockToken: token },
-        data: {
-          ...(mode === 'enable' ? { enabled: true } : {}),
-          lastCheckedAt: new Date(), lastError: null,
-          ...(mode !== 'test' ? { lastResult: result } : {}),
-        },
-      });
-      return result;
+      return await operation({ row, credentials: credential, token, signal });
     } catch (error) {
-      const message = errorMessage(error);
-      await this.db.yahooOrderConnection.updateMany({
-        where: { id: connectionId, lockToken: token }, data: { lastCheckedAt: new Date(), lastError: message },
-      });
-      throw new BadRequestException(message);
+      await onFailure?.(error, token);
+      throw error;
     } finally {
       await this.release(token);
+    }
+  }
+
+  private async run(mode: 'test' | 'enable' | 'sync') {
+    try {
+      return await this.withConnection(async ({ row, credentials, token, signal }) => {
+        const to = new Date();
+        const since = new Date(Math.max(to.getTime() - 90 * days, row.importFrom.getTime()));
+        const first = await this.client.list(row.sellerId, credentials, since, to, 1, mode === 'sync' ? 100 : 1, signal);
+        const result: SyncResult = { matched: first.total, imported: 0, skipped: 0, issueCount: 0, issues: [] };
+        if (mode === 'sync') {
+          await this.importOrders(row, token, credentials, first, since, to, signal, result);
+        } else if (first.ids.length) {
+          await this.client.detail(row.sellerId, credentials, first.ids[0], signal);
+        }
+        await this.db.yahooOrderConnection.updateMany({
+          where: { id: connectionId, lockToken: token },
+          data: {
+            ...(mode === 'enable' ? { enabled: true } : {}),
+            lastCheckedAt: new Date(), lastError: null,
+            ...(mode !== 'test' ? { lastResult: result } : {}),
+            ...(mode === 'sync' ? { lastCompleteOrdersAt: result.issueCount === 0 ? new Date() : null } : {}),
+          },
+        });
+        return result;
+      }, mode === 'sync', async (error, token) => {
+        await this.db.yahooOrderConnection.updateMany({
+          where: { id: connectionId, lockToken: token },
+          data: { lastCheckedAt: new Date(), lastError: errorMessage(error), ...(mode === 'sync' ? { lastCompleteOrdersAt: null } : {}) },
+        });
+      });
+    } catch (error) {
+      if (error instanceof ConflictException) throw error;
+      throw new BadRequestException(errorMessage(error));
     }
   }
 
@@ -239,7 +259,7 @@ export class YahooOrdersService {
     });
   }
 
-  private async importOrders(row: Connection, token: string, credential: YahooCredentials, first: { total: number; ids: string[] },
+  private async importOrders(row: YahooConnection, token: string, credential: YahooCredentials, first: { total: number; ids: string[] },
     since: Date, to: Date, signal: AbortSignal, result: SyncResult) {
     const ids = new Set(first.ids);
     for (let offset = 101; offset <= first.total; offset += 100) {
@@ -265,7 +285,7 @@ export class YahooOrdersService {
           continue;
         }
         const active = await this.db.yahooOrderConnection.count({ where: { id: connectionId, lockToken: token, enabled: true } });
-        if (!active) return;
+        if (!active) throw new ConflictException('雅虎拉单已停止，本轮未完整导入');
         await delay(1050, undefined, { signal });
         const order = await this.client.detail(row.sellerId, credential, orderId, signal);
         try {
@@ -289,7 +309,7 @@ export class YahooOrdersService {
     }
   }
 
-  private async mapOrder(row: Connection, orderId: string, order: YahooOrder) {
+  private async mapOrder(row: YahooConnection, orderId: string, order: YahooOrder) {
     const ship = order.Ship;
     if (order.OrderStatus !== '2' || ship?.ShipStatus !== '1' || order.Suspect === '1' ||
         (order.IsLineGiftOrder === 'true' && order.IsLineGiftShippable !== 'true')) return null;

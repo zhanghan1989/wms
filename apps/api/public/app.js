@@ -22973,6 +22973,7 @@ async function loadYahooOrders(page = yahooOrderPage) {
     $("yahooScheduleLast").textContent = current.lastCheckedAt ? formatDate(current.lastCheckedAt) : "—";
     $("toggleYahooOrders").classList.toggle("hidden", !canConfigure);
     $("runYahooOrders").classList.toggle("hidden", !canConfigure);
+    $("openYahooInventory").classList.toggle("hidden", !canConfigure || !canManageJapanOperations());
     $("toggleYahooOrders").disabled = !current.authorized || (!current.enabled && current.running);
     $("toggleYahooOrders").textContent = current.enabled ? "暂停自动拉单" : "开启自动拉单";
     $("runYahooOrders").disabled = !current.enabled || current.running;
@@ -23041,4 +23042,229 @@ async function loadYahooOrders(page = yahooOrderPage) {
     history.replaceState(null, "", callback);
     showToast(oauthResult === "authorized" ? "Yahoo 已授权，可在店铺管理测试订单 API" : "Yahoo 授权未完成，请在店铺管理查看", oauthResult !== "authorized");
   }
+})();
+
+(() => {
+  const button = $("openYahooInventory");
+  if (!button) return;
+  const panel = $("yahooInventoryPanel");
+  const form = $("yahooInventoryMappingForm");
+  const endpoint = "/yahoo-orders/inventory";
+  const date = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Tokyo", dateStyle: "short", timeStyle: "medium" });
+  const labels = {
+    planning: "正在预览", checking: "正在复查库存", writing: "正在写入并回读", preview: "待确认",
+    success: "成功", partial: "部分 SKU 跳过", failed: "失败", needs_review: "需核对 Yahoo 实际库存",
+  };
+  const isRunning = (status) => ["planning", "checking", "writing"].includes(status);
+  const showError = (error) => showToast(error.message, true);
+  let current;
+  let job;
+  let timer;
+  let saving = false;
+  let sessionToken;
+
+  const row = (values) => `<tr>${values.map((value) => `<td>${escapeHtml(String(value ?? "—"))}</td>`).join("")}</tr>`;
+  const empty = (columns, label) => `<tr><td colspan="${columns}">${label}</td></tr>`;
+  const showTime = (value) => value ? date.format(new Date(value)) : "—";
+  const updateList = (id, messages) => $(id).replaceChildren(...messages.map((message) => {
+    const item = document.createElement("li");
+    item.textContent = message;
+    return item;
+  }));
+  const jsonRequest = (path, method, body = {}) => request(endpoint + path, { method, body: JSON.stringify(body) });
+  const target = () => ({ itemCode: $("yahooInventoryItemCode").value.trim(), subCode: $("yahooInventorySubCode").value.trim() });
+
+  function updateActions() {
+    const configured = current?.authorized && current.proxyConfigured;
+    const running = saving || isRunning(job?.status);
+    const previewReady = job?.status === "preview" && job.canExecute && job.result.eligible > 0 && Date.parse(job.expiresAt) > Date.now();
+    $("yahooInventoryPreview").disabled = running || !configured || !current.mappings.some((item) => item.enabled);
+    $("yahooInventoryExecute").disabled = running || !configured || !current.writeReady || !previewReady;
+    $("yahooInventoryToggle").textContent = current?.enabled ? "暂停自动同步" : "开启自动同步";
+    $("yahooInventoryToggle").disabled = saving || (!current?.enabled &&
+      (running || !configured || !current.writeReady || !current.initialized || Boolean(current.pauseReason)));
+    for (const id of ["yahooInventorySave", "yahooInventoryAutoMatch", "yahooInventoryCheck"]) {
+      $(id).disabled = running || !configured;
+    }
+  }
+
+  function render() {
+    const status = current;
+    $("yahooInventoryStatus").textContent = [
+      status.shopName, status.authorized ? "Yahoo 已授权" : "请在店铺管理完成 Yahoo 授权",
+      status.proxyConfigured ? "飞牛 OS 日本出口" : "飞牛 OS 出口未配置",
+      status.enabled ? `自动同步已开启，下次 ${showTime(status.nextRunAt)}（日本时间）` : "自动同步已暂停，每天 17:30（日本时间）",
+      status.writeReady ? `最近完整拉单 ${showTime(status.lastCompleteOrdersAt)}（日本时间）` : "完整拉单后可写入库存",
+      !status.initialized && "首次手动同步核验后可开启定时任务", status.pauseReason,
+    ].filter(Boolean).join(" / ");
+    $("yahooInventoryMappingBody").innerHTML = status.mappings.map((mapping) => {
+      const id = escapeHtml(mapping.id);
+      return row([mapping.itemCode, mapping.subCode || "—", mapping.productId, mapping.safetyStock,
+        mapping.source === "auto" ? "自动匹配" : "手动", mapping.enabled ? "同步中" : "已停用"]).replace("</tr>",
+        `<td><button type="button" class="ghost" data-yahoo-map-edit="${id}">编辑</button>
+        ${mapping.enabled ? `<button type="button" class="ghost" data-yahoo-map-disable="${id}">停用</button>` : ""}</td></tr>`);
+    }).join("") || empty(7, "暂无 SKU 映射");
+    $("yahooInventoryHistoryBody").innerHTML = status.runs.map((run) => {
+      const id = escapeHtml(run.id);
+      return row([showTime(run.startedAt), { scheduled: "定时", manual: "手动", preview: "预览" }[run.trigger],
+        labels[run.status], run.result?.verified ?? "—"]).replace("</tr>",
+        `<td><button type="button" class="ghost" data-yahoo-inventory-run="${id}">${escapeHtml(run.message || "查看明细")}</button></td></tr>`);
+    }).join("") || empty(5, "暂无库存任务");
+    updateActions();
+  }
+
+  function renderJob() {
+    $("yahooInventoryJob").classList.toggle("hidden", !job);
+    if (!job) return;
+    const summary = job.result;
+    $("yahooInventoryJobMessage").textContent = [
+      labels[job.status], summary && `可同步 ${summary.eligible} 条，预计变更 ${summary.changed} 条，归零 ${summary.zero} 条，待处理 ${summary.issues} 条，已回读 ${summary.verified} 条`,
+      job.status === "preview" && `确认截止 ${showTime(job.expiresAt)}（日本时间）`, job.message,
+    ].filter(Boolean).join(" / ");
+    $("yahooInventoryPreviewBody").innerHTML = job.rows.map((item) => row([item.itemCode, item.subCode || "—",
+      item.productId, item.quantity, item.available, item.safetyStock, item.target])).join("") || empty(7, "暂无可显示的库存明细");
+    $("yahooInventoryPrev").disabled = job.page <= 1;
+    $("yahooInventoryNext").disabled = job.page * 50 >= job.total;
+    updateList("yahooInventoryJobIssues", job.issues.map((issue) =>
+      [issue.itemCode, issue.subCode, issue.message].filter(Boolean).join(" / ")));
+    updateActions();
+  }
+
+  async function reload() {
+    const result = await request(endpoint);
+    if (state.token !== sessionToken || !panel.classList.contains("active")) return;
+    current = result;
+    render();
+  }
+
+  async function loadJob(id, page = 1) {
+    clearTimeout(timer);
+    const result = await request(`${endpoint}/jobs/${encodeURIComponent(id)}?page=${page}`);
+    if (state.token !== sessionToken || !panel.classList.contains("active")) return;
+    job = result;
+    renderJob();
+    if (isRunning(job.status)) {
+      timer = setTimeout(() => {
+        if (panel.classList.contains("active")) loadJob(id, page).catch(showError);
+      }, 2500);
+    } else {
+      await reload();
+      if (job.status === "preview") {
+        timer = setTimeout(updateActions, Math.max(0, Date.parse(job.expiresAt) - Date.now()));
+      }
+    }
+  }
+
+  async function act(control, action) {
+    if (saving) return;
+    saving = true;
+    try {
+      await withBusyButton(control, "处理中…", async () => {
+        updateActions();
+        await action();
+      });
+    } catch (error) {
+      showError(error);
+    } finally {
+      saving = false;
+      if (panel.classList.contains("active")) updateActions();
+    }
+  }
+
+  button.addEventListener("click", () => {
+    if (!canManageJapanOperations() || !hasAdminAccess(state.me?.role)) return;
+    if (sessionToken !== state.token) {
+      sessionToken = state.token;
+      current = undefined;
+      job = undefined;
+      form.reset();
+      $("yahooInventoryMappingMessage").textContent = "";
+      $("yahooInventoryStatus").textContent = "正在加载雅虎库存设置…";
+      $("yahooInventoryMappingBody").replaceChildren();
+      $("yahooInventoryHistoryBody").replaceChildren();
+    }
+    switchPanel("yahooInventoryPanel");
+    updateActions();
+    renderJob();
+    reload().then(() => {
+      if (job && isRunning(job.status)) return loadJob(job.id, job.page);
+    }).catch(showError);
+  });
+  $("closeYahooInventory").addEventListener("click", () => {
+    clearTimeout(timer);
+    $("openYahooOrders").click();
+  });
+  $("yahooInventoryRefresh").addEventListener("click", (event) => act(event.currentTarget, async () => {
+    if (job) await loadJob(job.id, job.page);
+    await reload();
+  }));
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    return act(event.submitter, async () => {
+      await jsonRequest("/mappings", "PUT", { ...target(), productId: $("yahooInventoryProductId").value.trim(),
+        safetyStock: Number($("yahooInventorySafety").value), enabled: $("yahooInventoryMappingEnabled").checked });
+      $("yahooInventoryMappingMessage").textContent = "已验证并保存 SKU 映射";
+      form.reset();
+      await reload();
+    });
+  });
+  $("yahooInventoryAutoMatch").addEventListener("click", (event) => act(event.currentTarget, async () => {
+    const result = await jsonRequest("/mappings/auto-match", "POST", { itemCode: target().itemCode });
+    $("yahooInventoryMappingMessage").textContent = [
+      `新增 ${result.created} 条，保留 ${result.existing} 条`,
+      ...result.issues.map((issue) => `${issue.subCode || issue.itemCode} ${issue.message}`),
+    ].join(" / ");
+    await reload();
+  }));
+  $("yahooInventoryCheck").addEventListener("click", (event) => act(event.currentTarget, async () => {
+    const result = await jsonRequest("/check", "POST", target());
+    $("yahooInventoryMappingMessage").textContent = result.stockAvailable
+      ? `库存读取成功，Yahoo 库存 ${result.quantity ?? "不限量"}，${result.listingOnSale && result.published ? "在售" : "未在售"}`
+      : "已连接 Yahoo，此商品暂无库存记录";
+  }));
+  $("yahooInventoryMappingBody").addEventListener("click", (event) => {
+    const edit = event.target.closest("[data-yahoo-map-edit]");
+    const disable = event.target.closest("[data-yahoo-map-disable]");
+    if (edit) {
+      const mapping = current?.mappings.find((item) => item.id === edit.dataset.yahooMapEdit);
+      if (!mapping) return;
+      $("yahooInventoryItemCode").value = mapping.itemCode;
+      $("yahooInventorySubCode").value = mapping.subCode;
+      $("yahooInventoryProductId").value = mapping.productId;
+      $("yahooInventorySafety").value = mapping.safetyStock;
+      $("yahooInventoryMappingEnabled").checked = mapping.enabled;
+      $("yahooInventoryProductId").focus();
+    }
+    if (disable) return act(disable, async () => {
+      await jsonRequest(`/mappings/${encodeURIComponent(disable.dataset.yahooMapDisable)}/disable`, "POST");
+      $("yahooInventoryMappingMessage").textContent = "已停用此 SKU 的库存同步";
+      await reload();
+    });
+  });
+  $("yahooInventoryHistoryBody").addEventListener("click", (event) => {
+    const run = event.target.closest("[data-yahoo-inventory-run]");
+    if (run) return act(run, async () => {
+      await loadJob(run.dataset.yahooInventoryRun);
+      $("yahooInventoryJob").scrollIntoView({ block: "nearest" });
+    });
+  });
+  for (const [id, offset] of [["yahooInventoryPrev", -1], ["yahooInventoryNext", 1]]) {
+    $(id).addEventListener("click", (event) => act(event.currentTarget, () => loadJob(job.id, job.page + offset)));
+  }
+  $("yahooInventoryToggle").addEventListener("click", (event) => act(event.currentTarget, async () => {
+    const enabled = !current.enabled;
+    if (enabled && !window.confirm("开启后，WMS 每天日本时间 17:30 会同步 Yahoo 可售库存。确认开启？")) return;
+    await jsonRequest("/enabled", "PUT", { enabled });
+    await reload();
+  }));
+  $("yahooInventoryPreview").addEventListener("click", (event) => act(event.currentTarget, async () => {
+    const result = await jsonRequest("/preview", "POST");
+    await loadJob(result.jobId);
+    $("yahooInventoryJob").scrollIntoView({ block: "nearest" });
+  }));
+  $("yahooInventoryExecute").addEventListener("click", (event) => act(event.currentTarget, async () => {
+    if (!window.confirm(`确认将本次预览中 ${job.result.changed} 条变更写入 Yahoo 库存？`)) return;
+    const result = await jsonRequest("/execute", "POST", { previewId: job.id });
+    await loadJob(result.jobId);
+  }));
 })();
